@@ -198,27 +198,15 @@ pub fn prove_generalized_tactic_held_out_value(
         .map(|row| row.action_sha256)
         .collect::<BTreeSet<_>>();
     let all_episodes = rows.iter().map(|row| row.episode).collect::<BTreeSet<_>>();
-    let (episode_training, episode_evaluation): (Vec<_>, Vec<_>) = rows
-        .into_iter()
-        .partition(|row| row.episode.corpus % 5 != 4);
-    if episode_training.is_empty() || episode_evaluation.is_empty() {
-        return Err(evidence_message(
-            "deterministic episode-group split produced an empty partition",
-        ));
-    }
+    // Label complete native graphs before applying either holdout. Splitting
+    // graph edges first severs successful continuations and silently relabels
+    // their prefixes as censored, which makes a controller or state-region
+    // generalization test meaningless.
+    let labeled = objective_targets(rows)?;
 
-    let controller_holdout = controller_holdout(
-        &episode_training,
-        &episode_evaluation,
-        goal_distance_feature,
-        &ablated_indices,
-    )?;
-    let state_holdout = contiguous_state_holdout(
-        &episode_training,
-        &episode_evaluation,
-        goal_distance_feature,
-        &ablated_indices,
-    )?;
+    let controller_holdout = controller_holdout(&labeled, goal_distance_feature, &ablated_indices)?;
+    let state_holdout =
+        contiguous_state_holdout(&labeled, goal_distance_feature, &ablated_indices)?;
     let holdouts = vec![controller_holdout, state_holdout];
     let passed = holdouts.iter().all(|holdout| holdout.passed);
 
@@ -230,7 +218,7 @@ pub fn prove_generalized_tactic_held_out_value(
         goal_distance_feature,
         input_corpora: corpora.len() as u64,
         authenticated_native_transitions,
-        unique_native_transitions: episode_training.len() as u64 + episode_evaluation.len() as u64,
+        unique_native_transitions: labeled.len() as u64,
         unique_controller_instances: all_controllers.len() as u64,
         episode_groups: all_episodes.len() as u64,
         objective: GeneralizedTacticEvidenceObjective {
@@ -281,41 +269,61 @@ fn flatten_unique_native_rows(
 }
 
 fn controller_holdout(
-    episode_training: &[NativeRow],
-    episode_evaluation: &[NativeRow],
+    rows: &[LabeledRow],
     goal_distance_feature: usize,
     ablated_indices: &[usize],
 ) -> Result<GeneralizedTacticHoldoutEvidence, GeneralizedTacticEvidenceError> {
-    let held_out_controllers = episode_evaluation
+    let mut controller_ids = rows
         .iter()
-        .map(|row| row.action_sha256)
-        .collect::<BTreeSet<_>>();
-    let training = episode_training
-        .iter()
-        .filter(|row| !held_out_controllers.contains(&row.action_sha256))
-        .cloned()
+        .map(|row| row.row.action_sha256)
         .collect::<Vec<_>>();
-    evaluate_holdout(
-        "exact_controller_instances",
-        training,
-        episode_evaluation.to_vec(),
-        held_out_controllers.len(),
-        None,
-        goal_distance_feature,
-        ablated_indices,
-    )
+    controller_ids.sort_unstable();
+    controller_ids.dedup();
+    if controller_ids.len() < 2 {
+        return Err(evidence_message(
+            "exact-controller holdout requires at least two controller instances",
+        ));
+    }
+    // Try each deterministic fifth as the excluded controller fold. Selecting
+    // by controller identity (rather than corpus) keeps entire native graphs
+    // labeled while still guaranteeing that no exact held-out controller is
+    // visible to the fit.
+    for fold in 0..5 {
+        let held_out_controllers = controller_ids
+            .iter()
+            .enumerate()
+            .filter_map(|(index, digest)| (index % 5 == fold).then_some(*digest))
+            .collect::<BTreeSet<_>>();
+        let (training, evaluation): (Vec<_>, Vec<_>) = rows
+            .iter()
+            .cloned()
+            .partition(|row| !held_out_controllers.contains(&row.row.action_sha256));
+        if !valid_mixed_partition(&training, &evaluation) {
+            continue;
+        }
+        return evaluate_holdout(
+            "exact_controller_instances",
+            training,
+            evaluation,
+            held_out_controllers.len(),
+            None,
+            goal_distance_feature,
+            ablated_indices,
+        );
+    }
+    Err(evidence_message(
+        "exact-controller folds do not contain enough mixed terminal and censored evidence",
+    ))
 }
 
 fn contiguous_state_holdout(
-    episode_training: &[NativeRow],
-    episode_evaluation: &[NativeRow],
+    rows: &[LabeledRow],
     goal_distance_feature: usize,
     ablated_indices: &[usize],
 ) -> Result<GeneralizedTacticHoldoutEvidence, GeneralizedTacticEvidenceError> {
-    let mut distances = episode_training
+    let mut distances = rows
         .iter()
-        .chain(episode_evaluation)
-        .map(|row| row.transition.value_sample.state[goal_distance_feature])
+        .map(|row| row.row.transition.value_sample.state[goal_distance_feature])
         .collect::<Vec<_>>();
     distances.sort_by(f32::total_cmp);
     distances.dedup_by(|left, right| left.to_bits() == right.to_bits());
@@ -331,24 +339,16 @@ fn contiguous_state_holdout(
             "contiguous state-region holdout has zero width",
         ));
     }
-    let outside = |row: &&NativeRow| {
-        let distance = row.transition.value_sample.state[goal_distance_feature];
+    let outside = |row: &&LabeledRow| {
+        let distance = row.row.transition.value_sample.state[goal_distance_feature];
         distance < lower || distance > upper
     };
-    let inside = |row: &&NativeRow| {
-        let distance = row.transition.value_sample.state[goal_distance_feature];
+    let inside = |row: &&LabeledRow| {
+        let distance = row.row.transition.value_sample.state[goal_distance_feature];
         distance >= lower && distance <= upper
     };
-    let training = episode_training
-        .iter()
-        .filter(outside)
-        .cloned()
-        .collect::<Vec<_>>();
-    let evaluation = episode_evaluation
-        .iter()
-        .filter(inside)
-        .cloned()
-        .collect::<Vec<_>>();
+    let training = rows.iter().filter(outside).cloned().collect::<Vec<_>>();
+    let evaluation = rows.iter().filter(inside).cloned().collect::<Vec<_>>();
     evaluate_holdout(
         "contiguous_goal_distance_region",
         training,
@@ -368,8 +368,8 @@ fn contiguous_state_holdout(
 #[allow(clippy::too_many_arguments)]
 fn evaluate_holdout(
     kind: &str,
-    training: Vec<NativeRow>,
-    evaluation: Vec<NativeRow>,
+    training: Vec<LabeledRow>,
+    evaluation: Vec<LabeledRow>,
     exact_controller_instances_excluded: usize,
     state_region: Option<GeneralizedTacticStateRegion>,
     goal_distance_feature: usize,
@@ -380,8 +380,11 @@ fn evaluate_holdout(
             "{kind} holdout requires at least {MINIMUM_EVALUATION_ROWS} training and evaluation transitions"
         )));
     }
-    let training = objective_targets(training)?;
-    let evaluation = objective_targets(evaluation)?;
+    if !has_mixed_terminal_outcomes(&training) {
+        return Err(evidence_message(format!(
+            "{kind} holdout training requires both terminal-reaching and censored native outcomes"
+        )));
+    }
     let positives = evaluation
         .iter()
         .filter(|row| row.target.terminal_probability == 1.0)
@@ -455,6 +458,21 @@ fn evaluate_holdout(
         typed_signals_improve_prediction,
         passed,
     })
+}
+
+fn valid_mixed_partition(training: &[LabeledRow], evaluation: &[LabeledRow]) -> bool {
+    training.len() >= MINIMUM_EVALUATION_ROWS
+        && evaluation.len() >= MINIMUM_EVALUATION_ROWS
+        && has_mixed_terminal_outcomes(training)
+        && has_mixed_terminal_outcomes(evaluation)
+}
+
+fn has_mixed_terminal_outcomes(rows: &[LabeledRow]) -> bool {
+    let positives = rows
+        .iter()
+        .filter(|row| row.target.terminal_probability == 1.0)
+        .count();
+    positives > 0 && positives < rows.len()
 }
 
 fn objective_targets(

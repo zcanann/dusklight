@@ -301,9 +301,10 @@ impl GeneralizedTacticValueModel {
     /// Bellman backups use only the authenticated scalar reward and observed
     /// successor actions. Auxiliary trajectory outcomes are retained for
     /// inspection, but cannot enter the objective return or action ordering.
-    /// Nonterminal leaves are censored observations, not failed terminal
-    /// episodes: when authenticated terminal support exists, they must not
-    /// inject an invented zero continuation value into the policy fit.
+    /// Nonterminal leaves are right-censored observations, not failed terminal
+    /// episodes. They remain in the fit as reachability/support evidence, but
+    /// carry only their observed immediate return; Bellman backups never invent
+    /// an unobserved continuation for a censored component.
     pub fn fit_fitted_q_transitions(
         transitions: &[OptionTransitionSample],
         goal_distance_feature: usize,
@@ -339,6 +340,7 @@ impl GeneralizedTacticValueModel {
                 .or_default()
                 .push(index);
         }
+        let terminal_supported = terminal_supported_transition_indices(transitions);
         let immediate = transitions
             .iter()
             .map(|transition| transition.value_sample.reward)
@@ -349,15 +351,18 @@ impl GeneralizedTacticValueModel {
             let prior = values.clone();
             let mut changed = false;
             for (index, transition) in transitions.iter().enumerate() {
-                values[index] = if transition.value_sample.terminal {
+                values[index] = if transition.value_sample.terminal
+                    || !terminal_supported.contains(&index)
+                {
                     immediate[index]
                 } else if let Some(next_actions) = outgoing.get(&transition.after_state_sha256) {
                     let next_value = next_actions
                         .iter()
+                        .filter(|next| terminal_supported.contains(next))
                         .map(|next| prior[*next])
                         .max_by(f32::total_cmp)
                         .ok_or(GeneralizedTacticValueError::InvalidTransition(
-                            "successor action set is empty".into(),
+                            "terminal-supported successor action set is empty".into(),
                         ))?;
                     let duration =
                         i32::try_from(transition.value_sample.duration_ticks).map_err(|_| {
@@ -378,16 +383,12 @@ impl GeneralizedTacticValueModel {
                 break;
             }
         }
-        for (sample, value) in samples.iter_mut().zip(values) {
+        let first_hit_ticks =
+            terminal_supported_first_hit_ticks(transitions, &terminal_supported, backup_limit)?;
+        for (index, (sample, value)) in samples.iter_mut().zip(values).enumerate() {
             sample.outcome.reward = value;
-        }
-        let terminal_supported = terminal_supported_transition_indices(transitions);
-        if terminal_supported.len() >= 2 {
-            samples = samples
-                .into_iter()
-                .enumerate()
-                .filter_map(|(index, sample)| terminal_supported.contains(&index).then_some(sample))
-                .collect();
+            sample.outcome.terminal = f32::from(terminal_supported.contains(&index));
+            sample.outcome.duration_ticks = first_hit_ticks[index].unwrap_or(0) as f32;
         }
         Self::fit(&samples)
     }
@@ -484,12 +485,25 @@ impl GeneralizedTacticValueModel {
         let nearest_distance = neighbors[0].0;
         let mut outcome = GeneralizedTacticOutcome::default();
         let mut total_weight = 0.0_f32;
+        let mut terminal_weight = 0.0_f32;
+        let mut terminal_duration = 0.0_f32;
         for (distance, sample) in &neighbors {
             let weight = 1.0 / (0.01 + *distance);
             outcome.weighted_add(sample.outcome, weight);
             total_weight += weight;
+            let supported_weight = weight * sample.outcome.terminal.clamp(0.0, 1.0);
+            terminal_weight += supported_weight;
+            terminal_duration += sample.outcome.duration_ticks * supported_weight;
         }
         outcome.scale(1.0 / total_weight);
+        // First-hit cost is conditional on authenticated terminal support.
+        // Censored rows calibrate reachability and expected return, but cannot
+        // manufacture a zero-tick success.
+        outcome.duration_ticks = if terminal_weight > 0.0 {
+            terminal_duration / terminal_weight
+        } else {
+            0.0
+        };
         Ok(GeneralizedTacticEstimate {
             descriptor: descriptor.clone(),
             outcome,
@@ -554,6 +568,61 @@ fn terminal_supported_edge_indices(edges: &[(Digest, Digest, bool)]) -> BTreeSet
             return supported_edges;
         }
     }
+}
+
+fn terminal_supported_first_hit_ticks(
+    transitions: &[OptionTransitionSample],
+    terminal_supported: &BTreeSet<usize>,
+    iteration_limit: usize,
+) -> Result<Vec<Option<u64>>, GeneralizedTacticValueError> {
+    let mut outgoing = BTreeMap::<_, Vec<usize>>::new();
+    for (index, transition) in transitions.iter().enumerate() {
+        outgoing
+            .entry(transition.before_state_sha256)
+            .or_default()
+            .push(index);
+    }
+    let mut ticks = transitions
+        .iter()
+        .map(|transition| {
+            transition
+                .value_sample
+                .terminal
+                .then_some(u64::from(transition.value_sample.duration_ticks))
+        })
+        .collect::<Vec<_>>();
+    for _ in 0..iteration_limit.max(1) {
+        let prior = ticks.clone();
+        let mut changed = false;
+        for (index, transition) in transitions.iter().enumerate() {
+            if transition.value_sample.terminal || !terminal_supported.contains(&index) {
+                continue;
+            }
+            let next_ticks = outgoing
+                .get(&transition.after_state_sha256)
+                .into_iter()
+                .flatten()
+                .filter(|next| terminal_supported.contains(next))
+                .filter_map(|next| prior[*next])
+                .min();
+            let value = next_ticks
+                .map(|next| next.saturating_add(u64::from(transition.value_sample.duration_ticks)));
+            changed |= ticks[index] != value;
+            ticks[index] = value;
+        }
+        if !changed {
+            break;
+        }
+    }
+    if terminal_supported
+        .iter()
+        .any(|index| ticks.get(*index).is_none_or(Option::is_none))
+    {
+        return Err(GeneralizedTacticValueError::InvalidTransition(
+            "terminal-supported transition has no finite first-hit path".into(),
+        ));
+    }
+    Ok(ticks)
 }
 
 pub fn compare_generalized_tactic_outcomes(
@@ -1104,6 +1173,52 @@ mod tests {
             .predict(&[0.0, 0.0], &GeneralizedTacticContext::default(), &target)
             .unwrap();
         assert_eq!(prediction.outcome.reward, 1.0);
+    }
+
+    #[test]
+    fn censored_neighbors_calibrate_expected_return_and_not_first_hit_cost() {
+        let descriptor = action("query", 100.0, 100.0, 0.0, Some(20), 10.0);
+        let mut samples = Vec::new();
+        for index in 0..4 {
+            let mut supported = descriptor.clone();
+            supported.option_id = format!("supported-{index}");
+            samples.push(GeneralizedTacticTrainingSample {
+                state_features: vec![0.0, 1.0],
+                context: GeneralizedTacticContext::default(),
+                action: supported,
+                outcome: GeneralizedTacticOutcome {
+                    terminal: 1.0,
+                    reward: 99.0,
+                    duration_ticks: 10.0,
+                    ..GeneralizedTacticOutcome::default()
+                },
+            });
+            let mut censored = descriptor.clone();
+            censored.option_id = format!("censored-{index}");
+            samples.push(GeneralizedTacticTrainingSample {
+                state_features: vec![0.0, 1.0],
+                context: GeneralizedTacticContext::default(),
+                action: censored,
+                outcome: GeneralizedTacticOutcome {
+                    terminal: 0.0,
+                    reward: -1.0,
+                    duration_ticks: 0.0,
+                    ..GeneralizedTacticOutcome::default()
+                },
+            });
+        }
+
+        let prediction = GeneralizedTacticValueModel::fit(&samples)
+            .unwrap()
+            .predict(
+                &[0.0, 1.0],
+                &GeneralizedTacticContext::default(),
+                &descriptor,
+            )
+            .unwrap();
+        assert!((prediction.outcome.terminal - 0.5).abs() < 1.0e-6);
+        assert!((prediction.outcome.reward - 49.0).abs() < 1.0e-6);
+        assert_eq!(prediction.outcome.duration_ticks, 10.0);
     }
 
     #[test]
