@@ -799,8 +799,16 @@ mod tests {
 
     #[test]
     fn action_identity_is_not_a_model_feature() {
-        let left = action("left", 100.0, 100.0, 0.0, Some(20), 10.0);
-        let right = action("right", 100.0, 100.0, 0.0, Some(20), 10.0);
+        let mut left = action("left", 100.0, 100.0, 0.0, Some(20), 10.0);
+        let mut right = action("right", 100.0, 100.0, 0.0, Some(20), 10.0);
+        left.parameters.insert(
+            "controller_sha256".into(),
+            OptionParameter::Digest(crate::artifact::Digest([1; 32])),
+        );
+        right.parameters.insert(
+            "controller_sha256".into(),
+            OptionParameter::Digest(crate::artifact::Digest([2; 32])),
+        );
         assert_eq!(
             encode_action(&GeneralizedTacticContext::default(), &left).unwrap(),
             encode_action(&GeneralizedTacticContext::default(), &right).unwrap()

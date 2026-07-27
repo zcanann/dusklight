@@ -117,17 +117,12 @@ pub fn choose_tactic_with_state_untried(
 
     let exploration_draw =
         stratified_exploration_draw(config.seed, decision_index, config.epsilon_per_million);
-    let supported_route = ranking
-        .values
-        .ranked
-        .iter()
-        .any(|value| is_route_sequence(&value.descriptor));
     let bootstrap_unsupported = ranking.values.ranked.is_empty()
         || (ranking.values.ranked[0].mean_q <= 0.0
             && !ranking.values.unsupported.is_empty()
             && exploration_draw >= config.epsilon_per_million);
     let (descriptor, reason) = if bootstrap_unsupported {
-        let unsupported = prioritized_unsupported(&ranking.values.unsupported, supported_route);
+        let unsupported = canonical_candidates(&ranking.values.unsupported);
         let index = deterministic_index(
             config.seed,
             decision_index,
@@ -143,17 +138,14 @@ pub fn choose_tactic_with_state_untried(
         // not yet tried in the current coarse state cell before resampling a
         // locally known action. If the caller has no state-local history, fall
         // back to globally unsupported choices and then the full live catalog.
-        // Prefer typed spatial targets, long full-strength heading probes, and
-        // bounded curves. The first exploit the goal-relative corridor; the
-        // others make lateral detours around contact geometry discoverable
-        // without prioritizing every short control variant. This is still
-        // epsilon-greedy—the greedy branch is unchanged.
+        // Coverage is canonical and seeded, without assigning privileged
+        // meaning to controller IDs, route namespaces, or action families.
         let exploratory = if !state_untried.is_empty() {
-            prioritized_unsupported(state_untried, supported_route)
+            canonical_candidates(state_untried)
         } else if ranking.values.unsupported.is_empty() {
             available
         } else {
-            prioritized_unsupported(&ranking.values.unsupported, supported_route)
+            canonical_candidates(&ranking.values.unsupported)
         };
         let index = deterministic_index(
             config.seed,
@@ -176,6 +168,12 @@ pub fn choose_tactic_with_state_untried(
         reason,
         exploration_draw,
     })
+}
+
+fn canonical_candidates(descriptors: &[OptionActionDescriptor]) -> Vec<&OptionActionDescriptor> {
+    let mut candidates = descriptors.iter().collect::<Vec<_>>();
+    candidates.sort_by(|left, right| left.option_id.cmp(&right.option_id));
+    candidates
 }
 
 /// Choose a reproducible primary tactic plus distinct alternatives to evaluate
@@ -941,6 +939,7 @@ fn select_batch_candidate(
         .map(|(index, _, _)| index)
 }
 
+#[cfg(test)]
 fn prioritized_unsupported(
     unsupported: &[OptionActionDescriptor],
     escape_before_routes: bool,
@@ -1437,7 +1436,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_navigation_probes_are_covered_before_short_controls() {
+    fn unsupported_coverage_does_not_privilege_authored_action_semantics() {
         let known = descriptor("known", OptionType::Neutral);
         let mut directional = descriptor("directional", OptionType::MaintainHeading);
         directional
@@ -1499,12 +1498,6 @@ mod tests {
                 },
             )
             .unwrap();
-            assert!(
-                selected.descriptor == spatial
-                    || selected.descriptor == directional
-                    || selected.descriptor == curve,
-                "short control was incorrectly prioritized"
-            );
             selected_ids.insert(selected.descriptor.option_id);
             assert_eq!(selected.reason, TacticSelectionReason::Epsilon);
         }
@@ -1513,6 +1506,7 @@ mod tests {
             std::collections::BTreeSet::from([
                 "curve".into(),
                 "directional".into(),
+                "short".into(),
                 "spatial".into(),
             ])
         );

@@ -2681,12 +2681,6 @@ fn run_seed(
                     action_schema_sha256,
                     &encode,
                     TACTIC_PROPOSALS_PER_DECISION,
-                    // Shared replay removes the preceding generation's tried
-                    // actions before this catalog is ranked. Partition within
-                    // the current generation so each four-seed wave consumes
-                    // the next four ranked acquisitions instead of skipping
-                    // farther through a shrinking candidate list.
-                    (seed_index % LEARNED_EPISODES_PER_GENERATION) as u64,
                     config.proposal_policy,
                     Some(encoder.goal_distance_feature()),
                 )

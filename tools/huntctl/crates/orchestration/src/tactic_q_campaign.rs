@@ -36,8 +36,7 @@ use dusklight_learning::tactic_blueprint::{
 use dusklight_learning::tactic_exploration::{
     SelectedTactic, TacticExplorationConfig, TacticExplorationError, TacticProposalPolicy,
     TacticSelectionReason, choose_tactic_batch_for_policy, choose_tactic_batch_with_state_untried,
-    ensure_generalized_value_acquisition, ensure_route_composition_refinement,
-    ensure_route_family_partition, ensure_terminal_cost_refinement,
+    ensure_generalized_value_acquisition,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_proposals::behavior_archive::{
@@ -1387,7 +1386,6 @@ impl TacticQCampaign {
             family_schema_sha256,
             encode,
             maximum_proposals,
-            0,
             TacticProposalPolicy::Learned,
             None,
         )
@@ -1400,7 +1398,6 @@ impl TacticQCampaign {
         family_schema_sha256: Digest,
         encode: &F,
         maximum_proposals: usize,
-        acquisition_partition: u64,
         policy: TacticProposalPolicy,
         goal_distance_feature: Option<usize>,
     ) -> Result<TacticQProposalBatch, TacticQCampaignError>
@@ -1481,7 +1478,6 @@ impl TacticQCampaign {
             .into_iter()
             .filter(|descriptor| !tried_here.contains(descriptor.option_id.as_str()))
             .collect::<Vec<_>>();
-        let terminal_incumbent = self.current_terminal_incumbent();
         let mut proposals = choose_tactic_batch_for_policy(
             &ranking,
             self.decision_index,
@@ -1490,31 +1486,6 @@ impl TacticQCampaign {
             maximum_proposals,
             policy,
         )?;
-        if policy == TacticProposalPolicy::Learned {
-            ensure_route_family_partition(
-                &ranking,
-                &state_untried,
-                acquisition_partition,
-                maximum_proposals,
-                &mut proposals,
-            )?;
-            ensure_terminal_cost_refinement(
-                &ranking,
-                &state_untried,
-                terminal_incumbent.as_ref(),
-                acquisition_partition,
-                maximum_proposals,
-                &mut proposals,
-            )?;
-            ensure_route_composition_refinement(
-                &ranking,
-                &state_untried,
-                terminal_incumbent.as_ref(),
-                acquisition_partition,
-                maximum_proposals,
-                &mut proposals,
-            )?;
-        }
         if policy != TacticProposalPolicy::RandomValid {
             ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
         }
