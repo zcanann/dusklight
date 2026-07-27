@@ -1,0 +1,109 @@
+{
+  "schema": "dusklight-tactic-route-binary-hot-evidence-report/v1",
+  "date": "2026-07-26",
+  "claim": "On the sealed 16-seed Ordon workload, release execution plus inline binary hot evidence preserved all 14 successful seeds and all 5,434 evaluated native ticks while reducing campaign wall time by 8.43x at four workers and 8.72x at eight workers. Evidence projection and persistence improved by 17.33x, retained output shrank by 89.3%, and duplicate content objects fell from 251 to one. The P1 10x end-to-end gate remains open.",
+  "bindings": {
+    "optimization_request_sha256": "ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c",
+    "source_boundary_index": 506,
+    "native_source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+    "exploration_seeds": "1..16",
+    "decisions_per_seed": 1,
+    "proposals_per_decision": 4,
+    "learned_episodes_per_generation": 4
+  },
+  "semantic_equivalence": {
+    "successful_seeds": 14,
+    "total_decisions": 16,
+    "total_native_ticks": 5434,
+    "unchanged": true
+  },
+  "before": {
+    "report": "build/campaigns/ordon-q125-decoded-episode-reuse-seeds1to16-20260726/run/report.json",
+    "build_profile": "debug",
+    "workers": 4,
+    "campaign_wall_micros": 67963805,
+    "tactic_selection_micros": 597946,
+    "tactic_execution_micros": 66829856,
+    "native_simulation_micros": 51547806,
+    "tactic_preparation_and_fact_extraction_micros": 6520701,
+    "model_update_micros": 3897728,
+    "evidence_projection_and_persistence_micros": 15026192,
+    "retained_candidate_artifact_micros": 3294576,
+    "retained_files": 586,
+    "retained_bytes": 41742303,
+    "content_objects": 251,
+    "final_result_files": 14,
+    "final_result_bytes": 33893008
+  },
+  "after_four_workers": {
+    "report": "build/campaigns/ordon-q125-binary-hot-evidence-release-seeds1to16-20260726/run/report.json",
+    "build_profile": "release",
+    "huntctl_sha256": "62668fc280be13813b8ca9c716816d8d408f0ffca91d3c30841dc95a968fc425",
+    "workers": 4,
+    "campaign_wall_micros": 8066815,
+    "tactic_selection_micros": 69074,
+    "tactic_execution_micros": 10964210,
+    "native_simulation_micros": 12053377,
+    "tactic_preparation_and_fact_extraction_micros": 178411,
+    "model_update_micros": 195051,
+    "evidence_projection_and_persistence_micros": 867310,
+    "retained_candidate_artifact_micros": 97885,
+    "retained_files": 336,
+    "retained_bytes": 4466658,
+    "content_objects": 1,
+    "final_result_files": 14,
+    "final_result_bytes": 85303
+  },
+  "after_eight_workers": {
+    "report": "build/campaigns/ordon-q125-binary-hot-evidence-release-w8-seeds1to16-20260726/run/report.json",
+    "build_profile": "release",
+    "huntctl_sha256": "62668fc280be13813b8ca9c716816d8d408f0ffca91d3c30841dc95a968fc425",
+    "workers": 8,
+    "campaign_wall_micros": 7795749,
+    "tactic_selection_micros": 69727,
+    "tactic_execution_micros": 9347745,
+    "native_simulation_micros": 17602105,
+    "tactic_preparation_and_fact_extraction_micros": 208624,
+    "model_update_micros": 209604,
+    "evidence_projection_and_persistence_micros": 920312,
+    "retained_candidate_artifact_micros": 102169
+  },
+  "ratios": {
+    "four_worker_campaign_wall_speedup": 8.4255,
+    "eight_worker_campaign_wall_speedup": 8.7184,
+    "four_worker_persistence_speedup": 17.3251,
+    "four_worker_retained_artifact_speedup": 33.6576,
+    "retained_byte_reduction_fraction": 0.8930,
+    "final_result_byte_reduction_fraction": 0.9975,
+    "four_to_eight_worker_campaign_wall_speedup": 1.0348
+  },
+  "implementation": {
+    "training_corpus": "Version 2 is one bounded zstd-compressed CBOR envelope containing the completed episode's new transitions, routes, and route groups. The reader remains compatible with version 1 content references.",
+    "journal": "New decision records inline transition samples in the existing authenticated compressed segment. Legacy content references remain readable.",
+    "final_result": "Successful results use the bounded binary DSKTQF01 envelope at final-result.dtqz. Component digests bind the exact route, replay, and terminal payloads; the outer digest binds their identity tuple.",
+    "shared_content": "The authenticated root tape is written once before seed coordinators rather than concurrently per seed."
+  },
+  "verification": {
+    "cargo_check": "passed",
+    "targeted_resume_ranking_test": "passed",
+    "legacy_training_corpus_compatibility_test": "passed",
+    "journal_round_trip_and_compaction_tests": "passed",
+    "full_orchestration_suite": {
+      "passed": 149,
+      "failed": 2,
+      "failures": [
+        "residual_horizon_tightening::tests::file_validation_recomputes_the_parent_checkpoint_and_exact_delta",
+        "residual_reverse_curriculum::tests::file_validation_rebuilds_expansion_and_rejects_resealed_support_drift"
+      ],
+      "cause": "Pre-existing absent or digest-mismatched native residual card fixture; neither failure exercises this change."
+    }
+  },
+  "scope": {
+    "p1_requested_workers_used": true,
+    "p1_worker_scaling_measured": true,
+    "p1_order_of_magnitude_met": false,
+    "p5_learning_value_met": false,
+    "p6_sub_125_met": false,
+    "next_bottleneck": "Four sequential learning generations impose a real dependency boundary. Increasing the worker pool from four to eight improves wall time only 3.5%; remaining fixed launch and headless game initialization work must be profiled and removed without weakening exact input authentication."
+  }
+}

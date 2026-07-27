@@ -3,8 +3,9 @@
 use crate::tactic_q_campaign::{
     TACTIC_Q_CHECKPOINT_EXTENSION, TACTIC_Q_CHECKPOINT_SCHEMA_V2, TACTIC_Q_CHECKPOINT_SCHEMA_V3,
     TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1, TacticQCampaignCheckpoint,
-    TacticQCampaignError, TacticQCheckpointSerializationBenchmark, TacticQTrainingCorpus,
-    checkpoint_digest, validate_checkpoint, validate_training_corpus,
+    TacticQCampaignError, TacticQCheckpointSerializationBenchmark, TacticQFinalResult,
+    TacticQTrainingCorpus, checkpoint_digest, validate_checkpoint, validate_final_result,
+    validate_training_corpus,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
@@ -34,10 +35,14 @@ const FACT_OBJECT_SCHEMA_V1: &str = "dusklight-tactic-q-fact-object/v1";
 const CHECKPOINT_MANIFEST_SCHEMA_V1: &str = "dusklight-tactic-q-checkpoint-manifest/v1";
 const CHECKPOINT_MANIFEST_SCHEMA_V2: &str = "dusklight-tactic-q-checkpoint-manifest/v2";
 const TRAINING_CORPUS_MANIFEST_SCHEMA_V1: &str = "dusklight-tactic-q-training-corpus-manifest/v1";
+const TRAINING_CORPUS_MANIFEST_SCHEMA_V2: &str = "dusklight-tactic-q-training-corpus-manifest/v2";
 const CHECKPOINT_MAGIC: &[u8; 8] = b"DSKTQZ01";
 const TRAINING_CORPUS_MAGIC: &[u8; 8] = b"DSKTQC01";
+const FINAL_RESULT_MAGIC: &[u8; 8] = b"DSKTQF01";
 const CHECKPOINT_FORMAT_VERSION: u16 = 2;
-const TRAINING_CORPUS_FORMAT_VERSION: u16 = 1;
+const TRAINING_CORPUS_FORMAT_VERSION_V1: u16 = 1;
+const TRAINING_CORPUS_FORMAT_VERSION_V2: u16 = 2;
+const FINAL_RESULT_FORMAT_VERSION: u16 = 1;
 const CHECKPOINT_HEADER_SIZE: usize = 8 + 2 + 2 + 8 + 32;
 const MAXIMUM_CHECKPOINT_MANIFEST_BYTES: u64 = 256 * 1024 * 1024;
 const CHECKPOINT_COMPRESSION_LEVEL: i32 = 1;
@@ -391,6 +396,18 @@ struct StoredTrainingCorpusManifest {
     episode_groups: Vec<u64>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct InlineTrainingCorpusManifest {
+    schema: String,
+    feature_schema_sha256: Digest,
+    objective_sha256: Digest,
+    root_checkpoint_sha256: Digest,
+    transitions: Vec<OptionTransitionSample>,
+    routes: Vec<InputTape>,
+    episode_groups: Vec<u64>,
+}
+
 pub(crate) fn write_checkpoint_with_local_store(
     checkpoint: &TacticQCampaignCheckpoint,
     directory: &Path,
@@ -438,35 +455,30 @@ pub(crate) fn write_training_corpus(
         "training corpus path has no parent",
     ))?;
     fs::create_dir_all(parent).map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
-    let store = TacticQContentStore::initialize(content_root).map_err(checkpoint_store_error)?;
-    let transitions = corpus
-        .transitions
-        .iter()
-        .zip(&corpus.routes)
-        .map(|(transition, route)| {
-            store
-                .store_option_transition(transition, route)
-                .map_err(checkpoint_store_error)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let routes = corpus
-        .routes
-        .iter()
-        .map(|route| store.store_tape(route).map_err(checkpoint_store_error))
-        .collect::<Result<Vec<_>, _>>()?;
-    let manifest = StoredTrainingCorpusManifest {
-        schema: TRAINING_CORPUS_MANIFEST_SCHEMA_V1.into(),
+    // Completed-episode handoff is one bounded, compressed, authenticated
+    // binary artifact. Splitting four hot proposal rows into dozens of tiny
+    // content files forced one durable filesystem flush per field and
+    // dominated native-search wall time. Checkpoints retain content-addressed
+    // objects for cross-checkpoint deduplication; a generated corpus contains
+    // only this episode's newly acquired rows, so an inline envelope is both
+    // smaller operationally and independently recoverable after a crash.
+    TacticQContentStore::initialize(content_root).map_err(checkpoint_store_error)?;
+    let manifest = InlineTrainingCorpusManifest {
+        schema: TRAINING_CORPUS_MANIFEST_SCHEMA_V2.into(),
         feature_schema_sha256: corpus.feature_schema_sha256,
         objective_sha256: corpus.objective_sha256,
         root_checkpoint_sha256: corpus.root_checkpoint_sha256,
-        transitions,
-        routes,
+        transitions: corpus.transitions.clone(),
+        routes: corpus.routes.clone(),
         episode_groups: corpus.episode_groups.clone(),
     };
     let raw = serde_cbor::to_vec(&manifest)
         .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-    let envelope =
-        encode_binary_envelope(&raw, TRAINING_CORPUS_MAGIC, TRAINING_CORPUS_FORMAT_VERSION)?;
+    let envelope = encode_binary_envelope(
+        &raw,
+        TRAINING_CORPUS_MAGIC,
+        TRAINING_CORPUS_FORMAT_VERSION_V2,
+    )?;
     install_binary_artifact(path, &envelope)
 }
 
@@ -484,11 +496,38 @@ pub(crate) fn read_training_corpus(
             "training corpus path is not a bounded physical binary envelope",
         ));
     }
-    let raw = decode_binary_envelope(
-        &fs::read(path).map_err(|error| TacticQCampaignError::Io(error.to_string()))?,
-        TRAINING_CORPUS_MAGIC,
-        TRAINING_CORPUS_FORMAT_VERSION,
-    )?;
+    let envelope = fs::read(path).map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
+    if envelope.len() < CHECKPOINT_HEADER_SIZE || &envelope[..8] != TRAINING_CORPUS_MAGIC {
+        return Err(TacticQCampaignError::InvalidState(
+            "training corpus envelope is invalid",
+        ));
+    }
+    let version = u16::from_le_bytes(envelope[8..10].try_into().expect("fixed slice"));
+    let raw = decode_binary_envelope(&envelope, TRAINING_CORPUS_MAGIC, version)?;
+    if version == TRAINING_CORPUS_FORMAT_VERSION_V2 {
+        let manifest: InlineTrainingCorpusManifest =
+            decode_cbor(&raw).map_err(checkpoint_store_error)?;
+        let corpus = TacticQTrainingCorpus {
+            feature_schema_sha256: manifest.feature_schema_sha256,
+            objective_sha256: manifest.objective_sha256,
+            root_checkpoint_sha256: manifest.root_checkpoint_sha256,
+            transitions: manifest.transitions,
+            routes: manifest.routes,
+            episode_groups: manifest.episode_groups,
+        };
+        if manifest.schema != TRAINING_CORPUS_MANIFEST_SCHEMA_V2 {
+            return Err(TacticQCampaignError::InvalidState(
+                "training corpus manifest identity is invalid",
+            ));
+        }
+        validate_training_corpus(&corpus)?;
+        return Ok(corpus);
+    }
+    if version != TRAINING_CORPUS_FORMAT_VERSION_V1 {
+        return Err(TacticQCampaignError::InvalidState(
+            "training corpus envelope version is unsupported",
+        ));
+    }
     let manifest: StoredTrainingCorpusManifest =
         decode_cbor(&raw).map_err(checkpoint_store_error)?;
     if manifest.schema != TRAINING_CORPUS_MANIFEST_SCHEMA_V1
@@ -538,6 +577,42 @@ pub(crate) fn read_training_corpus(
     Err(TacticQCampaignError::InvalidState(
         "training corpus content objects are unavailable or invalid",
     ))
+}
+
+pub(crate) fn write_final_result(
+    result: &TacticQFinalResult,
+    path: &Path,
+) -> Result<(), TacticQCampaignError> {
+    validate_final_result(result)?;
+    let raw = serde_cbor::to_vec(result)
+        .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
+    let envelope = encode_binary_envelope(&raw, FINAL_RESULT_MAGIC, FINAL_RESULT_FORMAT_VERSION)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
+    }
+    install_binary_artifact(path, &envelope)
+}
+
+pub(crate) fn read_final_result(path: &Path) -> Result<TacticQFinalResult, TacticQCampaignError> {
+    let metadata =
+        fs::symlink_metadata(path).map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
+    if !metadata.file_type().is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() < CHECKPOINT_HEADER_SIZE as u64
+        || metadata.len() > MAXIMUM_CHECKPOINT_MANIFEST_BYTES + CHECKPOINT_HEADER_SIZE as u64
+    {
+        return Err(TacticQCampaignError::InvalidState(
+            "final result path is not a bounded physical binary envelope",
+        ));
+    }
+    let raw = decode_binary_envelope(
+        &fs::read(path).map_err(|error| TacticQCampaignError::Io(error.to_string()))?,
+        FINAL_RESULT_MAGIC,
+        FINAL_RESULT_FORMAT_VERSION,
+    )?;
+    let result: TacticQFinalResult = decode_cbor(&raw).map_err(checkpoint_store_error)?;
+    validate_final_result(&result)?;
+    Ok(result)
 }
 
 pub(crate) fn read_checkpoint(
@@ -1185,6 +1260,45 @@ mod tests {
                 .unwrap(),
         );
         assert_eq!(store.load_fact(legacy_ref).unwrap(), first);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn inline_training_corpus_reader_accepts_legacy_reference_envelopes() {
+        let root = std::env::temp_dir().join(format!(
+            "dusklight-tactic-training-corpus-legacy-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let content_root = root.join(CONTENT_DIRECTORY);
+        TacticQContentStore::initialize(&content_root).unwrap();
+        let expected = TacticQTrainingCorpus {
+            feature_schema_sha256: Digest([1; 32]),
+            objective_sha256: Digest([2; 32]),
+            root_checkpoint_sha256: Digest([3; 32]),
+            transitions: Vec::new(),
+            routes: Vec::new(),
+            episode_groups: Vec::new(),
+        };
+        let legacy = StoredTrainingCorpusManifest {
+            schema: TRAINING_CORPUS_MANIFEST_SCHEMA_V1.into(),
+            feature_schema_sha256: expected.feature_schema_sha256,
+            objective_sha256: expected.objective_sha256,
+            root_checkpoint_sha256: expected.root_checkpoint_sha256,
+            transitions: Vec::new(),
+            routes: Vec::new(),
+            episode_groups: Vec::new(),
+        };
+        let envelope = encode_binary_envelope(
+            &serde_cbor::to_vec(&legacy).unwrap(),
+            TRAINING_CORPUS_MAGIC,
+            TRAINING_CORPUS_FORMAT_VERSION_V1,
+        )
+        .unwrap();
+        let path = root.join("legacy.dtqc");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(&path, envelope).unwrap();
+        assert_eq!(read_training_corpus(&path).unwrap(), expected);
         fs::remove_dir_all(root).unwrap();
     }
 }

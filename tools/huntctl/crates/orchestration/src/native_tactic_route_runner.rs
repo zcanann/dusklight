@@ -34,6 +34,7 @@ use dusklight_learning::fact_registry::FactRegistry;
 use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::fqi::FqiConfig;
 use dusklight_learning::learner_state::LearnerState;
+use dusklight_learning::option_transition::OptionTransitionSample;
 use dusklight_learning::option_values::OptionValueConfig;
 use dusklight_learning::parameterized_tactic_proposals::{
     ParameterizedTacticFeedback, ParameterizedTacticProposalCatalog,
@@ -506,7 +507,15 @@ pub struct NativeTacticProposalTrace {
 #[serde(deny_unknown_fields)]
 struct NativeTacticProposalRecord {
     trace: NativeTacticProposalTrace,
-    transition: StoredContentRef,
+    /// Legacy content-store reference retained for exact replay of existing
+    /// journals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transition: Option<StoredContentRef>,
+    /// New journals keep the compact learning row inside their already
+    /// authenticated, compressed decision segment. This avoids five durable
+    /// tiny-file installs per proposal on the hot path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    inline_transition: Option<OptionTransitionSample>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -542,7 +551,10 @@ struct NativeTacticDecisionRecord {
     visited_states: usize,
     root_checkpoint_sha256: Digest,
     root_tape: StoredContentRef,
-    transition: StoredContentRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transition: Option<StoredContentRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    inline_transition: Option<OptionTransitionSample>,
     #[serde(default)]
     proposal_feedback: Option<ParameterizedTacticFeedback>,
     #[serde(default)]
@@ -595,6 +607,15 @@ pub fn run_native_tactic_route(
             .to_vec(),
     };
     route_prefix.validate().map_err(route_error)?;
+    let campaign_content_store = TacticQContentStore::initialize(
+        config
+            .output_root
+            .join(NATIVE_TACTIC_CONTENT_STORE_DIRECTORY),
+    )
+    .map_err(route_error)?;
+    let root_tape_ref = campaign_content_store
+        .store_tape(&route_prefix)
+        .map_err(route_error)?;
 
     let initial_batch = initial_probe_batch(config)?;
     let terminal = NativeTerminalBinding {
@@ -751,6 +772,7 @@ pub fn run_native_tactic_route(
                                         goal_route_catalog,
                                         action_schema_sha256,
                                         root_checkpoint_sha256,
+                                        root_tape_ref,
                                         inherited_training,
                                         seed_index,
                                         seed,
@@ -931,9 +953,11 @@ fn mine_and_store_tactic_macros(
         let root_tape = store.load_tape(records[0].root_tape).map_err(route_error)?;
         for record in records {
             for proposal in record.proposal_batch {
-                let transition = store
-                    .load_option_transition(proposal.transition)
-                    .map_err(route_error)?;
+                let transition = journal_transition(
+                    &store,
+                    proposal.transition,
+                    proposal.inline_transition.as_ref(),
+                )?;
                 if transition.before_state_sha256 == Digest::ZERO
                     || transition.before_state_sha256
                         != transition.before.content_sha256().map_err(route_error)?
@@ -950,7 +974,10 @@ fn mine_and_store_tactic_macros(
                 let observation = MacroDiscoveryObservation {
                     seed,
                     frontier_state_sha256: transition.before_state_sha256,
-                    transition_sha256: proposal.transition.sha256,
+                    transition_sha256: journal_transition_sha256(
+                        proposal.transition,
+                        proposal.inline_transition.as_ref(),
+                    )?,
                     option_id: transition.value_sample.action.option_id,
                     tape: InputTape {
                         boot: root_tape.boot.clone(),
@@ -1106,7 +1133,10 @@ fn mine_connected_tactic_macro_compositions(
                 sources.push(MacroSourceProvenance {
                     seed,
                     frontier_state_sha256: transition.before_state_sha256,
-                    transition_sha256: record.transition.sha256,
+                    transition_sha256: journal_transition_sha256(
+                        record.transition,
+                        record.inline_transition.as_ref(),
+                    )?,
                     option_id: transition.value_sample.action.option_id.clone(),
                 });
                 if sources.len() >= 2 && high_value {
@@ -1564,9 +1594,11 @@ fn collect_tactic_macro_validation_frontiers(
             let Some(first_proposal) = record.proposal_batch.first() else {
                 continue;
             };
-            let first_transition = store
-                .load_option_transition(first_proposal.transition)
-                .map_err(route_error)?;
+            let first_transition = journal_transition(
+                &store,
+                first_proposal.transition,
+                first_proposal.inline_transition.as_ref(),
+            )?;
             let mut source_route = replay
                 .routes
                 .get(index)
@@ -1594,9 +1626,11 @@ fn collect_tactic_macro_validation_frontiers(
                 .map_err(route_error)?[encoder.goal_distance_feature()];
             let mut primitive_baseline = None;
             for proposal in &record.proposal_batch {
-                let transition = store
-                    .load_option_transition(proposal.transition)
-                    .map_err(route_error)?;
+                let transition = journal_transition(
+                    &store,
+                    proposal.transition,
+                    proposal.inline_transition.as_ref(),
+                )?;
                 if transition.before_state_sha256 != first_transition.before_state_sha256
                     || transition.source_checkpoint_sha256
                         != first_transition.source_checkpoint_sha256
@@ -1756,6 +1790,7 @@ fn run_seed_coordinator(
     goal_route_catalog: &TacticAssetCatalog,
     action_schema_sha256: Digest,
     root_checkpoint_sha256: Digest,
+    root_tape_ref: StoredContentRef,
     shared_training: &[TacticQTrainingCorpus],
     seed_index: usize,
     seed: u64,
@@ -1787,6 +1822,7 @@ fn run_seed_coordinator(
             goal_route_catalog,
             action_schema_sha256,
             root_checkpoint_sha256,
+            root_tape_ref,
             shared_training,
             seed_index,
             seed,
@@ -2402,6 +2438,7 @@ fn run_seed(
     goal_route_catalog: &TacticAssetCatalog,
     action_schema_sha256: Digest,
     root_checkpoint_sha256: Digest,
+    root_tape_ref: StoredContentRef,
     shared_training: &[TacticQTrainingCorpus],
     seed_index: usize,
     seed: u64,
@@ -2515,8 +2552,6 @@ fn run_seed(
     let encode = |facts: &FactSnapshot| encoder.encode(facts);
     let checkpoint_root = seed_root.join("checkpoints");
     let checkpoint_content_root = tactic_content_store_path(&seed_root);
-    let content_store =
-        TacticQContentStore::initialize(&checkpoint_content_root).map_err(route_error)?;
     let mut rolling_checkpoint = None;
     // Process-local handles intentionally do not survive campaign resume.
     let mut cached_frontier: Option<CachedTacticFrontier> = None;
@@ -2995,24 +3030,21 @@ fn run_seed(
             .map(|(proposal, trace)| {
                 Ok(NativeTacticProposalRecord {
                     trace: trace.clone(),
-                    transition: content_store
-                        .store_option_transition(&proposal.transition, &proposal.outcome.route_tape)
-                        .map_err(route_error)?,
+                    transition: None,
+                    inline_transition: Some(proposal.transition.clone()),
                 })
             })
             .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
-        let transition = proposal_records[winner_index].transition;
-        let root_tape = content_store
-            .store_tape(route_prefix)
-            .map_err(route_error)?;
+        let transition = evaluated[winner_index].transition.clone();
         append_tactic_decision_record(
             &seed_root,
             &decision_record(
                 &decision_trace,
                 campaign.episode_group,
                 campaign.root_checkpoint_sha256,
-                root_tape,
-                transition,
+                root_tape_ref,
+                None,
+                Some(transition),
                 proposal_records,
             ),
         )?;
@@ -3074,12 +3106,9 @@ fn run_seed(
             &tape_path,
             &campaign.route_tape.encode().map_err(route_error)?,
         )?;
-        let result_path = seed_root.join("final-result.json");
-        write_new(
-            &result_path,
-            &serde_json::to_vec_pretty(&campaign.final_result().map_err(route_error)?)
-                .map_err(route_error)?,
-        )?;
+        let result_path = seed_root.join("final-result.dtqz");
+        let result = campaign.final_result().map_err(route_error)?;
+        result.write(&result_path).map_err(route_error)?;
         timing.retained_candidate_artifact_micros = timing
             .retained_candidate_artifact_micros
             .saturating_add(elapsed_micros(retained_candidate_started.elapsed()));
@@ -3726,9 +3755,7 @@ fn load_tactic_journal_replay(
     let transitions = records
         .iter()
         .map(|record| {
-            store
-                .load_option_transition(record.transition)
-                .map_err(route_error)
+            journal_transition(&store, record.transition, record.inline_transition.as_ref())
         })
         .collect::<Result<Vec<_>, _>>()?;
     let proposal_transitions = records
@@ -3742,9 +3769,11 @@ fn load_tactic_journal_replay(
                     .proposal_batch
                     .iter()
                     .map(|proposal| {
-                        store
-                            .load_option_transition(proposal.transition)
-                            .map_err(route_error)
+                        journal_transition(
+                            &store,
+                            proposal.transition,
+                            proposal.inline_transition.as_ref(),
+                        )
                     })
                     .collect()
             }
@@ -3859,7 +3888,8 @@ fn decision_record(
     episode_group: u64,
     root_checkpoint_sha256: Digest,
     root_tape: StoredContentRef,
-    transition: StoredContentRef,
+    transition: Option<StoredContentRef>,
+    inline_transition: Option<OptionTransitionSample>,
     proposal_batch: Vec<NativeTacticProposalRecord>,
 ) -> NativeTacticDecisionRecord {
     NativeTacticDecisionRecord {
@@ -3887,8 +3917,39 @@ fn decision_record(
         root_checkpoint_sha256,
         root_tape,
         transition,
+        inline_transition,
         proposal_feedback: trace.proposal_feedback,
         proposal_batch,
+    }
+}
+
+fn journal_transition(
+    store: &TacticQContentStore,
+    reference: Option<StoredContentRef>,
+    inline: Option<&OptionTransitionSample>,
+) -> Result<OptionTransitionSample, NativeTacticRouteRunError> {
+    match (reference, inline) {
+        (Some(reference), None) => store.load_option_transition(reference).map_err(route_error),
+        (None, Some(transition)) => {
+            transition.validate().map_err(route_error)?;
+            Ok(transition.clone())
+        }
+        _ => Err(route_message(
+            "tactic journal transition must have exactly one storage representation",
+        )),
+    }
+}
+
+fn journal_transition_sha256(
+    reference: Option<StoredContentRef>,
+    inline: Option<&OptionTransitionSample>,
+) -> Result<Digest, NativeTacticRouteRunError> {
+    match (reference, inline) {
+        (Some(reference), None) => Ok(reference.sha256),
+        (None, Some(transition)) => transition.replay_identity_sha256().map_err(route_error),
+        _ => Err(route_message(
+            "tactic journal transition must have exactly one storage representation",
+        )),
     }
 }
 
@@ -3896,9 +3957,8 @@ fn project_tactic_decision_record(
     store: &TacticQContentStore,
     record: NativeTacticDecisionRecord,
 ) -> Result<NativeTacticDecisionTrace, NativeTacticRouteRunError> {
-    let transition = store
-        .load_option_transition(record.transition)
-        .map_err(route_error)?;
+    let transition =
+        journal_transition(store, record.transition, record.inline_transition.as_ref())?;
     if transition.execution.duration.realized_ticks != record.reward_components.duration_ticks
         || transition.value_sample.action.option_id.is_empty()
         || transition.before.content_sha256().map_err(route_error)? == Digest::ZERO
@@ -3923,9 +3983,11 @@ fn project_tactic_decision_record(
         .proposal_batch
         .iter()
         .map(|proposal| {
-            let candidate = store
-                .load_option_transition(proposal.transition)
-                .map_err(route_error)?;
+            let candidate = journal_transition(
+                store,
+                proposal.transition,
+                proposal.inline_transition.as_ref(),
+            )?;
             if candidate.value_sample.action.option_id != proposal.trace.option_id
                 || candidate.execution.duration.realized_ticks != proposal.trace.realized_ticks
                 || (proposal.trace.emitted_tape_sha256 != Digest::ZERO
@@ -3949,7 +4011,17 @@ fn project_tactic_decision_record(
             .count()
             != 1
             || !record.proposal_batch.iter().any(|proposal| {
-                proposal.trace.retained && proposal.transition == record.transition
+                proposal.trace.retained
+                    && journal_transition_sha256(
+                        proposal.transition,
+                        proposal.inline_transition.as_ref(),
+                    )
+                    .ok()
+                        == journal_transition_sha256(
+                            record.transition,
+                            record.inline_transition.as_ref(),
+                        )
+                        .ok()
             }))
     {
         return Err(route_message(
@@ -6178,7 +6250,8 @@ mod tests {
             2,
             Digest([3; 32]),
             root_tape,
-            transition,
+            Some(transition),
+            None,
             Vec::new(),
         )
     }
@@ -6379,7 +6452,6 @@ mod tests {
         .unwrap();
         let store = TacticQContentStore::initialize(tactic_content_store_path(&root)).unwrap();
         let root_ref = store.store_tape(&root_tape).unwrap();
-        let transition_ref = store.store_option_transition(&transition, &route).unwrap();
         let mut trace = journal_trace(0);
         trace.reward_components.duration_ticks = 1;
         let proposal_trace = NativeTacticProposalTrace {
@@ -6400,10 +6472,12 @@ mod tests {
             2,
             root_checkpoint_sha256,
             root_ref,
-            transition_ref,
+            None,
+            Some(transition.clone()),
             vec![NativeTacticProposalRecord {
                 trace: proposal_trace,
-                transition: transition_ref,
+                transition: None,
+                inline_transition: Some(transition.clone()),
             }],
         );
         let mut detached = record.clone();

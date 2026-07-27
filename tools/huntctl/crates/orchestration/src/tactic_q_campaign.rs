@@ -53,6 +53,7 @@ pub const TACTIC_Q_CHECKPOINT_EXTENSION: &str = "dtqz";
 pub const TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1: &str =
     "dusklight-tactic-q-checkpoint-serialization-benchmark/v1";
 pub const TACTIC_Q_FINAL_RESULT_SCHEMA_V1: &str = "dusklight-tactic-q-final-result/v1";
+pub const TACTIC_Q_FINAL_RESULT_SCHEMA_V2: &str = "dusklight-tactic-q-final-result/v2";
 const ROUTE_CHECKPOINT_SCHEMA_V1: &[u8] = b"dusklight-route-checkpoint/v1";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -134,6 +135,16 @@ pub struct TacticQFinalResult {
     pub replay: Vec<OptionTransitionSample>,
     pub replay_routes: Vec<InputTape>,
     pub terminal: FactSnapshot,
+}
+
+impl TacticQFinalResult {
+    pub fn write(&self, path: &Path) -> Result<(), TacticQCampaignError> {
+        tactic_q_checkpoint_store::write_final_result(self, path)
+    }
+
+    pub fn read(path: &Path) -> Result<Self, TacticQCampaignError> {
+        tactic_q_checkpoint_store::read_final_result(path)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -1222,12 +1233,14 @@ impl TacticQCampaign {
                 "final result requires a native-authorized terminal replay boundary",
             ));
         }
-        let route_bytes = serde_json::to_vec(&self.route_tape)
-            .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-        let replay_bytes = serde_json::to_vec(&(&self.replay, &self.replay_routes))
+        let route_bytes = self
+            .route_tape
+            .encode()
+            .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
+        let replay_bytes = serde_cbor::to_vec(&(&self.replay, &self.replay_routes))
             .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
         let mut result = TacticQFinalResult {
-            schema: TACTIC_Q_FINAL_RESULT_SCHEMA_V1.into(),
+            schema: TACTIC_Q_FINAL_RESULT_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
             objective_sha256: self.objective_sha256,
             root_checkpoint_sha256: self.root_checkpoint_sha256,
@@ -1240,7 +1253,6 @@ impl TacticQCampaign {
             terminal: self.current.snapshot.clone(),
         };
         result.content_sha256 = final_result_digest(&result)?;
-        validate_final_result(&result)?;
         Ok(result)
     }
 
@@ -2250,7 +2262,9 @@ pub(crate) fn checkpoint_digest(
     Ok(sha256(&bytes))
 }
 
-fn validate_final_result(result: &TacticQFinalResult) -> Result<(), TacticQCampaignError> {
+pub(crate) fn validate_final_result(
+    result: &TacticQFinalResult,
+) -> Result<(), TacticQCampaignError> {
     result
         .route_tape
         .validate()
@@ -2259,11 +2273,13 @@ fn validate_final_result(result: &TacticQFinalResult) -> Result<(), TacticQCampa
         .terminal
         .validate()
         .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
-    let route_bytes = serde_json::to_vec(&result.route_tape)
+    let route_bytes = result
+        .route_tape
+        .encode()
+        .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
+    let replay_bytes = serde_cbor::to_vec(&(&result.replay, &result.replay_routes))
         .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-    let replay_bytes = serde_json::to_vec(&(&result.replay, &result.replay_routes))
-        .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-    if result.schema != TACTIC_Q_FINAL_RESULT_SCHEMA_V1
+    if result.schema != TACTIC_Q_FINAL_RESULT_SCHEMA_V2
         || result.content_sha256 == Digest::ZERO
         || result.content_sha256 != final_result_digest(result)?
         || result.objective_sha256 == Digest::ZERO
@@ -2300,10 +2316,18 @@ fn validate_final_result(result: &TacticQFinalResult) -> Result<(), TacticQCampa
 }
 
 fn final_result_digest(result: &TacticQFinalResult) -> Result<Digest, TacticQCampaignError> {
-    let mut canonical = result.clone();
-    canonical.content_sha256 = Digest::ZERO;
-    let bytes = serde_json::to_vec(&canonical)
-        .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
+    // The component digests already bind the exact route, replay, and terminal
+    // payloads. Seal the small identity tuple instead of serializing those
+    // multi-megabyte values a second time merely to derive the outer identity.
+    let bytes = serde_cbor::to_vec(&(
+        &result.schema,
+        result.objective_sha256,
+        result.root_checkpoint_sha256,
+        result.route_tape_sha256,
+        result.replay_sha256,
+        result.terminal_state_sha256,
+    ))
+    .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
     Ok(sha256(&bytes))
 }
 
@@ -3120,6 +3144,15 @@ mod tests {
         if terminal {
             let final_result = campaign.final_result().unwrap();
             validate_final_result(&final_result).unwrap();
+            let final_directory = std::env::temp_dir().join(format!(
+                "dusklight-tactic-final-result-{}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&final_directory);
+            let final_path = final_directory.join("result.dtqz");
+            final_result.write(&final_path).unwrap();
+            assert_eq!(TacticQFinalResult::read(&final_path).unwrap(), final_result);
+            fs::remove_dir_all(final_directory).unwrap();
             let mut tampered = final_result;
             tampered.route_tape.frames[0].owned_ports ^= 1;
             assert!(validate_final_result(&tampered).is_err());
