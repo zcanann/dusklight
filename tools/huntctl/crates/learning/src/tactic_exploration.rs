@@ -842,6 +842,13 @@ pub fn retain_generalized_value_acquisition(
     if proposals.is_empty() {
         return Err(TacticExplorationError::InvalidInput);
     }
+    // Epsilon controls behavior, not merely which siblings are measured.
+    // Keep the shared-model exploit in the same native batch as a control, but
+    // do not silently replace the exploratory action after the epsilon-greedy
+    // selector has made it authoritative.
+    if proposals[0].reason == TacticSelectionReason::Epsilon {
+        return Ok(());
+    }
     let Some(index) = proposals
         .iter()
         .position(|proposal| proposal.reason == TacticSelectionReason::GeneralizedValue)
@@ -2768,6 +2775,37 @@ mod tests {
             proposals[1].reason,
             TacticSelectionReason::UnsupportedBootstrap
         );
+    }
+
+    #[test]
+    fn generalized_value_does_not_override_an_epsilon_primary() {
+        let exploratory = descriptor("unseen/epsilon", OptionType::Move);
+        let predicted = descriptor("unseen/predicted", OptionType::Roll);
+        let mut proposals = vec![
+            SelectedTactic {
+                schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+                learner_snapshot_sha256: Digest([31; 32]),
+                decision_index: 7,
+                descriptor: exploratory.clone(),
+                reason: TacticSelectionReason::Epsilon,
+                exploration_draw: 1,
+            },
+            SelectedTactic {
+                schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+                learner_snapshot_sha256: Digest([31; 32]),
+                decision_index: 7,
+                descriptor: predicted.clone(),
+                reason: TacticSelectionReason::GeneralizedValue,
+                exploration_draw: 1,
+            },
+        ];
+
+        retain_generalized_value_acquisition(&mut proposals).unwrap();
+
+        assert_eq!(proposals[0].descriptor, exploratory);
+        assert_eq!(proposals[0].reason, TacticSelectionReason::Epsilon);
+        assert_eq!(proposals[1].descriptor, predicted);
+        assert_eq!(proposals[1].reason, TacticSelectionReason::GeneralizedValue);
     }
 
     #[test]
