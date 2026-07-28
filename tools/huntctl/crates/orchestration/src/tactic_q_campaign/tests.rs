@@ -540,9 +540,29 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
     )
     .unwrap();
+    let mut treatment_corpus = corpus.clone();
+    let mut alternate = treatment_corpus.transitions[0].clone();
+    alternate.execution.option_id = "shield-alternate".into();
+    alternate.value_sample.action.option_id = alternate.execution.option_id.clone();
+    treatment_corpus.transitions.push(alternate);
+    treatment_corpus
+        .routes
+        .push(treatment_corpus.routes[0].clone());
+    treatment_corpus
+        .episode_groups
+        .push(treatment_corpus.episode_groups[0] + 1);
+    let local_treatment_snapshot = TacticQImmutableLearnerSnapshot::fit(
+        treatment_corpus.clone(),
+        treatment_corpus.transitions.len() as u64,
+        7,
+        OptionValueConfig::default(),
+        0,
+        TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
+    )
+    .unwrap();
     let continuous_snapshot = TacticQImmutableLearnerSnapshot::fit(
-        corpus.clone(),
-        corpus.transitions.len() as u64,
+        treatment_corpus.clone(),
+        treatment_corpus.transitions.len() as u64,
         7,
         OptionValueConfig::default(),
         0,
@@ -550,14 +570,18 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     )
     .unwrap();
     assert_eq!(
-        immutable_snapshot.manifest.value_treatment,
+        local_treatment_snapshot.manifest.value_treatment,
         TacticValueTreatment::LocalGeneralizedFittedQKnnV1
     );
     assert_eq!(
         continuous_snapshot.manifest.value_treatment,
         TacticValueTreatment::ContinuousFittedQForestV1
     );
-    assert_ne!(immutable_snapshot.sha256, continuous_snapshot.sha256);
+    assert!(local_treatment_snapshot.generalized_model.is_some());
+    assert!(local_treatment_snapshot.continuous_model.is_none());
+    assert!(continuous_snapshot.generalized_model.is_none());
+    assert!(continuous_snapshot.continuous_model.is_some());
+    assert_ne!(local_treatment_snapshot.sha256, continuous_snapshot.sha256);
     let mut snapshot_consumer = TacticQCampaign::resume_without_model(checkpoint.clone()).unwrap();
     assert!(snapshot_consumer.model().is_none());
     assert_eq!(
