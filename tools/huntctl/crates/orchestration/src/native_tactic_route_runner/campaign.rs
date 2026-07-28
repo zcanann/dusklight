@@ -3,6 +3,16 @@ use super::*;
 pub(super) const NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1: &str =
     "dusklight-native-tactic-result-admission/v1";
 
+pub(super) fn first_demonstration_intervention(
+    coverage_pending: bool,
+    prefer_root: bool,
+    acquisition: Option<&TacticFrontierAcquisition>,
+) -> bool {
+    coverage_pending
+        && !prefer_root
+        && acquisition.is_some_and(|acquisition| acquisition.expansion_count == 0)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_seed(
     config: &NativeTacticRouteRunConfig<'_>,
@@ -270,9 +280,11 @@ pub(super) fn run_seed(
             {
                 first_demonstration_expansions = first_demonstration_expansions.saturating_add(1);
             }
-            demonstration_intervention_pending = demonstration_coverage_pending
-                && !prefer_root
-                && selected_branch.acquisition.is_some();
+            demonstration_intervention_pending = first_demonstration_intervention(
+                demonstration_coverage_pending,
+                prefer_root,
+                selected_branch.acquisition.as_ref(),
+            );
             branch_acquisition = selected_branch.acquisition.clone();
             let branch_proposals = parameterized_catalog_for_state_with_promoted(
                 seed,
@@ -436,9 +448,11 @@ pub(super) fn run_seed(
             {
                 first_demonstration_expansions = first_demonstration_expansions.saturating_add(1);
             }
-            demonstration_intervention_pending = demonstration_coverage_pending
-                && !prefer_root
-                && selected_branch.acquisition.is_some();
+            demonstration_intervention_pending = first_demonstration_intervention(
+                demonstration_coverage_pending,
+                prefer_root,
+                selected_branch.acquisition.as_ref(),
+            );
             branch_acquisition = selected_branch.acquisition.clone();
             let branch_proposals = parameterized_catalog_for_state_with_promoted(
                 seed,

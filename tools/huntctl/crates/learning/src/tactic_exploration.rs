@@ -12,9 +12,9 @@ use std::fmt;
 
 mod terminal_support;
 
-pub use terminal_support::ensure_terminal_support_factor_acquisitions;
 #[cfg(test)]
 use terminal_support::action_button_mask;
+pub use terminal_support::ensure_terminal_support_factor_acquisitions;
 
 pub const TACTIC_EXPLORATION_SCHEMA_V1: &str = "dusklight-tactic-exploration/v1";
 pub const EPSILON_SCALE: u32 = 1_000_000;
@@ -900,8 +900,7 @@ fn interleave_ranked_groups<'a, T>(
         .map(|(_, members)| members.len())
         .max()
         .unwrap_or(0);
-    let mut interleaved =
-        Vec::with_capacity(groups.iter().map(|(_, members)| members.len()).sum());
+    let mut interleaved = Vec::with_capacity(groups.iter().map(|(_, members)| members.len()).sum());
     for rank_within_type in 0..maximum_group {
         for (_, members) in groups {
             if let Some(descriptor) = members.get(rank_within_type) {
@@ -912,20 +911,24 @@ fn interleave_ranked_groups<'a, T>(
     interleaved
 }
 
-/// Make the shared model's partitioned acquisition authoritative for the
-/// learned policy while preserving the prior exact/coverage choice as a native
-/// control in the same batch.
+/// Make the shared model's partitioned acquisition authoritative when the
+/// exact policy lacks support, while preserving an exploratory or supported
+/// exact primary.
 pub fn retain_generalized_value_acquisition(
     proposals: &mut [SelectedTactic],
 ) -> Result<(), TacticExplorationError> {
     if proposals.is_empty() {
         return Err(TacticExplorationError::InvalidInput);
     }
-    // Epsilon controls behavior, not merely which siblings are measured.
-    // Keep the shared-model exploit in the same native batch as a control, but
-    // do not silently replace the exploratory action after the epsilon-greedy
-    // selector has made it authoritative.
-    if proposals[0].reason == TacticSelectionReason::Epsilon {
+    // Epsilon controls behavior, not merely which siblings are measured, and
+    // a supported exact greedy action is stronger evidence than an
+    // interpolated state-action estimate. Keep the generalized candidate in
+    // the same native batch as a control without silently replacing either
+    // authoritative choice.
+    if matches!(
+        proposals[0].reason,
+        TacticSelectionReason::Epsilon | TacticSelectionReason::Greedy
+    ) {
         return Ok(());
     }
     let Some(index) = proposals

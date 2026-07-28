@@ -1446,6 +1446,37 @@ fn generalized_value_does_not_override_an_epsilon_primary() {
 }
 
 #[test]
+fn generalized_value_does_not_override_a_supported_greedy_primary() {
+    let supported = descriptor("known/terminal", OptionType::Target);
+    let predicted = descriptor("unseen/predicted", OptionType::Bezier);
+    let mut proposals = vec![
+        SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: Digest([31; 32]),
+            decision_index: 7,
+            descriptor: supported.clone(),
+            reason: TacticSelectionReason::Greedy,
+            exploration_draw: 1,
+        },
+        SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: Digest([31; 32]),
+            decision_index: 7,
+            descriptor: predicted.clone(),
+            reason: TacticSelectionReason::GeneralizedValue,
+            exploration_draw: 1,
+        },
+    ];
+
+    retain_generalized_value_acquisition(&mut proposals).unwrap();
+
+    assert_eq!(proposals[0].descriptor, supported);
+    assert_eq!(proposals[0].reason, TacticSelectionReason::Greedy);
+    assert_eq!(proposals[1].descriptor, predicted);
+    assert_eq!(proposals[1].reason, TacticSelectionReason::GeneralizedValue);
+}
+
+#[test]
 fn generalized_value_partitions_ranked_acquisition_across_workers() {
     let control = descriptor("known/control", OptionType::Move);
     let ranked = (0..140)
@@ -1574,8 +1605,7 @@ fn terminal_support_factor_transfer_preserves_epsilon_authority() {
 
 #[test]
 fn terminal_support_factor_transfer_preserves_long_movement_probe() {
-    let exploratory =
-        descriptor_with_duration("move/epsilon-short", OptionType::Move, 4);
+    let exploratory = descriptor_with_duration("move/epsilon-short", OptionType::Move, 4);
     let ranked = vec![
         descriptor_with_duration("move/best-short", OptionType::Move, 4),
         descriptor_with_duration("move/second-short", OptionType::Move, 4),

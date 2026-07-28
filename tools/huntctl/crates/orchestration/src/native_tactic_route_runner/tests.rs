@@ -6,6 +6,51 @@ use super::macro_discovery::*;
 use super::worker_pool::*;
 use super::*;
 
+fn acquisition_with_expansion_count(expansion_count: u64) -> TacticFrontierAcquisition {
+    TacticFrontierAcquisition {
+        expansion_count,
+        terminal: false,
+        reward: 0.0,
+        best_mean_q: None,
+        predicted_terminal_ticks_to_go: None,
+        predicted_total_terminal_ticks: None,
+        maximum_ensemble_variance: None,
+        generalized_nearest_distance: None,
+        novelty_rank: 0,
+        replayed_prefix_ticks: 0,
+    }
+}
+
+#[test]
+fn demonstration_frontier_intervention_only_forces_the_first_expansion() {
+    let unexpanded = acquisition_with_expansion_count(0);
+    let revisited = acquisition_with_expansion_count(1);
+
+    assert!(super::campaign::first_demonstration_intervention(
+        true,
+        false,
+        Some(&unexpanded)
+    ));
+    assert!(!super::campaign::first_demonstration_intervention(
+        true,
+        false,
+        Some(&revisited)
+    ));
+    assert!(!super::campaign::first_demonstration_intervention(
+        true,
+        true,
+        Some(&unexpanded)
+    ));
+    assert!(!super::campaign::first_demonstration_intervention(
+        false,
+        false,
+        Some(&unexpanded)
+    ));
+    assert!(!super::campaign::first_demonstration_intervention(
+        true, false, None
+    ));
+}
+
 #[test]
 fn demonstration_chunks_preserve_the_bounded_authenticated_suffix() {
     let mut frames = Vec::new();

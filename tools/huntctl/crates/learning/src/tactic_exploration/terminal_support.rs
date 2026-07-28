@@ -128,14 +128,10 @@ fn push_generalized_factor_acquisition(
 fn interleave_ranked_action_factors(
     ranked: &[OptionActionDescriptor],
 ) -> Vec<&OptionActionDescriptor> {
-    let mut groups =
-        Vec::<((OptionType, u32), Vec<&OptionActionDescriptor>)>::new();
+    let mut groups = Vec::<((OptionType, u32), Vec<&OptionActionDescriptor>)>::new();
     for descriptor in ranked {
         let factor = action_factor_block(descriptor);
-        if let Some((_, members)) = groups
-            .iter_mut()
-            .find(|(existing, _)| existing == &factor)
-        {
+        if let Some((_, members)) = groups.iter_mut().find(|(existing, _)| existing == &factor) {
             members.push(descriptor);
         } else {
             groups.push((factor, vec![descriptor]));
@@ -146,8 +142,7 @@ fn interleave_ranked_action_factors(
         .map(|(_, members)| members.len())
         .max()
         .unwrap_or(0);
-    let mut interleaved =
-        Vec::with_capacity(groups.iter().map(|(_, members)| members.len()).sum());
+    let mut interleaved = Vec::with_capacity(groups.iter().map(|(_, members)| members.len()).sum());
     for rank_within_factor in 0..maximum_group {
         for (_, members) in &groups {
             if let Some(descriptor) = members.get(rank_within_factor) {
@@ -180,15 +175,17 @@ pub(super) fn action_button_mask(descriptor: &OptionActionDescriptor) -> u16 {
         descriptor,
         &["command_button_mask", "button_pulse_mask", "button_mask"],
     )
-    .unwrap_or_else(|| u64::from(descriptor.option_type == OptionType::Roll) * 0x0100)
-        as u16
+    .unwrap_or_else(|| u64::from(descriptor.option_type == OptionType::Roll) * 0x0100) as u16
 }
 
 fn unsigned_parameter(descriptor: &OptionActionDescriptor, names: &[&str]) -> Option<u64> {
     names.iter().find_map(|name| {
-        descriptor.parameters.get(*name).and_then(|value| match value {
-            OptionParameter::Unsigned(value) => Some(*value),
-            _ => None,
-        })
+        descriptor
+            .parameters
+            .get(*name)
+            .and_then(|value| match value {
+                OptionParameter::Unsigned(value) => Some(*value),
+                _ => None,
+            })
     })
 }

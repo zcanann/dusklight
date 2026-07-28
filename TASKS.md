@@ -145,6 +145,17 @@ at tick `125`.
   137 frames versus the 131-frame demonstration, so prompted-factor discovery
   and retention now work while learner selection and improvement remain open.
   Evidence: `ordon-p3-prompted-factor-coverage-v1.report.json`.
+- A matched 16-decision arm64 macOS audit then exposed two policy wrappers
+  overriding that learned success. `DemonstrationFrontierOnce` forced epsilon
+  again when revisiting an already-expanded frontier, and generalized
+  acquisition subsequently displaced the supported exact greedy action.
+  Interventions are now restricted to expansion zero, and exact greedy or
+  epsilon authority is preserved over interpolated acquisition. On the fixed
+  cell's repeated frontier, the exact action had `best_q = selected_q = 99.75`,
+  was selected greedy, and authoritatively reached the terminal. The suffix
+  still cost 137 frames versus the 131-frame demonstration, so basic
+  learn-and-exploit behavior is demonstrated while route improvement remains
+  failed. Evidence: `ordon-p3-greedy-authority-v1.report.json`.
 - The first two-seed replay-macro probe mined 26 candidates and completed 52
   held-out macro-versus-primitive comparisons. It spent 1,008 validation ticks
   and 149.4 seconds—about 26% of total wall time—but promoted nothing and
