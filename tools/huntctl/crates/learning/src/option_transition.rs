@@ -13,6 +13,10 @@ use std::fmt;
 
 pub const OPTION_TRANSITION_SAMPLE_SCHEMA_V1: &str = "dusklight-option-transition-sample/v1";
 
+fn digest_is_zero(value: &Digest) -> bool {
+    *value == Digest::ZERO
+}
+
 /// The replay row retains the exact facts and execution proof that produced
 /// the compact `OptionValueSample`. The Q implementation continues to consume
 /// only `value_sample`; checkpoint and PAD provenance remain inspectable and
@@ -21,6 +25,8 @@ pub const OPTION_TRANSITION_SAMPLE_SCHEMA_V1: &str = "dusklight-option-transitio
 #[serde(deny_unknown_fields)]
 pub struct OptionTransitionSample {
     pub schema: String,
+    #[serde(default, skip_serializing_if = "digest_is_zero")]
+    pub execution_authority_sha256: Digest,
     pub feature_schema_sha256: Digest,
     pub before_state_sha256: Digest,
     pub after_state_sha256: Digest,
@@ -36,7 +42,12 @@ impl OptionTransitionSample {
     pub fn replay_identity_sha256(&self) -> Result<Digest, OptionTransitionError> {
         self.validate()?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight-option-transition-replay-identity/v1");
+        if self.execution_authority_sha256 == Digest::ZERO {
+            hasher.update(b"dusklight-option-transition-replay-identity/v1");
+        } else {
+            hasher.update(b"dusklight-option-transition-replay-identity/v2");
+            hasher.update(self.execution_authority_sha256.0);
+        }
         hasher.update(self.feature_schema_sha256.0);
         hasher.update(
             self.value_sample
@@ -101,6 +112,7 @@ impl OptionTransitionSample {
         };
         let row = Self {
             schema: OPTION_TRANSITION_SAMPLE_SCHEMA_V1.into(),
+            execution_authority_sha256: Digest::ZERO,
             feature_schema_sha256,
             before_state_sha256,
             after_state_sha256,
@@ -370,6 +382,32 @@ mod tests {
             }
         );
         assert_ne!(row.value_sample.realized_tape_sha256, Digest::ZERO);
+    }
+
+    #[test]
+    fn execution_authority_partitions_replay_identity_without_changing_legacy_rows() {
+        let legacy = row();
+        let legacy_identity = legacy.replay_identity_sha256().unwrap();
+        assert!(
+            !serde_json::to_vec(&legacy)
+                .unwrap()
+                .windows("execution_authority_sha256".len())
+                .any(|window| window == b"execution_authority_sha256")
+        );
+
+        let mut first_plan = legacy.clone();
+        first_plan.execution_authority_sha256 = Digest([8; 32]);
+        let mut second_plan = legacy;
+        second_plan.execution_authority_sha256 = Digest([9; 32]);
+
+        assert_ne!(
+            first_plan.replay_identity_sha256().unwrap(),
+            legacy_identity
+        );
+        assert_ne!(
+            first_plan.replay_identity_sha256().unwrap(),
+            second_plan.replay_identity_sha256().unwrap()
+        );
     }
 
     #[test]

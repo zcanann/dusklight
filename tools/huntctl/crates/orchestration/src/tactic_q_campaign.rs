@@ -74,6 +74,10 @@ pub const TACTIC_Q_DEMONSTRATION_EPISODE_GROUP: u64 = u64::MAX - 1;
 const MAX_RANKED_FRONTIER_CANDIDATES: usize = 16;
 const ROUTE_CHECKPOINT_SCHEMA_V1: &[u8] = b"dusklight-route-checkpoint/v1";
 
+fn digest_is_zero(value: &Digest) -> bool {
+    *value == Digest::ZERO
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TacticQDecision {
@@ -119,6 +123,8 @@ pub struct RewardedTacticQCampaignStep {
 pub struct TacticQCampaignCheckpoint {
     pub schema: String,
     pub content_sha256: Digest,
+    #[serde(default, skip_serializing_if = "digest_is_zero")]
+    pub execution_authority_sha256: Digest,
     pub feature_schema_sha256: Digest,
     pub objective_sha256: Digest,
     pub root_checkpoint_sha256: Digest,
@@ -144,6 +150,8 @@ pub struct TacticQCampaignCheckpoint {
 pub struct TacticQFinalResult {
     pub schema: String,
     pub content_sha256: Digest,
+    #[serde(default, skip_serializing_if = "digest_is_zero")]
+    pub execution_authority_sha256: Digest,
     pub objective_sha256: Digest,
     pub root_checkpoint_sha256: Digest,
     pub route_tape_sha256: Digest,
@@ -333,6 +341,7 @@ pub struct TacticCampaignDiagnostics {
 #[derive(Debug)]
 pub struct TacticQCampaign {
     pub schema: String,
+    pub execution_authority_sha256: Digest,
     pub feature_schema_sha256: Digest,
     pub objective_sha256: Digest,
     pub root_checkpoint_sha256: Digest,
@@ -372,6 +381,7 @@ struct CachedGeneralizedTacticValueModel {
 /// pretending those trials belong to its retained path.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TacticQTrainingCorpus {
+    pub execution_authority_sha256: Digest,
     pub feature_schema_sha256: Digest,
     pub objective_sha256: Digest,
     pub root_checkpoint_sha256: Digest,
@@ -488,6 +498,7 @@ impl TacticQCampaign {
             .map_err(TacticQCampaignError::Hindsight)?;
         Ok(Self {
             schema: TACTIC_Q_CAMPAIGN_SCHEMA_V1.into(),
+            execution_authority_sha256: Digest::ZERO,
             feature_schema_sha256,
             objective_sha256,
             root_checkpoint_sha256,
@@ -515,6 +526,24 @@ impl TacticQCampaign {
 
     pub fn model(&self) -> Option<&OptionValueModel> {
         self.model.as_ref()
+    }
+
+    pub fn bind_execution_authority(
+        &mut self,
+        execution_authority_sha256: Digest,
+    ) -> Result<(), TacticQCampaignError> {
+        if execution_authority_sha256 == Digest::ZERO
+            || self.decision_index != 0
+            || !self.replay.is_empty()
+            || !self.training_replay.is_empty()
+            || self.execution_authority_sha256 != Digest::ZERO
+        {
+            return Err(TacticQCampaignError::InvalidState(
+                "execution authority can only bind a fresh campaign".into(),
+            ));
+        }
+        self.execution_authority_sha256 = execution_authority_sha256;
+        Ok(())
     }
 
     fn generalized_model(
@@ -571,6 +600,7 @@ impl TacticQCampaign {
             ));
         }
         Ok(TacticQTrainingCorpus {
+            execution_authority_sha256: self.execution_authority_sha256,
             feature_schema_sha256: self.feature_schema_sha256,
             objective_sha256: self.objective_sha256,
             root_checkpoint_sha256: self.root_checkpoint_sha256,
@@ -596,7 +626,8 @@ impl TacticQCampaign {
         let mut admitted = 0_usize;
 
         for corpus in corpora {
-            if corpus.feature_schema_sha256 != self.feature_schema_sha256
+            if corpus.execution_authority_sha256 != self.execution_authority_sha256
+                || corpus.feature_schema_sha256 != self.feature_schema_sha256
                 || corpus.objective_sha256 != self.objective_sha256
                 || corpus.root_checkpoint_sha256 != self.root_checkpoint_sha256
                 || corpus.transitions.len() != corpus.routes.len()
@@ -613,6 +644,7 @@ impl TacticQCampaign {
                 .zip(&corpus.episode_groups)
             {
                 validate_training_transition(
+                    self.execution_authority_sha256,
                     self.feature_schema_sha256,
                     self.root_checkpoint_sha256,
                     transition,
@@ -869,7 +901,8 @@ pub(crate) fn validate_checkpoint(
         .zip(&checkpoint.episode_groups)
     {
         transition.validate()?;
-        if transition.feature_schema_sha256 != checkpoint.feature_schema_sha256
+        if transition.execution_authority_sha256 != checkpoint.execution_authority_sha256
+            || transition.feature_schema_sha256 != checkpoint.feature_schema_sha256
             || endpoints.get(episode_group).is_some_and(|(state, route)| {
                 *state != transition.before_state_sha256
                     || *route != transition.source_checkpoint_sha256
@@ -937,6 +970,7 @@ pub(crate) fn validate_checkpoint(
         .zip(training_groups)
     {
         validate_training_transition(
+            checkpoint.execution_authority_sha256,
             checkpoint.feature_schema_sha256,
             checkpoint.root_checkpoint_sha256,
             transition,
@@ -983,6 +1017,7 @@ pub(crate) fn validate_training_corpus(
     let mut identities = BTreeSet::new();
     for (transition, route) in corpus.transitions.iter().zip(&corpus.routes) {
         validate_training_transition(
+            corpus.execution_authority_sha256,
             corpus.feature_schema_sha256,
             corpus.root_checkpoint_sha256,
             transition,
@@ -998,6 +1033,7 @@ pub(crate) fn validate_training_corpus(
 }
 
 fn validate_training_transition(
+    execution_authority_sha256: Digest,
     feature_schema_sha256: Digest,
     root_checkpoint_sha256: Digest,
     transition: &OptionTransitionSample,
@@ -1012,7 +1048,8 @@ fn validate_training_transition(
         .map_err(|_| TacticQCampaignError::InvalidState("training tape range overflows"))?;
     let end = usize::try_from(transition.execution.realized_tape_range.end_frame_exclusive)
         .map_err(|_| TacticQCampaignError::InvalidState("training tape range overflows"))?;
-    if transition.feature_schema_sha256 != feature_schema_sha256
+    if transition.execution_authority_sha256 != execution_authority_sha256
+        || transition.feature_schema_sha256 != feature_schema_sha256
         || end > route.frames.len()
         || transition.source_checkpoint_sha256
             != route_checkpoint(root_checkpoint_sha256, &tape_prefix(route, start))?
@@ -1091,6 +1128,9 @@ pub(crate) fn validate_final_result(
         || result.route_tape_sha256 != sha256(&route_bytes)
         || result.replay_sha256 != sha256(&replay_bytes)
         || result.replay.len() != result.replay_routes.len()
+        || result.replay.iter().any(|transition| {
+            transition.execution_authority_sha256 != result.execution_authority_sha256
+        })
         || result.terminal_state_sha256
             != result
                 .terminal
@@ -1123,14 +1163,27 @@ fn final_result_digest(result: &TacticQFinalResult) -> Result<Digest, TacticQCam
     // The component digests already bind the exact route, replay, and terminal
     // payloads. Seal the small identity tuple instead of serializing those
     // multi-megabyte values a second time merely to derive the outer identity.
-    let bytes = serde_cbor::to_vec(&(
-        &result.schema,
-        result.objective_sha256,
-        result.root_checkpoint_sha256,
-        result.route_tape_sha256,
-        result.replay_sha256,
-        result.terminal_state_sha256,
-    ))
+    let bytes = if result.execution_authority_sha256 == Digest::ZERO {
+        serde_cbor::to_vec(&(
+            &result.schema,
+            result.objective_sha256,
+            result.root_checkpoint_sha256,
+            result.route_tape_sha256,
+            result.replay_sha256,
+            result.terminal_state_sha256,
+        ))
+    } else {
+        serde_cbor::to_vec(&(
+            "dusklight-tactic-q-final-result-identity/v3",
+            &result.schema,
+            result.execution_authority_sha256,
+            result.objective_sha256,
+            result.root_checkpoint_sha256,
+            result.route_tape_sha256,
+            result.replay_sha256,
+            result.terminal_state_sha256,
+        ))
+    }
     .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
     Ok(sha256(&bytes))
 }

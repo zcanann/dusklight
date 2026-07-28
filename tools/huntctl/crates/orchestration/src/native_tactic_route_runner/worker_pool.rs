@@ -110,15 +110,24 @@ pub(super) fn run_seed_coordinator(
 pub(super) fn load_generated_training_corpus(
     result: &NativeTacticSeedResult,
 ) -> Result<TacticQTrainingCorpus, NativeTacticRouteRunError> {
-    if let Some(corpus) = result.generated_training_corpus.as_deref() {
-        return TacticQTrainingCorpus::read(Path::new(corpus)).map_err(route_error);
+    let corpus = if let Some(corpus) = result.generated_training_corpus.as_deref() {
+        TacticQTrainingCorpus::read(Path::new(corpus)).map_err(route_error)?
+    } else {
+        let checkpoint = result.final_checkpoint.as_deref().ok_or_else(|| {
+            route_message("completed tactic seed has no generated training corpus or checkpoint")
+        })?;
+        TacticQCampaign::read_checkpoint(Path::new(checkpoint))
+            .and_then(|campaign| {
+                campaign.training_corpus_from(result.imported_training_replay_rows)
+            })
+            .map_err(route_error)?
+    };
+    if corpus.execution_authority_sha256 != result.execution_plan_sha256 {
+        return Err(route_message(
+            "generated tactic training corpus belongs to another execution plan",
+        ));
     }
-    let checkpoint = result.final_checkpoint.as_deref().ok_or_else(|| {
-        route_message("completed tactic seed has no generated training corpus or checkpoint")
-    })?;
-    TacticQCampaign::read_checkpoint(Path::new(checkpoint))
-        .and_then(|campaign| campaign.training_corpus_from(result.imported_training_replay_rows))
-        .map_err(route_error)
+    Ok(corpus)
 }
 
 pub(super) fn parameterized_catalog_for_state(
@@ -711,7 +720,7 @@ pub(super) fn load_or_capture_demonstration(
             route_checkpoint(root_checkpoint_sha256, &route).map_err(route_error)?;
         let next_checkpoint_sha256 =
             route_checkpoint(root_checkpoint_sha256, &outcome.route_tape).map_err(route_error)?;
-        let transition = OptionTransitionSample::capture(
+        let mut transition = OptionTransitionSample::capture(
             encoder.schema_sha256,
             source_checkpoint_sha256,
             next_checkpoint_sha256,
@@ -724,6 +733,8 @@ pub(super) fn load_or_capture_demonstration(
             |facts| encoder.encode(facts),
         )
         .map_err(route_error)?;
+        transition.execution_authority_sha256 = config.execution_plan.identity()?;
+        transition.validate().map_err(route_error)?;
         native_ticks =
             native_ticks.saturating_add(u64::from(outcome.execution.duration.realized_ticks));
         let outcome_first_hit_tick = outcome
@@ -783,6 +794,7 @@ pub(super) fn load_or_capture_demonstration(
     }
 
     let corpus = TacticQTrainingCorpus {
+        execution_authority_sha256: config.execution_plan.identity()?,
         feature_schema_sha256: encoder.schema_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
         root_checkpoint_sha256,

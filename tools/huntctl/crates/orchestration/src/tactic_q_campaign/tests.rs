@@ -341,6 +341,10 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         },
     )
     .unwrap();
+    let execution_authority_sha256 = Digest([6; 32]);
+    campaign
+        .bind_execution_authority(execution_authority_sha256)
+        .unwrap();
     let encode = |facts: &FactSnapshot| Ok::<_, &'static str>(vec![facts.tape_frame as f32]);
 
     let decision = campaign.decide(&catalog, &[], &encode).unwrap();
@@ -481,8 +485,16 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
 
     let checkpoint = campaign.checkpoint().unwrap();
     assert_eq!(checkpoint.schema, TACTIC_Q_CHECKPOINT_SCHEMA_V3);
+    assert_eq!(
+        checkpoint.execution_authority_sha256,
+        execution_authority_sha256
+    );
     assert_eq!(checkpoint.training_replay.len(), 1);
     let restored = TacticQCampaign::resume(checkpoint.clone()).unwrap();
+    assert_eq!(
+        restored.execution_authority_sha256,
+        execution_authority_sha256
+    );
     assert_eq!(restored.decision_index, campaign.decision_index);
     assert_eq!(restored.training_replay_len(), 1);
     assert_eq!(restored.route_tape, campaign.route_tape);
@@ -490,6 +502,10 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert_eq!(restored.replay_routes, campaign.replay_routes);
     assert!(restored.model().is_some());
     let corpus = campaign.training_corpus();
+    assert_eq!(
+        corpus.execution_authority_sha256,
+        execution_authority_sha256
+    );
     let corpus_root = std::env::temp_dir().join(format!(
         "dusklight-tactic-training-corpus-{}",
         std::process::id()
@@ -522,6 +538,9 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         },
     )
     .unwrap();
+    fresh_episode
+        .bind_execution_authority(execution_authority_sha256)
+        .unwrap();
     assert!(fresh_episode.model().is_none());
     assert_eq!(
         fresh_episode
@@ -546,7 +565,29 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             .is_err()
     );
     assert_eq!(fresh_episode.training_replay_len(), 1);
+    let mut foreign_authority = corpus.clone();
+    foreign_authority.execution_authority_sha256 = Digest([8; 32]);
+    for transition in &mut foreign_authority.transitions {
+        transition.execution_authority_sha256 = Digest([8; 32]);
+    }
+    assert!(
+        fresh_episode
+            .import_training_corpora(std::slice::from_ref(&foreign_authority))
+            .is_err()
+    );
     let policy = restored.freeze_greedy_policy().unwrap();
+    assert_eq!(
+        policy.execution_authority_sha256,
+        execution_authority_sha256
+    );
+    policy
+        .validate_execution_authority(execution_authority_sha256)
+        .unwrap();
+    assert!(
+        policy
+            .validate_execution_authority(Digest([8; 32]))
+            .is_err()
+    );
     assert_eq!(
         policy.action_universe_sha256,
         catalog.action_schema_sha256()

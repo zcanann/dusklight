@@ -337,7 +337,7 @@ impl TacticQCampaign {
             route_checkpoint(self.root_checkpoint_sha256, &self.route_tape)?;
         let next_checkpoint_sha256 =
             route_checkpoint(self.root_checkpoint_sha256, &outcome.route_tape)?;
-        let transition = OptionTransitionSample::capture(
+        let mut transition = OptionTransitionSample::capture(
             self.feature_schema_sha256,
             source_checkpoint_sha256,
             next_checkpoint_sha256,
@@ -349,6 +349,8 @@ impl TacticQCampaign {
             outcome.terminal,
             encode,
         )?;
+        transition.execution_authority_sha256 = self.execution_authority_sha256;
+        transition.validate()?;
         Ok(EvaluatedRewardedTacticOutcome {
             outcome,
             transition,
@@ -625,7 +627,7 @@ impl TacticQCampaign {
             route_checkpoint(self.root_checkpoint_sha256, &self.route_tape)?;
         let next_checkpoint_sha256 =
             route_checkpoint(self.root_checkpoint_sha256, &outcome.route_tape)?;
-        let transition = OptionTransitionSample::capture(
+        let mut transition = OptionTransitionSample::capture(
             self.feature_schema_sha256,
             source_checkpoint_sha256,
             next_checkpoint_sha256,
@@ -637,6 +639,8 @@ impl TacticQCampaign {
             outcome.terminal,
             encode,
         )?;
+        transition.execution_authority_sha256 = self.execution_authority_sha256;
+        transition.validate()?;
 
         let mut replay = self.replay.clone();
         replay.push(transition.clone());

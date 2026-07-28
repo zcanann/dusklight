@@ -50,6 +50,10 @@ const CHECKPOINT_COMPRESSION_LEVEL: i32 = 1;
 const CONTENT_DIRECTORY: &str = "objects";
 const LEGACY_CHECKPOINT_SCHEMA_V1: &str = "dusklight-tactic-q-checkpoint/v1";
 
+fn digest_is_zero(value: &Digest) -> bool {
+    *value == Digest::ZERO
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoredContentRef {
@@ -349,6 +353,8 @@ struct StoredOptionValueSample {
 #[serde(deny_unknown_fields)]
 struct StoredOptionTransition {
     schema: String,
+    #[serde(default, skip_serializing_if = "digest_is_zero")]
+    execution_authority_sha256: Digest,
     feature_schema_sha256: Digest,
     before_state_sha256: Digest,
     after_state_sha256: Digest,
@@ -365,6 +371,8 @@ struct StoredOptionTransition {
 struct StoredCheckpointManifest {
     schema: String,
     content_sha256: Digest,
+    #[serde(default, skip_serializing_if = "digest_is_zero")]
+    execution_authority_sha256: Digest,
     feature_schema_sha256: Digest,
     objective_sha256: Digest,
     root_checkpoint_sha256: Digest,
@@ -389,6 +397,8 @@ struct StoredCheckpointManifest {
 #[serde(deny_unknown_fields)]
 struct StoredTrainingCorpusManifest {
     schema: String,
+    #[serde(default, skip_serializing_if = "digest_is_zero")]
+    execution_authority_sha256: Digest,
     feature_schema_sha256: Digest,
     objective_sha256: Digest,
     root_checkpoint_sha256: Digest,
@@ -401,6 +411,8 @@ struct StoredTrainingCorpusManifest {
 #[serde(deny_unknown_fields)]
 struct InlineTrainingCorpusManifest {
     schema: String,
+    #[serde(default, skip_serializing_if = "digest_is_zero")]
+    execution_authority_sha256: Digest,
     feature_schema_sha256: Digest,
     objective_sha256: Digest,
     root_checkpoint_sha256: Digest,
@@ -467,6 +479,7 @@ pub(crate) fn write_training_corpus(
     let (raw, version) = if corpus.transitions.len() <= MAXIMUM_INLINE_TRAINING_CORPUS_ROWS {
         let manifest = InlineTrainingCorpusManifest {
             schema: TRAINING_CORPUS_MANIFEST_SCHEMA_V2.into(),
+            execution_authority_sha256: corpus.execution_authority_sha256,
             feature_schema_sha256: corpus.feature_schema_sha256,
             objective_sha256: corpus.objective_sha256,
             root_checkpoint_sha256: corpus.root_checkpoint_sha256,
@@ -496,6 +509,7 @@ pub(crate) fn write_training_corpus(
         }
         let manifest = StoredTrainingCorpusManifest {
             schema: TRAINING_CORPUS_MANIFEST_SCHEMA_V1.into(),
+            execution_authority_sha256: corpus.execution_authority_sha256,
             feature_schema_sha256: corpus.feature_schema_sha256,
             objective_sha256: corpus.objective_sha256,
             root_checkpoint_sha256: corpus.root_checkpoint_sha256,
@@ -539,6 +553,7 @@ pub(crate) fn read_training_corpus(
         let manifest: InlineTrainingCorpusManifest =
             decode_cbor(&raw).map_err(checkpoint_store_error)?;
         let corpus = TacticQTrainingCorpus {
+            execution_authority_sha256: manifest.execution_authority_sha256,
             feature_schema_sha256: manifest.feature_schema_sha256,
             objective_sha256: manifest.objective_sha256,
             root_checkpoint_sha256: manifest.root_checkpoint_sha256,
@@ -594,6 +609,7 @@ pub(crate) fn read_training_corpus(
             continue;
         };
         let corpus = TacticQTrainingCorpus {
+            execution_authority_sha256: manifest.execution_authority_sha256,
             feature_schema_sha256: manifest.feature_schema_sha256,
             objective_sha256: manifest.objective_sha256,
             root_checkpoint_sha256: manifest.root_checkpoint_sha256,
@@ -824,6 +840,7 @@ fn store_checkpoint_manifest(
     Ok(StoredCheckpointManifest {
         schema: CHECKPOINT_MANIFEST_SCHEMA_V2.into(),
         content_sha256: checkpoint.content_sha256,
+        execution_authority_sha256: checkpoint.execution_authority_sha256,
         feature_schema_sha256: checkpoint.feature_schema_sha256,
         objective_sha256: checkpoint.objective_sha256,
         root_checkpoint_sha256: checkpoint.root_checkpoint_sha256,
@@ -864,6 +881,7 @@ fn encode_transition(
         .map_err(checkpoint_store_error)?;
     Ok(StoredOptionTransition {
         schema: transition.schema.clone(),
+        execution_authority_sha256: transition.execution_authority_sha256,
         feature_schema_sha256: transition.feature_schema_sha256,
         before_state_sha256: transition.before_state_sha256,
         after_state_sha256: transition.after_state_sha256,
@@ -971,6 +989,7 @@ fn load_checkpoint_manifest(
         }
         .into(),
         content_sha256: manifest.content_sha256,
+        execution_authority_sha256: manifest.execution_authority_sha256,
         feature_schema_sha256: manifest.feature_schema_sha256,
         objective_sha256: manifest.objective_sha256,
         root_checkpoint_sha256: manifest.root_checkpoint_sha256,
@@ -1018,6 +1037,7 @@ fn load_transition(
         .map_err(checkpoint_store_error)?;
     let transition = OptionTransitionSample {
         schema: stored.schema.clone(),
+        execution_authority_sha256: stored.execution_authority_sha256,
         feature_schema_sha256: stored.feature_schema_sha256,
         before_state_sha256: stored.before_state_sha256,
         after_state_sha256: stored.after_state_sha256,
@@ -1304,6 +1324,7 @@ mod tests {
         let content_root = root.join(CONTENT_DIRECTORY);
         TacticQContentStore::initialize(&content_root).unwrap();
         let expected = TacticQTrainingCorpus {
+            execution_authority_sha256: Digest::ZERO,
             feature_schema_sha256: Digest([1; 32]),
             objective_sha256: Digest([2; 32]),
             root_checkpoint_sha256: Digest([3; 32]),
@@ -1313,6 +1334,7 @@ mod tests {
         };
         let legacy = StoredTrainingCorpusManifest {
             schema: TRAINING_CORPUS_MANIFEST_SCHEMA_V1.into(),
+            execution_authority_sha256: Digest::ZERO,
             feature_schema_sha256: expected.feature_schema_sha256,
             objective_sha256: expected.objective_sha256,
             root_checkpoint_sha256: expected.root_checkpoint_sha256,

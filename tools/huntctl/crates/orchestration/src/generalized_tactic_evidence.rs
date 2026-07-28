@@ -854,6 +854,7 @@ mod tests {
     fn proof_rejects_a_non_goal_feature_as_goal_distance() {
         let encoder = GoalConditionedTacticFeatureEncoder::new([0.0; 3]).unwrap();
         let corpus = TacticQTrainingCorpus {
+            execution_authority_sha256: Digest::ZERO,
             feature_schema_sha256: encoder.schema_sha256,
             objective_sha256: Digest([1; 32]),
             root_checkpoint_sha256: Digest([2; 32]),

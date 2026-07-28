@@ -183,6 +183,9 @@ pub(super) fn run_seed(
             },
         )
         .map_err(route_error)?;
+        campaign
+            .bind_execution_authority(execution_plan_sha256)
+            .map_err(route_error)?;
         let imported = if config.execution_plan.proposal_policy == TacticProposalPolicy::Learned {
             campaign
                 .import_training_corpora(shared_training)
@@ -248,6 +251,7 @@ pub(super) fn run_seed(
     let retained_success_root = seed_root.join("retained-successes");
     let mut best_success = load_best_retained_success(
         &retained_success_root,
+        execution_plan_sha256,
         campaign.objective_sha256,
         campaign.root_checkpoint_sha256,
     )?;
@@ -973,6 +977,7 @@ fn tactic_learner_snapshot_sha256(
     campaign: &TacticQCampaign,
 ) -> Result<Digest, NativeTacticRouteRunError> {
     let bytes = serde_cbor::to_vec(&(
+        campaign.execution_authority_sha256,
         campaign.decision_index,
         campaign.training_replay_len(),
         campaign.model(),

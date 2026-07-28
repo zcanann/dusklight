@@ -17,6 +17,10 @@ use std::fmt;
 
 pub const TACTIC_FROZEN_POLICY_SCHEMA_V2: &str = "dusklight-tactic-frozen-policy/v2";
 
+fn digest_is_zero(value: &Digest) -> bool {
+    *value == Digest::ZERO
+}
+
 /// The exact tabular-Q decision for a state observed during training.
 ///
 /// Fitted Q remains the fallback for novel states. Retaining the observed
@@ -43,6 +47,8 @@ impl ObservedGreedyTactic {
 pub struct TacticFrozenPolicy {
     pub schema: String,
     pub content_sha256: Digest,
+    #[serde(default, skip_serializing_if = "digest_is_zero")]
+    pub execution_authority_sha256: Digest,
     pub source_campaign_sha256: Digest,
     pub root_checkpoint_sha256: Digest,
     pub root_state_sha256: Digest,
@@ -59,6 +65,7 @@ pub struct TacticFrozenPolicy {
 impl TacticFrozenPolicy {
     #[allow(clippy::too_many_arguments)]
     pub fn freeze(
+        execution_authority_sha256: Digest,
         source_campaign_sha256: Digest,
         root_checkpoint_sha256: Digest,
         root_state_sha256: Digest,
@@ -76,6 +83,7 @@ impl TacticFrozenPolicy {
         let mut policy = Self {
             schema: TACTIC_FROZEN_POLICY_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
+            execution_authority_sha256,
             source_campaign_sha256,
             root_checkpoint_sha256,
             root_state_sha256,
@@ -157,6 +165,19 @@ impl TacticFrozenPolicy {
     pub fn reconstruct_model(&self) -> Result<OptionValueModel, TacticFrozenPolicyError> {
         self.validate()?;
         OptionValueModel::fit_batch(&self.training_batch, &self.config).map_err(Into::into)
+    }
+
+    pub fn validate_execution_authority(
+        &self,
+        expected: Digest,
+    ) -> Result<(), TacticFrozenPolicyError> {
+        self.validate()?;
+        if self.execution_authority_sha256 != expected {
+            return Err(TacticFrozenPolicyError::Invalid(
+                "frozen tactic policy belongs to another execution authority",
+            ));
+        }
+        Ok(())
     }
 
     pub fn observed_greedy_tactic(&self, state: Digest) -> Option<&ObservedGreedyTactic> {
@@ -325,6 +346,7 @@ mod tests {
             OptionValueBatch::new(Digest([1; 32]), Digest([2; 32]), 1, vec![sample()], vec![0])
                 .unwrap();
         let policy = TacticFrozenPolicy::freeze(
+            Digest::ZERO,
             Digest([3; 32]),
             Digest([4; 32]),
             Digest([7; 32]),
@@ -359,6 +381,7 @@ mod tests {
             OptionValueBatch::new(Digest([1; 32]), Digest([2; 32]), 1, vec![sample()], vec![0])
                 .unwrap();
         let mut policy = TacticFrozenPolicy::freeze(
+            Digest::ZERO,
             Digest([3; 32]),
             Digest([4; 32]),
             Digest([7; 32]),
@@ -419,6 +442,7 @@ mod tests {
         )
         .unwrap();
         let policy = TacticFrozenPolicy::freeze(
+            Digest::ZERO,
             Digest([3; 32]),
             Digest([4; 32]),
             Digest([7; 32]),

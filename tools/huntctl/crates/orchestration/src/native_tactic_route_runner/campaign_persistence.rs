@@ -172,6 +172,7 @@ pub(super) fn resume_seed(
     };
     if checkpoint.decision_index != checkpoint_decision
         || checkpoint.decision_index > config.execution_plan.budgets.decisions_per_lane
+        || checkpoint.execution_authority_sha256 != config.execution_plan.identity()?
         || checkpoint.feature_schema_sha256 != feature_schema_sha256
         || checkpoint.objective_sha256 != config.optimization.terminal_predicate.definition_sha256
         || checkpoint.root_checkpoint_sha256 != root_checkpoint_sha256
@@ -329,6 +330,22 @@ pub(super) fn read_completed_seed_result(
         return Err(route_message(
             "completed tactic seed result is invalid or belongs to another run",
         ));
+    }
+    if let (Some(final_path), Some(tape_path)) = (
+        result.final_result.as_deref(),
+        result.successful_tape.as_deref(),
+    ) {
+        let final_result = TacticQFinalResult::read(Path::new(final_path)).map_err(route_error)?;
+        let tape = InputTape::decode(&fs::read(tape_path).map_err(route_error)?)
+            .map_err(route_error)?
+            .tape;
+        if final_result.execution_authority_sha256 != execution_plan_sha256
+            || final_result.route_tape != tape
+        {
+            return Err(route_message(
+                "completed tactic terminal artifacts belong to another execution plan",
+            ));
+        }
     }
     Ok(result)
 }

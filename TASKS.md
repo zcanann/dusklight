@@ -77,10 +77,6 @@ same tie is diagnostic evidence only.
 
 ## P0 - Make an experiment mean exactly what it says
 
-- [ ] Carry the execution-plan identity from route jobs, decision journals, and
-      candidate evidence into generic transition rows, Tactic-Q model
-      snapshots, checkpoint manifests, and retained terminal artifacts. Reject
-      every mixed-plan import or resume path.
 - [ ] Eliminate the remaining learning/orchestration production-file
       exceptions in the source-size baseline. Split by owned behavior and lower
       or remove the corresponding ceiling with every cleanup milestone.

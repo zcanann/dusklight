@@ -24,6 +24,7 @@ pub(super) fn retain_successful_result(
 
 pub(super) fn load_best_retained_success(
     root: &Path,
+    execution_authority_sha256: Digest,
     objective_sha256: Digest,
     root_checkpoint_sha256: Digest,
 ) -> Result<Option<TacticQFinalResult>, NativeTacticRouteRunError> {
@@ -53,7 +54,8 @@ pub(super) fn load_best_retained_success(
             ));
         }
         let result = TacticQFinalResult::read(&path).map_err(route_error)?;
-        if result.objective_sha256 != objective_sha256
+        if result.execution_authority_sha256 != execution_authority_sha256
+            || result.objective_sha256 != objective_sha256
             || result.root_checkpoint_sha256 != root_checkpoint_sha256
         {
             return Err(route_message(

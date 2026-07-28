@@ -5,6 +5,7 @@ impl TacticQCampaign {
         let mut checkpoint = TacticQCampaignCheckpoint {
             schema: TACTIC_Q_CHECKPOINT_SCHEMA_V3.into(),
             content_sha256: Digest::ZERO,
+            execution_authority_sha256: self.execution_authority_sha256,
             feature_schema_sha256: self.feature_schema_sha256,
             objective_sha256: self.objective_sha256,
             root_checkpoint_sha256: self.root_checkpoint_sha256,
@@ -66,6 +67,7 @@ impl TacticQCampaign {
             .into(),
         );
         TacticFrozenPolicy::freeze(
+            self.execution_authority_sha256,
             checkpoint.content_sha256,
             self.root_checkpoint_sha256,
             first.before_state_sha256,
@@ -166,6 +168,7 @@ impl TacticQCampaign {
         )?;
         Ok(Self {
             schema: TACTIC_Q_CAMPAIGN_SCHEMA_V1.into(),
+            execution_authority_sha256: checkpoint.execution_authority_sha256,
             feature_schema_sha256: checkpoint.feature_schema_sha256,
             objective_sha256: checkpoint.objective_sha256,
             root_checkpoint_sha256: checkpoint.root_checkpoint_sha256,
@@ -280,6 +283,7 @@ impl TacticQCampaign {
         let mut result = TacticQFinalResult {
             schema: TACTIC_Q_FINAL_RESULT_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
+            execution_authority_sha256: self.execution_authority_sha256,
             objective_sha256: self.objective_sha256,
             root_checkpoint_sha256: self.root_checkpoint_sha256,
             route_tape_sha256: sha256(&route_bytes),
