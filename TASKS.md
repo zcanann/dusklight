@@ -150,9 +150,6 @@ Acceptance:
       present, masked correctly, and not leaked from the future.
 - [ ] Audit normalization and distance weighting so high-cardinality or mostly
       irrelevant fields cannot swamp movement-relevant variation.
-- [ ] Replace or qualify exact-state-only Bellman connectivity for continuous
-      routes. Near states must be able to share value without fabricating an
-      exact replay edge.
 - [ ] Compare the current local generalized model against at least:
   - fitted Q over a learned continuous representation;
   - a double-Q or ensemble control;
