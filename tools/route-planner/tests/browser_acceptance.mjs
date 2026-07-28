@@ -1052,3 +1052,9 @@ try {
   await Promise.all([stopChild(browser, browserProcessGroup), stopChild(planner)]);
   await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
+
+// Node 22 on macOS can retain an idle handle after Brave's detached process
+// group and DevTools socket have both closed. All assertions and cleanup have
+// completed at this boundary; terminate explicitly so a successful browser
+// workflow cannot hang the Rust test runner.
+process.exit(0);
