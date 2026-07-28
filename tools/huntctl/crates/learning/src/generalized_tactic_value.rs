@@ -1121,7 +1121,15 @@ fn behavior_cloning_action_distance(
     range: &[f32],
 ) -> f32 {
     let continuous = normalized_distance(left, right, minimum, range);
+    const BUTTON_L_BIT: usize = 6;
     let prompted_action_mismatches = (55..71)
+        // L targeting is a movement/camera modifier: it changes how an
+        // otherwise comparable direction is realized, rather than expressing
+        // a prompted world action. Keep its ordinary continuous distance so
+        // native outcomes can distinguish it, but allow a demonstrated
+        // movement heading to transfer to the corresponding camera-lock
+        // tactic. A, B, and future prompt buttons remain categorical.
+        .filter(|index| *index != 55 + BUTTON_L_BIT)
         .filter(|index| (left[*index] >= 0.5) != (right[*index] >= 0.5))
         .count() as f32;
     // A prompted action (roll today; jump, mount, lift, or another button in
@@ -1882,6 +1890,36 @@ mod tests {
             .unwrap();
 
         assert_eq!(ranked[0].descriptor.option_id, generated_roll.option_id);
+    }
+
+    #[test]
+    fn terminal_support_transfers_direction_across_camera_lock_modifier() {
+        let mut plain = [0.0; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH];
+        let mut camera_lock = plain;
+        let mut prompted_action = plain;
+        let minimum = [0.0; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH];
+        let range = [1.0; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH];
+        camera_lock[55 + 6] = 1.0; // L
+        prompted_action[55 + 8] = 1.0; // A
+
+        let camera_lock_distance =
+            behavior_cloning_action_distance(&plain, &camera_lock, &minimum, &range);
+        let prompted_action_distance =
+            behavior_cloning_action_distance(&plain, &prompted_action, &minimum, &range);
+
+        assert_eq!(
+            camera_lock_distance,
+            1.0 / GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH as f32
+        );
+        assert!(
+            prompted_action_distance
+                > camera_lock_distance + GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH as f32
+        );
+        plain[55 + 6] = 1.0;
+        assert_eq!(
+            behavior_cloning_action_distance(&plain, &camera_lock, &minimum, &range),
+            0.0
+        );
     }
 
     #[test]

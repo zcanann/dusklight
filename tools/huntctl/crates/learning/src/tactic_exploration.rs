@@ -869,6 +869,78 @@ pub fn ensure_generalized_value_acquisition(
     Ok(())
 }
 
+const MAX_TERMINAL_SUPPORT_TYPES_PER_BATCH: usize = 4;
+
+/// Reserve type-diverse behavior-transfer probes on the terminal-support lane.
+///
+/// A demonstration can establish useful movement intent without containing
+/// every executable realization of that intent. The ordinary generalized
+/// acquisition reserves only one descriptor, which makes a high-ranked plain
+/// movement action crowd out targeting, rolling, or another compatible action
+/// type. This lane keeps the top learned descriptor from up to four distinct
+/// types in the same native batch. Their measured outcomes still determine
+/// value; the demonstration supplies action similarity, not reward.
+pub fn ensure_terminal_support_type_acquisitions(
+    ranked_applicable: &[OptionActionDescriptor],
+    maximum_proposals: usize,
+    proposals: &mut Vec<SelectedTactic>,
+) -> Result<(), TacticExplorationError> {
+    if maximum_proposals <= 1 || proposals.is_empty() || proposals.len() > maximum_proposals {
+        return if !proposals.is_empty() && proposals.len() <= maximum_proposals {
+            Ok(())
+        } else {
+            Err(TacticExplorationError::InvalidInput)
+        };
+    }
+    let ranked = interleave_ranked_action_types(ranked_applicable)
+        .into_iter()
+        .take(
+            maximum_proposals
+                .min(MAX_TERMINAL_SUPPORT_TYPES_PER_BATCH)
+                .min(MAX_GENERALIZED_VALUE_ACQUISITION_RANKS),
+        )
+        .collect::<Vec<_>>();
+    if ranked.is_empty() {
+        return Ok(());
+    }
+
+    let template = proposals[0].clone();
+    let original = std::mem::take(proposals);
+    let mut rebuilt = Vec::with_capacity(maximum_proposals);
+    rebuilt.push(original[0].clone());
+    for descriptor in ranked {
+        if let Some(existing) = rebuilt
+            .iter_mut()
+            .find(|proposal| proposal.descriptor == *descriptor)
+        {
+            if existing.reason != TacticSelectionReason::Epsilon {
+                existing.reason = TacticSelectionReason::GeneralizedValue;
+            }
+            continue;
+        }
+        let mut acquisition = template.clone();
+        acquisition.descriptor = descriptor.clone();
+        acquisition.reason = TacticSelectionReason::GeneralizedValue;
+        rebuilt.push(acquisition);
+        if rebuilt.len() == maximum_proposals {
+            break;
+        }
+    }
+    for proposal in original.into_iter().skip(1) {
+        if rebuilt.len() == maximum_proposals {
+            break;
+        }
+        if !rebuilt
+            .iter()
+            .any(|existing| existing.descriptor == proposal.descriptor)
+        {
+            rebuilt.push(proposal);
+        }
+    }
+    *proposals = rebuilt;
+    Ok(())
+}
+
 fn interleave_ranked_action_types(
     ranked: &[OptionActionDescriptor],
 ) -> Vec<&OptionActionDescriptor> {
@@ -2814,6 +2886,77 @@ mod tests {
                 "roll/third",
             ]
         );
+    }
+
+    #[test]
+    fn terminal_support_batch_transfers_to_distinct_learned_action_types() {
+        let control = descriptor("move/control", OptionType::Move);
+        let ranked = vec![
+            descriptor("move/best", OptionType::Move),
+            descriptor("move/second", OptionType::Move),
+            descriptor("target/best", OptionType::Target),
+            descriptor("roll/best", OptionType::Roll),
+            descriptor("neutral/best", OptionType::Neutral),
+            descriptor("curve/best", OptionType::Bezier),
+        ];
+        let mut proposals = vec![
+            SelectedTactic {
+                schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+                learner_snapshot_sha256: Digest([31; 32]),
+                decision_index: 7,
+                descriptor: control.clone(),
+                reason: TacticSelectionReason::Greedy,
+                exploration_draw: 0,
+            },
+            SelectedTactic {
+                schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+                learner_snapshot_sha256: Digest([31; 32]),
+                decision_index: 7,
+                descriptor: descriptor("coverage/random", OptionType::Roll),
+                reason: TacticSelectionReason::BatchCoverage,
+                exploration_draw: 0,
+            },
+        ];
+
+        ensure_terminal_support_type_acquisitions(&ranked, 4, &mut proposals).unwrap();
+
+        assert_eq!(proposals[0].descriptor, control);
+        assert_eq!(
+            proposals[1..]
+                .iter()
+                .map(|proposal| proposal.descriptor.option_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["move/best", "target/best", "roll/best"]
+        );
+        assert!(
+            proposals[1..]
+                .iter()
+                .all(|proposal| proposal.reason == TacticSelectionReason::GeneralizedValue)
+        );
+    }
+
+    #[test]
+    fn terminal_support_type_transfer_preserves_epsilon_authority() {
+        let exploratory = descriptor("move/epsilon", OptionType::Move);
+        let ranked = vec![
+            descriptor("target/best", OptionType::Target),
+            descriptor("roll/best", OptionType::Roll),
+        ];
+        let mut proposals = vec![SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: Digest([31; 32]),
+            decision_index: 7,
+            descriptor: exploratory.clone(),
+            reason: TacticSelectionReason::Epsilon,
+            exploration_draw: 1,
+        }];
+
+        ensure_terminal_support_type_acquisitions(&ranked, 4, &mut proposals).unwrap();
+        retain_generalized_value_acquisition(&mut proposals).unwrap();
+
+        assert_eq!(proposals[0].descriptor, exploratory);
+        assert_eq!(proposals[0].reason, TacticSelectionReason::Epsilon);
+        assert_eq!(proposals.len(), 3);
     }
 
     #[test]
