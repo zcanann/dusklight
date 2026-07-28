@@ -33,6 +33,7 @@ fn frontier_learning_value_precedes_the_last_edges_immediate_cost() {
         expansion_count: 0,
         terminal: false,
         terminal_value_supported: true,
+        achieved_goal_value_supported: false,
         reward: -0.4,
         best_mean_q: Some(10.0),
         predicted_terminal_ticks_to_go: None,
@@ -61,6 +62,7 @@ fn frontier_learning_value_precedes_coverage_count() {
         expansion_count: 3,
         terminal: false,
         terminal_value_supported: true,
+        achieved_goal_value_supported: false,
         reward: -0.4,
         best_mean_q: Some(10.0),
         predicted_terminal_ticks_to_go: None,
@@ -88,6 +90,7 @@ fn cold_start_frontier_coverage_precedes_unsupported_sparse_return() {
         expansion_count: 1,
         terminal: false,
         terminal_value_supported: false,
+        achieved_goal_value_supported: false,
         reward: -0.04,
         best_mean_q: Some(10.0),
         predicted_terminal_ticks_to_go: None,
@@ -120,6 +123,7 @@ fn terminal_supported_prediction_precedes_unsupported_q_estimate() {
         expansion_count: 2,
         terminal: false,
         terminal_value_supported: true,
+        achieved_goal_value_supported: false,
         reward: -0.4,
         best_mean_q: Some(2.0),
         predicted_terminal_ticks_to_go: Some(80.0),
@@ -149,6 +153,7 @@ fn frontier_terminal_cost_includes_the_replayed_prefix() {
         expansion_count: 0,
         terminal: false,
         terminal_value_supported: true,
+        achieved_goal_value_supported: false,
         reward: -0.4,
         best_mean_q: Some(99.0),
         predicted_terminal_ticks_to_go: Some(84.0),
@@ -178,6 +183,7 @@ fn equal_terminal_cost_prefers_the_less_expanded_frontier() {
         expansion_count: 0,
         terminal: false,
         terminal_value_supported: true,
+        achieved_goal_value_supported: false,
         reward: -0.4,
         best_mean_q: Some(99.0),
         predicted_terminal_ticks_to_go: Some(86.0),
@@ -197,6 +203,35 @@ fn equal_terminal_cost_prefers_the_less_expanded_frontier() {
 
     assert_eq!(
         compare_frontier_acquisition(&fresh, &expanded),
+        std::cmp::Ordering::Less
+    );
+}
+
+#[test]
+fn achieved_goal_return_ranks_equally_fresh_cold_start_frontiers() {
+    let learned = TacticFrontierAcquisition {
+        expansion_count: 0,
+        terminal: false,
+        terminal_value_supported: false,
+        achieved_goal_value_supported: true,
+        reward: -0.4,
+        best_mean_q: Some(-40.0),
+        predicted_terminal_ticks_to_go: None,
+        predicted_total_terminal_ticks: None,
+        maximum_ensemble_variance: None,
+        generalized_nearest_distance: Some(0.2),
+        novelty_rank: 8,
+        replayed_prefix_ticks: 40,
+    };
+    let novel_but_slow = TacticFrontierAcquisition {
+        best_mean_q: Some(-80.0),
+        generalized_nearest_distance: Some(1.0),
+        novelty_rank: 0,
+        ..learned.clone()
+    };
+
+    assert_eq!(
+        compare_frontier_acquisition(&learned, &novel_but_slow),
         std::cmp::Ordering::Less
     );
 }

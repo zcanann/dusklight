@@ -240,6 +240,11 @@ pub struct TacticFrontierAcquisition {
     /// as evidence that a frontier leads to the objective.
     #[serde(default)]
     pub terminal_value_supported: bool,
+    /// True when a universal goal-conditioned treatment has authenticated
+    /// achieved-goal return support. This may rank cold-start continuation,
+    /// but never claims that the authored native terminal was reached.
+    #[serde(default)]
+    pub achieved_goal_value_supported: bool,
     pub reward: f32,
     pub best_mean_q: Option<f64>,
     /// Learned terminal-supported cost from the frontier through first hit.
@@ -835,6 +840,29 @@ fn compare_frontier_acquisition(
         return terminal;
     }
     if !left.terminal_value_supported && !right.terminal_value_supported {
+        if left.achieved_goal_value_supported != right.achieved_goal_value_supported {
+            return right
+                .achieved_goal_value_supported
+                .cmp(&left.achieved_goal_value_supported);
+        }
+        if left.achieved_goal_value_supported && right.achieved_goal_value_supported {
+            // Preserve one expansion of every fresh state cell, then let the
+            // learned achieved-goal return decide which equally fresh
+            // continuation is most promising. This is learned first-hit cost,
+            // not sparse action cost or native terminal evidence.
+            return left
+                .expansion_count
+                .cmp(&right.expansion_count)
+                .then_with(|| {
+                    option_f64(right.best_mean_q).total_cmp(&option_f64(left.best_mean_q))
+                })
+                .then_with(|| left.novelty_rank.cmp(&right.novelty_rank))
+                .then_with(|| {
+                    option_f64(right.generalized_nearest_distance.map(f64::from)).total_cmp(
+                        &option_f64(left.generalized_nearest_distance.map(f64::from)),
+                    )
+                });
+        }
         // With no authenticated terminal sample, sparse return is only the
         // negative duration already spent. Treating it as goal evidence traps
         // acquisition near cheap, shallow actions. Cover the farthest-first

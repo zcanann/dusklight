@@ -169,6 +169,10 @@ tie is diagnostic evidence only.
 
 ## P3 - Prove delayed-credit continuous-control learning
 
+- [ ] Validate that supported achieved-goal return, rather than cold-start
+      novelty alone, selects among equally fresh retained frontiers. Keep
+      native-terminal authority separate and ablate against the recorded
+      goal-relabeled treatment.
 - [ ] Demonstrate that ordinary suboptimal human replay improves sample
       efficiency without capping the policy or becoming required for success.
 

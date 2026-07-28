@@ -520,6 +520,9 @@ impl TacticQCampaign {
                     expansion_count,
                     terminal: entry.transition.value_sample.terminal,
                     terminal_value_supported,
+                    achieved_goal_value_supported: !terminal_value_supported
+                        && self.value_treatment == TacticValueTreatment::GoalRelabeledFittedQKnnV2
+                        && generalized_model.is_some(),
                     reward: entry.transition.value_sample.reward,
                     best_mean_q,
                     predicted_terminal_ticks_to_go,
