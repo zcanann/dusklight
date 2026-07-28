@@ -115,6 +115,14 @@ at tick `125`.
   cost 311 versus 207 seconds; no cell reached the terminal, so neither
   learned superiority nor improvement beyond demonstration is established.
   Evidence: `ordon-p3-matched-controls-v1.report.json`.
+- A deeper matched ablation against the explicitly degraded 131-tick
+  demonstration reached 16 decisions and 64 proposals per cell. Ordinary demo
+  replay increased useful decisions from 10 to 16, useful transitions from 41
+  to 68, and visited states from 11 to 21; scratch found no terminal, while
+  demo-assisted search independently retained one exact terminal. That
+  candidate cost 137 ticks, however, so the demo helped discovery but did not
+  establish improvement beyond itself. Evidence:
+  `ordon-p3-q131-ablation-v1.report.json`.
 
 A terminal hit, a reliable terminal hit, a 125 tie, or a faster search for the
 same tie is diagnostic evidence only.

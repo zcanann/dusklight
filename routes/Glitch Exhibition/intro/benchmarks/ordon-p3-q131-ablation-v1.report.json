@@ -1,0 +1,72 @@
+{
+  "schema": "dusklight-p3-q131-demonstration-ablation/v1",
+  "date": "2026-07-28",
+  "source_commit": "851ae59faa69376c82a119e1644295f7bdf06bd2",
+  "acceptance_passed": false,
+  "conclusion": "Ordinary demonstration replay improved exploration density and enabled one independently retained exact terminal proposal that scratch did not find, but the candidate first hit cost 137 ticks versus the 131-tick demonstration. The demonstration therefore helped discovery without establishing independent improvement.",
+  "fixed_plan": {
+    "optimization_request_path": "routes/Glitch Exhibition/intro/benchmarks/ordon-degraded-q131-cem-canary.request.json",
+    "optimization_request_sha256": "83cf1d0f8bf8f6364962f7ee15bbe72b30d771542eec1cb37dc44ddc3322990d",
+    "execution_binding_sha256": "5a6ece0c1c18417a7ed1cf27e3f4d1f3d49e5275164168b143826766cdbb11b5",
+    "native_executable_sha256": "8f92535082026d1af9297826ba3b0f8a747b9942b902b7b489250ee161357e62",
+    "game_data_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814",
+    "world_context_sha256": "5417f084d4aec9812ab96f0bee6dbcbce37843be669d4f3a5e20cf771bf70dcf",
+    "card_fixture_manifest_sha256": "0c8b461d60fa8004486e31149a1a861a225ef4a1606b28f17b15c40e0080fe59",
+    "incumbent_first_hit_tick": 131,
+    "seed": 104729,
+    "workers": 4,
+    "decisions": 16,
+    "proposals_per_decision": 4,
+    "branch_every_decisions": 4,
+    "refit_every_decisions": 2,
+    "epsilon_per_million": 500000,
+    "checkpoint_validation_ticks": 8,
+    "verify_state_hashes": true
+  },
+  "cells": [
+    {
+      "name": "learned_from_scratch",
+      "source_report_sha256": "42c611899e7e2a1633cf771fc4b5eafca462e80a056f70fdc0fc790747e9bb21",
+      "execution_plan_sha256": "38a06f1c7a0d4019cc1df21f58f0c1ffc1f1a783a6fe623e5bef4a7b09ecbafc",
+      "replay_snapshot_sha256": "7b8142efb806d636aaa41e2a82dcc799fcd5ef07584060b5615318982f15ef69",
+      "demonstration_transitions": 0,
+      "native_ticks": 948,
+      "useful_decisions": 10,
+      "useful_training_transitions": 41,
+      "shared_training_replay_rows": 64,
+      "visited_states": 11,
+      "wall_micros": 426853027,
+      "native_simulation_micros": 275528261,
+      "model_update_micros": 4409674,
+      "retained_terminal_candidates": 0
+    },
+    {
+      "name": "learned_demonstration_assisted",
+      "source_report_sha256": "88030505f456a99bce0dc8c449c853dad2dc0e2d5219737704ce999b0434d762",
+      "execution_plan_sha256": "e2aa493aa25d4451039e0fc179c1890a7f19e826ded1fa36828e08a251a887e2",
+      "replay_snapshot_sha256": "aac540b1eca148cb621cdb3789857b68c56a60681524f20ec014a5d8b7b01c08",
+      "demonstration_transitions": 9,
+      "demonstration_chunk_ticks": 16,
+      "native_ticks": 933,
+      "useful_decisions": 16,
+      "useful_training_transitions": 68,
+      "shared_training_replay_rows": 72,
+      "visited_states": 21,
+      "wall_micros": 570383339,
+      "native_simulation_micros": 437986469,
+      "model_update_micros": 5658085,
+      "retained_terminal_candidates": 1,
+      "best_terminal_prefix_ticks": 112,
+      "best_terminal_option_ticks": 25,
+      "best_terminal_first_hit_tick": 137
+    }
+  ],
+  "observations": {
+    "demonstration_minus_scratch_useful_decisions": 6,
+    "demonstration_minus_scratch_useful_training_transitions": 27,
+    "demonstration_minus_scratch_visited_states": 10,
+    "demonstration_minus_scratch_wall_micros": 143530312,
+    "demonstration_improved_terminal_discovery": true,
+    "demonstration_improved_beyond_demonstrated_route": false
+  }
+}
