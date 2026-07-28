@@ -6,7 +6,6 @@ tools/huntctl/crates/finalist-reduction/src/route.rs	1793
 tools/huntctl/crates/harness-contracts/src/run_contract.rs	1556
 tools/huntctl/crates/learning/src/default_tactic_catalog.rs	1606
 tools/huntctl/crates/learning/src/generalized_tactic_value.rs	2040
-tools/huntctl/crates/learning/src/multitask_set_encoder.rs	6440
 tools/huntctl/crates/learning/src/native_actor_view.rs	2026
 tools/huntctl/crates/learning/src/native_generic_tactic.rs	1891
 tools/huntctl/crates/learning/src/native_goal_frozen_policy.rs	1571
