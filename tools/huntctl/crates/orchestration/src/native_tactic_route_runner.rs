@@ -129,6 +129,7 @@ const MAX_ROUTE_DECISIONS: u64 = 100_000;
 const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
 const ROUTE_TACTIC_TICK_COST: f32 = 0.01;
 const TACTIC_PROPOSALS_PER_DECISION: usize = 4;
+const MAX_TACTIC_PROPOSALS_PER_DECISION: usize = 16;
 const LEARNED_EPISODES_PER_GENERATION: usize = 4;
 const NAVIGABLE_SURFACE_MINIMUM_UP_NORMAL: f32 = 0.5;
 const NAVIGABLE_SURFACE_MAXIMUM_ATTACHMENT_DISTANCE: f32 = 512.0;
@@ -3224,7 +3225,7 @@ fn run_seed(
                     &proposal_blueprints,
                     action_schema_sha256,
                     &encode,
-                    TACTIC_PROPOSALS_PER_DECISION,
+                    tactic_proposals_per_decision(config.workers, config.exploration_seeds.len()),
                     generalized_acquisition_partition(seed_index),
                     config.proposal_policy,
                     Some(encoder.goal_distance_feature()),
@@ -6581,6 +6582,14 @@ fn generalized_acquisition_partition(seed_index: usize) -> u64 {
     }
 }
 
+fn tactic_proposals_per_decision(worker_count: usize, seed_count: usize) -> usize {
+    if seed_count == 1 {
+        worker_count.min(MAX_TACTIC_PROPOSALS_PER_DECISION)
+    } else {
+        TACTIC_PROPOSALS_PER_DECISION
+    }
+}
+
 fn tactic_lane_epsilon(
     proposal_policy: TacticProposalPolicy,
     configured_epsilon_per_million: u32,
@@ -6744,6 +6753,14 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![0, 1, 2, 3, 0, 4, 5, 6, 0, 7, 8, 9]
         );
+    }
+
+    #[test]
+    fn single_seed_proposal_width_uses_idle_native_workers_without_queue_explosion() {
+        assert_eq!(tactic_proposals_per_decision(4, 1), 4);
+        assert_eq!(tactic_proposals_per_decision(16, 1), 16);
+        assert_eq!(tactic_proposals_per_decision(32, 1), 16);
+        assert_eq!(tactic_proposals_per_decision(16, 4), 4);
     }
 
     #[test]
