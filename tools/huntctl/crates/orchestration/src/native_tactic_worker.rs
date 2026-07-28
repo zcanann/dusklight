@@ -1108,6 +1108,15 @@ pub enum NativeTacticWorkerError {
     Worker(NativeSuffixWorkerError),
 }
 
+impl NativeTacticWorkerError {
+    pub(crate) fn is_missing_process_local_checkpoint(&self) -> bool {
+        matches!(
+            self,
+            Self::Worker(error) if error.is_missing_process_local_checkpoint()
+        )
+    }
+}
+
 impl fmt::Display for NativeTacticWorkerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

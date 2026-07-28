@@ -16,7 +16,7 @@ use dusklight_search::suffix_batch::{
     NATIVE_CACHED_SUFFIX_BATCH_SCHEMA, NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA,
     NATIVE_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch,
 };
-use dusklight_worker_protocol::client::{BatchComplete, HelloResponse, WorkerClient};
+use dusklight_worker_protocol::client::{BatchComplete, ClientError, HelloResponse, WorkerClient};
 use dusklight_worker_protocol::transport::ProcessTransport;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -241,7 +241,7 @@ impl NativeSuffixWorkerSession {
                     .map(|path| path_text(path, "suffix winner tape"))
                     .transpose()?,
             )
-            .map_err(worker_error)?;
+            .map_err(worker_client_error)?;
         validate_completed_batch(&complete, &result_path, &batch, &self.terminal)
     }
 
@@ -265,7 +265,7 @@ impl NativeSuffixWorkerSession {
                 path_text(&result_path, "frozen policy suffix result")?,
                 None,
             )
-            .map_err(worker_error)?;
+            .map_err(worker_client_error)?;
         validate_completed_frozen_batch(
             &complete,
             &result_path,
@@ -972,6 +972,18 @@ fn sha256(bytes: &[u8]) -> Digest {
 #[derive(Debug)]
 pub enum NativeSuffixWorkerError {
     Message(String),
+    Rejected { code: String, message: String },
+}
+
+impl NativeSuffixWorkerError {
+    pub fn is_missing_process_local_checkpoint(&self) -> bool {
+        matches!(
+            self,
+            Self::Rejected { code, message }
+                if code == "batch_rejected"
+                    && message == "requested process-local checkpoint is absent or invalid"
+        )
+    }
 }
 
 fn worker_message(message: impl Into<String>) -> NativeSuffixWorkerError {
@@ -982,10 +994,22 @@ fn worker_error(error: impl fmt::Display) -> NativeSuffixWorkerError {
     NativeSuffixWorkerError::Message(error.to_string())
 }
 
+fn worker_client_error(error: ClientError) -> NativeSuffixWorkerError {
+    match error {
+        ClientError::Worker { code, message } => {
+            NativeSuffixWorkerError::Rejected { code, message }
+        }
+        error => worker_error(error),
+    }
+}
+
 impl fmt::Display for NativeSuffixWorkerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Message(message) => formatter.write_str(message),
+            Self::Rejected { code, message } => {
+                write!(formatter, "worker error {code}: {message}")
+            }
         }
     }
 }
@@ -1003,6 +1027,21 @@ mod tests {
     use dusklight_search::search::MacroAction;
     use dusklight_search::suffix_batch::{NativeCheckpointValidation, NativeSuffixCandidate};
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn process_local_checkpoint_rejection_is_structured() {
+        let missing = worker_client_error(ClientError::Worker {
+            code: "batch_rejected".into(),
+            message: "requested process-local checkpoint is absent or invalid".into(),
+        });
+        assert!(missing.is_missing_process_local_checkpoint());
+
+        let unrelated = worker_client_error(ClientError::Worker {
+            code: "batch_rejected".into(),
+            message: "batch horizon exceeds the authenticated source tape".into(),
+        });
+        assert!(!unrelated.is_missing_process_local_checkpoint());
+    }
 
     static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
 

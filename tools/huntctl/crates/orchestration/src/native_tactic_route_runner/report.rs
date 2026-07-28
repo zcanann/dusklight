@@ -205,6 +205,10 @@ pub struct NativeTacticRestoreAccounting {
     pub native_requests: u64,
     pub authenticated_root_restore_requests: u64,
     pub direct_process_local_restore_requests: u64,
+    /// Direct requests whose owner-local handle had been evicted and were
+    /// reconstructed by exact authenticated-root replay.
+    #[serde(default)]
+    pub direct_restore_fallback_replays: u64,
     /// Root replays performed solely to retain a logical non-root frontier.
     pub prefix_materializations: u64,
     pub replayed_prefix_ticks: u64,
@@ -218,6 +222,8 @@ pub struct NativeTacticRestoreAccounting {
     /// request may perform multiple internal lookups.
     pub cache_hits: u64,
     pub cache_misses: u64,
+    #[serde(default)]
+    pub cache_evictions: u64,
     pub cache_hit_rate_per_million: u64,
     pub checkpoint_capture_attempts: u64,
     pub checkpoint_capture_successes: u64,
@@ -243,6 +249,9 @@ impl NativeTacticRestoreAccounting {
         self.direct_process_local_restore_requests = self
             .direct_process_local_restore_requests
             .saturating_add(other.direct_process_local_restore_requests);
+        self.direct_restore_fallback_replays = self
+            .direct_restore_fallback_replays
+            .saturating_add(other.direct_restore_fallback_replays);
         self.prefix_materializations = self
             .prefix_materializations
             .saturating_add(other.prefix_materializations);
@@ -253,6 +262,7 @@ impl NativeTacticRestoreAccounting {
         self.restore_micros = self.restore_micros.saturating_add(other.restore_micros);
         self.cache_hits = self.cache_hits.saturating_add(other.cache_hits);
         self.cache_misses = self.cache_misses.saturating_add(other.cache_misses);
+        self.cache_evictions = self.cache_evictions.saturating_add(other.cache_evictions);
         self.checkpoint_capture_attempts = self
             .checkpoint_capture_attempts
             .saturating_add(other.checkpoint_capture_attempts);

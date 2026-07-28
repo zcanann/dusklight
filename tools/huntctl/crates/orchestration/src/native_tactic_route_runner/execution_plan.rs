@@ -305,7 +305,6 @@ impl NativeTacticExecutionPlan {
                 lane_indices,
             });
         }
-        let single_lane = request.seeds.len() == 1;
         let plan = Self {
             schema: NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V2.into(),
             seeds: request.seeds,
@@ -320,7 +319,7 @@ impl NativeTacticExecutionPlan {
             checkpoint: NativeTacticCheckpointPlan {
                 ownership: NativeTacticCheckpointOwnership::WorkerLocal,
                 fallback: NativeTacticCheckpointFallback::AuthenticatedRootReplay,
-                cross_decision_direct_restore: single_lane,
+                cross_decision_direct_restore: true,
             },
             budgets: request.budgets,
             generations,
@@ -496,6 +495,21 @@ mod tests {
     }
 
     #[test]
+    fn multi_seed_plans_route_cross_decision_restores_to_checkpoint_owners() {
+        let plan = NativeTacticExecutionPlan::build(request()).unwrap();
+        assert_eq!(plan.lanes.len(), 4);
+        assert!(plan.checkpoint.cross_decision_direct_restore);
+        assert_eq!(
+            plan.checkpoint.ownership,
+            NativeTacticCheckpointOwnership::WorkerLocal
+        );
+        assert_eq!(
+            plan.checkpoint.fallback,
+            NativeTacticCheckpointFallback::AuthenticatedRootReplay
+        );
+    }
+
+    #[test]
     fn counterfactual_siblings_receive_distinct_censored_episode_lineages() {
         let plan = NativeTacticExecutionPlan::build(request()).unwrap();
         let lane = &plan.lanes[0];
@@ -559,7 +573,7 @@ mod tests {
         };
         variants.push(changed);
         let mut changed = plan.clone();
-        changed.checkpoint.cross_decision_direct_restore = true;
+        changed.checkpoint.cross_decision_direct_restore = false;
         variants.push(changed);
         let mut changed = plan.clone();
         changed.budgets.decisions_per_lane += 1;

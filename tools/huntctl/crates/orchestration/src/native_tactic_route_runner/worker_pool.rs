@@ -255,6 +255,7 @@ pub(super) struct TimedTacticWorker<'a, W> {
     pending_accounting: NativeTacticRestoreAccounting,
     prior_cache_hits: u64,
     prior_cache_misses: u64,
+    prior_cache_evictions: u64,
 }
 
 impl<'a, W> TimedTacticWorker<'a, W> {
@@ -265,6 +266,7 @@ impl<'a, W> TimedTacticWorker<'a, W> {
             pending_accounting: NativeTacticRestoreAccounting::default(),
             prior_cache_hits: 0,
             prior_cache_misses: 0,
+            prior_cache_evictions: 0,
         }
     }
 
@@ -272,6 +274,36 @@ impl<'a, W> TimedTacticWorker<'a, W> {
         let mut accounting = std::mem::take(&mut self.pending_accounting);
         accounting.refresh_rates();
         accounting
+    }
+
+    fn record_prefix_materialization(
+        &mut self,
+        route_frames: usize,
+        fallback: bool,
+    ) -> Result<(), NativeTacticWorkerError>
+    where
+        W: PersistentTacticBatchWorker,
+    {
+        let source_frame = usize::try_from(self.identity().source_frame)
+            .map_err(|_| NativeTacticWorkerError::InvalidDuration)?;
+        let replayed_prefix_ticks = u64::try_from(route_frames.saturating_sub(source_frame))
+            .map_err(|_| NativeTacticWorkerError::InvalidDuration)?;
+        self.pending_accounting.prefix_materializations = self
+            .pending_accounting
+            .prefix_materializations
+            .saturating_add(1);
+        self.pending_accounting.replayed_prefix_ticks = self
+            .pending_accounting
+            .replayed_prefix_ticks
+            .saturating_add(replayed_prefix_ticks);
+        if fallback {
+            self.pending_accounting.direct_restore_fallback_replays = self
+                .pending_accounting
+                .direct_restore_fallback_replays
+                .saturating_add(1);
+        }
+        self.pending_accounting.refresh_rates();
+        Ok(())
     }
 
     fn record_batch(
@@ -324,8 +356,12 @@ impl<'a, W> TimedTacticWorker<'a, W> {
         let cache_misses = cache.misses.checked_sub(self.prior_cache_misses).ok_or(
             NativeTacticWorkerError::DetachedResult("tactic cache miss counter regressed"),
         )?;
+        let cache_evictions = cache.evictions.checked_sub(self.prior_cache_evictions).ok_or(
+            NativeTacticWorkerError::DetachedResult("tactic cache eviction counter regressed"),
+        )?;
         self.prior_cache_hits = cache.hits;
         self.prior_cache_misses = cache.misses;
+        self.prior_cache_evictions = cache.evictions;
         if cache_misses != 0 || direct_restore != (cache_hits != 0) {
             return Err(NativeTacticWorkerError::DetachedResult(
                 "tactic cache lookup accounting",
@@ -339,6 +375,10 @@ impl<'a, W> TimedTacticWorker<'a, W> {
             .pending_accounting
             .cache_misses
             .saturating_add(cache_misses);
+        self.pending_accounting.cache_evictions = self
+            .pending_accounting
+            .cache_evictions
+            .saturating_add(cache_evictions);
         self.pending_accounting.checkpoint_capture_attempts = self
             .pending_accounting
             .checkpoint_capture_attempts
@@ -389,7 +429,15 @@ impl<W: PersistentTacticBatchWorker> PersistentTacticBatchWorker for TimedTactic
                 self.record_batch(&batch)?;
                 Ok(batch)
             }
-            Err(error) => Err(error),
+            Err(error) => {
+                if error.is_missing_process_local_checkpoint() {
+                    self.prior_cache_misses = self.prior_cache_misses.saturating_add(1);
+                    self.pending_accounting.cache_misses =
+                        self.pending_accounting.cache_misses.saturating_add(1);
+                    self.pending_accounting.refresh_rates();
+                }
+                Err(error)
+            }
         }
     }
 }
@@ -964,67 +1012,28 @@ pub(super) fn run_tactic_proposal_worker(
     let mut timed_worker = TimedTacticWorker::new(&mut worker);
     loop {
         let job = receiver.recv();
-        let Ok(job) = job else {
+        let Ok(mut job) = job else {
             break;
         };
         let batch_started = Instant::now();
-        let native_before_materialization = timed_worker.native_elapsed;
+        let native_before_batch = timed_worker.native_elapsed;
         let checkpoint_source = if job.materialize_frontier {
-            let materialization_root = job.paths_root.join("frontier-source");
-            fs::create_dir_all(&materialization_root)
-                .map_err(route_error)
-                .and_then(|_| {
-                    materialize_tactic_frontier(
-                        &mut timed_worker,
-                        &job.source_snapshot,
-                        &job.source_route_tape,
-                        &NativeTacticWorkerPaths {
-                            request: materialization_root.join("request.json"),
-                            result: materialization_root.join("result.json"),
-                        },
-                    )
-                    .map(|frontier| Some(frontier.source))
-                    .map_err(route_error)
-                })
+            materialize_job_frontier(&mut timed_worker, &job, "frontier-source", false).map(Some)
         } else {
-            Ok(job.checkpoint_source)
+            Ok(job.checkpoint_source.clone())
         };
-        let checkpoint_source = match checkpoint_source {
+        let mut checkpoint_source = match checkpoint_source {
             Ok(source) => source,
             Err(error) => {
-                let _ = job.response.send(Err(error));
+                let _ = job.response.send(Err(route_error(error)));
                 continue;
             }
         };
-        let materialization_native_elapsed = timed_worker
-            .native_elapsed
-            .saturating_sub(native_before_materialization);
-        let materialization_elapsed = batch_started.elapsed();
-        let materialization_preparation_elapsed =
-            materialization_elapsed.saturating_sub(materialization_native_elapsed);
-        let mut materialization_accounting = timed_worker.take_accounting();
-        if job.materialize_frontier {
-            materialization_accounting.prefix_materializations = materialization_accounting
-                .prefix_materializations
-                .saturating_add(1);
-            let source_frame = usize::try_from(timed_worker.identity().source_frame)
-                .map_err(|_| route_message("native tactic source frame exceeds platform limits"))?;
-            let replayed_prefix_ticks = u64::try_from(
-                job.source_route_tape
-                    .frames
-                    .len()
-                    .saturating_sub(source_frame),
-            )
-            .map_err(|_| route_message("replayed tactic prefix exceeds report limits"))?;
-            materialization_accounting.replayed_prefix_ticks = materialization_accounting
-                .replayed_prefix_ticks
-                .saturating_add(replayed_prefix_ticks);
-            materialization_accounting.refresh_rates();
-        }
 
         let mut work = Vec::with_capacity(job.proposals.len());
         let mut failed = None;
-        for (batch_index, proposal) in job.proposals.into_iter().enumerate() {
+        let proposals = std::mem::take(&mut job.proposals);
+        for (batch_index, proposal) in proposals.into_iter().enumerate() {
             let proposal_root = job
                 .paths_root
                 .join(format!("proposal-{:03}", proposal.proposal_index));
@@ -1032,9 +1041,17 @@ pub(super) fn run_tactic_proposal_worker(
                 failed = Some(error);
                 break;
             }
-            let execution_started = Instant::now();
-            let native_before = timed_worker.native_elapsed;
-            let outcome = execute_selected_tactic_with_checkpoint_retention_and_strategy(
+            let execution_started = if batch_index == 0 {
+                batch_started
+            } else {
+                Instant::now()
+            };
+            let native_before = if batch_index == 0 {
+                native_before_batch
+            } else {
+                timed_worker.native_elapsed
+            };
+            let mut outcome = execute_selected_tactic_with_checkpoint_retention_and_strategy(
                 &mut timed_worker,
                 &proposal.selected,
                 &job.proposal_catalog,
@@ -1048,13 +1065,50 @@ pub(super) fn run_tactic_proposal_worker(
                 },
                 false,
                 job.execution_strategy,
-            )
-            .map_err(route_error);
-            let native_elapsed = timed_worker.native_elapsed.saturating_sub(native_before);
-            let mut restore_accounting = timed_worker.take_accounting();
-            if batch_index == 0 {
-                restore_accounting.merge(&materialization_accounting);
+            );
+            if outcome
+                .as_ref()
+                .is_err_and(NativeTacticWorkerError::is_missing_process_local_checkpoint)
+                && batch_index == 0
+                && checkpoint_source.is_some()
+            {
+                checkpoint_source = match materialize_job_frontier(
+                    &mut timed_worker,
+                    &job,
+                    "frontier-replay-fallback",
+                    true,
+                ) {
+                    Ok(source) => Some(source),
+                    Err(error) => {
+                        failed = Some(route_error(error));
+                        break;
+                    }
+                };
+                let fallback_root = job
+                    .paths_root
+                    .join(format!("proposal-{:03}-after-replay", proposal.proposal_index));
+                if let Err(error) = fs::create_dir_all(&fallback_root).map_err(route_error) {
+                    failed = Some(error);
+                    break;
+                }
+                outcome = execute_selected_tactic_with_checkpoint_retention_and_strategy(
+                    &mut timed_worker,
+                    &proposal.selected,
+                    &job.proposal_catalog,
+                    &job.proposal_blueprints,
+                    &job.source_snapshot,
+                    &job.source_route_tape,
+                    checkpoint_source.as_ref(),
+                    &NativeTacticWorkerPaths {
+                        request: fallback_root.join("request.json"),
+                        result: fallback_root.join("result.json"),
+                    },
+                    false,
+                    job.execution_strategy,
+                );
             }
+            let native_elapsed = timed_worker.native_elapsed.saturating_sub(native_before);
+            let restore_accounting = timed_worker.take_accounting();
             match outcome {
                 Ok(outcome) => {
                     let elapsed = execution_started.elapsed();
@@ -1062,23 +1116,13 @@ pub(super) fn run_tactic_proposal_worker(
                         execution_plan_sha256: job.execution_plan_sha256,
                         worker_slot,
                         outcome,
-                        native_elapsed: native_elapsed.saturating_add(if batch_index == 0 {
-                            materialization_native_elapsed
-                        } else {
-                            Duration::ZERO
-                        }),
-                        preparation_elapsed: elapsed.saturating_sub(native_elapsed).saturating_add(
-                            if batch_index == 0 {
-                                materialization_preparation_elapsed
-                            } else {
-                                Duration::ZERO
-                            },
-                        ),
+                        native_elapsed,
+                        preparation_elapsed: elapsed.saturating_sub(native_elapsed),
                         restore_accounting,
                     });
                 }
                 Err(error) => {
-                    failed = Some(error);
+                    failed = Some(route_error(error));
                     break;
                 }
             }
@@ -1090,4 +1134,92 @@ pub(super) fn run_tactic_proposal_worker(
     }
     drop(timed_worker);
     worker.shutdown().map_err(route_error)
+}
+
+fn materialize_job_frontier<W: PersistentTacticBatchWorker>(
+    worker: &mut TimedTacticWorker<'_, W>,
+    job: &NativeTacticProposalJob,
+    directory: &str,
+    fallback: bool,
+) -> Result<NativeTacticCheckpointSource, NativeTacticWorkerError> {
+    let materialization_root = job.paths_root.join(directory);
+    fs::create_dir_all(&materialization_root)
+        .map_err(|error| NativeTacticWorkerError::Io(error.to_string()))?;
+    let frontier = materialize_tactic_frontier(
+        worker,
+        &job.source_snapshot,
+        &job.source_route_tape,
+        &NativeTacticWorkerPaths {
+            request: materialization_root.join("request.json"),
+            result: materialization_root.join("result.json"),
+        },
+    )?;
+    worker.record_prefix_materialization(job.source_route_tape.frames.len(), fallback)?;
+    Ok(frontier.source)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_suffix_worker::NativeSuffixWorkerIdentity;
+
+    struct MissingCheckpointWorker {
+        identity: NativeSuffixWorkerIdentity,
+    }
+
+    impl PersistentTacticBatchWorker for MissingCheckpointWorker {
+        fn identity(&self) -> &NativeSuffixWorkerIdentity {
+            &self.identity
+        }
+
+        fn run_tactic_batch(
+            &mut self,
+            _request: &Path,
+            _result: &Path,
+        ) -> Result<ValidatedNativeSuffixBatch, NativeTacticWorkerError> {
+            Err(NativeTacticWorkerError::Worker(
+                NativeSuffixWorkerError::Rejected {
+                    code: "batch_rejected".into(),
+                    message: "requested process-local checkpoint is absent or invalid".into(),
+                },
+            ))
+        }
+    }
+
+    #[test]
+    fn missing_owner_checkpoint_is_counted_before_exact_replay_fallback() {
+        let mut worker = MissingCheckpointWorker {
+            identity: NativeSuffixWorkerIdentity {
+                executable_sha256: Digest([1; 32]),
+                game_data_sha256: Digest([2; 32]),
+                input_tape_sha256: Digest([3; 32]),
+                milestone_program_sha256: Digest([4; 32]),
+                card_fixture_sha256: Digest([5; 32]),
+                world_context_sha256: Digest([6; 32]),
+                source_frame: 506,
+                source_boundary_fingerprint: "7".repeat(32),
+                checkpoint_validation_kind: "recorded_replay_window".into(),
+                checkpoint_validation_ticks: 8,
+                maximum_ticks: 160,
+                terminal: NativeTerminalBinding {
+                    goal: "goal".into(),
+                    program_sha256: Digest([8; 32]),
+                    definition_sha256: Digest([9; 32]),
+                },
+            },
+        };
+        let mut timed = TimedTacticWorker::new(&mut worker);
+
+        let error = timed
+            .run_tactic_batch(Path::new("request"), Path::new("result"))
+            .unwrap_err();
+        assert!(error.is_missing_process_local_checkpoint());
+        timed.record_prefix_materialization(530, true).unwrap();
+        let accounting = timed.take_accounting();
+
+        assert_eq!(accounting.cache_misses, 1);
+        assert_eq!(accounting.prefix_materializations, 1);
+        assert_eq!(accounting.replayed_prefix_ticks, 24);
+        assert_eq!(accounting.direct_restore_fallback_replays, 1);
+    }
 }

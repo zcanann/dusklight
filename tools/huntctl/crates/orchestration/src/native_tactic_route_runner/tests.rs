@@ -756,11 +756,14 @@ fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
         native_requests: 3,
         authenticated_root_restore_requests: 1,
         direct_process_local_restore_requests: 2,
+        direct_restore_fallback_replays: 1,
         prefix_materializations: 1,
         replayed_prefix_ticks: 40,
         restore_samples: 3,
         restore_micros: 30,
         cache_hits: 2,
+        cache_misses: 1,
+        cache_evictions: 3,
         checkpoint_capture_attempts: 3,
         checkpoint_capture_successes: 2,
         checkpoint_capture_micros: 50,
@@ -776,8 +779,11 @@ fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
     let mut second = NativeTacticRestoreAccounting {
         native_requests: 1,
         authenticated_root_restore_requests: 1,
+        direct_restore_fallback_replays: 2,
         restore_samples: 1,
         restore_micros: 30,
+        cache_misses: 1,
+        cache_evictions: 4,
         checkpoint_capture_attempts: 1,
         checkpoint_capture_successes: 1,
         checkpoint_capture_micros: 20,
@@ -798,7 +804,9 @@ fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
     assert_eq!(first.restore_micros, 60);
     assert_eq!(first.mean_restore_micros, 15);
     assert_eq!(first.direct_restore_request_rate_per_million, 500_000);
-    assert_eq!(first.cache_hit_rate_per_million, 1_000_000);
+    assert_eq!(first.direct_restore_fallback_replays, 3);
+    assert_eq!(first.cache_hit_rate_per_million, 500_000);
+    assert_eq!(first.cache_evictions, 7);
     assert_eq!(first.replayed_prefix_ticks, 40);
     assert_eq!(first.peak_resident_bytes, 600);
     assert_eq!(first.proposal_transitions, 4);
