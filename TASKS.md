@@ -64,6 +64,13 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   generalized fitted-Q k-NN path remains an explicit control. It still lacks
   matched native validation and is not yet evidence of route improvement.
   Evidence: `ordon-p3-control-comparison-v1.report.json`.
+- The current continuous treatment completed matched scratch,
+  ordinary-demonstration, and structured non-learning native cells under the
+  same fixed identities and budget caps. None reached the terminal.
+  Demonstration replay increased visited states from `13` to `18` but reduced
+  useful decisions from `13` to `12`; structured search delivered the highest
+  useful-decision throughput. This is a recorded P3 failure, not acceptance.
+  Evidence: `ordon-p3-continuous-matched-controls-v2.report.json`.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
   camera orientation, exact A-button prompt-status bits, and the native
@@ -108,9 +115,6 @@ tie is diagnostic evidence only.
 
 ## P3 - Prove delayed-credit continuous-control learning
 
-- [ ] Run matched from-scratch, ordinary-demonstration, and structured
-      non-learning campaigns with equal native budgets and identical source,
-      terminal, and execution bindings.
 - [ ] Measure held-out value error, uncertainty, action ordering, useful
       transitions per wall second, terminal discovery rate, and best
       authenticated tick across independent seeds and semantic state groups.
