@@ -219,6 +219,27 @@ impl BehaviorArchive {
         self.tactic_entries.len()
     }
 
+    /// Return every retained tactic frontier in deterministic state-cell order.
+    ///
+    /// Callers that need the complete archive should not route through
+    /// `select_tactic_frontier`: farthest-first novelty selection is useful for
+    /// a bounded subset, but needlessly quadratic when its budget is the full
+    /// archive.
+    pub fn tactic_frontiers(&self) -> Vec<TacticFrontierEntry> {
+        self.tactic_entries.values().cloned().collect()
+    }
+
+    pub fn contains_tactic_frontier(
+        &self,
+        route_checkpoint_sha256: Digest,
+        state_sha256: Digest,
+    ) -> bool {
+        self.tactic_entries.values().any(|entry| {
+            entry.route_checkpoint_sha256 == route_checkpoint_sha256
+                && entry.transition.after_state_sha256 == state_sha256
+        })
+    }
+
     pub fn tactic_route_checkpoints(&self) -> impl Iterator<Item = Digest> + '_ {
         self.tactic_entries
             .values()
@@ -1166,6 +1187,12 @@ mod tests {
             selected[0].route_checkpoint_sha256,
             transition.next_checkpoint_sha256
         );
+        assert_eq!(archive.tactic_frontiers(), selected);
+        assert!(archive.contains_tactic_frontier(
+            transition.next_checkpoint_sha256,
+            transition.after_state_sha256
+        ));
+        assert!(!archive.contains_tactic_frontier(Digest([8; 32]), transition.after_state_sha256));
 
         let mut better = transition.clone();
         better.value_sample.reward = 2.0;

@@ -832,7 +832,7 @@ impl TacticQCampaign {
         &self,
         seed: u64,
         round: u64,
-        reference: &[TacticEndpointDescriptor],
+        _reference: &[TacticEndpointDescriptor],
         maximum_route_frames: usize,
     ) -> Result<[TacticCampaignBranch; 2], TacticQCampaignError> {
         let first = self
@@ -862,7 +862,7 @@ impl TacticQCampaign {
         };
         let archive = self.frontier_archive()?;
         let choices = archive
-            .select_tactic_frontier(reference, archive.tactic_len())
+            .tactic_frontiers()
             .into_iter()
             .filter(|entry| entry.route_tape.frames.len() <= maximum_route_frames)
             .collect::<Vec<_>>();
@@ -930,7 +930,7 @@ impl TacticQCampaign {
         let root_frames = root.route_tape.frames.len();
         let archive = self.frontier_archive()?;
         let mut choices = archive
-            .select_tactic_frontier(reference, archive.tactic_len())
+            .tactic_frontiers()
             .into_iter()
             .filter(|entry| entry.route_tape.frames.len() <= maximum_route_frames)
             .collect::<Vec<_>>();
@@ -1164,13 +1164,10 @@ impl TacticQCampaign {
                 first.before_state_sha256 == branch.logical_frontier.state_sha256
                     && first.source_checkpoint_sha256 == branch.logical_frontier.identity_sha256
             }),
-            TacticBranchKind::RetainedFrontier => frontier
-                .select_tactic_frontier(&[], frontier.tactic_len())
-                .iter()
-                .any(|entry| {
-                    entry.transition.after_state_sha256 == branch.logical_frontier.state_sha256
-                        && entry.route_checkpoint_sha256 == branch.logical_frontier.identity_sha256
-                }),
+            TacticBranchKind::RetainedFrontier => frontier.contains_tactic_frontier(
+                branch.logical_frontier.identity_sha256,
+                branch.logical_frontier.state_sha256,
+            ),
         };
         if !admitted
             || self.episode_groups.contains(&episode_group)
