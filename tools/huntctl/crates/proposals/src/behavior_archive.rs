@@ -314,7 +314,34 @@ impl BehaviorArchive {
         reference: &[TacticEndpointDescriptor],
         budget: usize,
     ) -> Vec<TacticFrontierEntry> {
-        let mut pool = self.tactic_entries.values().cloned().collect::<Vec<_>>();
+        self.select_tactic_frontier_matching(reference, budget, |_| true)
+    }
+
+    /// Select a semantically diverse frontier without admitting routes that
+    /// cannot fit the caller's remaining execution horizon.
+    pub fn select_tactic_frontier_within_route_frames(
+        &self,
+        reference: &[TacticEndpointDescriptor],
+        budget: usize,
+        maximum_route_frames: usize,
+    ) -> Vec<TacticFrontierEntry> {
+        self.select_tactic_frontier_matching(reference, budget, |entry| {
+            entry.route_tape.frames.len() <= maximum_route_frames
+        })
+    }
+
+    fn select_tactic_frontier_matching(
+        &self,
+        reference: &[TacticEndpointDescriptor],
+        budget: usize,
+        mut eligible: impl FnMut(&TacticFrontierEntry) -> bool,
+    ) -> Vec<TacticFrontierEntry> {
+        let mut pool = self
+            .tactic_entries
+            .values()
+            .filter(|entry| eligible(entry))
+            .cloned()
+            .collect::<Vec<_>>();
         let mut selected: Vec<TacticFrontierEntry> = Vec::new();
         while selected.len() < budget && !pool.is_empty() {
             let index = pool
@@ -1183,6 +1210,11 @@ mod tests {
         let selected = archive.select_tactic_frontier(&[], 1);
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].route_tape, route);
+        assert!(
+            archive
+                .select_tactic_frontier_within_route_frames(&[], 1, route.frames.len() - 1)
+                .is_empty()
+        );
         assert_eq!(
             selected[0].route_checkpoint_sha256,
             transition.next_checkpoint_sha256

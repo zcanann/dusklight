@@ -317,14 +317,12 @@ impl TacticQCampaign {
 
     /// Return the authenticated root plus one learned frontier acquisition.
     ///
-    /// Authenticated terminal state and shared predicted future return over the
-    /// actions executable at the endpoint determine exploitation. Expansion
-    /// count, model distance, and exact-critic variance then preserve generic
-    /// exploration pressure. Keeping coverage behind learned return is
-    /// important because every batch adds several fresh siblings: a hard
-    /// least-expanded tier otherwise prevents the learner from revisiting and
-    /// deepening a valuable frontier. The last edge's immediate cost is
-    /// evidence only, not a myopic frontier-ordering rule.
+    /// Before any authenticated terminal supervision exists, least-expanded
+    /// farthest-first semantic frontiers drive acquisition; sparse action cost
+    /// alone cannot say which branch approaches the objective. Once terminal
+    /// evidence exists, learned total first-hit cost and predicted future
+    /// return take over, with coverage and uncertainty as tie-breakers. The
+    /// last edge's immediate cost is evidence only, not a myopic ordering rule.
     pub fn sample_root_and_ranked_frontier<E, AE, F, A>(
         &self,
         seed: u64,
@@ -346,11 +344,11 @@ impl TacticQCampaign {
             self.sample_root_and_frontier(seed, round, reference, maximum_route_frames)?;
         let root_frames = root.route_tape.frames.len();
         let archive = self.frontier_archive()?;
-        let mut choices = archive
-            .tactic_frontiers()
-            .into_iter()
-            .filter(|entry| entry.route_tape.frames.len() <= maximum_route_frames)
-            .collect::<Vec<_>>();
+        let mut choices = archive.select_tactic_frontier_within_route_frames(
+            reference,
+            archive.tactic_len(),
+            maximum_route_frames,
+        );
         if demonstration_curriculum {
             let demonstration_endpoints = self
                 .training_replay
@@ -390,6 +388,10 @@ impl TacticQCampaign {
         }
         let tie_offset = seeded_frontier_index(seed, round, choices.len());
         let choice_count = choices.len();
+        let terminal_value_supported = self
+            .training_replay
+            .iter()
+            .any(|transition| transition.value_sample.terminal);
         let generalized_model = if !demonstration_curriculum
             && self.value_treatment == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
         {
@@ -506,6 +508,7 @@ impl TacticQCampaign {
                 let acquisition = TacticFrontierAcquisition {
                     expansion_count,
                     terminal: entry.transition.value_sample.terminal,
+                    terminal_value_supported,
                     reward: entry.transition.value_sample.reward,
                     best_mean_q,
                     predicted_terminal_ticks_to_go,

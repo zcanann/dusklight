@@ -235,6 +235,11 @@ pub struct TacticCampaignBranch {
 pub struct TacticFrontierAcquisition {
     pub expansion_count: u64,
     pub terminal: bool,
+    /// True once authenticated replay contains terminal supervision. Before
+    /// then, sparse return only measures action cost and must not masquerade
+    /// as evidence that a frontier leads to the objective.
+    #[serde(default)]
+    pub terminal_value_supported: bool,
     pub reward: f32,
     pub best_mean_q: Option<f64>,
     /// Learned terminal-supported cost from the frontier through first hit.
@@ -829,6 +834,30 @@ fn compare_frontier_acquisition(
     if terminal != std::cmp::Ordering::Equal {
         return terminal;
     }
+    if !left.terminal_value_supported && !right.terminal_value_supported {
+        // With no authenticated terminal sample, sparse return is only the
+        // negative duration already spent. Treating it as goal evidence traps
+        // acquisition near cheap, shallow actions. Cover the farthest-first
+        // semantic archive until real terminal supervision exists.
+        return left
+            .expansion_count
+            .cmp(&right.expansion_count)
+            .then_with(|| left.novelty_rank.cmp(&right.novelty_rank))
+            .then_with(|| {
+                option_f64(right.generalized_nearest_distance.map(f64::from)).total_cmp(
+                    &option_f64(left.generalized_nearest_distance.map(f64::from)),
+                )
+            })
+            .then_with(|| {
+                option_f64(right.maximum_ensemble_variance)
+                    .total_cmp(&option_f64(left.maximum_ensemble_variance))
+            });
+    }
+    if left.terminal_value_supported != right.terminal_value_supported {
+        return right
+            .terminal_value_supported
+            .cmp(&left.terminal_value_supported);
+    }
     match (
         left.predicted_total_terminal_ticks,
         right.predicted_total_terminal_ticks,
@@ -842,7 +871,9 @@ fn compare_frontier_acquisition(
                 .total_cmp(&right_ticks)
                 .then_with(|| left.expansion_count.cmp(&right.expansion_count))
         }
-        _ => option_f64(right.best_mean_q)
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => option_f64(right.best_mean_q)
             .total_cmp(&option_f64(left.best_mean_q))
             .then_with(|| left.expansion_count.cmp(&right.expansion_count))
             .then_with(|| {

@@ -32,6 +32,7 @@ fn frontier_learning_value_precedes_the_last_edges_immediate_cost() {
     let valuable = TacticFrontierAcquisition {
         expansion_count: 0,
         terminal: false,
+        terminal_value_supported: true,
         reward: -0.4,
         best_mean_q: Some(10.0),
         predicted_terminal_ticks_to_go: None,
@@ -59,6 +60,7 @@ fn frontier_learning_value_precedes_coverage_count() {
     let valuable = TacticFrontierAcquisition {
         expansion_count: 3,
         terminal: false,
+        terminal_value_supported: true,
         reward: -0.4,
         best_mean_q: Some(10.0),
         predicted_terminal_ticks_to_go: None,
@@ -81,10 +83,72 @@ fn frontier_learning_value_precedes_coverage_count() {
 }
 
 #[test]
+fn cold_start_frontier_coverage_precedes_unsupported_sparse_return() {
+    let cheap_shallow = TacticFrontierAcquisition {
+        expansion_count: 1,
+        terminal: false,
+        terminal_value_supported: false,
+        reward: -0.04,
+        best_mean_q: Some(10.0),
+        predicted_terminal_ticks_to_go: None,
+        predicted_total_terminal_ticks: None,
+        maximum_ensemble_variance: Some(0.1),
+        generalized_nearest_distance: Some(0.1),
+        novelty_rank: 0,
+        replayed_prefix_ticks: 4,
+    };
+    let fresh_semantic_frontier = TacticFrontierAcquisition {
+        expansion_count: 0,
+        reward: -0.4,
+        best_mean_q: Some(1.0),
+        maximum_ensemble_variance: Some(1.0),
+        generalized_nearest_distance: Some(1.0),
+        novelty_rank: 1,
+        replayed_prefix_ticks: 40,
+        ..cheap_shallow.clone()
+    };
+
+    assert_eq!(
+        compare_frontier_acquisition(&fresh_semantic_frontier, &cheap_shallow),
+        std::cmp::Ordering::Less
+    );
+}
+
+#[test]
+fn terminal_supported_prediction_precedes_unsupported_q_estimate() {
+    let supported = TacticFrontierAcquisition {
+        expansion_count: 2,
+        terminal: false,
+        terminal_value_supported: true,
+        reward: -0.4,
+        best_mean_q: Some(2.0),
+        predicted_terminal_ticks_to_go: Some(80.0),
+        predicted_total_terminal_ticks: Some(120.0),
+        maximum_ensemble_variance: None,
+        generalized_nearest_distance: Some(0.1),
+        novelty_rank: 1,
+        replayed_prefix_ticks: 40,
+    };
+    let unsupported = TacticFrontierAcquisition {
+        expansion_count: 0,
+        best_mean_q: Some(99.0),
+        predicted_terminal_ticks_to_go: None,
+        predicted_total_terminal_ticks: None,
+        ..supported.clone()
+    };
+
+    assert_eq!(
+        compare_frontier_acquisition(&supported, &unsupported),
+        std::cmp::Ordering::Less
+    );
+}
+
+#[test]
 fn frontier_terminal_cost_includes_the_replayed_prefix() {
     let earlier = TacticFrontierAcquisition {
         expansion_count: 0,
         terminal: false,
+        terminal_value_supported: true,
         reward: -0.4,
         best_mean_q: Some(99.0),
         predicted_terminal_ticks_to_go: Some(84.0),
@@ -113,6 +177,7 @@ fn equal_terminal_cost_prefers_the_less_expanded_frontier() {
     let fresh = TacticFrontierAcquisition {
         expansion_count: 0,
         terminal: false,
+        terminal_value_supported: true,
         reward: -0.4,
         best_mean_q: Some(99.0),
         predicted_terminal_ticks_to_go: Some(86.0),
@@ -829,6 +894,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert!(ranked_root.acquisition.is_none());
     let acquisition = ranked_frontier.acquisition.as_ref().unwrap();
     assert_eq!(acquisition.expansion_count, 0);
+    assert!(!acquisition.terminal_value_supported);
     assert_eq!(
         acquisition.replayed_prefix_ticks,
         ranked_frontier.logical_frontier.replayed_prefix_ticks
