@@ -104,6 +104,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V20: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V21: &str = "dusklight-native-tactic-route-report/v21";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V22: &str = "dusklight-native-tactic-route-report/v22";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V23: &str = "dusklight-native-tactic-route-report/v23";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V24: &str = "dusklight-native-tactic-route-report/v24";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -531,6 +532,7 @@ pub fn run_native_tactic_route(
         .map(|(_, result)| result)
         .collect::<Vec<_>>();
     let useful_decisions = seed_results.iter().map(|seed| seed.useful_decisions).sum();
+    let learner_updates = seed_results.iter().map(|seed| seed.learner_updates).sum();
     let mut native_restore_accounting = NativeTacticRestoreAccounting::default();
     for seed in &seed_results {
         native_restore_accounting.merge(&seed.native_restore_accounting);
@@ -581,7 +583,8 @@ pub fn run_native_tactic_route(
             },
         );
     let replay_control_plane = lock_replay_control_plane(&replay_control_plane)?;
-    let final_replay_snapshot = replay_control_plane.replay_snapshot();
+    let final_replay = replay_control_plane.snapshot().map_err(route_error)?;
+    let final_replay_snapshot = final_replay.version;
     let replay_admission = replay_control_plane.invocation_metrics();
     let replay_sharing = seed_results.iter().fold(
         NativeTacticReplaySharingTelemetry::default(),
@@ -590,8 +593,11 @@ pub fn run_native_tactic_route(
             total
         },
     );
+    let useful_training_transitions =
+        useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
+    let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V23.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V24.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
@@ -628,6 +634,16 @@ pub fn run_native_tactic_route(
             .saturating_add(tactic_macro_discovery.validation_native_ticks),
         total_decisions: seed_results.iter().map(|seed| seed.decisions).sum(),
         useful_decisions,
+        learner_updates,
+        learner_updates_per_second_millionths: per_second_millionths(
+            learner_updates,
+            timing.wall_micros,
+        ),
+        useful_training_transitions,
+        useful_transitions_per_learner_update_millionths: ratio_per_million(
+            useful_training_transitions,
+            learner_updates,
+        ),
         learned_episodes_per_generation: config
             .execution_plan
             .generations
@@ -647,6 +663,7 @@ pub fn run_native_tactic_route(
             .iter()
             .map(|seed| seed.duplicate_training_transitions)
             .sum(),
+        censored_training_transitions,
         replay_sharing,
         frontier_availability,
         native_restore_accounting,
@@ -681,8 +698,9 @@ mod campaign;
 use campaign::{NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1, run_seed};
 mod timing_metrics;
 use timing_metrics::{
-    aggregate_route_timing, decision_evaluated_ticks, decision_trace_is_useful, elapsed_micros,
-    per_second_millionths, ratio_per_million, refresh_route_throughput,
+    aggregate_route_timing, censored_training_transitions, decision_evaluated_ticks,
+    decision_trace_is_useful, elapsed_micros, per_second_millionths, ratio_per_million,
+    refresh_route_throughput, useful_training_transitions,
 };
 mod candidate_retention;
 use candidate_retention::{

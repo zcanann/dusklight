@@ -716,6 +716,8 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
         training_replay_rows: 12,
         imported_training_replay_rows: 0,
         duplicate_training_transitions: 4,
+        censored_training_transitions: 0,
+        learner_updates: 3,
         replay_sharing: NativeTacticReplaySharingTelemetry::default(),
         visited_states: 3,
         useful_decisions: 2,

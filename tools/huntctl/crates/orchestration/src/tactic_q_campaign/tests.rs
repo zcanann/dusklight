@@ -445,9 +445,21 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         .unwrap();
     assert_eq!(campaign.decision_index, 0);
     assert!(campaign.replay.is_empty());
+    let episode_group = campaign.episode_group;
+    assert!(
+        campaign
+            .admit_evaluated_replay(
+                &[evaluated.clone(), evaluated.clone()],
+                &[episode_group, episode_group],
+            )
+            .is_err()
+    );
     assert_eq!(
         campaign
-            .admit_evaluated_replay(&[evaluated.clone(), evaluated.clone()])
+            .admit_evaluated_replay(
+                &[evaluated.clone(), evaluated.clone()],
+                &[episode_group, episode_group + 1],
+            )
             .unwrap(),
         1
     );
@@ -487,8 +499,9 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     );
     assert_eq!(campaign.visited_state_count(), 1);
 
+    let expected_fitted_snapshot = campaign.learner_snapshot().unwrap();
     let checkpoint = campaign.checkpoint().unwrap();
-    assert_eq!(checkpoint.schema, TACTIC_Q_CHECKPOINT_SCHEMA_V3);
+    assert_eq!(checkpoint.schema, TACTIC_Q_CHECKPOINT_SCHEMA_V4);
     assert_eq!(
         checkpoint.execution_authority_sha256,
         execution_authority_sha256
@@ -506,6 +519,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert_eq!(restored.replay_routes, campaign.replay_routes);
     assert!(restored.model().is_some());
     let fitted_snapshot = restored.learner_snapshot().unwrap();
+    assert_eq!(fitted_snapshot, expected_fitted_snapshot);
     assert_eq!(fitted_snapshot.training_replay_rows, 1);
     assert!(fitted_snapshot.model_sha256.is_some());
     assert_ne!(
@@ -1014,6 +1028,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     let reused_model = uninterrupted.generalized_model(0).unwrap().unwrap();
     assert!(Arc::ptr_eq(&cached_model, &reused_model));
     uninterrupted.model_revision = uninterrupted.model_revision.saturating_add(1);
+    resumed.model_revision = resumed.model_revision.saturating_add(1);
     let refitted_model = uninterrupted.generalized_model(0).unwrap().unwrap();
     assert!(!Arc::ptr_eq(&cached_model, &refitted_model));
     assert_eq!(uninterrupted_step, resumed_step);

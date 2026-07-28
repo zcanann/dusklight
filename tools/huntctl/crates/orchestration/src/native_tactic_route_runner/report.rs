@@ -42,10 +42,15 @@ pub struct NativeTacticRouteReport {
     pub total_native_ticks: u64,
     pub total_decisions: u64,
     pub useful_decisions: u64,
+    pub learner_updates: u64,
+    pub learner_updates_per_second_millionths: u64,
+    pub useful_training_transitions: u64,
+    pub useful_transitions_per_learner_update_millionths: u64,
     pub learned_episodes_per_generation: usize,
     pub training_replay_rows: u64,
     pub shared_training_replay_rows: u64,
     pub duplicate_training_transitions: u64,
+    pub censored_training_transitions: u64,
     pub replay_sharing: NativeTacticReplaySharingTelemetry,
     pub frontier_availability: NativeTacticFrontierAvailability,
     pub native_restore_accounting: NativeTacticRestoreAccounting,
@@ -307,6 +312,10 @@ pub struct NativeTacticSeedResult {
     pub imported_training_replay_rows: usize,
     #[serde(default)]
     pub duplicate_training_transitions: u64,
+    #[serde(default)]
+    pub censored_training_transitions: u64,
+    #[serde(default)]
+    pub learner_updates: u64,
     #[serde(default)]
     pub replay_sharing: NativeTacticReplaySharingTelemetry,
     pub visited_states: usize,

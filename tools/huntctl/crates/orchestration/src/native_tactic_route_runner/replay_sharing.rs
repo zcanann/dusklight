@@ -71,10 +71,15 @@ impl BoundedStalenessReplaySession {
         publisher_decision: u64,
         learner_snapshot_sha256: Digest,
         evaluated: &[EvaluatedRewardedTacticOutcome],
-        episode_group: u64,
+        episode_groups: &[u64],
     ) -> Result<(), NativeTacticRouteRunError> {
+        if evaluated.len() != episode_groups.len() {
+            return Err(route_message(
+                "published tactic replay batch has detached episode lineages",
+            ));
+        }
         let mut replay = lock_replay_control_plane(&self.replay)?;
-        for proposal in evaluated {
+        for (proposal, episode_group) in evaluated.iter().zip(episode_groups) {
             replay
                 .publish(
                     self.publisher_lane,
@@ -82,7 +87,7 @@ impl BoundedStalenessReplaySession {
                     learner_snapshot_sha256,
                     &proposal.transition,
                     &proposal.outcome.route_tape,
-                    episode_group,
+                    *episode_group,
                 )
                 .map_err(route_error)?;
         }

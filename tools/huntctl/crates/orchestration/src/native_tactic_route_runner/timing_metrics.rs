@@ -41,6 +41,49 @@ pub(super) fn ratio_per_million(numerator: u64, denominator: u64) -> u64 {
     u64::try_from(scaled).unwrap_or(u64::MAX)
 }
 
+fn censored_episode_end_count(rows: impl IntoIterator<Item = (u64, bool)>) -> u64 {
+    let mut episode_ends = BTreeMap::<u64, bool>::new();
+    for (episode_group, terminal) in rows {
+        episode_ends.insert(episode_group, terminal);
+    }
+    episode_ends.values().filter(|terminal| !**terminal).count() as u64
+}
+
+pub(super) fn censored_training_transitions(corpus: &TacticQTrainingCorpus) -> u64 {
+    censored_episode_end_count(
+        corpus
+            .transitions
+            .iter()
+            .zip(&corpus.episode_groups)
+            .map(|(transition, episode_group)| (*episode_group, transition.value_sample.terminal)),
+    )
+}
+
+pub(super) fn useful_training_transitions(
+    corpus: &TacticQTrainingCorpus,
+    goal_distance_feature: usize,
+) -> u64 {
+    corpus
+        .transitions
+        .iter()
+        .filter(|transition| {
+            transition.value_sample.terminal
+                || transition.value_sample.reward > 0.0
+                || transition
+                    .value_sample
+                    .state
+                    .get(goal_distance_feature)
+                    .zip(
+                        transition
+                            .value_sample
+                            .next_state
+                            .get(goal_distance_feature),
+                    )
+                    .is_some_and(|(before, after)| after < before)
+        })
+        .count() as u64
+}
+
 pub(super) fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> NativeTacticRouteTiming {
     let mut timing = NativeTacticRouteTiming::default();
     for seed in seeds {
@@ -86,4 +129,17 @@ pub(super) fn refresh_route_throughput(
     timing.native_ticks_per_second_millionths =
         per_second_millionths(native_ticks, timing.wall_micros);
     timing.episodes_per_second_millionths = per_second_millionths(episodes, timing.wall_micros);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::censored_episode_end_count;
+
+    #[test]
+    fn only_non_terminal_episode_ends_are_censored() {
+        assert_eq!(
+            censored_episode_end_count([(10, false), (10, true), (20, false), (30, false)]),
+            2
+        );
+    }
 }

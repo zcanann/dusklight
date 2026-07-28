@@ -75,17 +75,13 @@ same tie is diagnostic evidence only.
 - First-hit comparisons must bind the same source checkpoint, terminal
   predicate, game bytes, card fixture, fidelity, and source boundary.
 
-## P1 - Finish shared replay capacity evidence
+## P1 - Prove shared replay scales learner throughput
 
-- [ ] Measure learner updates per second, useful transitions per update, and
-      explicitly censored rows. Replay admission latency, exact duplicates,
-      refresh counts, imported rows, and maximum observed snapshot staleness
-      are already reported by the campaign authority.
-
-Acceptance:
-
-- Scaling worker count increases useful learner updates instead of merely
-  multiplying independent searches.
+- [ ] Run a fixed-plan multi-worker comparison and prove that scaling worker
+      count increases useful learner updates instead of merely multiplying
+      independent searches. Compare learner updates per second, useful
+      transitions per update, censored rows, replay admission latency, exact
+      duplicates, refreshes, imported rows, and maximum snapshot staleness.
 
 ## P2 - Make native checkpointing buy throughput
 

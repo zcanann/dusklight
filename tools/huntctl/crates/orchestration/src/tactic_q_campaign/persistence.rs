@@ -3,7 +3,7 @@ use super::*;
 impl TacticQCampaign {
     pub fn checkpoint(&self) -> Result<TacticQCampaignCheckpoint, TacticQCampaignError> {
         let mut checkpoint = TacticQCampaignCheckpoint {
-            schema: TACTIC_Q_CHECKPOINT_SCHEMA_V3.into(),
+            schema: TACTIC_Q_CHECKPOINT_SCHEMA_V4.into(),
             content_sha256: Digest::ZERO,
             execution_authority_sha256: self.execution_authority_sha256,
             feature_schema_sha256: self.feature_schema_sha256,
@@ -19,6 +19,7 @@ impl TacticQCampaign {
             training_replay: self.training_replay.clone(),
             training_replay_routes: self.training_replay_routes.clone(),
             training_episode_groups: self.training_episode_groups.clone(),
+            model_revision: self.model_revision,
             model_config: self.model_config.clone(),
             exploration: self.exploration,
         };
@@ -187,7 +188,7 @@ impl TacticQCampaign {
             model_config: checkpoint.model_config,
             exploration: checkpoint.exploration,
             model,
-            model_revision: 0,
+            model_revision: checkpoint.model_revision,
             generalized_model: RefCell::new(None),
             visited_states,
             hindsight,

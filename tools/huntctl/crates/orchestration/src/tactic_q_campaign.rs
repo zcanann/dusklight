@@ -56,6 +56,7 @@ use std::sync::Arc;
 pub const TACTIC_Q_CAMPAIGN_SCHEMA_V1: &str = "dusklight-tactic-q-campaign/v1";
 pub const TACTIC_Q_CHECKPOINT_SCHEMA_V2: &str = "dusklight-tactic-q-checkpoint/v2";
 pub const TACTIC_Q_CHECKPOINT_SCHEMA_V3: &str = "dusklight-tactic-q-checkpoint/v3";
+pub const TACTIC_Q_CHECKPOINT_SCHEMA_V4: &str = "dusklight-tactic-q-checkpoint/v4";
 pub const TACTIC_Q_CHECKPOINT_EXTENSION: &str = "dtqz";
 pub const TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1: &str =
     "dusklight-tactic-q-checkpoint-serialization-benchmark/v1";
@@ -77,6 +78,10 @@ const ROUTE_CHECKPOINT_SCHEMA_V1: &[u8] = b"dusklight-route-checkpoint/v1";
 
 fn digest_is_zero(value: &Digest) -> bool {
     *value == Digest::ZERO
+}
+
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -142,6 +147,8 @@ pub struct TacticQCampaignCheckpoint {
     pub training_replay_routes: Vec<InputTape>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub training_episode_groups: Vec<u64>,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub model_revision: u64,
     pub model_config: OptionValueConfig,
     pub exploration: TacticExplorationConfig,
 }
@@ -613,6 +620,10 @@ impl TacticQCampaign {
         self.model.as_ref()
     }
 
+    pub fn model_revision(&self) -> u64 {
+        self.model_revision
+    }
+
     pub fn learner_snapshot(&self) -> Result<TacticQLearnerSnapshot, TacticQCampaignError> {
         let model_sha256 = self
             .model
@@ -986,8 +997,9 @@ pub(crate) fn validate_checkpoint(
         .validate()
         .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
     let legacy = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V2;
-    let current = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V3;
-    if (!legacy && !current)
+    let shared_replay = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V3;
+    let current = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V4;
+    if (!legacy && !shared_replay && !current)
         || checkpoint.content_sha256 == Digest::ZERO
         || checkpoint.content_sha256 != checkpoint_digest(checkpoint)?
         || checkpoint.feature_schema_sha256 == Digest::ZERO
@@ -1001,10 +1013,11 @@ pub(crate) fn validate_checkpoint(
             && (!checkpoint.training_replay.is_empty()
                 || !checkpoint.training_replay_routes.is_empty()
                 || !checkpoint.training_episode_groups.is_empty()))
-        || (current
+        || ((shared_replay || current)
             && (checkpoint.training_replay.len() != checkpoint.training_replay_routes.len()
                 || checkpoint.training_replay.len() != checkpoint.training_episode_groups.len()
                 || checkpoint.training_replay.len() < checkpoint.replay.len()))
+        || (shared_replay && checkpoint.model_revision != 0)
         || checkpoint.current.snapshot.tape_frame != checkpoint.route_tape.frames.len() as u64
     {
         return Err(TacticQCampaignError::InvalidState(

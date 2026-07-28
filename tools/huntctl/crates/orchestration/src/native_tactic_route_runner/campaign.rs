@@ -21,6 +21,8 @@ pub(super) fn run_seed(
     seed_index: usize,
     seed: u64,
 ) -> Result<CompletedNativeTacticSeed, NativeTacticRouteRunError> {
+    let invocation_started = Instant::now();
+    let mut setup_model_update_micros = 0_u64;
     let execution_plan_sha256 = config.execution_plan.identity()?;
     let lane = config
         .execution_plan
@@ -59,9 +61,14 @@ pub(super) fn run_seed(
         let mut resumed_campaign = resumed.0;
         let imported = if config.execution_plan.proposal_policy == TacticProposalPolicy::Learned {
             if live_replay.is_some() {
-                resumed_campaign
+                let model_started = Instant::now();
+                let admitted = resumed_campaign
                     .import_training_corpora(shared_training)
                     .map_err(route_error)?;
+                if admitted > 0 {
+                    setup_model_update_micros = setup_model_update_micros
+                        .saturating_add(elapsed_micros(model_started.elapsed()));
+                }
             }
             shared_training_unique_rows(shared_training)?
         } else {
@@ -112,9 +119,15 @@ pub(super) fn run_seed(
             .bind_execution_authority(execution_plan_sha256)
             .map_err(route_error)?;
         let imported = if config.execution_plan.proposal_policy == TacticProposalPolicy::Learned {
-            campaign
+            let model_started = Instant::now();
+            let imported = campaign
                 .import_training_corpora(shared_training)
-                .map_err(route_error)?
+                .map_err(route_error)?;
+            if imported > 0 {
+                setup_model_update_micros =
+                    setup_model_update_micros.saturating_add(elapsed_micros(model_started.elapsed()));
+            }
+            imported
         } else {
             0
         };
@@ -134,9 +147,11 @@ pub(super) fn run_seed(
         }
     };
     let mut timing = performance.timing;
+    timing.model_update_micros = timing
+        .model_update_micros
+        .saturating_add(setup_model_update_micros);
     let mut native_restore_accounting = performance.native_restore_accounting;
     let prior_wall_micros = timing.wall_micros;
-    let invocation_started = Instant::now();
     let mut useful_decisions = if has_performance {
         performance.useful_decisions
     } else {
@@ -210,7 +225,12 @@ pub(super) fn run_seed(
             return Err(route_cancelled("native tactic route paused"));
         }
         if let Some(session) = replay_session.as_mut() {
-            session.refresh_if_required(&mut campaign)?;
+            let model_started = Instant::now();
+            if session.refresh_if_required(&mut campaign)? > 0 {
+                timing.model_update_micros = timing
+                    .model_update_micros
+                    .saturating_add(elapsed_micros(model_started.elapsed()));
+            }
         }
         let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
         let demonstration_coverage_pending = demonstration_curriculum
@@ -344,10 +364,14 @@ pub(super) fn run_seed(
             timing.tactic_selection_micros = timing
                 .tactic_selection_micros
                 .saturating_add(elapsed_micros(selection_started.elapsed()));
-            if let Some(session) = replay_session.as_mut()
-                && session.refresh_if_required(&mut campaign)? > 0
-            {
-                continue;
+            if let Some(session) = replay_session.as_mut() {
+                let model_started = Instant::now();
+                if session.refresh_if_required(&mut campaign)? > 0 {
+                    timing.model_update_micros = timing
+                        .model_update_micros
+                        .saturating_add(elapsed_micros(model_started.elapsed()));
+                    continue;
+                }
             }
             let primary = preview
                 .proposals
@@ -543,12 +567,28 @@ pub(super) fn run_seed(
                     .map_err(route_error)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let evaluated_episode_groups = evaluated
+            .iter()
+            .enumerate()
+            .map(|(proposal_index, _)| {
+                if proposal_index == 0 {
+                    Ok(decision_episode_group)
+                } else {
+                    lane.counterfactual_episode_group(
+                        decision_index,
+                        proposal_index,
+                        config.execution_plan.budgets.decisions_per_lane,
+                        config.execution_plan.proposal_width_per_decision,
+                    )
+                }
+            })
+            .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
         if let Some(session) = replay_session.as_ref() {
             session.publish_evaluated(
                 decision_index,
                 learner_snapshot_sha256,
                 &evaluated,
-                decision_episode_group,
+                &evaluated_episode_groups,
             )?;
         }
         let execution_elapsed = execution_started.elapsed();
@@ -586,7 +626,8 @@ pub(super) fn run_seed(
             ))
         });
         let model_started = Instant::now();
-        let newly_admitted_training_rows = campaign.admit_evaluated_replay(&evaluated)? as u64;
+        let newly_admitted_training_rows =
+            campaign.admit_evaluated_replay(&evaluated, &evaluated_episode_groups)? as u64;
         let duplicate_training_transitions = evaluated
             .len()
             .saturating_sub(newly_admitted_training_rows as usize)
@@ -901,6 +942,11 @@ pub(super) fn run_seed(
         .as_ref()
         .map(BoundedStalenessReplaySession::telemetry)
         .unwrap_or_default();
+    let generated_training_rows = generated_training.transitions.len() as u64;
+    let duplicate_training_transitions = native_restore_accounting
+        .proposal_transitions
+        .saturating_sub(generated_training_rows);
+    let censored_training_transitions = censored_training_transitions(&generated_training);
     Ok(CompletedNativeTacticSeed {
         result: NativeTacticSeedResult {
             execution_plan_sha256,
@@ -912,13 +958,9 @@ pub(super) fn run_seed(
             replay_rows: campaign.replay.len(),
             training_replay_rows: campaign.training_replay_len(),
             imported_training_replay_rows,
-            duplicate_training_transitions: native_restore_accounting
-                .proposal_transitions
-                .saturating_sub(
-                    campaign
-                        .training_replay_len()
-                        .saturating_sub(imported_training_replay_rows) as u64,
-                ),
+            duplicate_training_transitions,
+            censored_training_transitions,
+            learner_updates: campaign.model_revision(),
             replay_sharing,
             visited_states: campaign.visited_state_count(),
             useful_decisions,

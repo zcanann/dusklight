@@ -7,7 +7,7 @@ const PLAN_MAGIC: &[u8; 8] = b"DSKTPN01";
 const PLAN_VERSION: u16 = 1;
 const PLAN_HEADER_BYTES: usize = 8 + 2 + 8 + 32;
 const MAXIMUM_PLAN_BYTES: usize = 4 * 1024 * 1024;
-const EPISODE_GROUP_STRIDE: u64 = 1_000_000;
+pub(super) const EPISODE_GROUP_STRIDE: u64 = 1_000_000;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -86,6 +86,41 @@ impl NativeTacticLanePlan {
     pub fn owns_episode_group(&self, episode_group: u64) -> bool {
         episode_group >= self.episode_group_base
             && episode_group < self.episode_group_base.saturating_add(EPISODE_GROUP_STRIDE)
+    }
+
+    pub fn counterfactual_episode_group(
+        &self,
+        decision_index: u64,
+        proposal_index: usize,
+        decisions_per_lane: u64,
+        proposal_width_per_decision: usize,
+    ) -> Result<u64, NativeTacticRouteRunError> {
+        if decision_index >= decisions_per_lane
+            || proposal_index == 0
+            || proposal_index >= proposal_width_per_decision
+        {
+            return Err(route_message(
+                "counterfactual tactic episode identity is outside its execution plan",
+            ));
+        }
+        let sibling_width = u64::try_from(proposal_width_per_decision - 1).map_err(route_error)?;
+        let sibling_index = u64::try_from(proposal_index - 1).map_err(route_error)?;
+        let offset = decisions_per_lane
+            .checked_add(
+                decision_index
+                    .checked_mul(sibling_width)
+                    .ok_or_else(|| route_message("counterfactual episode group overflowed"))?,
+            )
+            .and_then(|value| value.checked_add(sibling_index))
+            .ok_or_else(|| route_message("counterfactual episode group overflowed"))?;
+        if offset >= EPISODE_GROUP_STRIDE {
+            return Err(route_message(
+                "counterfactual tactic episode identity exceeds its lane",
+            ));
+        }
+        self.episode_group_base
+            .checked_add(offset)
+            .ok_or_else(|| route_message("counterfactual episode group overflowed"))
     }
 }
 
@@ -191,7 +226,11 @@ impl NativeTacticExecutionPlan {
             || request.branch_every_decisions > request.budgets.decisions_per_lane
             || request.refit_every_decisions > request.budgets.decisions_per_lane
             || request.budgets.decisions_per_lane == 0
-            || request.budgets.decisions_per_lane >= EPISODE_GROUP_STRIDE
+            || request
+                .budgets
+                .decisions_per_lane
+                .checked_mul(request.proposal_width_per_decision as u64)
+                .is_none_or(|groups| groups > EPISODE_GROUP_STRIDE)
             || request.epsilon_per_million > 1_000_000
             || request.demonstration_chunk_ticks == Some(0)
             || (matches!(
@@ -344,6 +383,11 @@ impl NativeTacticExecutionPlan {
             || self.seeds.len() != self.lanes.len()
             || self.generations.is_empty()
             || self
+                .budgets
+                .decisions_per_lane
+                .checked_mul(self.proposal_width_per_decision as u64)
+                .is_none_or(|groups| groups > EPISODE_GROUP_STRIDE)
+            || self
                 .lanes
                 .iter()
                 .enumerate()
@@ -447,6 +491,37 @@ mod tests {
             maximum_stale_replay_revisions: 0,
         };
         assert!(NativeTacticExecutionPlan::build(freshest).is_ok());
+    }
+
+    #[test]
+    fn counterfactual_siblings_receive_distinct_censored_episode_lineages() {
+        let plan = NativeTacticExecutionPlan::build(request()).unwrap();
+        let lane = &plan.lanes[0];
+        let retained = lane.episode_group(3).unwrap();
+        let first = lane
+            .counterfactual_episode_group(
+                7,
+                1,
+                plan.budgets.decisions_per_lane,
+                plan.proposal_width_per_decision,
+            )
+            .unwrap();
+        let second = lane
+            .counterfactual_episode_group(
+                7,
+                2,
+                plan.budgets.decisions_per_lane,
+                plan.proposal_width_per_decision,
+            )
+            .unwrap();
+        assert_ne!(retained, first);
+        assert_ne!(first, second);
+        assert!(lane.owns_episode_group(first));
+        assert!(lane.owns_episode_group(second));
+
+        let mut oversized = request();
+        oversized.budgets.decisions_per_lane = EPISODE_GROUP_STRIDE / 4 + 1;
+        assert!(NativeTacticExecutionPlan::build(oversized).is_err());
     }
 
     #[test]

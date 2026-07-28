@@ -365,10 +365,21 @@ impl TacticQCampaign {
     pub fn admit_evaluated_replay(
         &mut self,
         evaluated: &[EvaluatedRewardedTacticOutcome],
+        episode_groups: &[u64],
     ) -> Result<usize, TacticQCampaignError> {
-        if evaluated.is_empty() {
+        if evaluated.is_empty()
+            || evaluated.len() != episode_groups.len()
+            || episode_groups[0] != self.episode_group
+            || episode_groups[1..].contains(&self.episode_group)
+            || episode_groups
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .len()
+                != episode_groups.len()
+        {
             return Err(TacticQCampaignError::InvalidState(
-                "evaluated tactic replay batch is empty",
+                "evaluated tactic replay batch has invalid episode lineages",
             ));
         }
         let source_checkpoint_sha256 =
@@ -379,7 +390,7 @@ impl TacticQCampaign {
         let mut identities = self.training_identities.clone();
         let mut frontier_archive = self.frontier_archive.clone();
         let mut admitted = 0;
-        for evaluated in evaluated {
+        for (evaluated, episode_group) in evaluated.iter().zip(episode_groups) {
             evaluated.transition.validate()?;
             if evaluated.outcome.selected.decision_index != self.decision_index
                 || evaluated.outcome.selected.learner_snapshot_sha256
@@ -411,12 +422,12 @@ impl TacticQCampaign {
                     self.root_checkpoint_sha256,
                     &evaluated.transition,
                     &evaluated.outcome.route_tape,
-                    self.episode_group,
+                    *episode_group,
                     training_replay.len(),
                 )?;
                 training_replay.push(evaluated.transition.clone());
                 training_replay_routes.push(evaluated.outcome.route_tape.clone());
-                training_episode_groups.push(self.episode_group);
+                training_episode_groups.push(*episode_group);
                 admitted += 1;
             }
         }
