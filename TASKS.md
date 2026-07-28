@@ -67,9 +67,10 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
 - The current continuous treatment completed matched scratch,
   ordinary-demonstration, and structured non-learning native cells under the
   same fixed identities and budget caps. None reached the terminal.
-  Demonstration replay increased visited states from `13` to `18` but reduced
-  useful decisions from `13` to `12`; structured search delivered the highest
-  useful-decision throughput. This is a recorded P3 failure, not acceptance.
+  Demonstration replay increased visited states from `11` to `18` and useful
+  decisions from `11` to `12`, but took over six times the scratch wall time
+  and did not improve terminal discovery or best tick. This is a recorded P3
+  failure, not acceptance.
   Evidence: `ordon-p3-continuous-matched-controls-v2.report.json`.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
