@@ -35,10 +35,16 @@ at tick `125`.
   four-lane run reported a 100% cache-hit rate and about 27.5 ms mean restore,
   but multi-lane orchestration still spends too much time rebuilding and
   persisting frontiers.
-- The historical four-lane benchmark used a deterministic generation barrier:
-  its lanes shared the input corpus but not each other's new experience.
-  Bounded-staleness online sharing now uses one campaign-owned fitter and
-  immutable model snapshots, but has not yet been measured on this benchmark.
+- The fixed 1/2/4-worker online-replay comparison now passes. With one
+  campaign-owned fitter and immutable snapshots, learner-update throughput rose
+  from 40,745 to 58,933 to 76,515 per-second-millionths, while useful-transition
+  throughput rose from 165,377 to 239,198 to 328,564. Every cell published 18
+  snapshots, performed 17 centralized updates, and performed zero lane-local
+  fits.
+- Parallel held-out macro validation removed the serial post-campaign tail:
+  validation wall time fell from 192.7 seconds at one worker to 96.2 seconds at
+  two and 49.1 seconds at four. Full measured wall time fell from 417.2 to
+  288.5 to 222.2 seconds.
 
 A terminal hit, a reliable terminal hit, a 125 tie, or a faster search for the
 same tie is diagnostic evidence only.
@@ -74,14 +80,6 @@ same tie is diagnostic evidence only.
   projection. Do not move overhead outside the measured boundary.
 - First-hit comparisons must bind the same source checkpoint, terminal
   predicate, game bytes, card fixture, fidelity, and source boundary.
-
-## P1 - Prove shared replay scales learner throughput
-
-- [ ] Repeat the fixed-plan comparison in
-      `ordon-p1-online-replay-scaling-v1.report.json` and prove that scaling
-      worker count increases unique useful evidence and learner updates per
-      wall second. The current 1/2/4-worker comparison failed this gate even
-      though native throughput increased.
 
 ## P2 - Make native checkpointing buy throughput
 
