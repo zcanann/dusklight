@@ -60,8 +60,8 @@ use controller_execution::{
 
 pub const NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V2: &str =
     "dusklight-native-tactic-worker-outcome/v2";
-const TACTIC_CHECKPOINT_CACHE_BYTES: usize = 640 * 1024 * 1024;
-const TACTIC_CHECKPOINT_CACHE_ENTRIES: usize = 2;
+pub(crate) const TACTIC_CHECKPOINT_CACHE_BYTES: usize = 640 * 1024 * 1024;
+pub(crate) const TACTIC_CHECKPOINT_CACHE_ENTRIES: usize = 2;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -848,7 +848,7 @@ fn lower_hex_bytes(bytes: &[u8]) -> String {
     output
 }
 
-fn pad_runs(frames: &[InputFrame]) -> Result<Vec<MacroAction>, NativeTacticWorkerError> {
+pub(crate) fn pad_runs(frames: &[InputFrame]) -> Result<Vec<MacroAction>, NativeTacticWorkerError> {
     let mut runs: Vec<(SearchPadState, u32)> = Vec::new();
     for frame in frames {
         if frame.owned_ports & 1 == 0

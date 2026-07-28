@@ -1,6 +1,6 @@
 //! Revision-pinned benchmark metadata import and selection validation.
 
-use crate::{option, required_path, u32_option};
+use crate::{option, repeated_option, required_path, u32_option};
 use huntctl::benchmark::skybook::SkybookManifest;
 use huntctl::benchmark::skybook_pilot::SkybookPilot;
 use huntctl::benchmark::skybook_requirements::SkybookRequirementsIndex;
@@ -22,6 +22,12 @@ use huntctl::harness::run_contract::{
 };
 use huntctl::learning::offline_rl::{MovementActionSchema, movement_action_schema_digest_v2};
 use huntctl::observation_view::ObservationSpec;
+use huntctl::search_evaluator::native_checkpoint_benchmark::{
+    NativeCheckpointBenchmarkConfig, NativeCheckpointBenchmarkReport,
+    run_native_checkpoint_benchmark,
+};
+use huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding;
+use huntctl::search_evaluator::optimization_request::OptimizationRequest;
 use huntctl::throughput_benchmark::{
     ColdProcessBenchmarkConfig, ColdProcessBenchmarkReport, run_cold_process_benchmark,
 };
@@ -182,6 +188,15 @@ pub(crate) fn command_benchmark(args: &[String]) -> Result<(), Box<dyn Error>> {
             Ok(())
         }
         Some("route-cold-process") => route_cold_process(&args[1..]),
+        Some("native-checkpoint") => native_checkpoint(&args[1..]),
+        Some("validate-native-checkpoint") => {
+            let report: NativeCheckpointBenchmarkReport = serde_json::from_slice(&fs::read(
+                required_path(&args[1..], "--report")?,
+            )?)?;
+            report.validate()?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
         Some("cold-process") => {
             let benchmark_args = &args[1..];
             let request_path = required_path(benchmark_args, "--request")?;
@@ -228,7 +243,84 @@ pub(crate) fn command_benchmark(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
-        _ => Err("benchmark command:\n  import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  index-skybook-requirements --manifest MANIFEST.json --output INDEX.json\n  validate-skybook-requirements --manifest MANIFEST.json --index INDEX.json\n  validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json\n  validate-skybook-pilot --manifest MANIFEST.json --pilot PILOT.json [--repository-root ROOT]\n  route-cold-process --timeline FILE --segment ID --goal GOAL --game PATH --dvd PATH --artifact-root RELATIVE_ROOT [--output REPORT.json] [--repository-root ROOT] [--repetitions N] [--timeout-seconds N]\n  cold-process --request REQUEST.json --artifact-root RELATIVE_ROOT --output REPORT.json [--repository-root ROOT] [--repetitions N] [--prefix-ticks N]\n  validate-cold-process --report REPORT.json".into()),
+        _ => Err("benchmark command:\n  import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  index-skybook-requirements --manifest MANIFEST.json --output INDEX.json\n  validate-skybook-requirements --manifest MANIFEST.json --index INDEX.json\n  validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json\n  validate-skybook-pilot --manifest MANIFEST.json --pilot PILOT.json [--repository-root ROOT]\n  route-cold-process --timeline FILE --segment ID --goal GOAL --game PATH --dvd PATH --artifact-root RELATIVE_ROOT [--output REPORT.json] [--repository-root ROOT] [--repetitions N] [--timeout-seconds N]\n  cold-process --request REQUEST.json --artifact-root RELATIVE_ROOT --output REPORT.json [--repository-root ROOT] [--repetitions N] [--prefix-ticks N]\n  validate-cold-process --report REPORT.json\n  native-checkpoint --request REQUEST.json --execution EXECUTION.json --output-root DIRECTORY --report REPORT.json [--repository-root ROOT] [--frontier-ticks N --frontier-ticks N --frontier-ticks N]\n  validate-native-checkpoint --report REPORT.json".into()),
+    }
+}
+
+fn native_checkpoint(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let repository_root = fs::canonicalize(
+        option(args, "--repository-root")
+            .map(PathBuf::from)
+            .unwrap_or(env::current_dir()?),
+    )?;
+    let request: OptimizationRequest =
+        serde_json::from_slice(&fs::read(required_path(args, "--request")?)?)?;
+    let execution: NativeResidualExecutionBinding =
+        serde_json::from_slice(&fs::read(required_path(args, "--execution")?)?)?;
+    let output_root = resolve_output(&repository_root, required_path(args, "--output-root")?);
+    let report_path = resolve_output(&repository_root, required_path(args, "--report")?);
+    if report_path.exists() {
+        return Err(format!(
+            "native checkpoint benchmark report already exists: {}",
+            report_path.display()
+        )
+        .into());
+    }
+    let specified = repeated_option(args, "--frontier-ticks")
+        .into_iter()
+        .map(|value| value.parse::<usize>())
+        .collect::<Result<Vec<_>, _>>()?;
+    let frontier_ticks = if specified.is_empty() {
+        default_checkpoint_frontiers(&request)?
+    } else {
+        specified
+    };
+    let report = run_native_checkpoint_benchmark(&NativeCheckpointBenchmarkConfig {
+        repository_root: &repository_root,
+        optimization: &request,
+        execution: &execution,
+        output_root: &output_root,
+        frontier_ticks: &frontier_ticks,
+    })?;
+    write_new_file(&report_path, &report.to_pretty_json()?)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if !report.passed {
+        return Err(format!(
+            "native checkpoint benchmark parity failed; report: {}",
+            report_path.display()
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn default_checkpoint_frontiers(
+    request: &OptimizationRequest,
+) -> Result<Vec<usize>, Box<dyn Error>> {
+    let terminal_tick = usize::try_from(
+        request
+            .incumbent
+            .as_ref()
+            .ok_or("default checkpoint frontiers require an incumbent")?
+            .first_hit_tick,
+    )?;
+    if terminal_tick < 8 {
+        return Err(
+            "default checkpoint frontiers require an incumbent of at least eight ticks".into(),
+        );
+    }
+    Ok(vec![
+        (terminal_tick / 8).max(1),
+        terminal_tick / 2,
+        terminal_tick.saturating_mul(7) / 8,
+    ])
+}
+
+fn resolve_output(repository_root: &Path, path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        repository_root.join(path)
     }
 }
 

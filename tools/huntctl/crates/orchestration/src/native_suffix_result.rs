@@ -163,6 +163,10 @@ pub struct NativeRetainedCheckpointResult {
     pub semantic_digest: String,
     pub checkpoint_bytes: u64,
     pub host_snapshot_bytes: u64,
+    #[serde(default)]
+    pub machine_capture_micros: u64,
+    #[serde(default)]
+    pub host_snapshot_capture_nanos: u64,
     pub capture_micros: u64,
     pub route_ticks: u64,
 }
@@ -1173,6 +1177,8 @@ mod tests {
             semantic_digest: "d".repeat(32),
             checkpoint_bytes: 128,
             host_snapshot_bytes: 16,
+            machine_capture_micros: 1,
+            host_snapshot_capture_nanos: 1,
             capture_micros: 1,
             route_ticks: 42,
         });

@@ -113,6 +113,8 @@ private:
         std::string semanticDigest;
         std::size_t checkpointBytes = 0;
         std::size_t hostSnapshotBytes = 0;
+        std::uint64_t machineCaptureMicros = 0;
+        std::uint64_t hostSnapshotCaptureNanos = 0;
         std::uint64_t captureMicros = 0;
     };
 

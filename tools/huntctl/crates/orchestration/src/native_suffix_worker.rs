@@ -25,6 +25,7 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 const MAXIMUM_PERSISTENT_BATCH_TICKS: usize = 4_096;
 
@@ -87,6 +88,16 @@ pub struct NativeSuffixWorkerIdentity {
     pub terminal: NativeTerminalBinding,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeSuffixWorkerLaunchTiming {
+    pub spawn_call_micros: u64,
+    pub handshake_micros: u64,
+    pub initial_batch_wait_micros: u64,
+    pub artifact_validation_micros: u64,
+    pub total_micros: u64,
+}
+
 pub struct NativeSuffixWorkerSession {
     client: WorkerClient<ProcessTransport>,
     hello: HelloResponse,
@@ -125,7 +136,7 @@ impl NativeSuffixWorkerSession {
     pub fn launch(
         config: &NativeSuffixWorkerLaunch,
     ) -> Result<(Self, ValidatedNativeSuffixBatch), NativeSuffixWorkerError> {
-        Self::launch_prevalidated(config, None)
+        Self::launch_prevalidated(config, None).map(|(session, validated, _)| (session, validated))
     }
 
     pub fn launch_with_prevalidated_files(
@@ -133,13 +144,37 @@ impl NativeSuffixWorkerSession {
         identities: NativeSuffixPrevalidatedFileIdentities,
     ) -> Result<(Self, ValidatedNativeSuffixBatch), NativeSuffixWorkerError> {
         Self::launch_prevalidated(config, Some(identities))
+            .map(|(session, validated, _)| (session, validated))
+    }
+
+    pub fn launch_profiled_with_prevalidated_files(
+        config: &NativeSuffixWorkerLaunch,
+        identities: NativeSuffixPrevalidatedFileIdentities,
+    ) -> Result<
+        (
+            Self,
+            ValidatedNativeSuffixBatch,
+            NativeSuffixWorkerLaunchTiming,
+        ),
+        NativeSuffixWorkerError,
+    > {
+        Self::launch_prevalidated(config, Some(identities))
     }
 
     fn launch_prevalidated(
         config: &NativeSuffixWorkerLaunch,
         identities: Option<NativeSuffixPrevalidatedFileIdentities>,
-    ) -> Result<(Self, ValidatedNativeSuffixBatch), NativeSuffixWorkerError> {
+    ) -> Result<
+        (
+            Self,
+            ValidatedNativeSuffixBatch,
+            NativeSuffixWorkerLaunchTiming,
+        ),
+        NativeSuffixWorkerError,
+    > {
+        let total_started = Instant::now();
         let prepared = prepare_launch(config, identities)?;
+        let spawn_started = Instant::now();
         let transport = ProcessTransport::spawn_in(
             &prepared.executable,
             &prepared.args,
@@ -151,27 +186,44 @@ impl NativeSuffixWorkerSession {
                 prepared.executable.display()
             ))
         })?;
+        let spawn_call_micros = elapsed_micros(spawn_started);
         let mut client = WorkerClient::new(transport);
+        let handshake_started = Instant::now();
         let hello = client.handshake().map_err(worker_error)?.clone();
+        let handshake_micros = elapsed_micros(handshake_started);
         if !hello.capabilities.persistent_control || !hello.capabilities.batch_run {
             return Err(worker_message(
                 "native child does not advertise persistent suffix-batch capability",
             ));
         }
+        let initial_batch_started = Instant::now();
         let complete = client.await_initial_batch().map_err(worker_error)?;
+        let initial_batch_wait_micros = elapsed_micros(initial_batch_started);
+        let validation_started = Instant::now();
         let validated = validate_completed_batch(
             &complete,
             &prepared.result,
             &prepared.batch,
             &prepared.terminal,
         )?;
+        let artifact_validation_micros = elapsed_micros(validation_started);
         let session = Self {
             client,
             hello,
             identity: prepared.identity,
             terminal: prepared.terminal,
         };
-        Ok((session, validated))
+        Ok((
+            session,
+            validated,
+            NativeSuffixWorkerLaunchTiming {
+                spawn_call_micros,
+                handshake_micros,
+                initial_batch_wait_micros,
+                artifact_validation_micros,
+                total_micros: elapsed_micros(total_started),
+            },
+        ))
     }
 
     pub fn launch_frozen(
@@ -1001,6 +1053,10 @@ fn worker_client_error(error: ClientError) -> NativeSuffixWorkerError {
         }
         error => worker_error(error),
     }
+}
+
+fn elapsed_micros(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
 }
 
 impl fmt::Display for NativeSuffixWorkerError {

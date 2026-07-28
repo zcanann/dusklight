@@ -667,8 +667,10 @@ bool SuffixBatchRunner::retainCandidateCheckpoint(const std::uint64_t simulation
         return true;
     ++mCheckpointCacheCaptureAttempts;
     const auto started = ProfileClock::now();
+    const auto machineCaptureStarted = ProfileClock::now();
     StateCheckpointImage image;
     StateCheckpointError checkpointError = mCheckpoint.capture(image);
+    const std::uint64_t machineCaptureMicros = elapsed_micros(machineCaptureStarted);
     if (checkpointError != StateCheckpointError::None) {
         error = state_checkpoint_error_message(checkpointError);
         return false;
@@ -679,6 +681,7 @@ bool SuffixBatchRunner::retainCandidateCheckpoint(const std::uint64_t simulation
         error = state_checkpoint_error_message(checkpointError);
         return false;
     }
+    const auto hostSnapshotCaptureStarted = ProfileClock::now();
     CachedHostSnapshot host{
         .tapePlayer = input_tape_player().captureState(),
         .simulationTick = simulationTick + 1,
@@ -698,6 +701,8 @@ bool SuffixBatchRunner::retainCandidateCheckpoint(const std::uint64_t simulation
         error = "could not capture cached suffix endpoint PAD state";
         return false;
     }
+    const std::uint64_t hostSnapshotCaptureNanos =
+        elapsed_nanos(hostSnapshotCaptureStarted);
     std::string identityMaterial = "dusklight-native-restore-handle/v1";
     identityMaterial.push_back('\0');
     identityMaterial += activeSourceIdentity();
@@ -731,6 +736,8 @@ bool SuffixBatchRunner::retainCandidateCheckpoint(const std::uint64_t simulation
         .semanticDigest = semanticDigest,
         .checkpointBytes = checkpointBytes,
         .hostSnapshotBytes = hostSnapshotBytes,
+        .machineCaptureMicros = machineCaptureMicros,
+        .hostSnapshotCaptureNanos = hostSnapshotCaptureNanos,
         .captureMicros = captureMicros,
     };
     return true;
@@ -1512,6 +1519,10 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                   {"semantic_digest", result.retainedCheckpoint->semanticDigest},
                   {"checkpoint_bytes", result.retainedCheckpoint->checkpointBytes},
                   {"host_snapshot_bytes", result.retainedCheckpoint->hostSnapshotBytes},
+                  {"machine_capture_micros",
+                      result.retainedCheckpoint->machineCaptureMicros},
+                  {"host_snapshot_capture_nanos",
+                      result.retainedCheckpoint->hostSnapshotCaptureNanos},
                   {"capture_micros", result.retainedCheckpoint->captureMicros},
                   {"route_ticks", activeSourceRouteTicks() + result.ticksExecuted},
               };

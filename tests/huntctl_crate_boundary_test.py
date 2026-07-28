@@ -183,6 +183,7 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
         "learning_value_matrix.rs",
         "learning_value_report.rs",
         "lib.rs",
+        "native_checkpoint_benchmark.rs",
         "native_goal_learning_loop.rs",
         "native_goal_learning_loop/persistence.rs",
         "native_goal_learning_loop/tests.rs",

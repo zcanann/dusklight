@@ -31,10 +31,11 @@ at tick `125`.
   evaluated native ticks in 202 seconds, yielding 373 useful transitions.
 - One lane widened to sixteen proposals took 339 seconds for only 32 decisions.
   Wider sibling batches are not a substitute for learner iterations.
-- The native checkpoint primitive is functional and authenticated. The latest
-  four-lane run reported a 100% cache-hit rate and about 27.5 ms mean restore,
-  but multi-lane orchestration still spends too much time rebuilding and
-  persisting frontiers.
+- The native checkpoint primitive is functional and authenticated. A dedicated
+  macOS early/middle/late benchmark now separates process launch, root replay,
+  direct restore, checkpoint capture, in-process host snapshot transfer, and
+  fact extraction. Direct continuation took 0.87-0.91 seconds under full
+  per-tick state-hash proof, versus 7.8-50.4 seconds for portable root replay.
 - The fixed 1/2/4-worker online-replay comparison now passes. With one
   campaign-owned fitter and immutable snapshots, learner-update throughput rose
   from 40,745 to 58,933 to 76,515 per-second-millionths, while useful-transition
@@ -54,6 +55,17 @@ at tick `125`.
 - Checkpoint capture is now the measured P2 bottleneck. The 12-decision stress
   run spent 54.2 seconds capturing 18 campaign checkpoints; its two-entry,
   640-MiB-per-worker caches evicted 14 entries during campaign work.
+- The representative checkpoint benchmark confirms the same cause: each
+  294,694,748-byte machine image took 1.68-1.79 seconds to capture and 2.10-3.16
+  seconds for the whole retention operation. The 224-byte host snapshot took
+  only 95-101 microseconds to capture and move into the resident cache. Exact
+  decoded learning transitions, terminal-evidence bytes, and terminal boundary
+  fingerprints matched direct restore and authenticated replay at route ticks
+  15, 62, and 109.
+- The checkpoint-wide semantic digest does not match those otherwise exact
+  continuations because it includes automation allocator history outside the
+  decoded learning transition. This digest is diagnostic, not promotion
+  authority, until its state boundary is narrowed and proven.
 
 A terminal hit, a reliable terminal hit, a 125 tie, or a faster search for the
 same tie is diagnostic evidence only.
@@ -92,26 +104,22 @@ same tie is diagnostic evidence only.
 
 ## P2 - Make native checkpointing buy throughput
 
-- [ ] Benchmark, separately, process launch, authenticated-root replay,
-      process-local restore, host snapshot transfer, fact extraction, and
-      checkpoint capture at representative early, middle, and late frontiers.
-- [ ] Add a bounded checkpoint residency policy with explicit byte accounting,
-      eviction, replay fallback, and no hidden unbounded emulator copies.
-- [ ] Preserve exact portable replay reconstruction for evicted or
-      process-lost checkpoints.
 - [ ] Audit headless execution to prove which renderer, audio, pacing, and
       presentation systems still run. Disable only work whose removal preserves
       native state and terminal parity, then measure the result.
-- [ ] Report direct-restore rate and useful transitions per restore, per native
-      simulation second, and per wall second.
+- [ ] Narrow the checkpoint-wide semantic digest to parity-relevant native
+      state, excluding automation allocator history, and prove that the direct
+      and portable continuation digests then match.
 
 Acceptance:
 
 - After warm-up, ordinary non-root expansions use direct restore unless an
   explicitly reported ownership, eviction, or process-loss condition prevents
-  it.
+  it. Met by the owner-routed stress report and the representative checkpoint
+  benchmark.
 - The same transition and terminal evidence are byte-identical through direct
-  restore and authenticated replay fallback.
+  restore and authenticated replay fallback. Met at early, middle, and late
+  frontiers.
 - Orchestration plus persistence no longer dominates native simulation on the
   fixed throughput benchmark.
 

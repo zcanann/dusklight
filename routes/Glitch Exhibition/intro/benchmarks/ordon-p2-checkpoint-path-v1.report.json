@@ -1,0 +1,185 @@
+{
+  "schema": "dusklight-native-checkpoint-benchmark/v1",
+  "optimization_request_sha256": "0c71fb96d17e6371f0badbd3514361b7683b5935ec5f24e08767764cbac2863f",
+  "execution_sha256": "b98c95480edb578c3e0784562201b094ab1cc032339388541fc47b7858476be4",
+  "executable_sha256": "19c1973f252ebea80a383d61a091a2d18131838d2cdf18302cef6d76b686cabe",
+  "game_data_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814",
+  "platform_os": "macos",
+  "platform_arch": "aarch64",
+  "source_frame": 506,
+  "cache_capacity_bytes": 671088640,
+  "cache_capacity_entries": 2,
+  "launch": {
+    "phases": {
+      "spawn_call_micros": 1424,
+      "handshake_micros": 79660,
+      "initial_batch_wait_micros": 13123603,
+      "artifact_validation_micros": 2508,
+      "total_micros": 13210507
+    },
+    "initial_batch_native_wall_micros": 10761055,
+    "initial_batch_native_simulation_micros": 1220
+  },
+  "frontiers": [
+    {
+      "label": "early",
+      "route_ticks": 15,
+      "authenticated_root_replay": {
+        "host_wall_micros": 9614954,
+        "native_batch_wall_micros": 9612210,
+        "native_simulation_micros": 16209,
+        "native_restore_micros": 4782,
+        "simulated_ticks": 15,
+        "source_kind": "authenticated_root_restore"
+      },
+      "process_local_restore": {
+        "host_wall_micros": 912105,
+        "native_batch_wall_micros": 907845,
+        "native_simulation_micros": 1063,
+        "native_restore_micros": 4805,
+        "simulated_ticks": 1,
+        "source_kind": "direct_process_local_restore"
+      },
+      "portable_reconstruction": {
+        "host_wall_micros": 7803980,
+        "native_batch_wall_micros": 7801580,
+        "native_simulation_micros": 17123,
+        "native_restore_micros": 4987,
+        "simulated_ticks": 16,
+        "source_kind": "authenticated_root_restore"
+      },
+      "checkpoint_capture": {
+        "checkpoint_bytes": 294694748,
+        "host_snapshot_bytes": 224,
+        "machine_capture_micros": 1787400,
+        "host_snapshot_transfer_kind": "in_process_capture_and_move_into_resident_cache",
+        "host_snapshot_capture_nanos": 95125,
+        "total_capture_micros": 2238537
+      },
+      "evidence_projection": {
+        "episode_decode_micros": 18788,
+        "fact_extraction_micros": 1821
+      },
+      "parity": {
+        "source_state_exact": true,
+        "transition_exact": true,
+        "checkpoint_wide_semantic_digest_scope": "diagnostic_only: includes automation allocator history outside the decoded learning transition",
+        "semantic_state_digest_exact": false,
+        "terminal_evidence_bytes_exact": true,
+        "terminal_boundary_exact": true,
+        "passed": true
+      }
+    },
+    {
+      "label": "middle",
+      "route_ticks": 62,
+      "authenticated_root_replay": {
+        "host_wall_micros": 29780487,
+        "native_batch_wall_micros": 29773700,
+        "native_simulation_micros": 63651,
+        "native_restore_micros": 4877,
+        "simulated_ticks": 62,
+        "source_kind": "authenticated_root_restore"
+      },
+      "process_local_restore": {
+        "host_wall_micros": 868130,
+        "native_batch_wall_micros": 857099,
+        "native_simulation_micros": 918,
+        "native_restore_micros": 4593,
+        "simulated_ticks": 1,
+        "source_kind": "direct_process_local_restore"
+      },
+      "portable_reconstruction": {
+        "host_wall_micros": 27353526,
+        "native_batch_wall_micros": 27349659,
+        "native_simulation_micros": 63750,
+        "native_restore_micros": 4714,
+        "simulated_ticks": 63,
+        "source_kind": "authenticated_root_restore"
+      },
+      "checkpoint_capture": {
+        "checkpoint_bytes": 294694748,
+        "host_snapshot_bytes": 224,
+        "machine_capture_micros": 1675578,
+        "host_snapshot_transfer_kind": "in_process_capture_and_move_into_resident_cache",
+        "host_snapshot_capture_nanos": 101250,
+        "total_capture_micros": 2099736
+      },
+      "evidence_projection": {
+        "episode_decode_micros": 58511,
+        "fact_extraction_micros": 42
+      },
+      "parity": {
+        "source_state_exact": true,
+        "transition_exact": true,
+        "checkpoint_wide_semantic_digest_scope": "diagnostic_only: includes automation allocator history outside the decoded learning transition",
+        "semantic_state_digest_exact": false,
+        "terminal_evidence_bytes_exact": true,
+        "terminal_boundary_exact": true,
+        "passed": true
+      }
+    },
+    {
+      "label": "late",
+      "route_ticks": 109,
+      "authenticated_root_replay": {
+        "host_wall_micros": 52005150,
+        "native_batch_wall_micros": 51990307,
+        "native_simulation_micros": 115107,
+        "native_restore_micros": 4861,
+        "simulated_ticks": 109,
+        "source_kind": "authenticated_root_restore"
+      },
+      "process_local_restore": {
+        "host_wall_micros": 887432,
+        "native_batch_wall_micros": 868859,
+        "native_simulation_micros": 1180,
+        "native_restore_micros": 4874,
+        "simulated_ticks": 1,
+        "source_kind": "direct_process_local_restore"
+      },
+      "portable_reconstruction": {
+        "host_wall_micros": 50390845,
+        "native_batch_wall_micros": 50385630,
+        "native_simulation_micros": 118014,
+        "native_restore_micros": 4919,
+        "simulated_ticks": 110,
+        "source_kind": "authenticated_root_restore"
+      },
+      "checkpoint_capture": {
+        "checkpoint_bytes": 294694748,
+        "host_snapshot_bytes": 224,
+        "machine_capture_micros": 1702903,
+        "host_snapshot_transfer_kind": "in_process_capture_and_move_into_resident_cache",
+        "host_snapshot_capture_nanos": 97292,
+        "total_capture_micros": 3160199
+      },
+      "evidence_projection": {
+        "episode_decode_micros": 102527,
+        "fact_extraction_micros": 49
+      },
+      "parity": {
+        "source_state_exact": true,
+        "transition_exact": true,
+        "checkpoint_wide_semantic_digest_scope": "diagnostic_only: includes automation allocator history outside the decoded learning transition",
+        "semantic_state_digest_exact": false,
+        "terminal_evidence_bytes_exact": true,
+        "terminal_boundary_exact": true,
+        "passed": true
+      }
+    }
+  ],
+  "throughput": {
+    "useful_transition_definition": "one parity-verified continuation transition per representative frontier",
+    "useful_transitions": 3,
+    "non_root_expansion_requests": 3,
+    "direct_restore_requests": 3,
+    "direct_restore_rate_millionths": 1000000,
+    "useful_transitions_per_direct_restore_millionths": 1000000,
+    "useful_transitions_per_native_sim_second_millionths": 949066751,
+    "useful_transitions_per_wall_second_millionths": 12084,
+    "measured_wall_micros": 248247786,
+    "measured_native_simulation_micros": 3161
+  },
+  "passed": true
+}
