@@ -6,14 +6,13 @@ use crate::fact_registry::{FactQuery, FactRead, FactRegistry, FactValue};
 use crate::fact_snapshot::FactSnapshot;
 use crate::option_values::OptionActionDescriptor;
 use crate::tactic_asset::{
-    TacticApplicability, TacticAssetCatalog, TacticAssetDescription, TacticAssetKind,
-    TacticDurationBounds, TacticObservationRequirement,
+    TacticApplicability, TacticAssetCatalog, TacticAssetDescription, TacticDurationBounds,
+    TacticObservationRequirement,
 };
 use crate::tactic_blueprint::{
     ApplicableTacticChoices, ConcreteTacticChoiceKind, TacticBlueprint, TacticBlueprintError,
 };
-use crate::tactic_features::PLAYER_FRONT_ROLL_DO_STATUS;
-use dusklight_control::option_execution::{OptionCondition, OptionParameter, OptionType};
+use dusklight_control::option_execution::{OptionCondition, OptionParameter};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
@@ -314,48 +313,12 @@ pub fn tactic_intrinsically_applicable(
 ) -> bool {
     snapshot.terminal.reached != Some(true)
         && tactic_observations_available(description, snapshot)
-        && prompted_buttons_available(description, snapshot)
         && match description.applicability {
             TacticApplicability::InputOnly | TacticApplicability::ObservationBound => true,
             TacticApplicability::GameContextRequired => {
                 snapshot.player.present && snapshot.player.procedure.is_some()
             }
         }
-}
-
-/// The native A button is contextual. A tactic that emits it is executable
-/// only while the game exposes a concrete Do prompt. The prompt's typed status
-/// remains in the state features, so the learner—not this mask—decides whether
-/// a roll, mount, lift, jump, or another prompted action is useful.
-fn prompted_buttons_available(
-    description: &TacticAssetDescription,
-    snapshot: &FactSnapshot,
-) -> bool {
-    const BUTTON_A: u64 = 0x0100;
-    let button_mask = description
-        .option
-        .parameters
-        .get("command_button_mask")
-        .and_then(|parameter| match parameter {
-            OptionParameter::Unsigned(mask) => Some(*mask),
-            _ => None,
-        })
-        .unwrap_or(0);
-    let is_front_roll = description.kind == TacticAssetKind::Roll
-        || matches!(&description.option.option_type, OptionType::Roll);
-    let emits_prompted_a = is_front_roll
-        || matches!(&description.option.option_type, OptionType::Interact)
-        || button_mask & BUTTON_A != 0;
-    if !emits_prompted_a {
-        return true;
-    }
-    snapshot.player.action_state.is_some_and(|action| {
-        if is_front_roll {
-            action.do_status == PLAYER_FRONT_ROLL_DO_STATUS
-        } else {
-            action.do_status != 0
-        }
-    })
 }
 
 fn readable_optional(value: Option<bool>) -> &'static str {
@@ -618,14 +581,13 @@ mod tests {
             "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
         ))
         .unwrap();
-        let mut snapshot = FactSnapshot::from_native_learning(
+        let snapshot = FactSnapshot::from_native_learning(
             &shard.episodes[0].steps[0].pre_input,
             &[],
             None,
             Vec::new(),
         )
         .unwrap();
-        snapshot.player.action_state.as_mut().unwrap().do_status = PLAYER_FRONT_ROLL_DO_STATUS;
         let catalog = default_route_tactic_catalog().unwrap();
         let live_state = LearnerState::build(
             snapshot.clone(),
@@ -695,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn prompted_a_actions_follow_native_do_availability() {
+    fn prompted_a_actions_remain_executable_without_a_prior_frame_prompt() {
         let shard = NativeEpisodeShard::decode(include_bytes!(
             "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
         ))
@@ -707,76 +669,15 @@ mod tests {
             Vec::new(),
         )
         .unwrap();
-        let catalog = default_route_tactic_catalog().unwrap();
-
         snapshot.player.action_state.as_mut().unwrap().do_status = 0;
-        let unavailable = LearnerState::build(
-            snapshot.clone(),
-            &FactRegistry::canonical(),
-            &catalog,
-            &[],
-            |_| true,
-        )
-        .unwrap();
-        assert!(
-            !unavailable
-                .action_mask
-                .iter()
-                .find(|entry| entry.choice_id == "roll.direction.00.recovery.03")
-                .unwrap()
-                .applicable
-        );
-        assert!(
-            !unavailable
-                .action_mask
-                .iter()
-                .find(|entry| entry.choice_id == "interact.short")
-                .unwrap()
-                .applicable
-        );
-        assert!(
-            unavailable
-                .action_mask
-                .iter()
-                .find(|entry| entry.choice_id == "wait.neutral.04")
-                .unwrap()
-                .applicable
-        );
-
-        snapshot.player.action_state.as_mut().unwrap().do_status = 0x47;
-        let other_prompt = LearnerState::build(
-            snapshot.clone(),
-            &FactRegistry::canonical(),
-            &catalog,
-            &[],
-            |_| true,
-        )
-        .unwrap();
-        assert!(
-            !other_prompt
-                .action_mask
-                .iter()
-                .find(|entry| entry.choice_id == "roll.direction.00.recovery.03")
-                .unwrap()
-                .applicable
-        );
-        assert!(
-            other_prompt
-                .action_mask
-                .iter()
-                .find(|entry| entry.choice_id == "interact.short")
-                .unwrap()
-                .applicable
-        );
-
-        snapshot.player.action_state.as_mut().unwrap().do_status = PLAYER_FRONT_ROLL_DO_STATUS;
-        let roll_prompt =
+        let catalog = default_route_tactic_catalog().unwrap();
+        let state =
             LearnerState::build(snapshot, &FactRegistry::canonical(), &catalog, &[], |_| {
                 true
             })
             .unwrap();
         assert!(
-            roll_prompt
+            state
                 .action_mask
                 .iter()
                 .find(|entry| entry.choice_id == "roll.direction.00.recovery.03")
@@ -784,10 +685,18 @@ mod tests {
                 .applicable
         );
         assert!(
-            roll_prompt
+            state
                 .action_mask
                 .iter()
                 .find(|entry| entry.choice_id == "interact.short")
+                .unwrap()
+                .applicable
+        );
+        assert!(
+            state
+                .action_mask
+                .iter()
+                .find(|entry| entry.choice_id == "wait.neutral.04")
                 .unwrap()
                 .applicable
         );

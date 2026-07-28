@@ -20,7 +20,7 @@ pub const GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V4: &str =
     "dusklight-goal-conditioned-tactic-features/v4";
 // `BUTTON_STATUS_UNK_121` in the native player action path: A dispatches
 // `procFrontRollInit`. `BUTTON_STATUS_ROLL` (0x47) instead rolls a world object.
-pub(crate) const PLAYER_FRONT_ROLL_DO_STATUS: u8 = 0x79;
+const FRONT_ROLL_DO_STATUS: u8 = 0x79;
 const GOAL_FEATURE_NAMES: &[&str] = &[
     "goal_dx",
     "goal_dy",
@@ -518,7 +518,7 @@ fn encode_player_action(
         output.extend([bool_feature(do_status != 0), f32::from(do_status)]);
         output.extend((0..u8::BITS).map(|bit| bool_feature(do_status & (1_u8 << bit) != 0)));
         output.extend([
-            bool_feature(do_status == PLAYER_FRONT_ROLL_DO_STATUS),
+            bool_feature(do_status == FRONT_ROLL_DO_STATUS),
             f32::from(action.damage_wait_timer),
             f32::from(action.sword_at_up_time),
             f32::from(action.ice_damage_wait_timer),
@@ -1100,7 +1100,7 @@ mod tests {
         assert_eq!(feature("player_action_flag_19"), 1.0);
         assert_eq!(feature("player_action_flag_20"), 0.0);
 
-        facts.player.action_state.as_mut().unwrap().do_status = PLAYER_FRONT_ROLL_DO_STATUS;
+        facts.player.action_state.as_mut().unwrap().do_status = FRONT_ROLL_DO_STATUS;
         let front_roll = encoder.encode(&facts).unwrap();
         let feature = |name: &str| {
             front_roll[encoder
