@@ -18,7 +18,7 @@ namespace dusk::automation {
 inline constexpr std::string_view LegacySuffixBatchSchema = "dusklight-suffix-batch/v2";
 inline constexpr std::string_view PreviousSuffixBatchSchema = "dusklight-suffix-batch/v3";
 inline constexpr std::string_view ReactiveSuffixBatchSchema = "dusklight-suffix-batch/v8";
-inline constexpr std::string_view CachedSuffixBatchSchema = "dusklight-suffix-batch/v9";
+inline constexpr std::string_view CachedSuffixBatchSchema = "dusklight-suffix-batch/v10";
 inline constexpr std::string_view FactorizedSuffixBatchSchema = "dusklight-suffix-batch/v4";
 inline constexpr std::string_view FrozenPolicySuffixBatchSchemaV6 = "dusklight-suffix-batch/v6";
 inline constexpr std::string_view SuffixBatchSchema = "dusklight-suffix-batch/v7";
@@ -89,6 +89,7 @@ struct SuffixCheckpointCachePolicy {
     std::optional<std::string> sourceIdentity;
     std::size_t sourceRouteTicks = 0;
     bool retainCandidateCheckpoints = false;
+    bool retainLiveEndpoint = false;
 };
 
 [[nodiscard]] inline std::uint64_t policy_exploration_sample(

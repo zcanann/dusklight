@@ -696,6 +696,7 @@ fn batch(
             source_identity: retained.map(|checkpoint| checkpoint.restore_identity.clone()),
             source_route_ticks,
             retain_candidate_checkpoints,
+            retain_live_endpoint: false,
         }),
         candidates: vec![NativeSuffixCandidate {
             id: id.into(),

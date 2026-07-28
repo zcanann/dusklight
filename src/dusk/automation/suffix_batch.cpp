@@ -514,6 +514,7 @@ bool parse_suffix_batch(
             std::string_view{"source_identity"},
             std::string_view{"source_route_ticks"},
             std::string_view{"retain_candidate_checkpoints"},
+            std::string_view{"retain_live_endpoint"},
         };
         const json& cache = root["checkpoint_cache"];
         SuffixCheckpointCachePolicy policy;
@@ -525,6 +526,7 @@ bool parse_suffix_batch(
             !read_integer(cache["source_route_ticks"], std::size_t{0},
                 SuffixBatchMaximumExpandedTicks, policy.sourceRouteTicks) ||
             !cache["retain_candidate_checkpoints"].is_boolean() ||
+            !cache["retain_live_endpoint"].is_boolean() ||
             !(cache["source_identity"].is_null() ||
                 valid_boundary_fingerprint(cache["source_identity"])))
         {
@@ -535,6 +537,11 @@ bool parse_suffix_batch(
             policy.sourceIdentity = cache["source_identity"].get<std::string>();
         policy.retainCandidateCheckpoints =
             cache["retain_candidate_checkpoints"].get<bool>();
+        policy.retainLiveEndpoint = cache["retain_live_endpoint"].get<bool>();
+        if (policy.retainCandidateCheckpoints && policy.retainLiveEndpoint) {
+            error = "suffix batch checkpoint cache cannot retain a portable image and live endpoint";
+            return false;
+        }
         parsed.checkpointCache = std::move(policy);
     }
     if (frozen) {
@@ -594,6 +601,12 @@ bool parse_suffix_batch(
             return false;
         }
         parsed.candidates.push_back(std::move(candidate));
+    }
+    if (parsed.checkpointCache.has_value() &&
+        parsed.checkpointCache->retainLiveEndpoint && parsed.candidates.size() != 1)
+    {
+        error = "live endpoint retention requires exactly one candidate";
+        return false;
     }
     const bool hasFrozenCandidate = std::ranges::any_of(parsed.candidates,
         [](const SuffixBatchCandidate& candidate) { return candidate.frozenPolicy; });

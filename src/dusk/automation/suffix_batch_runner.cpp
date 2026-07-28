@@ -270,6 +270,8 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
     FrozenInferenceModel frozenPolicy;
     if (!loadFrozenPolicy(definition, frozenPolicy, error)) return false;
     mCachedSourceIdentity.reset();
+    mLiveSourceIdentity.reset();
+    mActiveLiveSource.reset();
     if (definition.checkpointCache.has_value()) {
         const auto& policy = *definition.checkpointCache;
         if (mCheckpointCache == nullptr) {
@@ -287,19 +289,31 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
         }
         mCheckpointCache->unpin();
         if (policy.sourceIdentity.has_value()) {
-            const auto* source = mCheckpointCache->find(*policy.sourceIdentity);
-            if (source == nullptr || source->semanticDigest.empty() ||
-                source->image.digest.empty() ||
-                source->metadata.routeTicks != policy.sourceRouteTicks ||
-                source->metadata.boundaryFingerprint !=
-                    definition.sourceBoundaryFingerprint ||
-                !mCheckpointCache->pin(*policy.sourceIdentity))
+            if (mLiveEndpoint.has_value() &&
+                mLiveEndpoint->identity == *policy.sourceIdentity &&
+                mLiveEndpoint->host.routeTicks == policy.sourceRouteTicks &&
+                mLiveEndpoint->host.boundaryFingerprint ==
+                    definition.sourceBoundaryFingerprint)
             {
-                error = "requested process-local checkpoint is absent or invalid";
-                return false;
+                mLiveSourceIdentity = mLiveEndpoint->identity;
+                mActiveLiveSource = mLiveEndpoint->host;
+                mActualSourceBoundaryFingerprint =
+                    mLiveEndpoint->host.boundaryFingerprint;
+            } else {
+                const auto* source = mCheckpointCache->find(*policy.sourceIdentity);
+                if (source == nullptr || source->semanticDigest.empty() ||
+                    source->image.digest.empty() ||
+                    source->metadata.routeTicks != policy.sourceRouteTicks ||
+                    source->metadata.boundaryFingerprint !=
+                        definition.sourceBoundaryFingerprint ||
+                    !mCheckpointCache->pin(*policy.sourceIdentity))
+                {
+                    error = "requested process-local checkpoint is absent or invalid";
+                    return false;
+                }
+                mCachedSourceIdentity = *policy.sourceIdentity;
+                mActualSourceBoundaryFingerprint = source->metadata.boundaryFingerprint;
             }
-            mCachedSourceIdentity = *policy.sourceIdentity;
-            mActualSourceBoundaryFingerprint = source->metadata.boundaryFingerprint;
         } else if (policy.sourceRouteTicks != 0) {
             error = "root suffix source cannot claim replayed route ticks";
             return false;
@@ -355,6 +369,11 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
     mCheckpointCacheCaptureMicros = 0;
     mCheckpointCacheCaptureAttempts = 0;
     mCheckpointCacheCaptureSuccesses = 0;
+    mLiveEndpointRetentionNanos = 0;
+    mLiveEndpointRetentionAttempts = 0;
+    mLiveEndpointRetentionSuccesses = 0;
+    mLiveEndpointConsumptions = 0;
+    mLiveEndpointInvalidations = 0;
     mEpisodePreInputCaptured = false;
     mPolicyFeatureRowReady = false;
     mCandidateChosenPadReady = false;
@@ -578,6 +597,8 @@ LearningGoalObservation summarize_learning_goal(const MilestoneTracker& tracker)
 }
 
 std::string SuffixBatchRunner::activeSourceIdentity() const {
+    if (mLiveSourceIdentity.has_value())
+        return *mLiveSourceIdentity;
     return mCachedSourceIdentity.value_or(mImage.digest);
 }
 
@@ -590,6 +611,52 @@ std::size_t SuffixBatchRunner::activeSourceRouteTicks() const {
 bool SuffixBatchRunner::restoreSource(std::uint64_t& simulationTick,
     std::uint64_t& tapeFrame, std::uint64_t& preparedInputFrame, bool& tapeFrameApplied,
     std::string& error) {
+    if (mLiveSourceIdentity.has_value()) {
+        if (!mLiveEndpoint.has_value() || !mActiveLiveSource.has_value() ||
+            mLiveEndpoint->identity != *mLiveSourceIdentity ||
+            mLiveEndpoint->host.routeTicks != mActiveLiveSource->routeTicks ||
+            mLiveEndpoint->host.boundaryFingerprint !=
+                mActiveLiveSource->boundaryFingerprint)
+        {
+            error = "live suffix source was detached or already consumed";
+            return false;
+        }
+        const std::string currentBoundary = compute_milestone_boundary_fingerprint(
+            capture_milestone_observation(mSourceMilestoneStorage),
+            input_tape_player().tape().boot);
+        if (currentBoundary != mActiveLiveSource->boundaryFingerprint) {
+            error = "live suffix source no longer names the current process boundary";
+            return false;
+        }
+        const CachedHostSnapshot& host = *mActiveLiveSource;
+        if (!input_tape_player().restoreState(host.tapePlayer) ||
+            !PADRestoreAutomationState(&host.pad))
+        {
+            error = "live suffix source host state restore failed";
+            return false;
+        }
+        milestone_tracker() = mSource.milestones;
+        simulationTick = host.simulationTick;
+        tapeFrame = host.tapeFrame;
+        preparedInputFrame = host.preparedInputFrame;
+        tapeFrameApplied = host.tapeFrameApplied;
+        mRestoreMicros.push_back(0);
+        mLiveEndpoint.reset();
+        ++mLiveEndpointConsumptions;
+        mGoalTracker.reset();
+        mCandidateTick = 0;
+        mConsumedPads.clear();
+        mStateDigestMaterial.clear();
+        mStateTickDigests.clear();
+        mTerminalStateEntryDigests.clear();
+        mConsumedCaptureFailed = false;
+        mEpisodePreInputCaptured = false;
+        return true;
+    }
+    if (mLiveEndpoint.has_value()) {
+        mLiveEndpoint.reset();
+        ++mLiveEndpointInvalidations;
+    }
     const StateCheckpointImage* image = &mImage;
     const CachedHostSnapshot* cachedHost = nullptr;
     std::string_view expectedSemanticDigest = mSourceSemanticDigest;
@@ -665,8 +732,69 @@ bool SuffixBatchRunner::retainCandidateCheckpoint(const std::uint64_t simulation
     const bool tapeFrameApplied, RetainedCheckpointResult& result, std::string& error)
 {
     result = {};
-    if (mCheckpointCache == nullptr || !mDefinition.checkpointCache.has_value() ||
-        !mDefinition.checkpointCache->retainCandidateCheckpoints)
+    if (mCheckpointCache == nullptr || !mDefinition.checkpointCache.has_value())
+        return true;
+    const SuffixCheckpointCachePolicy& policy = *mDefinition.checkpointCache;
+    if (policy.retainLiveEndpoint) {
+        ++mLiveEndpointRetentionAttempts;
+        const auto started = ProfileClock::now();
+        CachedHostSnapshot host{
+            .tapePlayer = input_tape_player().captureState(),
+            .simulationTick = simulationTick + 1,
+            .tapeFrame = tapeFrame,
+            .preparedInputFrame = preparedInputFrame,
+            .tapeFrameApplied = tapeFrameApplied,
+            .routeTicks = activeSourceRouteTicks() + mCandidateTick + 1,
+            .boundaryFingerprint = compute_milestone_boundary_fingerprint(
+                capture_milestone_observation(mSourceMilestoneStorage),
+                input_tape_player().tape().boot),
+        };
+        if (host.boundaryFingerprint.empty()) {
+            error = "live suffix endpoint boundary fingerprint is unavailable";
+            return false;
+        }
+        if (!PADCaptureAutomationState(&host.pad)) {
+            error = "could not capture live suffix endpoint PAD state";
+            return false;
+        }
+        std::string identityMaterial = "dusklight-native-live-endpoint/v1";
+        identityMaterial.push_back('\0');
+        identityMaterial += activeSourceIdentity();
+        identityMaterial.push_back('\0');
+        identityMaterial += mDefinition.candidates[mCandidateIndex].id;
+        identityMaterial.push_back('\0');
+        identityMaterial += host.boundaryFingerprint;
+        identityMaterial.push_back('\0');
+        identityMaterial += std::to_string(host.routeTicks);
+        identityMaterial.push_back('\0');
+        identityMaterial += std::to_string(host.simulationTick);
+        identityMaterial.push_back('\0');
+        identityMaterial += std::to_string(host.tapePlayer.nextFrame);
+        const std::string identity = xxh3_128_hex(identityMaterial);
+        const std::size_t hostSnapshotBytes =
+            sizeof(LiveEndpoint) + identity.size() + host.boundaryFingerprint.size();
+        const std::uint64_t retentionNanos = elapsed_nanos(started);
+        mLiveEndpointRetentionNanos += retentionNanos;
+        if (mLiveEndpoint.has_value()) {
+            ++mLiveEndpointInvalidations;
+        }
+        mLiveEndpoint = LiveEndpoint{
+            .identity = identity,
+            .host = std::move(host),
+        };
+        ++mLiveEndpointRetentionSuccesses;
+        result = {
+            .storageKind = "live_endpoint",
+            .identity = identity,
+            .checkpointBytes = 0,
+            .hostSnapshotBytes = hostSnapshotBytes,
+            .machineCaptureMicros = 0,
+            .hostSnapshotCaptureNanos = retentionNanos,
+            .captureMicros = retentionNanos / 1'000,
+        };
+        return true;
+    }
+    if (!policy.retainCandidateCheckpoints)
         return true;
     ++mCheckpointCacheCaptureAttempts;
     const auto started = ProfileClock::now();
@@ -734,6 +862,7 @@ bool SuffixBatchRunner::retainCandidateCheckpoint(const std::uint64_t simulation
         return true;
     ++mCheckpointCacheCaptureSuccesses;
     result = {
+        .storageKind = "portable_image",
         .identity = identity,
         .imageDigest = imageDigest,
         .semanticDigest = semanticDigest,
@@ -869,7 +998,9 @@ bool SuffixBatchRunner::captureEpisodePreInput(
         previousInput = mConsumedPads.back();
     } else {
         const PADAutomationState* sourcePad = &mSource.pad;
-        if (mCachedSourceIdentity.has_value() && mCheckpointCache != nullptr) {
+        if (mActiveLiveSource.has_value()) {
+            sourcePad = &mActiveLiveSource->pad;
+        } else if (mCachedSourceIdentity.has_value() && mCheckpointCache != nullptr) {
             if (const auto* cached = mCheckpointCache->peek(*mCachedSourceIdentity))
                 sourcePad = &cached->metadata.pad;
         }
@@ -1555,9 +1686,14 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
         const nlohmann::json retainedCheckpoint = !result.retainedCheckpoint.has_value()
             ? nlohmann::json(nullptr)
             : nlohmann::json{
+                  {"storage_kind", result.retainedCheckpoint->storageKind},
                   {"restore_identity", result.retainedCheckpoint->identity},
-                  {"image_digest", result.retainedCheckpoint->imageDigest},
-                  {"semantic_digest", result.retainedCheckpoint->semanticDigest},
+                  {"image_digest", result.retainedCheckpoint->imageDigest.empty()
+                      ? nlohmann::json(nullptr)
+                      : nlohmann::json(result.retainedCheckpoint->imageDigest)},
+                  {"semantic_digest", result.retainedCheckpoint->semanticDigest.empty()
+                      ? nlohmann::json(nullptr)
+                      : nlohmann::json(result.retainedCheckpoint->semanticDigest)},
                   {"checkpoint_bytes", result.retainedCheckpoint->checkpointBytes},
                   {"host_snapshot_bytes", result.retainedCheckpoint->hostSnapshotBytes},
                   {"machine_capture_micros",
@@ -1794,6 +1930,10 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
     const NativeCheckpointCacheStats cacheStats = mCheckpointCache == nullptr
         ? NativeCheckpointCacheStats{}
         : mCheckpointCache->stats();
+    const std::size_t liveEndpointBytes = mLiveEndpoint.has_value()
+        ? sizeof(LiveEndpoint) + mLiveEndpoint->identity.size() +
+              mLiveEndpoint->host.boundaryFingerprint.size()
+        : 0;
     std::string activeSourceSemanticDigest = mSourceSemanticDigest;
     if (mCachedSourceIdentity.has_value() && mCheckpointCache != nullptr) {
         if (const auto* source = mCheckpointCache->peek(*mCachedSourceIdentity))
@@ -1801,7 +1941,7 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
     }
     nlohmann::json result{
         {"schema", mDefinition.checkpointCache.has_value()
-                       ? "dusklight-suffix-batch-result/v8"
+                       ? "dusklight-suffix-batch-result/v9"
                        : mDefinition.frozenPolicy.has_value() &&
                            mDefinition.frozenPolicy->rolloutExploration.has_value()
                        ? "dusklight-suffix-batch-result/v7"
@@ -1897,10 +2037,16 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                 ? nlohmann::json(nullptr) : nlohmann::json(activeSourceIdentity())},
         {"checkpoint_cache", mDefinition.checkpointCache.has_value()
             ? nlohmann::json{
-                  {"source_kind", mCachedSourceIdentity.has_value()
-                      ? "direct_process_local_restore" : "authenticated_root_restore"},
-                  {"source_identity", mCachedSourceIdentity.has_value()
-                      ? nlohmann::json(*mCachedSourceIdentity) : nlohmann::json(nullptr)},
+                  {"source_kind", mLiveSourceIdentity.has_value()
+                      ? "direct_process_local_continuation"
+                      : mCachedSourceIdentity.has_value()
+                      ? "direct_process_local_restore"
+                      : "authenticated_root_restore"},
+                  {"source_identity", mLiveSourceIdentity.has_value()
+                      ? nlohmann::json(*mLiveSourceIdentity)
+                      : mCachedSourceIdentity.has_value()
+                      ? nlohmann::json(*mCachedSourceIdentity)
+                      : nlohmann::json(nullptr)},
                   {"source_route_ticks", activeSourceRouteTicks()},
                   {"capacity_bytes", cacheStats.capacityBytes},
                   {"capacity_entries", cacheStats.capacityEntries},
@@ -1917,6 +2063,14 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                   {"batch_capture_attempts", mCheckpointCacheCaptureAttempts},
                   {"batch_capture_successes", mCheckpointCacheCaptureSuccesses},
                   {"batch_capture_micros", mCheckpointCacheCaptureMicros},
+                  {"live_endpoint_capacity_entries", 1},
+                  {"live_endpoint_resident_entries", mLiveEndpoint.has_value() ? 1 : 0},
+                  {"live_endpoint_resident_host_snapshot_bytes", liveEndpointBytes},
+                  {"batch_live_retention_attempts", mLiveEndpointRetentionAttempts},
+                  {"batch_live_retention_successes", mLiveEndpointRetentionSuccesses},
+                  {"batch_live_retention_nanos", mLiveEndpointRetentionNanos},
+                  {"batch_live_consumptions", mLiveEndpointConsumptions},
+                  {"batch_live_invalidations", mLiveEndpointInvalidations},
               }
             : nlohmann::json(nullptr)},
         {"capture_micros", mCaptureMicros},

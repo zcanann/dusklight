@@ -185,13 +185,14 @@ void test_reactive_controller_executes_as_one_native_candidate() {
 
 void test_cached_batch_binds_bounded_process_local_source() {
     const std::string source = R"({
-        "schema":"dusklight-suffix-batch/v9","source_frame":506,
+        "schema":"dusklight-suffix-batch/v10","source_frame":506,
         "source_boundary_fingerprint":"e7ac8251329f22a5df682bbe5eb2a2ba",
         "checkpoint_validation":{"kind":"recorded_replay_window","ticks":8},
         "maximum_ticks":1,"verify_state_hashes":false,
         "checkpoint_cache":{"capacity_bytes":671088640,"capacity_entries":2,
           "source_identity":"0123456789abcdef0123456789abcdef",
-          "source_route_ticks":40,"retain_candidate_checkpoints":true},
+          "source_route_ticks":40,"retain_candidate_checkpoints":true,
+          "retain_live_endpoint":false},
         "candidates":[{"id":"cached-step","actions":[
           {"op":"pad_run","pad":{"buttons":0,"stick_x":0,"stick_y":127,
            "substick_x":0,"substick_y":0,"trigger_left":0,"trigger_right":0,
@@ -208,6 +209,29 @@ void test_cached_batch_binds_bounded_process_local_source() {
             std::optional<std::string>("0123456789abcdef0123456789abcdef"));
     REQUIRE(batch.checkpointCache->sourceRouteTicks == 40);
     REQUIRE(batch.checkpointCache->retainCandidateCheckpoints);
+    REQUIRE(!batch.checkpointCache->retainLiveEndpoint);
+
+    std::string live = source;
+    const std::size_t portableRetention =
+        live.find("\"retain_candidate_checkpoints\":true");
+    REQUIRE(portableRetention != std::string::npos);
+    live.replace(portableRetention,
+        std::string("\"retain_candidate_checkpoints\":true").size(),
+        "\"retain_candidate_checkpoints\":false");
+    const std::size_t liveRetention = live.find("\"retain_live_endpoint\":false");
+    REQUIRE(liveRetention != std::string::npos);
+    live.replace(liveRetention, std::string("\"retain_live_endpoint\":false").size(),
+        "\"retain_live_endpoint\":true");
+    REQUIRE(parse_suffix_batch(live, batch, error));
+    REQUIRE(!batch.checkpointCache->retainCandidateCheckpoints);
+    REQUIRE(batch.checkpointCache->retainLiveEndpoint);
+
+    std::string conflicting = source;
+    const std::size_t conflict = conflicting.find("\"retain_live_endpoint\":false");
+    REQUIRE(conflict != std::string::npos);
+    conflicting.replace(conflict, std::string("\"retain_live_endpoint\":false").size(),
+        "\"retain_live_endpoint\":true");
+    REQUIRE(!parse_suffix_batch(conflicting, batch, error));
 
     std::string detached = source;
     const std::size_t identity = detached.find("0123456789abcdef0123456789abcdef");

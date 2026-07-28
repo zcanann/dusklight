@@ -13,7 +13,7 @@ pub(super) fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
     source_frame: usize,
     candidate_prefix_ticks: usize,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
-    retain_candidate_checkpoint: bool,
+    checkpoint_retention: NativeTacticCheckpointRetention,
     mut stepper: NativeGenericTacticStepper,
     duration: TacticDurationBounds,
     termination: OptionCondition,
@@ -34,7 +34,7 @@ pub(super) fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
             source_frame,
             candidate_prefix_ticks,
             checkpoint_source,
-            retain_candidate_checkpoint,
+            checkpoint_retention,
             duration,
             termination,
             program,
@@ -70,7 +70,7 @@ pub(super) fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
             selected,
             &candidate_tape,
             checkpoint_source,
-            retain_candidate_checkpoint,
+            checkpoint_retention,
         )?;
         let iteration_paths = iteration_paths(paths, selected.decision_index, local_tick);
         write_new_json(&iteration_paths.request, &request)?;
@@ -270,7 +270,7 @@ pub(super) fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
     source_frame: usize,
     candidate_prefix_ticks: usize,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
-    retain_candidate_checkpoint: bool,
+    checkpoint_retention: NativeTacticCheckpointRetention,
     duration: TacticDurationBounds,
     termination: OptionCondition,
     program: ControllerProgram,
@@ -285,7 +285,7 @@ pub(super) fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
         &prefix_frames,
         &program,
         checkpoint_source,
-        retain_candidate_checkpoint,
+        checkpoint_retention,
     )?;
     write_new_json(&paths.request, &request)?;
     let validated = worker.run_tactic_batch(&paths.request, &paths.result)?;
@@ -442,7 +442,7 @@ pub(super) fn execute_reactive_controller_native<W: PersistentTacticBatchWorker>
     source_frame: usize,
     candidate_prefix_ticks: usize,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
-    retain_candidate_checkpoint: bool,
+    checkpoint_retention: NativeTacticCheckpointRetention,
     mut stepper: ControllerProgramStepper,
     duration: TacticDurationBounds,
     termination: OptionCondition,
@@ -462,7 +462,7 @@ pub(super) fn execute_reactive_controller_native<W: PersistentTacticBatchWorker>
         &prefix_frames,
         &program,
         checkpoint_source,
-        retain_candidate_checkpoint,
+        checkpoint_retention,
     )?;
     write_new_json(&paths.request, &request)?;
     let validated = worker.run_tactic_batch(&paths.request, &paths.result)?;
@@ -598,7 +598,7 @@ pub(super) fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
     source_frame: usize,
     candidate_prefix_ticks: usize,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
-    retain_candidate_checkpoint: bool,
+    checkpoint_retention: NativeTacticCheckpointRetention,
     mut stepper: ControllerProgramStepper,
     duration: TacticDurationBounds,
     termination: OptionCondition,
@@ -681,7 +681,7 @@ pub(super) fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
             selected,
             &candidate_tape,
             checkpoint_source,
-            retain_candidate_checkpoint,
+            checkpoint_retention,
         )?;
         let iteration_paths = iteration_paths(paths, selected.decision_index, local_tick);
         write_new_json(&iteration_paths.request, &request)?;

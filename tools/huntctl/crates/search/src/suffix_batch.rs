@@ -7,7 +7,7 @@ use std::collections::HashSet;
 
 pub const NATIVE_SUFFIX_BATCH_SCHEMA: &str = "dusklight-suffix-batch/v3";
 pub const NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA: &str = "dusklight-suffix-batch/v8";
-pub const NATIVE_CACHED_SUFFIX_BATCH_SCHEMA: &str = "dusklight-suffix-batch/v9";
+pub const NATIVE_CACHED_SUFFIX_BATCH_SCHEMA: &str = "dusklight-suffix-batch/v10";
 const MAXIMUM_CANDIDATES: usize = 16_384;
 const MAXIMUM_TICKS: usize = 4_096;
 const MAXIMUM_EXPANDED_TICKS: usize = 8 * 1_024 * 1_024;
@@ -72,6 +72,7 @@ pub struct NativeCheckpointCacheRequest {
     pub source_identity: Option<String>,
     pub source_route_ticks: usize,
     pub retain_candidate_checkpoints: bool,
+    pub retain_live_endpoint: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

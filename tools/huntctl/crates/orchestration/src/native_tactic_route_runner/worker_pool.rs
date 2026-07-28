@@ -1118,7 +1118,11 @@ pub(super) fn run_tactic_proposal_worker(
                     request: proposal_root.join("request.json"),
                     result: proposal_root.join("result.json"),
                 },
-                job.retain_primary_checkpoint && proposal.proposal_index == 0,
+                if job.retain_primary_checkpoint && proposal.proposal_index == 0 {
+                    NativeTacticCheckpointRetention::PortableImage
+                } else {
+                    NativeTacticCheckpointRetention::None
+                },
                 job.execution_strategy,
             );
             if outcome
@@ -1159,7 +1163,11 @@ pub(super) fn run_tactic_proposal_worker(
                         request: fallback_root.join("request.json"),
                         result: fallback_root.join("result.json"),
                     },
-                    job.retain_primary_checkpoint && proposal.proposal_index == 0,
+                    if job.retain_primary_checkpoint && proposal.proposal_index == 0 {
+                        NativeTacticCheckpointRetention::PortableImage
+                    } else {
+                        NativeTacticCheckpointRetention::None
+                    },
                     job.execution_strategy,
                 );
             }

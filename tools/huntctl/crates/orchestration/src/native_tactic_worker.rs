@@ -70,6 +70,13 @@ pub enum NativeGenericExecutionStrategy {
     ProgressiveAudit,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeTacticCheckpointRetention {
+    None,
+    PortableImage,
+    LiveEndpoint,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeTacticWorkerPaths {
     pub request: PathBuf,
@@ -215,7 +222,10 @@ pub fn materialize_tactic_frontier<W: PersistentTacticBatchWorker>(
         },
         maximum_ticks: replay_frames.len(),
         verify_state_hashes: false,
-        checkpoint_cache: Some(tactic_checkpoint_cache_request(None, true)),
+        checkpoint_cache: Some(tactic_checkpoint_cache_request(
+            None,
+            NativeTacticCheckpointRetention::PortableImage,
+        )),
         candidates: vec![NativeSuffixCandidate {
             id: hex_digest(
                 route
@@ -341,7 +351,11 @@ pub fn execute_selected_tactic_with_checkpoint_retention<W: PersistentTacticBatc
         route_prefix,
         checkpoint_source,
         paths,
-        retain_candidate_checkpoint,
+        if retain_candidate_checkpoint {
+            NativeTacticCheckpointRetention::PortableImage
+        } else {
+            NativeTacticCheckpointRetention::None
+        },
         NativeGenericExecutionStrategy::NativeController,
     )
 }
@@ -358,7 +372,7 @@ pub fn execute_selected_tactic_with_checkpoint_retention_and_strategy<
     route_prefix: &InputTape,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
     paths: &NativeTacticWorkerPaths,
-    retain_candidate_checkpoint: bool,
+    checkpoint_retention: NativeTacticCheckpointRetention,
     execution_strategy: NativeGenericExecutionStrategy,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
     let root_checkpoint_sha256 = tactic_root_checkpoint_sha256(worker.identity())?;
@@ -424,7 +438,7 @@ pub fn execute_selected_tactic_with_checkpoint_retention_and_strategy<
             source_frame,
             replayed_prefix_ticks,
             checkpoint_source,
-            retain_candidate_checkpoint,
+            checkpoint_retention,
             prepared,
         ),
         PreparedNativeExecution::NativeGeneric {
@@ -441,7 +455,7 @@ pub fn execute_selected_tactic_with_checkpoint_retention_and_strategy<
             source_frame,
             replayed_prefix_ticks,
             checkpoint_source,
-            retain_candidate_checkpoint,
+            checkpoint_retention,
             stepper,
             duration,
             termination,
@@ -465,7 +479,7 @@ pub fn execute_selected_tactic_with_checkpoint_retention_and_strategy<
                     source_frame,
                     replayed_prefix_ticks,
                     checkpoint_source,
-                    retain_candidate_checkpoint,
+                    checkpoint_retention,
                     stepper,
                     duration,
                     termination,
@@ -483,7 +497,7 @@ pub fn execute_selected_tactic_with_checkpoint_retention_and_strategy<
                     source_frame,
                     replayed_prefix_ticks,
                     checkpoint_source,
-                    retain_candidate_checkpoint,
+                    checkpoint_retention,
                     stepper,
                     duration,
                     termination,
@@ -505,7 +519,7 @@ fn execute_static_tactic<W: PersistentTacticBatchWorker>(
     source_frame: usize,
     candidate_prefix_ticks: usize,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
-    retain_candidate_checkpoint: bool,
+    checkpoint_retention: NativeTacticCheckpointRetention,
     prepared: PreparedNativeTactic,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
     let mut candidate_tape = InputTape {
@@ -522,7 +536,7 @@ fn execute_static_tactic<W: PersistentTacticBatchWorker>(
         selected,
         &candidate_tape,
         checkpoint_source,
-        retain_candidate_checkpoint,
+        checkpoint_retention,
     )?;
     write_new_json(&paths.request, &request)?;
     let validated = worker.run_tactic_batch(&paths.request, &paths.result)?;
@@ -704,7 +718,7 @@ fn tactic_batch(
     selected: &SelectedTactic,
     tape: &InputTape,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
-    retain_candidate_checkpoint: bool,
+    checkpoint_retention: NativeTacticCheckpointRetention,
 ) -> Result<NativeSuffixBatch, NativeTacticWorkerError> {
     if tape.frames.is_empty() || tape.frames.len() > 4_096 {
         return Err(NativeTacticWorkerError::InvalidDuration);
@@ -741,7 +755,7 @@ fn tactic_batch(
         verify_state_hashes: false,
         checkpoint_cache: Some(tactic_checkpoint_cache_request(
             checkpoint_source,
-            retain_candidate_checkpoint,
+            checkpoint_retention,
         )),
         candidates: vec![NativeSuffixCandidate {
             id,
@@ -757,7 +771,7 @@ fn tactic_controller_batch(
     prefix_frames: &[InputFrame],
     program: &ControllerProgram,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
-    retain_candidate_checkpoint: bool,
+    checkpoint_retention: NativeTacticCheckpointRetention,
 ) -> Result<NativeSuffixBatch, NativeTacticWorkerError> {
     let program_bytes = program
         .encode_compatible()
@@ -796,7 +810,7 @@ fn tactic_controller_batch(
         verify_state_hashes: false,
         checkpoint_cache: Some(tactic_checkpoint_cache_request(
             checkpoint_source,
-            retain_candidate_checkpoint,
+            checkpoint_retention,
         )),
         candidates: vec![NativeSuffixCandidate {
             id,
@@ -808,14 +822,21 @@ fn tactic_controller_batch(
 
 fn tactic_checkpoint_cache_request(
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
-    retain_candidate_checkpoint: bool,
+    checkpoint_retention: NativeTacticCheckpointRetention,
 ) -> NativeCheckpointCacheRequest {
     NativeCheckpointCacheRequest {
         capacity_bytes: TACTIC_CHECKPOINT_CACHE_BYTES,
         capacity_entries: TACTIC_CHECKPOINT_CACHE_ENTRIES,
         source_identity: checkpoint_source.map(|source| source.restore_identity.clone()),
         source_route_ticks: checkpoint_source.map_or(0, |source| source.route_ticks),
-        retain_candidate_checkpoints: retain_candidate_checkpoint,
+        retain_candidate_checkpoints: matches!(
+            checkpoint_retention,
+            NativeTacticCheckpointRetention::PortableImage
+        ),
+        retain_live_endpoint: matches!(
+            checkpoint_retention,
+            NativeTacticCheckpointRetention::LiveEndpoint
+        ),
     }
 }
 

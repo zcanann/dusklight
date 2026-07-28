@@ -21,6 +21,7 @@ use std::fmt;
 pub const NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V6: &str = "dusklight-suffix-batch-result/v6";
 pub const NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V7: &str = "dusklight-suffix-batch-result/v7";
 pub const NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V8: &str = "dusklight-suffix-batch-result/v8";
+pub const NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V9: &str = "dusklight-suffix-batch-result/v9";
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V2: &str = "dusklight-native-episode-shard/v2";
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V3: &str = "dusklight-native-episode-shard/v3";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
@@ -84,6 +85,14 @@ pub struct NativeCheckpointCacheResult {
     pub batch_capture_attempts: u64,
     pub batch_capture_successes: u64,
     pub batch_capture_micros: u64,
+    pub live_endpoint_capacity_entries: u64,
+    pub live_endpoint_resident_entries: u64,
+    pub live_endpoint_resident_host_snapshot_bytes: u64,
+    pub batch_live_retention_attempts: u64,
+    pub batch_live_retention_successes: u64,
+    pub batch_live_retention_nanos: u64,
+    pub batch_live_consumptions: u64,
+    pub batch_live_invalidations: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -171,9 +180,10 @@ pub struct NativeStateCheckpointEntryDigestResult {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeRetainedCheckpointResult {
+    pub storage_kind: String,
     pub restore_identity: String,
-    pub image_digest: String,
-    pub semantic_digest: String,
+    pub image_digest: Option<String>,
+    pub semantic_digest: Option<String>,
     pub checkpoint_bytes: u64,
     pub host_snapshot_bytes: u64,
     #[serde(default)]
@@ -275,7 +285,7 @@ impl NativeSuffixBatchResult {
         }
         let cached = request.schema == NATIVE_CACHED_SUFFIX_BATCH_SCHEMA;
         let expected_result_schema = if cached {
-            NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V8
+            NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V9
         } else {
             NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V6
         };
@@ -648,7 +658,11 @@ fn validate_checkpoint_cache(
     let actual =
         actual.ok_or_else(|| result_error("cached suffix result lacks cache accounting"))?;
     let expected_source_kind = if expected.source_identity.is_some() {
-        "direct_process_local_restore"
+        if actual.source_kind == "direct_process_local_continuation" {
+            "direct_process_local_continuation"
+        } else {
+            "direct_process_local_restore"
+        }
     } else {
         "authenticated_root_restore"
     };
@@ -657,14 +671,33 @@ fn validate_checkpoint_cache(
         || actual.source_route_ticks != expected.source_route_ticks as u64
         || actual.capacity_bytes != expected.capacity_bytes as u64
         || actual.capacity_entries != expected.capacity_entries as u64
-        || actual.source_pinned != expected.source_identity.is_some()
+        || actual.source_pinned
+            != (expected.source_identity.is_some()
+                && actual.source_kind == "direct_process_local_restore")
         || actual.batch_capture_attempts
             != if expected.retain_candidate_checkpoints {
                 request.candidates.len() as u64
             } else {
                 0
             }
+        || actual.batch_live_retention_attempts
+            != if expected.retain_live_endpoint {
+                request.candidates.len() as u64
+            } else {
+                0
+            }
         || actual.batch_capture_successes > actual.batch_capture_attempts
+        || actual.batch_live_retention_successes > actual.batch_live_retention_attempts
+        || (actual.source_kind == "direct_process_local_continuation")
+            != (actual.batch_live_consumptions == 1)
+        || actual.batch_live_consumptions > 1
+        || actual.live_endpoint_capacity_entries != 1
+        || actual.live_endpoint_resident_entries > actual.live_endpoint_capacity_entries
+        || (actual.live_endpoint_resident_entries == 0)
+            != (actual.live_endpoint_resident_host_snapshot_bytes == 0)
+        || (expected.retain_live_endpoint
+            && (actual.batch_live_retention_successes != actual.batch_live_retention_attempts
+                || actual.live_endpoint_resident_entries != 1))
         || actual.resident_entries > actual.capacity_entries
         || actual.resident_bytes > actual.capacity_bytes
         || actual.resident_bytes
@@ -693,7 +726,7 @@ fn validate_retained_checkpoint(
         }
         return Ok(());
     };
-    if !cache.retain_candidate_checkpoints {
+    if !cache.retain_candidate_checkpoints && !cache.retain_live_endpoint {
         if candidate.retained_checkpoint.is_some() {
             return Err(result_error(
                 "suffix candidate retained a checkpoint contrary to its cache request",
@@ -707,16 +740,40 @@ fn validate_retained_checkpoint(
         return Ok(());
     };
     if !lower_hex(&retained.restore_identity, 32)
-        || !lower_hex(&retained.image_digest, 32)
-        || !lower_hex(&retained.semantic_digest, 32)
-        || retained.checkpoint_bytes != checkpoint_bytes
         || retained.host_snapshot_bytes == 0
-        || retained.capture_micros == 0
         || retained.route_ticks
             != (cache.source_route_ticks as u64).saturating_add(candidate.ticks_executed)
     {
         return Err(result_error(
             "native retained checkpoint is incomplete or detached from its candidate",
+        ));
+    }
+    if cache.retain_candidate_checkpoints {
+        if retained.storage_kind != "portable_image"
+            || !retained
+                .image_digest
+                .as_deref()
+                .is_some_and(|digest| lower_hex(digest, 32))
+            || !retained
+                .semantic_digest
+                .as_deref()
+                .is_some_and(|digest| lower_hex(digest, 32))
+            || retained.checkpoint_bytes != checkpoint_bytes
+            || retained.capture_micros == 0
+        {
+            return Err(result_error(
+                "native portable checkpoint is incomplete or detached from its candidate",
+            ));
+        }
+    } else if retained.storage_kind != "live_endpoint"
+        || retained.image_digest.is_some()
+        || retained.semantic_digest.is_some()
+        || retained.checkpoint_bytes != 0
+        || retained.machine_capture_micros != 0
+        || retained.host_snapshot_capture_nanos == 0
+    {
+        return Err(result_error(
+            "native live endpoint is incomplete or detached from its candidate",
         ));
     }
     Ok(())
@@ -895,6 +952,8 @@ mod tests {
     };
     use dusklight_search::search::MacroAction;
     use dusklight_search::suffix_batch::{NativeCheckpointValidation, NativeSuffixCandidate};
+
+    mod live_endpoint;
 
     fn request(verify_state_hashes: bool) -> NativeSuffixBatch {
         NativeSuffixBatch {
@@ -1176,10 +1235,11 @@ mod tests {
                 source_identity: Some("a".repeat(32)),
                 source_route_ticks: 40,
                 retain_candidate_checkpoints: true,
+                retain_live_endpoint: false,
             },
         );
         let mut result = result(false, false);
-        result.schema = NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V8.into();
+        result.schema = NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V9.into();
         result.restore_identity = Some("a".repeat(32));
         result.checkpoint_cache = Some(
             serde_json::from_value(serde_json::json!({
@@ -1200,14 +1260,23 @@ mod tests {
                 "source_pinned": true,
                 "batch_capture_attempts": 1,
                 "batch_capture_successes": 1,
-                "batch_capture_micros": 1
+                "batch_capture_micros": 1,
+                "live_endpoint_capacity_entries": 1,
+                "live_endpoint_resident_entries": 0,
+                "live_endpoint_resident_host_snapshot_bytes": 0,
+                "batch_live_retention_attempts": 0,
+                "batch_live_retention_successes": 0,
+                "batch_live_retention_nanos": 0,
+                "batch_live_consumptions": 0,
+                "batch_live_invalidations": 0
             }))
             .unwrap(),
         );
         result.candidates[0].retained_checkpoint = Some(NativeRetainedCheckpointResult {
+            storage_kind: "portable_image".into(),
             restore_identity: "b".repeat(32),
-            image_digest: "c".repeat(32),
-            semantic_digest: "d".repeat(32),
+            image_digest: Some("c".repeat(32)),
+            semantic_digest: Some("d".repeat(32)),
             checkpoint_bytes: 128,
             host_snapshot_bytes: 16,
             machine_capture_micros: 1,

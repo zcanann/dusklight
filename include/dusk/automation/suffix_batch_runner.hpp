@@ -118,6 +118,7 @@ private:
     };
 
     struct RetainedCheckpointResult {
+        std::string storageKind;
         std::string identity;
         std::string imageDigest;
         std::string semanticDigest;
@@ -126,6 +127,11 @@ private:
         std::uint64_t machineCaptureMicros = 0;
         std::uint64_t hostSnapshotCaptureNanos = 0;
         std::uint64_t captureMicros = 0;
+    };
+
+    struct LiveEndpoint {
+        std::string identity;
+        CachedHostSnapshot host;
     };
 
     struct TerminalObservation {
@@ -256,9 +262,17 @@ private:
     HostSnapshot mSource;
     std::unique_ptr<NativeCheckpointCache<CachedHostSnapshot>> mCheckpointCache;
     std::optional<std::string> mCachedSourceIdentity;
+    std::optional<LiveEndpoint> mLiveEndpoint;
+    std::optional<std::string> mLiveSourceIdentity;
+    std::optional<CachedHostSnapshot> mActiveLiveSource;
     std::uint64_t mCheckpointCacheCaptureMicros = 0;
     std::uint64_t mCheckpointCacheCaptureAttempts = 0;
     std::uint64_t mCheckpointCacheCaptureSuccesses = 0;
+    std::uint64_t mLiveEndpointRetentionNanos = 0;
+    std::uint64_t mLiveEndpointRetentionAttempts = 0;
+    std::uint64_t mLiveEndpointRetentionSuccesses = 0;
+    std::uint64_t mLiveEndpointConsumptions = 0;
+    std::uint64_t mLiveEndpointInvalidations = 0;
     MilestoneTracker mGoalTracker;
     MilestoneObservationStorage mMilestoneStorage;
     MilestoneObservationStorage mSourceMilestoneStorage;

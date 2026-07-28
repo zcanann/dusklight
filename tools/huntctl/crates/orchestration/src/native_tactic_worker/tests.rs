@@ -131,7 +131,14 @@ fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
             definition_sha256: Digest([9; 32]),
         },
     };
-    let batch = tactic_batch(&identity, &selected, &prepared.option_tape, None, true).unwrap();
+    let batch = tactic_batch(
+        &identity,
+        &selected,
+        &prepared.option_tape,
+        None,
+        NativeTacticCheckpointRetention::PortableImage,
+    )
+    .unwrap();
     assert_eq!(batch.maximum_ticks, 3);
     assert_eq!(batch.candidates.len(), 1);
     assert_eq!(
@@ -157,7 +164,7 @@ fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
         &selected,
         &prepared.option_tape,
         Some(&checkpoint_source),
-        true,
+        NativeTacticCheckpointRetention::PortableImage,
     )
     .unwrap();
     let cache = restored
@@ -173,21 +180,35 @@ fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
     );
     assert_eq!(cache.source_route_ticks, 40);
     assert!(cache.retain_candidate_checkpoints);
+    assert!(!cache.retain_live_endpoint);
+
+    let live = tactic_batch(
+        &identity,
+        &selected,
+        &prepared.option_tape,
+        Some(&checkpoint_source),
+        NativeTacticCheckpointRetention::LiveEndpoint,
+    )
+    .unwrap();
+    let live_cache = live
+        .checkpoint_cache
+        .expect("live batches declare their bounded endpoint policy");
+    assert!(!live_cache.retain_candidate_checkpoints);
+    assert!(live_cache.retain_live_endpoint);
 
     let evaluation_only = tactic_batch(
         &identity,
         &selected,
         &prepared.option_tape,
         Some(&checkpoint_source),
-        false,
+        NativeTacticCheckpointRetention::None,
     )
     .unwrap();
-    assert!(
-        !evaluation_only
-            .checkpoint_cache
-            .expect("evaluation batches still declare their cache policy")
-            .retain_candidate_checkpoints
-    );
+    let evaluation_cache = evaluation_only
+        .checkpoint_cache
+        .expect("evaluation batches still declare their cache policy");
+    assert!(!evaluation_cache.retain_candidate_checkpoints);
+    assert!(!evaluation_cache.retain_live_endpoint);
     assert!(
         candidate_prefix_frames(
             &InputTape {
@@ -285,8 +306,15 @@ fn relative_heading_becomes_one_linear_native_controller_candidate() {
         };
         3
     ];
-    let batch =
-        tactic_controller_batch(&identity, &selected, &prefix, &program, None, true).unwrap();
+    let batch = tactic_controller_batch(
+        &identity,
+        &selected,
+        &prefix,
+        &program,
+        None,
+        NativeTacticCheckpointRetention::PortableImage,
+    )
+    .unwrap();
 
     assert_eq!(batch.schema, NATIVE_CACHED_SUFFIX_BATCH_SCHEMA);
     assert_eq!(batch.maximum_ticks, 19);
