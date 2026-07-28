@@ -345,6 +345,7 @@ pub struct TacticQCampaign {
     training_replay_routes: Vec<InputTape>,
     training_episode_groups: Vec<u64>,
     training_identities: BTreeSet<Digest>,
+    frontier_archive: BehaviorArchive,
     model_config: OptionValueConfig,
     exploration: TacticExplorationConfig,
     model: Option<OptionValueModel>,
@@ -379,6 +380,55 @@ impl TacticQTrainingCorpus {
     pub fn read(path: &Path) -> Result<Self, TacticQCampaignError> {
         tactic_q_checkpoint_store::read_training_corpus(path)
     }
+}
+
+fn consider_frontier_transition(
+    archive: &mut BehaviorArchive,
+    root_checkpoint_sha256: Digest,
+    transition: &OptionTransitionSample,
+    route: &InputTape,
+    episode_group: u64,
+    generation: usize,
+) -> Result<(), TacticQCampaignError> {
+    // Model-only evidence teaches return without granting the policy a route
+    // to replay. Terminal endpoints are leaves; refinement must branch from
+    // their source state, never execute beyond the goal.
+    if episode_group != TACTIC_Q_MODEL_ONLY_EPISODE_GROUP && !transition.value_sample.terminal {
+        archive
+            .consider_tactic_endpoint(
+                root_checkpoint_sha256,
+                transition.clone(),
+                route.clone(),
+                generation as u64,
+            )
+            .map_err(|error| TacticQCampaignError::Frontier(error.to_string()))?;
+    }
+    Ok(())
+}
+
+fn build_frontier_archive(
+    root_checkpoint_sha256: Digest,
+    transitions: &[OptionTransitionSample],
+    routes: &[InputTape],
+    episode_groups: &[u64],
+) -> Result<BehaviorArchive, TacticQCampaignError> {
+    let mut archive = BehaviorArchive::default();
+    for (generation, ((transition, route), episode_group)) in transitions
+        .iter()
+        .zip(routes)
+        .zip(episode_groups)
+        .enumerate()
+    {
+        consider_frontier_transition(
+            &mut archive,
+            root_checkpoint_sha256,
+            transition,
+            route,
+            *episode_group,
+            generation,
+        )?;
+    }
+    Ok(archive)
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -441,6 +491,7 @@ impl TacticQCampaign {
             training_replay_routes: Vec::new(),
             training_episode_groups: Vec::new(),
             training_identities: BTreeSet::new(),
+            frontier_archive: BehaviorArchive::default(),
             model_config,
             exploration,
             model: None,
@@ -492,6 +543,7 @@ impl TacticQCampaign {
         let mut training_replay_routes = self.training_replay_routes.clone();
         let mut training_episode_groups = self.training_episode_groups.clone();
         let mut identities = self.training_identities.clone();
+        let mut frontier_archive = self.frontier_archive.clone();
         let mut visited_states = self.visited_states.clone();
         let mut admitted = 0_usize;
 
@@ -520,6 +572,14 @@ impl TacticQCampaign {
                 )?;
                 let identity = transition.replay_identity_sha256()?;
                 if identities.insert(identity) {
+                    consider_frontier_transition(
+                        &mut frontier_archive,
+                        self.root_checkpoint_sha256,
+                        transition,
+                        route,
+                        *episode_group,
+                        training_replay.len(),
+                    )?;
                     training_replay.push(transition.clone());
                     training_replay_routes.push(route.clone());
                     training_episode_groups.push(*episode_group);
@@ -547,6 +607,7 @@ impl TacticQCampaign {
         self.training_replay_routes = training_replay_routes;
         self.training_episode_groups = training_episode_groups;
         self.training_identities = identities;
+        self.frontier_archive = frontier_archive;
         self.visited_states = visited_states;
         self.model = model;
         Ok(admitted)
@@ -560,40 +621,8 @@ impl TacticQCampaign {
         &self.hindsight
     }
 
-    pub fn frontier_archive(&self) -> Result<BehaviorArchive, TacticQCampaignError> {
-        let mut archive = BehaviorArchive::default();
-        // Every evaluated proposal is attached to an authenticated route from
-        // the campaign root, even though only one winner advances the current
-        // executable path. Preserve those alternatives as branchable frontier
-        // evidence instead of collapsing exploration to the winner lineage.
-        // BehaviorArchive keeps one short elite per semantic state cell and
-        // selects cells by novelty, so repeated choke outcomes cannot crowd
-        // out distinct progress, terminal, or low-cost endpoints.
-        for (index, ((transition, route), episode_group)) in self
-            .training_replay
-            .iter()
-            .zip(&self.training_replay_routes)
-            .zip(&self.training_episode_groups)
-            .enumerate()
-        {
-            // Model-only evidence teaches return without granting the policy a
-            // route to replay. Terminal endpoints are leaves; refinement must
-            // branch from their source state, never execute beyond the goal.
-            if *episode_group == TACTIC_Q_MODEL_ONLY_EPISODE_GROUP
-                || transition.value_sample.terminal
-            {
-                continue;
-            }
-            archive
-                .consider_tactic_endpoint(
-                    self.root_checkpoint_sha256,
-                    transition.clone(),
-                    route.clone(),
-                    index as u64,
-                )
-                .map_err(|error| TacticQCampaignError::Frontier(error.to_string()))?;
-        }
-        Ok(archive)
+    pub fn frontier_archive(&self) -> Result<&BehaviorArchive, TacticQCampaignError> {
+        Ok(&self.frontier_archive)
     }
 
     /// Count the bounded semantic frontier without cloning every retained
@@ -1356,6 +1385,12 @@ impl TacticQCampaign {
             .iter()
             .map(OptionTransitionSample::replay_identity_sha256)
             .collect::<Result<BTreeSet<_>, _>>()?;
+        let frontier_archive = build_frontier_archive(
+            checkpoint.root_checkpoint_sha256,
+            &checkpoint.training_replay,
+            &checkpoint.training_replay_routes,
+            &checkpoint.training_episode_groups,
+        )?;
         Ok(Self {
             schema: TACTIC_Q_CAMPAIGN_SCHEMA_V1.into(),
             feature_schema_sha256: checkpoint.feature_schema_sha256,
@@ -1372,6 +1407,7 @@ impl TacticQCampaign {
             training_replay_routes: checkpoint.training_replay_routes,
             training_episode_groups: checkpoint.training_episode_groups,
             training_identities,
+            frontier_archive,
             model_config: checkpoint.model_config,
             exploration: checkpoint.exploration,
             model,
@@ -1888,6 +1924,7 @@ impl TacticQCampaign {
         let mut training_replay_routes = self.training_replay_routes.clone();
         let mut training_episode_groups = self.training_episode_groups.clone();
         let mut identities = self.training_identities.clone();
+        let mut frontier_archive = self.frontier_archive.clone();
         let mut admitted = 0;
         for evaluated in evaluated {
             evaluated.transition.validate()?;
@@ -1916,6 +1953,14 @@ impl TacticQCampaign {
             }
             let identity = evaluated.transition.replay_identity_sha256()?;
             if identities.insert(identity) {
+                consider_frontier_transition(
+                    &mut frontier_archive,
+                    self.root_checkpoint_sha256,
+                    &evaluated.transition,
+                    &evaluated.outcome.route_tape,
+                    self.episode_group,
+                    training_replay.len(),
+                )?;
                 training_replay.push(evaluated.transition.clone());
                 training_replay_routes.push(evaluated.outcome.route_tape.clone());
                 training_episode_groups.push(self.episode_group);
@@ -1926,6 +1971,7 @@ impl TacticQCampaign {
         self.training_replay_routes = training_replay_routes;
         self.training_episode_groups = training_episode_groups;
         self.training_identities = identities;
+        self.frontier_archive = frontier_archive;
         Ok(admitted)
     }
 
@@ -2151,7 +2197,16 @@ impl TacticQCampaign {
         let mut training_replay_routes = self.training_replay_routes.clone();
         let mut training_episode_groups = self.training_episode_groups.clone();
         let mut training_identities = self.training_identities.clone();
+        let mut frontier_archive = self.frontier_archive.clone();
         if training_identities.insert(transition.replay_identity_sha256()?) {
+            consider_frontier_transition(
+                &mut frontier_archive,
+                self.root_checkpoint_sha256,
+                &transition,
+                &outcome.route_tape,
+                self.episode_group,
+                training_replay.len(),
+            )?;
             training_replay.push(transition.clone());
             training_replay_routes.push(outcome.route_tape.clone());
             training_episode_groups.push(self.episode_group);
@@ -2181,6 +2236,7 @@ impl TacticQCampaign {
         self.training_replay_routes = training_replay_routes;
         self.training_episode_groups = training_episode_groups;
         self.training_identities = training_identities;
+        self.frontier_archive = frontier_archive;
         if let Some(model) = model_update {
             // Exact-descriptor FQI is a small-data control, not the scalable
             // action representation. Clear it once a dynamic controller
@@ -3525,6 +3581,13 @@ mod tests {
         model_only
             .training_episode_groups
             .fill(TACTIC_Q_MODEL_ONLY_EPISODE_GROUP);
+        model_only.frontier_archive = build_frontier_archive(
+            model_only.root_checkpoint_sha256,
+            &model_only.training_replay,
+            &model_only.training_replay_routes,
+            &model_only.training_episode_groups,
+        )
+        .unwrap();
         assert_eq!(model_only.frontier_archive().unwrap().tactic_len(), 0);
         assert_eq!(model_only.frontier_cell_count(), 0);
         assert_eq!(model_only.demonstration_frontier_count(), 0);
@@ -3532,6 +3595,13 @@ mod tests {
         demonstration
             .training_episode_groups
             .fill(TACTIC_Q_DEMONSTRATION_EPISODE_GROUP);
+        demonstration.frontier_archive = build_frontier_archive(
+            demonstration.root_checkpoint_sha256,
+            &demonstration.training_replay,
+            &demonstration.training_replay_routes,
+            &demonstration.training_episode_groups,
+        )
+        .unwrap();
         assert_eq!(demonstration.frontier_archive().unwrap().tactic_len(), 1);
         assert_eq!(demonstration.frontier_cell_count(), 1);
         assert_eq!(demonstration.demonstration_frontier_count(), 1);
@@ -3540,6 +3610,13 @@ mod tests {
             .training_episode_groups
             .fill(TACTIC_Q_DEMONSTRATION_EPISODE_GROUP);
         terminal_leaf.training_replay[0].value_sample.terminal = true;
+        terminal_leaf.frontier_archive = build_frontier_archive(
+            terminal_leaf.root_checkpoint_sha256,
+            &terminal_leaf.training_replay,
+            &terminal_leaf.training_replay_routes,
+            &terminal_leaf.training_episode_groups,
+        )
+        .unwrap();
         assert_eq!(terminal_leaf.frontier_archive().unwrap().tactic_len(), 0);
         assert_eq!(terminal_leaf.frontier_cell_count(), 0);
         assert_eq!(terminal_leaf.demonstration_frontier_count(), 0);
