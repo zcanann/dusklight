@@ -91,11 +91,17 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   learning found authenticated terminals in `3/4` seeds while scratch found
   `0/4`; useful training evidence per wall second improved by `21%` and useful
   decisions per wall second by `47%`. Generated primitives refined the best
-  candidate from tick `136` to `135`, so this was not literal tape playback.
-  P3 still fails: the candidate did not beat `131`, scratch still required
-  replay support to succeed at this capacity, and the newer generic
-  executable-factor coverage also found no scratch terminal in its diagnostic
-  cell. A subsequent generic cold-start correction stopped treating
+  candidate from tick `136` to `135`, so this was not literal tape playback. A
+  follow-up exposed the replay at four-tick rather than 16-tick resolution,
+  preserving short setup inputs instead of averaging them into coarse action
+  summaries. At only 16 learned decisions per seed it found `2/4` terminals
+  and an authenticated tick-`130` candidate. At the full matched budget it
+  found `4/4` terminals and retained tick `130`, versus `3/4` and tick `135`
+  for the coarse replay, while visited states increased from `555` to `745`.
+  Ordinary suboptimal replay therefore improves terminal sample efficiency and
+  does not cap the learned policy: generated actions beat the `131` sample.
+  P3 still fails because scratch still requires replay support to succeed at
+  this capacity. A subsequent generic cold-start correction stopped treating
   pre-terminal sparse action cost as goal evidence and instead acquired
   least-expanded, semantically diverse frontiers. At the full matched scratch
   budget it increased useful decisions from `128` to `153`, useful training
