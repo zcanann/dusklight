@@ -6,6 +6,9 @@ pub struct NativeTacticRouteRunConfig<'a> {
     pub optimization: &'a OptimizationRequest,
     pub execution: &'a NativeResidualExecutionBinding,
     pub execution_plan: &'a NativeTacticExecutionPlan,
+    /// Optional previously validated macro registry. Its content identity is
+    /// sealed into `execution_plan`; the path is only a local artifact locator.
+    pub promoted_tactic_registry: Option<&'a Path>,
     pub output_root: &'a Path,
     pub workers: usize,
     pub cancellation: Option<&'a AtomicBool>,
@@ -27,6 +30,8 @@ pub struct NativeTacticRouteReport {
     pub objective_sha256: Digest,
     pub feature_schema_sha256: Digest,
     pub action_schema_sha256: Digest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_promoted_tactics: Option<NativeTacticImportedMacroReport>,
     pub goal_target: NativeTacticGoalTargetReport,
     pub reward_spec: TacticRewardSpec,
     pub demonstration_transitions: u64,
@@ -58,6 +63,14 @@ pub struct NativeTacticRouteReport {
     pub tactic_macro_discovery: NativeTacticMacroDiscoveryReport,
     pub timing: NativeTacticRouteTiming,
     pub seeds: Vec<NativeTacticSeedResult>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticImportedMacroReport {
+    pub registry_path: String,
+    pub registry_sha256: Digest,
+    pub promoted_count: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

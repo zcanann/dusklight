@@ -107,6 +107,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V23: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V24: &str = "dusklight-native-tactic-route-report/v24";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V25: &str = "dusklight-native-tactic-route-report/v25";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V26: &str = "dusklight-native-tactic-route-report/v26";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V27: &str = "dusklight-native-tactic-route-report/v27";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -157,21 +158,23 @@ use report::{
 };
 pub use report::{
     NativeTacticDecisionTrace, NativeTacticDemonstrationReport, NativeTacticFrontierAvailability,
-    NativeTacticLearnerAuthorityReport, NativeTacticMacroDiscoveryReport,
-    NativeTacticMacroReuseReport, NativeTacticMeasurementTrace, NativeTacticProposalTrace,
-    NativeTacticReplaySharingTelemetry, NativeTacticRestoreAccounting, NativeTacticRestoreSource,
-    NativeTacticRouteReport, NativeTacticRouteRunConfig, NativeTacticRouteTiming,
-    NativeTacticSeedResult, NativeTacticStateTrace, NativeTacticValueTrace,
+    NativeTacticImportedMacroReport, NativeTacticLearnerAuthorityReport,
+    NativeTacticMacroDiscoveryReport, NativeTacticMacroReuseReport, NativeTacticMeasurementTrace,
+    NativeTacticProposalTrace, NativeTacticReplaySharingTelemetry, NativeTacticRestoreAccounting,
+    NativeTacticRestoreSource, NativeTacticRouteReport, NativeTacticRouteRunConfig,
+    NativeTacticRouteTiming, NativeTacticSeedResult, NativeTacticStateTrace,
+    NativeTacticValueTrace,
 };
 
 mod execution_plan;
 pub use execution_plan::{
     NATIVE_TACTIC_EXECUTION_PLAN_FILE, NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V1,
-    NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V2, NativeTacticAcquisitionPlan,
-    NativeTacticCheckpointFallback, NativeTacticCheckpointOwnership, NativeTacticCheckpointPlan,
-    NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest, NativeTacticGenerationPlan,
-    NativeTacticInterventionPlan, NativeTacticLanePlan, NativeTacticLaneRole,
-    NativeTacticPlanBudgets, NativeTacticReplaySharingPlan, NativeTacticResourceLimit,
+    NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V2, NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V3,
+    NativeTacticAcquisitionPlan, NativeTacticCheckpointFallback, NativeTacticCheckpointOwnership,
+    NativeTacticCheckpointPlan, NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest,
+    NativeTacticGenerationPlan, NativeTacticInterventionPlan, NativeTacticLanePlan,
+    NativeTacticLaneRole, NativeTacticPlanBudgets, NativeTacticReplaySharingPlan,
+    NativeTacticResourceLimit,
 };
 
 mod learner_authority;
@@ -185,6 +188,7 @@ pub fn run_native_tactic_route(
 ) -> Result<NativeTacticRouteReport, NativeTacticRouteRunError> {
     let campaign_started = Instant::now();
     validate_config(config)?;
+    let imported_promoted_tactics = load_imported_promoted_tactics(config)?;
     let root = config.repository_root.canonicalize().map_err(route_error)?;
     config
         .execution
@@ -328,7 +332,11 @@ pub fn run_native_tactic_route(
         config.execution,
         &initial_facts,
     )?;
-    let action_schema_sha256 = parameterized_policy_action_schema_sha256();
+    let action_schema_sha256 = parameterized_policy_action_schema_sha256(
+        imported_promoted_tactics
+            .as_ref()
+            .map(|imported| imported.report.registry_sha256),
+    );
     let root_checkpoint_sha256 = worker_root_checkpoints[0];
     let reward_spec = route_tactic_reward_spec();
     let root_source_frame = usize::try_from(initial_facts.tape_frame)
@@ -442,6 +450,9 @@ pub fn run_native_tactic_route(
                                 let registry = &registry;
                                 let encoder = &encoder;
                                 let reward_spec = &reward_spec;
+                                let promoted_tactics = imported_promoted_tactics
+                                    .as_ref()
+                                    .map_or(&[][..], |imported| imported.entries.as_slice());
                                 let initial_facts = &initial_facts;
                                 let route_prefix = &route_prefix;
                                 let live_learner = live_learner.clone();
@@ -457,6 +468,7 @@ pub fn run_native_tactic_route(
                                         initial_facts,
                                         route_prefix,
                                         action_schema_sha256,
+                                        promoted_tactics,
                                         root_checkpoint_sha256,
                                         root_tape_ref,
                                         inherited_learner_snapshot,
@@ -629,7 +641,7 @@ pub fn run_native_tactic_route(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V26.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V27.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
@@ -641,6 +653,9 @@ pub fn run_native_tactic_route(
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
         feature_schema_sha256: encoder.schema_sha256,
         action_schema_sha256,
+        imported_promoted_tactics: imported_promoted_tactics
+            .as_ref()
+            .map(|imported| imported.report.clone()),
         goal_target,
         reward_spec,
         demonstration_transitions: demonstration
@@ -713,6 +728,9 @@ pub fn run_native_tactic_route(
 
 mod macro_discovery;
 use macro_discovery::{mine_and_store_tactic_macros, validate_and_store_tactic_macros};
+mod macro_import;
+use macro_import::load_imported_promoted_tactics;
+pub use macro_import::tactic_macro_registry_identity;
 
 mod replay_sharing;
 use replay_sharing::{
@@ -723,8 +741,9 @@ use replay_sharing::{
 mod worker_pool;
 use worker_pool::{
     CachedTacticFrontier, NativeTacticProposalPool, applicable_parameterized_descriptors_for_state,
-    launch_tactic_route_worker, load_or_capture_demonstration, parameterized_catalog_for_state,
-    parameterized_feedback_for_state, run_seed_coordinator, run_tactic_proposal_worker,
+    launch_tactic_route_worker, load_or_capture_demonstration,
+    parameterized_catalog_for_state_with_promoted, parameterized_feedback_for_state,
+    run_seed_coordinator, run_tactic_proposal_worker,
 };
 mod campaign;
 use campaign::{NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1, run_seed};
@@ -1030,6 +1049,11 @@ fn validate_config(
             })
         || config.execution_plan.budgets.decisions_per_lane
             > config.optimization.budgets.candidate_budget
+        || config
+            .execution_plan
+            .promoted_tactic_registry_sha256
+            .is_some()
+            != config.promoted_tactic_registry.is_some()
     {
         return Err(route_message(
             "native tactic route configuration is invalid",

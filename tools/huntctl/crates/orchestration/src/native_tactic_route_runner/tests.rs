@@ -988,6 +988,91 @@ fn live_parameterized_policy_rejects_authored_route_actions() {
 }
 
 #[test]
+fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
+    let generic = propose_parameterized_tactics(ParameterizedTacticProposalContext {
+        seed: 11,
+        decision_index: 3,
+        state_sha256: Digest([7; 32]),
+        player_position: [0.0, 0.0, 0.0],
+        camera_yaw_radians: Some(0.0),
+        goal_coordinate: [100.0, 0.0, -100.0],
+        maximum_ticks: 40,
+        feedback: None,
+    })
+    .unwrap();
+    let tape = InputTape {
+        frames: vec![
+            InputFrame {
+                owned_ports: 1,
+                ..InputFrame::default()
+            };
+            4
+        ],
+        ..InputTape::default()
+    };
+    let candidate = replay_macro_candidate(
+        tape,
+        vec![
+            MacroSourceProvenance {
+                seed: 11,
+                frontier_state_sha256: Digest([1; 32]),
+                transition_sha256: Digest([2; 32]),
+                option_id: "family/primitive/a".into(),
+            },
+            MacroSourceProvenance {
+                seed: 22,
+                frontier_state_sha256: Digest([3; 32]),
+                transition_sha256: Digest([4; 32]),
+                option_id: "family/primitive/b".into(),
+            },
+        ],
+    )
+    .unwrap();
+    let mut entries = generic.catalog.entries().to_vec();
+    entries.push(candidate.catalog_entry().unwrap());
+    let combined = TacticAssetCatalog::new(entries).unwrap();
+
+    validate_parameterized_policy_catalog(&combined).unwrap();
+    assert!(
+        combined
+            .entries()
+            .iter()
+            .any(|entry| entry.option_id().starts_with("promoted/"))
+    );
+    assert!(
+        combined
+            .entries()
+            .iter()
+            .any(|entry| entry.option_id().starts_with("family/"))
+    );
+    let shard = NativeEpisodeShard::decode(include_bytes!(
+        "../../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+    ))
+    .unwrap();
+    let snapshot = FactSnapshot::from_native_learning(
+        &shard.episodes[0].steps[0].pre_input,
+        &[],
+        None,
+        Vec::new(),
+    )
+    .unwrap();
+    let learner = LearnerState::build(snapshot, &FactRegistry::canonical(), &combined, &[], |_| {
+        true
+    })
+    .unwrap();
+    assert!(
+        learner
+            .applicable_descriptors()
+            .any(|descriptor| descriptor.option_id.starts_with("promoted/"))
+    );
+    assert!(
+        learner
+            .applicable_descriptors()
+            .any(|descriptor| descriptor.option_id.starts_with("family/"))
+    );
+}
+
+#[test]
 fn goal_corridor_is_a_symmetric_start_and_goal_derived_action_basis() {
     let source = [0.0, 10.0, 0.0];
     let goal = [1000.0, 20.0, 0.0];

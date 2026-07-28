@@ -54,6 +54,7 @@ pub(super) fn run_seed_coordinator(
     initial_facts: &FactSnapshot,
     route_prefix: &InputTape,
     action_schema_sha256: Digest,
+    promoted_tactics: &[TacticCatalogEntry],
     root_checkpoint_sha256: Digest,
     root_tape_ref: StoredContentRef,
     inherited_learner_snapshot: Arc<TacticQImmutableLearnerSnapshot>,
@@ -94,6 +95,7 @@ pub(super) fn run_seed_coordinator(
             initial_facts,
             route_prefix,
             action_schema_sha256,
+            promoted_tactics,
             root_checkpoint_sha256,
             root_tape_ref,
             inherited_learner_snapshot,
@@ -141,6 +143,29 @@ pub(super) fn parameterized_catalog_for_state(
     feedback: Option<ParameterizedTacticFeedback>,
     action_schema_sha256: Digest,
 ) -> Result<ParameterizedTacticProposalCatalog, NativeTacticRouteRunError> {
+    parameterized_catalog_for_state_with_promoted(
+        seed,
+        decision_index,
+        state,
+        encoder,
+        maximum_ticks,
+        feedback,
+        action_schema_sha256,
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn parameterized_catalog_for_state_with_promoted(
+    seed: u64,
+    decision_index: u64,
+    state: &FactSnapshot,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+    maximum_ticks: u32,
+    feedback: Option<ParameterizedTacticFeedback>,
+    action_schema_sha256: Digest,
+    promoted_tactics: &[TacticCatalogEntry],
+) -> Result<ParameterizedTacticProposalCatalog, NativeTacticRouteRunError> {
     let mut proposals = propose_parameterized_tactics(ParameterizedTacticProposalContext {
         seed,
         decision_index,
@@ -152,6 +177,11 @@ pub(super) fn parameterized_catalog_for_state(
         feedback,
     })
     .map_err(route_error)?;
+    if !promoted_tactics.is_empty() {
+        let mut entries = proposals.catalog.entries().to_vec();
+        entries.extend_from_slice(promoted_tactics);
+        proposals.catalog = TacticAssetCatalog::new(entries).map_err(route_error)?;
+    }
     validate_parameterized_policy_catalog(&proposals.catalog)?;
     proposals.family_schema_sha256 = action_schema_sha256;
     Ok(proposals)
@@ -160,11 +190,12 @@ pub(super) fn parameterized_catalog_for_state(
 pub(super) fn validate_parameterized_policy_catalog(
     catalog: &TacticAssetCatalog,
 ) -> Result<(), NativeTacticRouteRunError> {
-    if let Some(entry) = catalog
-        .entries()
-        .iter()
-        .find(|entry| !entry.option_id().starts_with("family/"))
-    {
+    if let Some(entry) = catalog.entries().iter().find(|entry| {
+        !entry.option_id().starts_with("family/")
+            && !(entry.option_id().starts_with("promoted/")
+                && entry.description().kind
+                    == dusklight_learning::tactic_asset::TacticAssetKind::RecordedTape)
+    }) {
         return Err(route_message(format!(
             "parameterized policy catalog contains non-atomic authored action {:?}",
             entry.option_id()
@@ -356,9 +387,12 @@ impl<'a, W> TimedTacticWorker<'a, W> {
         let cache_misses = cache.misses.checked_sub(self.prior_cache_misses).ok_or(
             NativeTacticWorkerError::DetachedResult("tactic cache miss counter regressed"),
         )?;
-        let cache_evictions = cache.evictions.checked_sub(self.prior_cache_evictions).ok_or(
-            NativeTacticWorkerError::DetachedResult("tactic cache eviction counter regressed"),
-        )?;
+        let cache_evictions = cache
+            .evictions
+            .checked_sub(self.prior_cache_evictions)
+            .ok_or(NativeTacticWorkerError::DetachedResult(
+                "tactic cache eviction counter regressed",
+            ))?;
         self.prior_cache_hits = cache.hits;
         self.prior_cache_misses = cache.misses;
         self.prior_cache_evictions = cache.evictions;
@@ -1089,9 +1123,10 @@ pub(super) fn run_tactic_proposal_worker(
                         break;
                     }
                 };
-                let fallback_root = job
-                    .paths_root
-                    .join(format!("proposal-{:03}-after-replay", proposal.proposal_index));
+                let fallback_root = job.paths_root.join(format!(
+                    "proposal-{:03}-after-replay",
+                    proposal.proposal_index
+                ));
                 if let Err(error) = fs::create_dir_all(&fallback_root).map_err(route_error) {
                     failed = Some(error);
                     break;

@@ -9,9 +9,9 @@ use super::{
     TacticFrozenPolicy, TacticProposalPolicy, TacticQCampaign, TacticQTrainingCorpus, cli,
     command_conservative_q, flag, native_frozen_policy_probe_model, native_tactic_execution_plan,
     option, prove_generalized_tactic_held_out_value, realize_native_frozen_policy_tape,
-    repeated_option, required_path, run_native_tactic_policy, run_native_tactic_route, u64_option,
-    usage_error, usize_option, verify_native_frozen_policy_cold_replay,
-    verify_native_frozen_policy_reinference,
+    repeated_option, required_path, run_native_tactic_policy, run_native_tactic_route,
+    tactic_macro_registry_identity, u64_option, usage_error, usize_option,
+    verify_native_frozen_policy_cold_replay, verify_native_frozen_policy_reinference,
 };
 use serde_json::json;
 use sha2::Digest as _;
@@ -558,18 +558,32 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 "--workers",
                 usize::from(request.execution.workers),
             )?;
+            let promoted_tactic_registry =
+                option(learn_args, "--promoted-tactic-registry").map(PathBuf::from);
+            let promoted_tactic_registry_sha256 =
+                if let Some(path) = promoted_tactic_registry.as_deref() {
+                    let (sha256, promoted_count) = tactic_macro_registry_identity(path)?;
+                    if promoted_count == 0 {
+                        return Err("promoted tactic registry contains no promoted tactics".into());
+                    }
+                    Some(sha256)
+                } else {
+                    None
+                };
             let execution_plan = native_tactic_execution_plan(
                 learn_args,
                 &request,
                 &seeds,
                 proposal_policy,
                 execution_strategy,
+                promoted_tactic_registry_sha256,
             )?;
             let report = run_native_tactic_route(&NativeTacticRouteRunConfig {
                 repository_root: &repository_root,
                 optimization: &request,
                 execution: &execution,
                 execution_plan: &execution_plan,
+                promoted_tactic_registry: promoted_tactic_registry.as_deref(),
                 output_root: &output,
                 workers,
                 cancellation: None,

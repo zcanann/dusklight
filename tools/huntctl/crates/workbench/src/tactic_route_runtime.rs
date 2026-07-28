@@ -413,6 +413,7 @@ fn launch_tactic_route_learning(
                     seeds,
                     proposal_policy: TacticProposalPolicy::Learned,
                     execution_strategy: NativeGenericExecutionStrategy::NativeController,
+                    promoted_tactic_registry_sha256: None,
                     lanes_per_generation: optimization
                         .execution
                         .deterministic_seeds
@@ -441,6 +442,7 @@ fn launch_tactic_route_learning(
                     optimization: &optimization,
                     execution: &execution,
                     execution_plan: &execution_plan,
+                    promoted_tactic_registry: None,
                     output_root: &output,
                     workers: usize::from(optimization.execution.workers),
                     cancellation: Some(&thread_cancellation),

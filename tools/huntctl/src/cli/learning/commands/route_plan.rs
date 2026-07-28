@@ -1,7 +1,7 @@
 use super::{
-    NativeGenericExecutionStrategy, NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest,
-    NativeTacticPlanBudgets, NativeTacticResourceLimit, OptimizationRequest, TacticProposalPolicy,
-    option, u64_option, usize_option,
+    Digest, NativeGenericExecutionStrategy, NativeTacticExecutionPlan,
+    NativeTacticExecutionPlanRequest, NativeTacticPlanBudgets, NativeTacticResourceLimit,
+    OptimizationRequest, TacticProposalPolicy, option, u64_option, usize_option,
 };
 use dusklight_orchestration::native_tactic_route_runner::NativeTacticReplaySharingPlan;
 use std::error::Error;
@@ -12,6 +12,7 @@ pub(super) fn native_tactic_execution_plan(
     seeds: &[u64],
     proposal_policy: TacticProposalPolicy,
     execution_strategy: NativeGenericExecutionStrategy,
+    promoted_tactic_registry_sha256: Option<Digest>,
 ) -> Result<NativeTacticExecutionPlan, Box<dyn Error>> {
     let decisions_per_lane = u64_option(learn_args, "--decisions-per-seed", 256)?;
     let default_lanes_per_generation = if proposal_policy == TacticProposalPolicy::Learned {
@@ -23,6 +24,7 @@ pub(super) fn native_tactic_execution_plan(
         seeds: seeds.to_vec(),
         proposal_policy,
         execution_strategy,
+        promoted_tactic_registry_sha256,
         lanes_per_generation: usize_option(
             learn_args,
             "--lanes-per-generation",

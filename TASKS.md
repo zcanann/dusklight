@@ -123,6 +123,12 @@ at tick `125`.
   candidate cost 137 ticks, however, so the demo helped discovery but did not
   establish improvement beyond itself. Evidence:
   `ordon-p3-q131-ablation-v1.report.json`.
+- The first two-seed replay-macro probe mined 26 candidates and completed 52
+  held-out macro-versus-primitive comparisons. It spent 1,008 validation ticks
+  and 149.4 seconds—about 26% of total wall time—but promoted nothing and
+  emitted no reusable action. Macro discovery is therefore implemented
+  machinery, not yet demonstrated search value. Evidence:
+  `ordon-p4-macro-promotion-probe-v1.report.json`.
 
 A terminal hit, a reliable terminal hit, a 125 tie, or a faster search for the
 same tie is diagnostic evidence only.

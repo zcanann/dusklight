@@ -97,6 +97,7 @@ use huntctl::search_evaluator::native_tactic_policy_runner::{
 use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest, NativeTacticPlanBudgets,
     NativeTacticResourceLimit, NativeTacticRouteRunConfig, run_native_tactic_route,
+    tactic_macro_registry_identity,
 };
 use huntctl::search_evaluator::native_tactic_worker::NativeGenericExecutionStrategy;
 use huntctl::search_evaluator::optimization_request::OptimizationRequest;
@@ -445,9 +446,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             "calibrate-tactic-value"
             | "cross-calibrate-tactic-value"
             | "compare-tactic-value-controls",
-        ) => {
-            tactic_calibration::command(args)
-        }
+        ) => tactic_calibration::command(args),
         _ => usage_error(),
     }
 }

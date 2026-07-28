@@ -1,0 +1,63 @@
+{
+  "schema": "dusklight-p4-macro-promotion-probe/v1",
+  "date": "2026-07-28",
+  "source_commit": "e9c27b94520e95281118d352393b1986bdd970a5",
+  "acceptance_passed": false,
+  "conclusion": "The two-seed native campaign mined 26 replay-derived macro candidates and completed two held-out comparisons per candidate, but promoted none. The post-campaign validation machinery therefore consumed substantial native work without producing a reusable learner action.",
+  "source_report_sha256": "dd995e1e30ecb5fbbc3c9a3119d84717c437b1676e99b4b3f8a4259902ffda14",
+  "fixed_plan": {
+    "optimization_request_sha256": "83cf1d0f8bf8f6364962f7ee15bbe72b30d771542eec1cb37dc44ddc3322990d",
+    "execution_binding_sha256": "5a6ece0c1c18417a7ed1cf27e3f4d1f3d49e5275164168b143826766cdbb11b5",
+    "execution_plan_sha256": "38648e9b795ec0c6ba0fa63c0a46d5ec389409764e25386be01f91d1052376fc",
+    "execution_plan_file_sha256": "ce64aa279114021a6648da424a93c7bbb8369685b40409460ac542dc66b3cd28",
+    "replay_snapshot_sha256": "c5ef0d793bbf29ed109e9ebf016051760348fd0eb894769ed0c2e496c83bcbc7",
+    "objective_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57",
+    "feature_schema_sha256": "ce93f724ae070dd5732d58a8fae1ac5c56af96881c40e30ef0b0095b66b49d06",
+    "action_schema_sha256": "d1ef788806eba299aae6651e24ccfb76ad9f2b4fdd7f7f96787a1ee5a156810a",
+    "seeds": [
+      104729,
+      130363
+    ],
+    "workers": 4,
+    "decisions_per_seed": 8,
+    "proposals_per_decision": 4,
+    "branch_every_decisions": 4,
+    "refit_every_decisions": 2,
+    "epsilon_per_million": 500000,
+    "demonstration_chunk_ticks": 16
+  },
+  "campaign": {
+    "demonstration_transitions": 9,
+    "total_decisions": 16,
+    "total_native_ticks": 2040,
+    "useful_decisions": 15,
+    "useful_training_transitions": 58,
+    "shared_training_replay_rows": 73,
+    "successful_seeds": 0,
+    "wall_micros": 578069119
+  },
+  "macro_validation": {
+    "observation_count": 64,
+    "high_value_observation_count": 0,
+    "candidate_count": 26,
+    "proposed_count": 26,
+    "promoted_count": 0,
+    "demoted_count": 0,
+    "validation_state_count": 52,
+    "comparison_count": 52,
+    "reused_primitive_baseline_count": 52,
+    "validation_native_ticks": 1008,
+    "validation_wall_micros": 149421472,
+    "validation_native_simulation_micros": 572837446,
+    "checkpoint_capture_micros": 284916122,
+    "registry_content_sha256": "ac2d0efbb19798babf27374dd3ac188ccfc0ef3f853d0a40df3ff5a9335f0e49",
+    "registry_file_sha256": "34df48ba2c71bf08efc00469ee78c0ff0850b6ad59d766702b54372efa7daa57",
+    "reuse": null
+  },
+  "observations": {
+    "every_candidate_received_independent_seed_support": true,
+    "promotion_produced_a_reusable_action": false,
+    "validation_share_of_reported_native_ticks_millionths": 494118,
+    "validation_wall_share_millionths": 258486
+  }
+}

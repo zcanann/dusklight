@@ -13,6 +13,7 @@ pub(super) fn run_seed(
     initial_facts: &FactSnapshot,
     route_prefix: &InputTape,
     action_schema_sha256: Digest,
+    promoted_tactics: &[TacticCatalogEntry],
     root_checkpoint_sha256: Digest,
     root_tape_ref: StoredContentRef,
     inherited_learner_snapshot: Arc<TacticQImmutableLearnerSnapshot>,
@@ -76,7 +77,7 @@ pub(super) fn run_seed(
         )
     } else {
         fs::create_dir_all(&seed_root).map_err(route_error)?;
-        let initial_proposals = parameterized_catalog_for_state(
+        let initial_proposals = parameterized_catalog_for_state_with_promoted(
             seed,
             0,
             initial_facts,
@@ -84,6 +85,7 @@ pub(super) fn run_seed(
             maximum_tactic_ticks,
             None,
             action_schema_sha256,
+            promoted_tactics,
         )?;
         let current = LearnerState::build(
             initial_facts.clone(),
@@ -272,7 +274,7 @@ pub(super) fn run_seed(
                 && !prefer_root
                 && selected_branch.acquisition.is_some();
             branch_acquisition = selected_branch.acquisition.clone();
-            let branch_proposals = parameterized_catalog_for_state(
+            let branch_proposals = parameterized_catalog_for_state_with_promoted(
                 seed,
                 campaign.decision_index,
                 &selected_branch.state,
@@ -280,6 +282,7 @@ pub(super) fn run_seed(
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
                 action_schema_sha256,
+                promoted_tactics,
             )?;
             campaign
                 .restore_branch(
@@ -312,7 +315,7 @@ pub(super) fn run_seed(
                 .saturating_sub(source_frame as usize) as u64;
             let proposal_feedback =
                 parameterized_feedback_for_state(&campaign, &campaign.current.snapshot, encoder)?;
-            let proposals = parameterized_catalog_for_state(
+            let proposals = parameterized_catalog_for_state_with_promoted(
                 seed,
                 campaign.decision_index,
                 &campaign.current.snapshot,
@@ -320,6 +323,7 @@ pub(super) fn run_seed(
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 proposal_feedback,
                 action_schema_sha256,
+                promoted_tactics,
             )?;
             let proposal_catalog = Arc::new(proposals.catalog);
             let proposal_blueprints = Arc::new(proposals.blueprints);
@@ -436,7 +440,7 @@ pub(super) fn run_seed(
                 && !prefer_root
                 && selected_branch.acquisition.is_some();
             branch_acquisition = selected_branch.acquisition.clone();
-            let branch_proposals = parameterized_catalog_for_state(
+            let branch_proposals = parameterized_catalog_for_state_with_promoted(
                 seed,
                 campaign.decision_index,
                 &selected_branch.state,
@@ -444,6 +448,7 @@ pub(super) fn run_seed(
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
                 action_schema_sha256,
+                promoted_tactics,
             )?;
             campaign
                 .restore_branch(
@@ -604,7 +609,7 @@ pub(super) fn run_seed(
             .len()
             .saturating_sub(newly_admitted_training_rows as usize)
             as u64;
-        let next_proposals = parameterized_catalog_for_state(
+        let next_proposals = parameterized_catalog_for_state_with_promoted(
             seed,
             campaign
                 .decision_index
@@ -615,6 +620,7 @@ pub(super) fn run_seed(
             u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
             None,
             action_schema_sha256,
+            promoted_tactics,
         )?;
         let step = campaign
             .retain_and_refit_rewarded(
