@@ -318,11 +318,13 @@ impl TacticQCampaign {
     /// Return the authenticated root plus one learned frontier acquisition.
     ///
     /// Before any authenticated terminal supervision exists, least-expanded
-    /// farthest-first semantic frontiers drive acquisition; sparse action cost
-    /// alone cannot say which branch approaches the objective. Once terminal
-    /// evidence exists, learned total first-hit cost and predicted future
-    /// return take over, with coverage and uncertainty as tie-breakers. The
-    /// last edge's immediate cost is evidence only, not a myopic ordering rule.
+    /// farthest-first spatial reachability frontiers drive acquisition; sparse
+    /// action cost alone cannot say which branch approaches the objective.
+    /// Semantic state and action diversity remain independently retained and
+    /// proposed. Once terminal evidence exists, learned total first-hit cost
+    /// and predicted future return take over, with coverage and uncertainty as
+    /// tie-breakers. The last edge's immediate cost is evidence only, not a
+    /// myopic ordering rule.
     pub fn sample_root_and_ranked_frontier<E, AE, F, A>(
         &self,
         seed: u64,
@@ -349,7 +351,7 @@ impl TacticQCampaign {
             .iter()
             .any(|transition| transition.value_sample.terminal);
         let mut choices = if !demonstration_curriculum && !terminal_value_supported {
-            archive.select_tactic_state_frontier_within_route_frames(
+            archive.select_tactic_reachability_frontier_within_route_frames(
                 reference,
                 archive.tactic_len(),
                 maximum_route_frames,

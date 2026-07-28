@@ -357,6 +357,27 @@ impl BehaviorArchive {
         )
     }
 
+    /// Select diverse reachable locations without allowing transient gameplay
+    /// modes to eclipse spatial expansion.
+    ///
+    /// The archive still retains procedure, event, actor, and action diversity
+    /// in its state cells. This projection is only for pre-terminal route
+    /// acquisition, where extending the authenticated reachable set is a
+    /// separate concern from choosing diverse controls at each retained state.
+    pub fn select_tactic_reachability_frontier_within_route_frames(
+        &self,
+        reference: &[TacticEndpointDescriptor],
+        budget: usize,
+        maximum_route_frames: usize,
+    ) -> Vec<TacticFrontierEntry> {
+        self.select_tactic_frontier_matching(
+            reference,
+            budget,
+            tactic_reachability_descriptor_distance,
+            |entry| entry.route_tape.frames.len() <= maximum_route_frames,
+        )
+    }
+
     fn select_tactic_frontier_matching(
         &self,
         reference: &[TacticEndpointDescriptor],
@@ -1030,6 +1051,26 @@ fn tactic_state_descriptor_distance(
     distance
 }
 
+fn tactic_reachability_descriptor_distance(
+    left: &TacticEndpointDescriptor,
+    right: &TacticEndpointDescriptor,
+) -> u128 {
+    let mut distance = 0_u128;
+    if left.stage != right.stage {
+        distance += 1_u128 << 127;
+    }
+    if left.room != right.room || left.layer != right.layer {
+        distance += 1_u128 << 112;
+    }
+    if left.terminal != right.terminal {
+        distance += 1_u128 << 111;
+    }
+    for (left, right) in left.position_bin.iter().zip(right.position_bin) {
+        distance += u128::from(left.abs_diff(right)).pow(2);
+    }
+    distance
+}
+
 fn descriptor_distance(left: &BehaviorDescriptor, right: &BehaviorDescriptor) -> u128 {
     let mut distance = 0_u128;
     if left.procedure_sequence_identity != right.procedure_sequence_identity {
@@ -1159,6 +1200,43 @@ mod tests {
         assert!(
             tactic_descriptor_distance(&reference, &different_action)
                 > tactic_descriptor_distance(&reference, &spatially_distinct)
+        );
+    }
+
+    #[test]
+    fn reachability_frontier_distance_excludes_nonspatial_modes() {
+        let reference = TacticEndpointDescriptor {
+            stage: "F_TEST".into(),
+            room: 1,
+            layer: Some(0),
+            player_procedure: Some(7),
+            position_bin: [10, 20, 30],
+            event_running: Some(false),
+            event_id: Some(-1),
+            actor_count_bin: 2,
+            terminal: false,
+            action_identity_sha256: Digest([1; 32]),
+        };
+        let mut different_mode = reference.clone();
+        different_mode.player_procedure = Some(99);
+        different_mode.event_running = Some(true);
+        different_mode.event_id = Some(8);
+        different_mode.actor_count_bin = 17;
+        different_mode.action_identity_sha256 = Digest([2; 32]);
+        let mut spatially_distinct = reference.clone();
+        spatially_distinct.position_bin[0] += 1;
+
+        assert_eq!(
+            tactic_reachability_descriptor_distance(&reference, &different_mode),
+            0
+        );
+        assert_eq!(
+            tactic_reachability_descriptor_distance(&reference, &spatially_distinct),
+            1
+        );
+        assert!(
+            tactic_state_descriptor_distance(&reference, &different_mode)
+                > tactic_state_descriptor_distance(&reference, &spatially_distinct)
         );
     }
 
