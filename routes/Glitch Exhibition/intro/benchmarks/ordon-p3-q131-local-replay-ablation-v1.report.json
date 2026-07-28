@@ -3,7 +3,7 @@
   "date": "2026-07-28",
   "campaign_control_plane_commit": "4d99a87173dede8f547e52ce29c168a8e469e929",
   "acceptance_passed": false,
-  "conclusion": "Ordinary 131-tick human replay materially improved sample efficiency under the support-aware local fitted-Q treatment, but did not satisfy P3. At the full matched budget, demonstration-assisted learning discovered authenticated terminals in 3/4 seeds while scratch discovered 0/4, increased useful training transitions per wall second by 21%, and increased useful decisions per wall second by 47%. Generated primitive actions improved the best replay-assisted candidate from tick 136 at the diagnostic budget to tick 135 at the full budget, so the learner was not merely replaying the recorded tape. It still failed to beat the tick-131 demonstration, and scratch still required demonstration support to succeed at this capacity. A HEAD follow-up with broader executable-factor coverage also found no scratch terminal at the diagnostic budget.",
+  "conclusion": "Ordinary 131-tick human replay materially improved sample efficiency under the support-aware local fitted-Q treatment, but did not satisfy P3. At the full matched budget, demonstration-assisted learning discovered authenticated terminals in 3/4 seeds while scratch discovered 0/4, increased useful training transitions per wall second by 21%, and increased useful decisions per wall second by 47%. Generated primitive actions improved the best replay-assisted candidate from tick 136 at the diagnostic budget to tick 135 at the full budget, so the learner was not merely replaying the recorded tape. It still failed to beat the tick-131 demonstration, and scratch still required demonstration support to succeed at this capacity. Generic executable-factor coverage did not produce a diagnostic scratch terminal. A subsequent terminal-support-aware cold-start correction increased useful decisions, useful training transitions, and visited states at the full scratch budget, but again found 0/4 terminals and reached the same roughly 1,496-distance plateau. Cold-start acquisition was defective but is not the terminal barrier.",
   "fixed_authority": {
     "optimization_request_path": "routes/Glitch Exhibition/intro/benchmarks/ordon-p3-q131-learning-ablation-v1.request.json",
     "optimization_request_sha256": "81a24a41ccf521d186def8556a6c9e6ab38cd047876866ef13e50238660264cc",
@@ -144,6 +144,57 @@
     "visited_states_sum": 262,
     "note": "The execution plan identity is unchanged because this implementation-only acquisition change is not a plan field; the control-plane commit disambiguates the runs."
   },
+  "cold_start_acquisition_follow_up": {
+    "campaign_control_plane_commit": "3ba6c722bd37654e8a084acd644beb68c8ec6eab",
+    "change": "Before authenticated terminal supervision exists, frontier acquisition covers least-expanded farthest-first semantic archive cells instead of treating sparse action cost as goal evidence. Terminal-supported learned first-hit cost regains priority after a real terminal sample.",
+    "diagnostic": {
+      "source_report_path": "build/campaigns/ordon-p3-local-q131-scratch-4x16-b4-w4-v3-20260728/report.json",
+      "source_report_sha256": "a559e256bf6e59e33f5101d57a57461f989d8123e0235211961d9da39db8b2be",
+      "execution_plan_sha256": "a647d949726428264f091e156c1ace16dbba76e75fcff170ff3c5ea6bbb88580",
+      "terminal_seeds": 0,
+      "best_authenticated_tick": null,
+      "native_ticks": 5740,
+      "useful_decisions": 32,
+      "useful_training_transitions": 115,
+      "proposal_transitions": 256,
+      "visited_states_sum": 255,
+      "minimum_proposal_goal_distance_by_seed": {
+        "104729": 1626.6,
+        "130363": 2003.7,
+        "155921": 1496.3,
+        "181081": 1983.6
+      }
+    },
+    "full_budget": {
+      "source_report_path": "build/campaigns/ordon-p3-local-q131-scratch-4x64-b4-w4-v2-20260728/report.json",
+      "source_report_sha256": "25a6dd147da6a0ab6c4681ee04f03a2334b9aa7c04ae92eef36a7ce22c61f6ab",
+      "execution_plan_sha256": "48fd05badd7c66173eaa3aa56a712f898b49b83abdfe3e67e581266a9acc7cb8",
+      "terminal_seeds": 0,
+      "best_authenticated_tick": null,
+      "promotion_successful_seeds": 0,
+      "native_ticks": 18344,
+      "useful_decisions": 153,
+      "useful_training_transitions": 572,
+      "proposal_transitions": 1021,
+      "visited_states_sum": 668,
+      "minimum_proposal_goal_distance_by_seed": {
+        "104729": 1581.5,
+        "130363": 1511.2,
+        "155921": 1522.6,
+        "181081": 1496.1
+      },
+      "matched_original_scratch_deltas": {
+        "terminal_seeds": 0,
+        "useful_decisions": 25,
+        "useful_training_transitions": 59,
+        "visited_states_sum": 97,
+        "native_ticks": 1708
+      },
+      "wall_time_comparable": false,
+      "wall_time_note": "Another repo-local native campaign overlapped this run, so wall-rate deltas are intentionally not claimed."
+    },
+    "conclusion": "The correction increased retained exploration breadth and useful evidence, and reached the old full-budget depth in one diagnostic seed after only 16 decisions. At 64 decisions it still converged on the same approximately 1,496-distance frontier without a terminal. The remaining blocker is downstream of cold-start frontier acquisition."
+  },
   "observations": {
     "ordinary_suboptimal_replay_improves_terminal_sample_efficiency": true,
     "generated_policy_differs_from_recorded_tape": true,
@@ -151,6 +202,8 @@
     "generated_policy_beats_demonstration": false,
     "scratch_reaches_terminal": false,
     "demonstration_is_not_required_for_success": false,
+    "cold_start_acquisition_increases_useful_evidence": true,
+    "cold_start_acquisition_breaks_terminal_plateau": false,
     "p3_task_complete": false
   }
 }

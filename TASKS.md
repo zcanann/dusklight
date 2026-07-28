@@ -95,7 +95,15 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   P3 still fails: the candidate did not beat `131`, scratch still required
   replay support to succeed at this capacity, and the newer generic
   executable-factor coverage also found no scratch terminal in its diagnostic
-  cell. Evidence: `ordon-p3-q131-local-replay-ablation-v1.report.json`.
+  cell. A subsequent generic cold-start correction stopped treating
+  pre-terminal sparse action cost as goal evidence and instead acquired
+  least-expanded, semantically diverse frontiers. At the full matched scratch
+  budget it increased useful decisions from `128` to `153`, useful training
+  transitions from `513` to `572`, and visited states from `571` to `668`,
+  but still found `0/4` terminals and stopped at the same roughly
+  `1,496`-distance frontier. Cold-start acquisition was a real throughput
+  defect, but is not the terminal barrier. Evidence:
+  `ordon-p3-q131-local-replay-ablation-v1.report.json`.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
   camera orientation, exact A-button prompt-status bits, and the native
