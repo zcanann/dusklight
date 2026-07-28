@@ -291,18 +291,21 @@ impl NativeReturnRestartWriteTrace {
                 "return/restart trace contains invalid or unordered events",
             ));
         }
-        let mut summary = ReturnRestartTraceSummary::default();
-        summary.observations = self
+        let observations = self
             .source_shards
             .iter()
             .try_fold(0_u64, |count, source| {
                 count.checked_add(source.observations)
             })
             .ok_or_else(|| trace_error("return/restart summary overflowed"))?;
+        let mut summary = ReturnRestartTraceSummary {
+            observations,
+            event_boundaries: self.events.len() as u64,
+            ..ReturnRestartTraceSummary::default()
+        };
         for event in &self.events {
             accumulate(&mut summary, event.writes.into())?;
         }
-        summary.event_boundaries = self.events.len() as u64;
         if summary != self.summary {
             return Err(trace_error(
                 "return/restart trace summary does not reproduce its events",

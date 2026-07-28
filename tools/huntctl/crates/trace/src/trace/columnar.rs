@@ -1693,36 +1693,3 @@ fn validate_plane(plane: [f32; 4], present: bool, kind: &str) -> Result<(), Trac
     }
     Ok(())
 }
-
-fn decode_rng_stream(bytes: &[u8]) -> Result<TraceRngStream, TraceError> {
-    if bytes[1..4].iter().any(|value| *value != 0) {
-        return Err(TraceError(
-            "nonzero gameplay trace RNG reserved field".into(),
-        ));
-    }
-    Ok(TraceRngStream {
-        id: bytes[0],
-        algorithm_version: u32_at(bytes, 4),
-        state: [i32_at(bytes, 8), i32_at(bytes, 12), i32_at(bytes, 16)],
-        call_count: u64_at(bytes, 20),
-    })
-}
-
-fn decode_pad(bytes: &[u8]) -> Result<RawPadState, TraceError> {
-    if bytes[10] & !1 != 0 {
-        return Err(TraceError("unknown gameplay trace pad flags".into()));
-    }
-    Ok(RawPadState {
-        buttons: u16_at(bytes, 0),
-        stick_x: bytes[2] as i8,
-        stick_y: bytes[3] as i8,
-        substick_x: bytes[4] as i8,
-        substick_y: bytes[5] as i8,
-        trigger_left: bytes[6],
-        trigger_right: bytes[7],
-        analog_a: bytes[8],
-        analog_b: bytes[9],
-        connected: bytes[10] & 1 != 0,
-        error: bytes[11] as i8,
-    })
-}

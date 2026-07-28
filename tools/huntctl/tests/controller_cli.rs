@@ -73,7 +73,7 @@ fn compiles_and_inspects_reactive_controller() {
     let summary: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
     assert_eq!(summary["format"], "DUSKCTRL");
     assert_eq!(summary["version"]["major"], 1);
-    assert_eq!(summary["version"]["minor"], 4);
+    assert_eq!(summary["version"]["minor"], 5);
     assert_eq!(summary["duration_frames"], 10);
     assert_eq!(summary["layer_count"], 13);
     assert_eq!(summary["layers"][0]["kind"], "seek_coordinate");

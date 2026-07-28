@@ -238,11 +238,12 @@ impl Error for ControllerError {}
 mod codec;
 mod parser;
 mod validation;
+mod wire;
 
 pub use parser::parse;
 
 #[cfg(test)]
-use codec::{get_i16, get_u16, get_u32, put_f32, put_u32};
+use wire::{get_i16, get_u16, get_u32, put_f32, put_u32};
 
 #[cfg(test)]
 #[path = "tests.rs"]

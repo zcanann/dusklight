@@ -652,15 +652,24 @@ fn replace_file(source: &Path, destination: &Path) -> Result<(), Box<dyn Error>>
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        append_journal_record, compact_ledger_journal, journal_path, load_ledger_for_run,
+        write_ledger,
+    };
+    use huntctl::Digest;
     use huntctl::stage_boot_catalog::{
         BootLayerSource, BootLayerSourceKind, BootPointSource, BootPointSourceKind,
-        STAGE_BOOT_CATALOG_SCHEMA, StageCatalogStatus, StageInventoryStatus,
+        STAGE_BOOT_CATALOG_SCHEMA, StageBootCandidate, StageBootCatalog, StageCatalogStatus,
+        StageInventoryStatus,
     };
     use huntctl::stage_survey::{
-        STAGE_SURVEY_FIDELITY, StageSurveyAttemptOutcome, StageSurveyIdentity,
+        STAGE_SURVEY_FIDELITY, StageSurveyAttemptOutcome, StageSurveyIdentity, StageSurveyLedger,
+        StageSurveyPolicy, StageSurveyProbeKind,
     };
-    use std::sync::atomic::AtomicU64;
+    use std::fs::{self, OpenOptions};
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static NEXT_TEST_ROOT: AtomicU64 = AtomicU64::new(0);

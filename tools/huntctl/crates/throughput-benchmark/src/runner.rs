@@ -1,6 +1,5 @@
 use crate::report::{
-    ColdProcessBenchmarkAttempt, ColdProcessBenchmarkHost, ColdProcessBenchmarkReport,
-    comparison_issue, summarize,
+    ColdProcessBenchmarkAttempt, ColdProcessBenchmarkReport, comparison_issue, summarize,
 };
 use crate::{
     COLD_PROCESS_BENCHMARK_SCHEMA, COLD_PROCESS_MODE, ColdProcessBenchmarkError, MAX_REPETITIONS,
@@ -12,8 +11,11 @@ use dusklight_harness_runtime::execution::execute_request;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+mod host;
+
+use host::capture_host;
 
 #[derive(Clone, Debug)]
 pub struct ColdProcessBenchmarkConfig<'a> {
@@ -267,43 +269,6 @@ fn measure_directory(path: &Path) -> Result<(u64, u64), ColdProcessBenchmarkErro
         }
     }
     Ok((files, bytes))
-}
-
-fn capture_host() -> Result<ColdProcessBenchmarkHost, ColdProcessBenchmarkError> {
-    let logical_cpu_count = std::thread::available_parallelism()
-        .map_err(|error| benchmark_error(format!("cannot query logical CPU count: {error}")))?
-        .get();
-    let operating_system_version = if cfg!(target_os = "macos") {
-        command_value("sw_vers", &["-productVersion"])
-    } else {
-        command_value("uname", &["-sr"])
-    };
-    Ok(ColdProcessBenchmarkHost {
-        operating_system: std::env::consts::OS.into(),
-        architecture: std::env::consts::ARCH.into(),
-        operating_system_version,
-        hardware_model: cfg!(target_os = "macos")
-            .then(|| command_value("sysctl", &["-n", "hw.model"]))
-            .flatten(),
-        cpu_model: cfg!(target_os = "macos")
-            .then(|| command_value("sysctl", &["-n", "machdep.cpu.brand_string"]))
-            .flatten(),
-        logical_cpu_count,
-        memory_bytes: cfg!(target_os = "macos")
-            .then(|| command_value("sysctl", &["-n", "hw.memsize"]))
-            .flatten()
-            .and_then(|value| value.parse().ok()),
-    })
-}
-
-fn command_value(program: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(program).args(args).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let value = String::from_utf8(output.stdout).ok()?;
-    let value = value.trim();
-    (!value.is_empty()).then(|| value.into())
 }
 
 fn create_benchmark_root(

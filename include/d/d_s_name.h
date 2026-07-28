@@ -66,6 +66,7 @@ private:
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
     // Read-only automation instrumentation; no layout or gameplay behavior is
     // changed by granting observer access.
+    // DUSKLIGHT OBSERVATION-ONLY APERTURE
     friend class dusk::automation::MenuStateObserver;
 #endif
 

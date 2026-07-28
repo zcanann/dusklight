@@ -1,5 +1,17 @@
 use super::*;
 
+#[derive(Clone)]
+pub(super) struct ChannelDescriptor {
+    pub(super) channel: Option<TraceChannel>,
+    pub(super) version: u16,
+    pub(super) flags: u32,
+    pub(super) stride: usize,
+    pub(super) status_offset: usize,
+    pub(super) status_length: usize,
+    pub(super) payload_offset: usize,
+    pub(super) payload_length: usize,
+}
+
 pub(super) fn decode_name(bytes: &[u8]) -> Result<String, TraceError> {
     let end = bytes
         .iter()
@@ -65,4 +77,18 @@ pub(super) fn u64_at(bytes: &[u8], offset: usize) -> u64 {
 
 pub(super) fn f32_at(bytes: &[u8], offset: usize) -> f32 {
     f32::from_bits(u32_at(bytes, offset))
+}
+
+pub(super) fn decode_rng_stream(bytes: &[u8]) -> Result<TraceRngStream, TraceError> {
+    if bytes[1..4].iter().any(|value| *value != 0) {
+        return Err(TraceError(
+            "nonzero gameplay trace RNG reserved field".into(),
+        ));
+    }
+    Ok(TraceRngStream {
+        id: bytes[0],
+        algorithm_version: u32_at(bytes, 4),
+        state: [i32_at(bytes, 8), i32_at(bytes, 12), i32_at(bytes, 16)],
+        call_count: u64_at(bytes, 20),
+    })
 }

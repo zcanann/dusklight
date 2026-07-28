@@ -1,6 +1,23 @@
 //! Frozen-policy, tactic execution, and Q-variant commands.
 
-use super::*;
+use super::{
+    Digest, FactorizedPolicyOutputSet, GoalConditionedTacticFeatureEncoder, InputTape,
+    MAX_LEARN_INPUT_CORPORA, NativeEpisodeShard, NativeFactorizedPolicyBatchConfig,
+    NativeFactorizedPolicySuffixBatch, NativeFrozenPolicyReinferenceReport,
+    NativeFrozenPolicySuffixBatch, NativeGenericExecutionStrategy, NativeResidualExecutionBinding,
+    NativeTacticPolicyRunConfig, NativeTacticRouteRunConfig, OptimizationRequest, Sha256,
+    TacticFrozenPolicy, TacticProposalPolicy, TacticQCampaign, TacticQTrainingCorpus, cli,
+    command_conservative_q, flag, native_frozen_policy_probe_model, native_tactic_execution_plan,
+    option, prove_generalized_tactic_held_out_value, realize_native_frozen_policy_tape,
+    repeated_option, required_path, run_native_tactic_policy, run_native_tactic_route, u64_option,
+    usage_error, usize_option, verify_native_frozen_policy_cold_replay,
+    verify_native_frozen_policy_reinference,
+};
+use serde_json::json;
+use sha2::Digest as _;
+use std::error::Error;
+use std::fs;
+use std::path::PathBuf;
 
 pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {

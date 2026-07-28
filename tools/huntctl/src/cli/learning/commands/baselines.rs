@@ -1,6 +1,19 @@
 //! Offline baseline fitting, calibration, inspection, and benchmarks.
 
-use super::*;
+use super::{
+    DatasetManifest, DatasetSplit, FittedQ, FqiConfig, FqiTransition, LocalFeature,
+    LocalReturnConfig, MAX_FQI_ACTIONS, MAX_FQI_BACKUP_STEPS, MAX_FQI_ITERATIONS,
+    MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, MAX_LEARN_INPUT_CORPORA,
+    MOVEMENT_CATEGORICAL_FEATURES_V1, NearestNeighborReturn, TabularAxis, TabularReturn,
+    TransitionCorpus, calibrate_fitted_q, empirical_return_samples, load_fqi_batch,
+    movement_feature_schema_digest_v1, movement_state_v2_spec, option, repeated_option,
+    required_path, u64_option, usage_error, usize_option,
+};
+use serde_json::json;
+use std::collections::{BTreeMap, BTreeSet};
+use std::error::Error;
+use std::fs;
+use std::path::PathBuf;
 
 pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {

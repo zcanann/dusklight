@@ -1,6 +1,25 @@
 //! Dataset, replay, reachability, and artifact inspection commands.
 
-use super::*;
+use super::{
+    AuxiliarySplitConfig, ContentKind, ContentStore, DATASET_SOURCE_SCHEMA_V1, DatasetBuildConfig,
+    DatasetManifest, DatasetSourceDescriptor, Digest, EpisodeContext, EpisodeManifest,
+    EpisodeManifestBuild, ExploratoryExtractConfig, ImmutableEpisodeArtifact, InputTape,
+    MAX_LEARN_INPUT_CORPORA, MOVEMENT_STATE_V2_ID, NATIVE_AUXILIARY_DATASET_SCHEMA_V2,
+    NATIVE_GOAL_TRAJECTORY_DATASET_SCHEMA_V2, NATIVE_REPLAY_CORPUS_SCHEMA_V1,
+    NATIVE_REPLAY_SOURCE_SCHEMA_V1, NativeAuxiliaryDataset, NativeEpisodeShard,
+    NativeGoalTrajectoryConfig, NativeGoalTrajectoryDataset, NativeReplayCorpus,
+    NativeReplaySourceDescriptor, NativeReturnRestartWriteTrace, ReplayEpisodeSource,
+    ReplayExperienceRole, Sha256, SiblingTraceDiff, TerminalReasonEvidence,
+    TransitionEvidenceBuild, TransitionEvidenceBundle, extract_exploratory_from_bytes,
+    extract_exploratory_v2_from_bytes, extract_exploratory_v3_from_bytes,
+    inspect_native_episode_corpus, movement_state_v2_spec, option, parse_replay_role,
+    repeated_option, required_path, u64_option, usage_error, usize_option,
+};
+use serde_json::json;
+use sha2::Digest as _;
+use std::error::Error;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {

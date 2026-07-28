@@ -53,6 +53,14 @@ struct GameplayTraceCollisionReadAdapter {
     static float wallRadius(const dBgS_AcchCir& value) { return value.m_wall_r; }
     static float directWallHeight(const dBgS_AcchCir& value) { return value.m_wall_h_direct; }
     static const cM3dGCir& realizedCircle(const dBgS_AcchCir& value) { return value.m_cir; }
+    static bool copyPlane(
+        const cBgS& background, const cBgS_PolyInfo& poly, cM3dGPla& output) {
+        const dBgW_Base* geometry = background.GetBgWBasePointer(poly);
+        if (geometry == nullptr)
+            return false;
+        output = geometry->GetTriPla(poly);
+        return true;
+    }
 
     static bool copyKclSurface(const dBgWKCol& value, const std::uint16_t polygon,
         GameplayTraceCollisionSurfaceSample& output) {
@@ -430,8 +438,11 @@ GameplayCollisionPlanesObservation capture_gameplay_collision_planes() {
     GameplayCollisionPlanesObservation output;
     const auto capture = [&output](const std::size_t slot, const cBgS_PolyInfo& poly) {
         cM3dGPla plane;
-        if (dComIfG_Bgsp().GetTriPla(poly, &plane) && copy_plane(plane, output.planes[slot]))
+        if (GameplayTraceCollisionReadAdapter::copyPlane(dComIfG_Bgsp(), poly, plane) &&
+            copy_plane(plane, output.planes[slot]))
+        {
             output.validMask |= static_cast<std::uint8_t>(1u << slot);
+        }
     };
     if (groundValid)
         capture(0, acch.m_gnd);

@@ -962,7 +962,7 @@ fn cem_and_cma_es_rank_typed_samples_only_after_native_rollout() {
             String::from_utf8_lossy(&output.stderr)
         );
         let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(summary["schema"], "dusklight-continuous-search/v1");
+        assert_eq!(summary["schema"], "dusklight-continuous-search/v2");
         assert_eq!(summary["generations_completed"], 1);
         let evaluated = summary["evaluated_candidates"].as_u64().unwrap();
         assert!(evaluated >= 3);

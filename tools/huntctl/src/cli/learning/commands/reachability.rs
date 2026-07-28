@@ -1,6 +1,18 @@
 //! Goal reachability fitting, controls, inspection, and frozen policy export.
 
-use super::*;
+use super::{
+    ContentKind, ContentStore, MAX_LEARN_INPUT_CORPORA,
+    NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V3, NATIVE_GOAL_REACHABILITY_MODEL_SCHEMA_V1,
+    NATIVE_GOAL_REACHABILITY_NEGATIVE_CONTROL_SCHEMA_V1, NativeEpisodeShard,
+    NativeGoalFrozenPolicyConfig, NativeGoalFrozenPolicyExport, NativeGoalFrozenPolicyManifest,
+    NativeGoalReachabilityModel, NativeGoalReachabilityNegativeControlReport,
+    NativeGoalTrajectoryDataset, goal_reachability_config, option, repeated_option, required_path,
+    u64_option, usage_error, usize_option,
+};
+use serde_json::json;
+use std::error::Error;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {

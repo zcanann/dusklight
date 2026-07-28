@@ -149,7 +149,11 @@ fn dry_run_rejects_unknown_cases_and_non_build_outputs() {
             .output()
             .unwrap();
         assert!(!result.status.success());
-        assert!(String::from_utf8_lossy(&result.stderr).contains(expected));
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{case} rejection did not contain {expected:?}: {stderr}"
+        );
     }
 }
 
@@ -452,7 +456,7 @@ fn optimization_request_rejects_coupled_horizons_and_timeline_tampering() {
                 "/campaign_class",
                 Value::String("demonstration_assisted_discovery".into()),
             ),
-            "incumbent-relative residual proposal surfaces",
+            "authenticated learning loop",
         ),
         (
             "horizon",
@@ -523,7 +527,11 @@ fn optimization_request_rejects_coupled_horizons_and_timeline_tampering() {
             .output()
             .unwrap();
         assert!(!result.status.success());
-        assert!(String::from_utf8_lossy(&result.stderr).contains(expected));
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{suffix} rejection did not contain {expected:?}: {stderr}"
+        );
         assert!(!output_path.exists());
         fs::remove_file(path).unwrap();
     }

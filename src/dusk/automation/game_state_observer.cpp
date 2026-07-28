@@ -743,7 +743,7 @@ bool capture_actor_door20(
     if (fopAcM_GetName(&actor) != fpcNm_DOOR20_e)
         return false;
 
-    auto* door = const_cast<daDoor20_c*>(static_cast<const daDoor20_c*>(&actor));
+    const auto* door = static_cast<const daDoor20_c*>(&actor);
     output.kind = static_cast<std::uint8_t>(door_param2_c::getKind(door));
     output.doorModel = static_cast<std::uint8_t>(door_param2_c::getDoorModel(door));
     output.frontOption = door_param2_c::getFrontOption(door);

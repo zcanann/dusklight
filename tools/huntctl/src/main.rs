@@ -10,10 +10,15 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::io::{self, BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 mod cli;
+
+pub(crate) use cli::args::{
+    flag, option, repeated_option, required_path, timeout_option, u32_option, u64_option,
+    usize_option,
+};
 
 fn main() {
     suppress_windows_error_dialogs();
@@ -26,7 +31,7 @@ fn main() {
     let command = std::thread::Builder::new()
         .name("huntctl-command".into())
         .stack_size(64 * 1024 * 1024)
-        .spawn(|| match run() {
+        .spawn(|| match cli::run() {
             Ok(()) => 0,
             Err(error) => {
                 eprintln!("huntctl: {error}");
@@ -70,102 +75,6 @@ fn suppress_windows_error_dialogs() {
 
 #[cfg(not(windows))]
 fn suppress_windows_error_dialogs() {}
-
-fn run() -> Result<(), Box<dyn Error>> {
-    let args: Vec<String> = env::args().skip(1).collect();
-    let Some(command) = args.first().map(String::as_str) else {
-        return usage_error();
-    };
-    match command {
-        "hello" => cli::worker::command_hello(&args[1..]),
-        "ping" => cli::worker::command_ping(&args[1..]),
-        "session" => cli::worker::command_session(&args[1..]),
-        "pool" => cli::worker::command_pool(&args[1..]),
-        "benchmark" => cli::benchmark::command_benchmark(&args[1..]),
-        "campaign" => cli::harness::command_campaign(&args[1..]),
-        "conformance" => cli::conformance::command_conformance(&args[1..]),
-        "harness" => cli::harness::command_harness(&args[1..]),
-        "identity" => cli::identity::command_identity(&args[1..]),
-        "corpus" => cli::corpus::command_corpus(&args[1..]),
-        "controller" => cli::controller::command_controller(&args[1..]),
-        "milestone" => cli::milestone::command_milestone(&args[1..]),
-        "fixture" => cli::fixture::command_fixture(&args[1..]),
-        "tape" => cli::tape::command_tape(&args[1..]),
-        "trace" => cli::trace::command_trace(&args[1..]),
-        "timeline" => cli::timeline::command_timeline(&args[1..]),
-        "search" => cli::search::command_search(&args[1..]),
-        "survey" => cli::survey::command_survey(&args[1..]),
-        "learn" => cli::learning::command_learn(&args[1..]),
-        "observe" => cli::observation::command_observe(&args[1..]),
-        "oracle" => cli::oracle::command_oracle(&args[1..]),
-        "world" => cli::world::command_world(&args[1..]),
-        "run" | "replay" => cli::worker::command_not_ready(command, &args[1..]),
-        "mock-worker" => mock_worker(&args[1..]),
-        "mock-search-worker" => mock_search_worker(&args[1..]),
-        "mock-record-worker" => mock_record_worker(&args[1..]),
-        "help" | "--help" | "-h" => {
-            print_usage();
-            Ok(())
-        }
-        _ => usage_error(),
-    }
-}
-
-fn option(args: &[String], name: &str) -> Option<String> {
-    args.windows(2)
-        .find(|pair| pair[0] == name)
-        .map(|pair| pair[1].clone())
-}
-
-fn flag(args: &[String], name: &str) -> bool {
-    args.iter().any(|argument| argument == name)
-}
-
-fn repeated_option(args: &[String], name: &str) -> Vec<String> {
-    args.windows(2)
-        .filter(|pair| pair[0] == name)
-        .map(|pair| pair[1].clone())
-        .collect()
-}
-
-fn required_path(args: &[String], name: &str) -> Result<PathBuf, Box<dyn Error>> {
-    option(args, name)
-        .map(PathBuf::from)
-        .ok_or_else(|| format!("missing required {name} <path>").into())
-}
-
-fn usize_option(args: &[String], name: &str, default: usize) -> Result<usize, Box<dyn Error>> {
-    Ok(option(args, name)
-        .map(|value| value.parse())
-        .transpose()?
-        .unwrap_or(default))
-}
-
-fn u64_option(args: &[String], name: &str, default: u64) -> Result<u64, Box<dyn Error>> {
-    Ok(option(args, name)
-        .map(|value| value.parse())
-        .transpose()?
-        .unwrap_or(default))
-}
-
-fn u32_option(args: &[String], name: &str, default: u32) -> Result<u32, Box<dyn Error>> {
-    Ok(option(args, name)
-        .map(|value| value.parse())
-        .transpose()?
-        .unwrap_or(default))
-}
-
-fn timeout_option(args: &[String]) -> Result<Duration, Box<dyn Error>> {
-    if let Some(milliseconds) = option(args, "--timeout-ms") {
-        return Ok(Duration::from_millis(milliseconds.parse()?));
-    }
-    Ok(Duration::from_secs(
-        option(args, "--timeout-seconds")
-            .map(|value| value.parse())
-            .transpose()?
-            .unwrap_or(300),
-    ))
-}
 
 fn usage_error<T>() -> Result<T, Box<dyn Error>> {
     print_usage();

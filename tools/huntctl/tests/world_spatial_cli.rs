@@ -54,7 +54,7 @@ fn spatial_index_and_filtered_point_query_cli_match_real_fixture_when_present() 
     assert_eq!(summary["excluded_surfaces"], 4);
     assert_eq!(
         summary["spatial_index_sha256"],
-        "2ad975eee45193b4325bb420a7ba5a78d533bed80cbcfeace29dcc5418e73834"
+        "dda6381f80f735821eea4a199510568281980978c902d963b9f8684db7dc4d1a"
     );
     assert!(output_path.is_file());
 
@@ -112,7 +112,7 @@ fn spatial_index_and_filtered_point_query_cli_match_real_fixture_when_present() 
     assert!(graph["maximum_vertex_cluster_diameter"].as_f64().unwrap() < 0.1);
     assert_eq!(
         graph["surface_graph_sha256"],
-        "40fc521620904d9485caf00ef5277f4c04a4ef71aba04457b5c465accc2fcc96"
+        "120f0116ffb9f9f22b17d34b1f9663f616868a058b3027f1fe786a887df3bf7e"
     );
     assert!(graph_output_path.is_file());
 

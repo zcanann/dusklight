@@ -1,7 +1,6 @@
 # Existing production Rust source debt. Limits may only decrease.
 # Remove an entry as soon as its file reaches the 1,500-line hard limit.
 tools/huntctl/crates/evidence/src/native_corpus_inspection.rs	2128
-tools/huntctl/crates/finalist-reduction/src/route.rs	1793
 tools/huntctl/crates/harness-contracts/src/run_contract.rs	1556
 tools/huntctl/crates/oracles/src/semantic_oracle.rs	2122
 tools/huntctl/crates/proposals/src/q_search.rs	2278

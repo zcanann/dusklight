@@ -1,6 +1,23 @@
 //! Native encoder pretraining and typed observation-view commands.
 
-use super::*;
+use super::{
+    ActorProfileCatalog, CompleteSetMultiTaskEncoder, ContentKind, ContentStore,
+    DEFAULT_COLLISION_HISTORY_DEPTH, DEFAULT_EPISODE_HISTORY_DEPTH,
+    DEFAULT_HISTORY_RECURRENT_WIDTH, GeometryObservationStatus, MAX_LEARN_INPUT_CORPORA,
+    MultiTaskSetPooling, NativeAuxiliaryDataset, NativeCollisionHistoryView,
+    NativeEncoderChannelFamily, NativeEncoderFeatureSpec, NativeEpisodeActorView,
+    NativeEpisodeGeometryView, NativeEpisodeHistoryView, NativeEpisodeResourceLoadView,
+    NativeEpisodeRoomLoadView, NativeEpisodeShard, NativeEpisodeSurfaceGraphView,
+    NativeGeometryViewConfiguration, NativeMultiTaskActorCorpus,
+    NativeSurfaceGraphViewConfiguration, ResourceArchiveKind, ResourceLoadOutcome,
+    ResourceLoadSetStatus, RoomLoadSetStatus, RoomSceneSetStatus, SurfaceGraphObservationStatus,
+    TrainableSetConfig, WorldInventory, fit_shuffled_auxiliary_control_with_pooling_and_temporal,
+    option, repeated_option, required_path, u64_option, usage_error, usize_option,
+};
+use serde_json::json;
+use std::error::Error;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {

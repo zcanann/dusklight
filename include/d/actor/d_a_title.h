@@ -60,6 +60,7 @@ private:
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
     // Read-only automation instrumentation. This friendship does not alter the
     // actor layout or native gameplay behavior.
+    // DUSKLIGHT OBSERVATION-ONLY APERTURE
     friend class dusk::automation::MenuStateObserver;
 #endif
 

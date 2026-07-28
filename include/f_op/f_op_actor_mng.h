@@ -185,7 +185,7 @@ inline u32 fopAcM_GetParam(const void* i_actor) {
     return fpcM_GetParam(i_actor);
 }
 
-inline u32 fopAcM_GetParamBit(void* ac, u8 shift, u8 bit) {
+inline u32 fopAcM_GetParamBit(const void* ac, u8 shift, u8 bit) {
     return (fopAcM_GetParam(ac) >> shift) & ((1 << bit) - 1);
 }
 

@@ -111,7 +111,7 @@ use huntctl::transition_evidence::{
 use huntctl::world_inventory::WorldInventory;
 use serde::Deserialize;
 use serde_json::json;
-use sha2::{Digest as _, Sha256};
+use sha2::Sha256;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fs;

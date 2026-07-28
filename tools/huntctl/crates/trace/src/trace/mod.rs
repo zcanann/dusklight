@@ -746,24 +746,14 @@ fn channel_definition(channel: TraceChannel, version: u16) -> Option<ChannelDefi
     Some(ChannelDefinition { stride })
 }
 
-#[derive(Clone)]
-struct ChannelDescriptor {
-    channel: Option<TraceChannel>,
-    version: u16,
-    flags: u32,
-    stride: usize,
-    status_offset: usize,
-    status_length: usize,
-    payload_offset: usize,
-    payload_length: usize,
-}
-
 mod columnar;
 mod decode;
+mod input;
 mod summary;
 mod wire;
 
 use columnar::decode_columnar;
+use input::*;
 use summary::{summarize, validate_tick_rate};
 use wire::*;
 
