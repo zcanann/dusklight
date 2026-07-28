@@ -132,8 +132,6 @@ Acceptance:
 
 ## P3 - Prove that the learner solves delayed continuous-control credit
 
-- [ ] Audit normalization and distance weighting so high-cardinality or mostly
-      irrelevant fields cannot swamp movement-relevant variation.
 - [ ] Compare the current local generalized model against at least:
   - fitted Q over a learned continuous representation;
   - a double-Q or ensemble control;
