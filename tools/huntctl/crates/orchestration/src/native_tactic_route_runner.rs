@@ -3040,7 +3040,11 @@ fn run_seed(
             route_option_value_config(seed),
             TacticExplorationConfig {
                 seed,
-                epsilon_per_million: config.epsilon_per_million,
+                epsilon_per_million: tactic_lane_epsilon(
+                    config.proposal_policy,
+                    config.epsilon_per_million,
+                    seed_index,
+                ),
             },
         )
         .map_err(route_error)?;
@@ -3898,7 +3902,11 @@ fn resume_seed(
         TacticQCampaign::read_checkpoint_payload(&checkpoint_path).map_err(route_error)?;
     let expected_exploration = TacticExplorationConfig {
         seed,
-        epsilon_per_million: config.epsilon_per_million,
+        epsilon_per_million: tactic_lane_epsilon(
+            config.proposal_policy,
+            config.epsilon_per_million,
+            seed_index,
+        ),
     };
     if checkpoint.decision_index != checkpoint_decision
         || checkpoint.decision_index > config.decisions_per_seed
@@ -6544,8 +6552,8 @@ fn generalized_acquisition_partition(seed_index: usize) -> u64 {
     let generation = seed_index / LEARNED_EPISODES_PER_GENERATION;
     let lane = seed_index % LEARNED_EPISODES_PER_GENERATION;
     if lane == 0 {
-        // Every shared-model generation retains its best predicted unseen
-        // controller instead of turning all parallel workers into exploration.
+        // Every shared-model generation reserves one terminal-support policy
+        // lane; the other lanes remain independent Q-ranked searches.
         0
     } else {
         // The remaining workers sweep consecutive ranks across generations.
@@ -6554,6 +6562,24 @@ fn generalized_acquisition_partition(seed_index: usize) -> u64 {
         generation
             .saturating_mul(LEARNED_EPISODES_PER_GENERATION - 1)
             .saturating_add(lane) as u64
+    }
+}
+
+fn tactic_lane_epsilon(
+    proposal_policy: TacticProposalPolicy,
+    configured_epsilon_per_million: u32,
+    seed_index: usize,
+) -> u32 {
+    if proposal_policy == TacticProposalPolicy::Learned
+        && seed_index % LEARNED_EPISODES_PER_GENERATION == 0
+    {
+        // Every shared generation reserves one deterministic exploitation
+        // lane. Demonstration/support behavior must be allowed to compose
+        // through a full route; the remaining lanes retain configured epsilon
+        // exploration and feed their counterexamples back into shared replay.
+        0
+    } else {
+        configured_epsilon_per_million
     }
 }
 
@@ -6702,6 +6728,27 @@ mod tests {
                 .map(generalized_acquisition_partition)
                 .collect::<Vec<_>>(),
             vec![0, 1, 2, 3, 0, 4, 5, 6, 0, 7, 8, 9]
+        );
+    }
+
+    #[test]
+    fn learned_terminal_support_lane_is_not_interrupted_by_epsilon_exploration() {
+        let configured = 250_000;
+        assert_eq!(
+            tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 0),
+            0
+        );
+        assert_eq!(
+            tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 4),
+            0
+        );
+        assert_eq!(
+            tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 1),
+            configured
+        );
+        assert_eq!(
+            tactic_lane_epsilon(TacticProposalPolicy::RandomValid, configured, 0),
+            configured
         );
     }
 

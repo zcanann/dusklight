@@ -17,6 +17,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH: usize = 71;
+const GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH: usize = 12;
 const MAX_GENERALIZED_TACTIC_SAMPLES: usize = 100_000;
 const MAX_FITTED_Q_BACKUP_ITERATIONS: usize = 512;
 const NEIGHBORS: usize = 8;
@@ -26,6 +27,7 @@ const MINIMUM_RETURN_COMPARISON_RESOLUTION: f64 = 1.0e-4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GeneralizedTacticContext {
+    pub simulation_tick: f32,
     pub player_x: f32,
     pub player_z: f32,
     pub velocity_x: f32,
@@ -69,6 +71,7 @@ impl GeneralizedTacticContext {
             })
             .unwrap_or(0.0);
         let context = Self {
+            simulation_tick: facts.simulation_tick as f32,
             player_x: position[0],
             player_z: position[2],
             velocity_x: velocity[0],
@@ -87,8 +90,9 @@ impl GeneralizedTacticContext {
         Ok(context)
     }
 
-    fn values(self) -> [f32; 11] {
+    fn values(self) -> [f32; GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH] {
         [
+            self.simulation_tick,
             self.player_x,
             self.player_z,
             self.velocity_x,
@@ -264,6 +268,7 @@ pub struct GeneralizedTacticEstimate {
 #[derive(Clone, Debug)]
 struct EncodedSample {
     state: Vec<f32>,
+    behavior_context: [f32; GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH],
     action: [f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
     outcome: GeneralizedTacticOutcome,
 }
@@ -272,6 +277,8 @@ struct EncodedSample {
 pub struct GeneralizedTacticValueModel {
     state_min: Vec<f32>,
     state_range: Vec<f32>,
+    behavior_context_min: [f32; GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH],
+    behavior_context_range: [f32; GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH],
     action_min: [f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
     action_range: [f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
     return_comparison_resolution: f64,
@@ -425,6 +432,7 @@ impl GeneralizedTacticValueModel {
             .map(|sample| {
                 Ok(EncodedSample {
                     state: sample.state_features.clone(),
+                    behavior_context: sample.context.values(),
                     action: encode_action(&sample.context, &sample.action)?,
                     outcome: sample.outcome,
                 })
@@ -434,10 +442,14 @@ impl GeneralizedTacticValueModel {
             encoded.iter().map(|sample| sample.state.as_slice()),
             state_width,
         );
+        let (behavior_context_min, behavior_context_range) =
+            fixed_feature_ranges(encoded.iter().map(|sample| &sample.behavior_context));
         let (action_min, action_range) = action_feature_ranges(&encoded);
         Ok(Self {
             state_min,
             state_range,
+            behavior_context_min,
+            behavior_context_range,
             action_min,
             action_range,
             return_comparison_resolution: MINIMUM_RETURN_COMPARISON_RESOLUTION,
@@ -499,24 +511,51 @@ impl GeneralizedTacticValueModel {
         neighbors.sort_by(|left, right| left.0.total_cmp(&right.0));
         neighbors.truncate(NEIGHBORS.min(neighbors.len()));
         let nearest_distance = neighbors[0].0;
-        let terminal_support_distance = self
+        let behavior_context = context.values();
+        let mut terminal_state_neighbors = self
             .samples
             .iter()
             .filter(|sample| sample.outcome.terminal > 0.0)
             .map(|sample| {
-                normalized_distance(
-                    state_features,
-                    &sample.state,
-                    &self.state_min,
-                    &self.state_range,
-                ) + normalized_distance(
-                    &action,
-                    &sample.action,
-                    &self.action_min,
-                    &self.action_range,
-                ) * 2.0
+                (
+                    (behavior_context[0] - sample.behavior_context[0]).abs(),
+                    normalized_distance(
+                        &behavior_context[1..],
+                        &sample.behavior_context[1..],
+                        &self.behavior_context_min[1..],
+                        &self.behavior_context_range[1..],
+                    ),
+                    sample,
+                )
             })
-            .min_by(f32::total_cmp);
+            .collect::<Vec<_>>();
+        terminal_state_neighbors.sort_by(|left, right| {
+            left.0
+                .total_cmp(&right.0)
+                .then_with(|| left.1.total_cmp(&right.1))
+        });
+        let terminal_support_distance = terminal_state_neighbors.first().map(
+            |(minimum_tick_distance, minimum_state_distance, _)| {
+                terminal_state_neighbors
+                    .iter()
+                    .take_while(|(tick_distance, _, _)| {
+                        *tick_distance <= *minimum_tick_distance + EXACT_STATE_DISTANCE_EPSILON
+                    })
+                    .filter(|(_, state_distance, _)| {
+                        *state_distance <= *minimum_state_distance + EXACT_STATE_DISTANCE_EPSILON
+                    })
+                    .map(|(_, _, sample)| {
+                        behavior_cloning_action_distance(
+                            &action,
+                            &sample.action,
+                            &self.action_min,
+                            &self.action_range,
+                        )
+                    })
+                    .min_by(f32::total_cmp)
+                    .expect("nonempty nearest terminal-state cohort")
+            },
+        );
         let mut outcome = GeneralizedTacticOutcome::default();
         let mut total_weight = 0.0_f32;
         let mut terminal_weight = 0.0_f32;
@@ -559,6 +598,28 @@ impl GeneralizedTacticValueModel {
             .collect::<Result<Vec<_>, _>>()?;
         estimates.sort_by(|left, right| {
             compare_generalized_tactic_estimates(left, right, self.return_comparison_resolution)
+        });
+        Ok(estimates)
+    }
+
+    /// Ranks executable actions as a behavior-cloning policy over the nearest
+    /// authenticated terminal-supported trajectory phase and physical state.
+    ///
+    /// This is a separate acquisition lane, not a reward bonus. Other lanes
+    /// remain Q-ranked, so a demonstration supplies a reproducible foothold
+    /// without becoming the only policy or constraining later improvement.
+    pub fn rank_terminal_support(
+        &self,
+        state_features: &[f32],
+        context: &GeneralizedTacticContext,
+        descriptors: &[OptionActionDescriptor],
+    ) -> Result<Vec<GeneralizedTacticEstimate>, GeneralizedTacticValueError> {
+        let mut estimates = descriptors
+            .iter()
+            .map(|descriptor| self.predict(state_features, context, descriptor))
+            .collect::<Result<Vec<_>, _>>()?;
+        estimates.sort_by(|left, right| {
+            compare_terminal_support_estimates(left, right, self.return_comparison_resolution)
         });
         Ok(estimates)
     }
@@ -721,6 +782,31 @@ fn compare_generalized_tactic_estimates(
     .then_with(|| left.descriptor.option_id.cmp(&right.descriptor.option_id))
 }
 
+fn compare_terminal_support_estimates(
+    left: &GeneralizedTacticEstimate,
+    right: &GeneralizedTacticEstimate,
+    return_resolution: f64,
+) -> std::cmp::Ordering {
+    match (
+        left.terminal_support_distance,
+        right.terminal_support_distance,
+    ) {
+        (Some(left), Some(right)) => left.total_cmp(&right),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    }
+    .then_with(|| {
+        compare_generalized_tactic_outcomes_with_resolution(
+            &right.outcome,
+            &left.outcome,
+            return_resolution,
+        )
+    })
+    .then_with(|| left.nearest_distance.total_cmp(&right.nearest_distance))
+    .then_with(|| left.descriptor.option_id.cmp(&right.descriptor.option_id))
+}
+
 pub fn generalized_tactic_action_factors(
     context: &GeneralizedTacticContext,
     descriptor: &OptionActionDescriptor,
@@ -836,24 +922,28 @@ fn encode_action(
         / 127.0;
     values[cursor + 2] = float(descriptor, "waypoint_switch_radius").unwrap_or(0.0);
     cursor += 3;
-    let relative_heading = ["heading_radians", "movement_heading"]
-        .iter()
-        .find_map(|name| float(descriptor, name))
+    // Compare what the controller actually emits, rather than comparing
+    // similarly named parameters with different coordinate-frame semantics.
+    // Recorded chunks expose their raw PAD heading directly. Roll headings use
+    // the opposite X convention. Native maintained-heading plans compile a
+    // camera-relative authored offset into a player-frame controller, whose
+    // first emitted PAD heading is player - authored - camera.
+    let current_yaw = context.yaw_sin.atan2(context.yaw_cos);
+    let camera_yaw = context.camera_yaw_sin.atan2(context.camera_yaw_cos);
+    let emitted_heading = float(descriptor, "movement_heading")
+        .or_else(|| {
+            float(descriptor, "heading_radians")
+                .map(|authored| angle_delta(current_yaw - authored, camera_yaw))
+        })
         .or_else(|| {
             float(descriptor, "direction_degrees")
-                // RollOptionPlan defines positive degrees in raw-pad space,
-                // whose X axis is opposite the world-heading convention used
-                // by seek and maintained-heading controllers.
                 .map(|degrees| -degrees * std::f32::consts::PI / 180.0)
         });
-    values[cursor] = f32::from(relative_heading.is_some());
-    if let Some(relative_heading) = relative_heading {
-        let current_yaw = context.yaw_sin.atan2(context.yaw_cos);
-        let camera_yaw = context.camera_yaw_sin.atan2(context.camera_yaw_cos);
-        let desired_yaw = camera_yaw + relative_heading;
-        values[cursor + 1] = desired_yaw.sin();
-        values[cursor + 2] = desired_yaw.cos();
-        values[cursor + 3] = angle_delta(desired_yaw, current_yaw).abs();
+    values[cursor] = f32::from(emitted_heading.is_some());
+    if let Some(emitted_heading) = emitted_heading {
+        values[cursor + 1] = emitted_heading.sin();
+        values[cursor + 2] = emitted_heading.cos();
+        values[cursor + 3] = emitted_heading.abs();
     }
     cursor += 4;
     let mask = unsigned(
@@ -1023,6 +1113,23 @@ fn angle_delta(left: f32, right: f32) -> f32 {
     (left - right + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
+fn behavior_cloning_action_distance(
+    left: &[f32],
+    right: &[f32],
+    minimum: &[f32],
+    range: &[f32],
+) -> f32 {
+    let continuous = normalized_distance(left, right, minimum, range);
+    let prompted_action_mismatches = (55..71)
+        .filter(|index| (left[*index] >= 0.5) != (right[*index] >= 0.5))
+        .count() as f32;
+    // A prompted action (roll today; jump, mount, lift, or another button in
+    // future catalogs) is a categorical behavioral choice. Make one mismatch
+    // dominate every possible continuous-factor difference without turning it
+    // into reward or terminal evidence.
+    continuous + prompted_action_mismatches * (GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH as f32 + 1.0)
+}
+
 fn feature_ranges<'a>(rows: impl Iterator<Item = &'a [f32]>, width: usize) -> (Vec<f32>, Vec<f32>) {
     let mut minimum = vec![f32::INFINITY; width];
     let mut maximum = vec![f32::NEG_INFINITY; width];
@@ -1037,6 +1144,24 @@ fn feature_ranges<'a>(rows: impl Iterator<Item = &'a [f32]>, width: usize) -> (V
         .zip(&maximum)
         .map(|(minimum, maximum)| (maximum - minimum).max(1.0e-6))
         .collect();
+    (minimum, range)
+}
+
+fn fixed_feature_ranges<'a, const WIDTH: usize>(
+    rows: impl Iterator<Item = &'a [f32; WIDTH]>,
+) -> ([f32; WIDTH], [f32; WIDTH]) {
+    let mut minimum = [f32::INFINITY; WIDTH];
+    let mut maximum = [f32::NEG_INFINITY; WIDTH];
+    for row in rows {
+        for (index, value) in row.iter().copied().enumerate() {
+            minimum[index] = minimum[index].min(value);
+            maximum[index] = maximum[index].max(value);
+        }
+    }
+    let range = std::array::from_fn(|index| {
+        let width = maximum[index] - minimum[index];
+        if width > f32::EPSILON { width } else { 1.0 }
+    });
     (minimum, range)
 }
 
@@ -1434,7 +1559,7 @@ mod tests {
         assert_eq!(encoded_heading[0], 1.0);
         assert_eq!(encoded_heading[5], 0.0);
         assert_eq!(encoded_heading[47], 1.0);
-        assert!((encoded_heading[48] - 1.0).abs() < 1.0e-6);
+        assert!((encoded_heading[48] + 1.0).abs() < 1.0e-6);
         assert!(encoded_heading[49].abs() < 1.0e-6);
         assert!((encoded_heading[50] - std::f32::consts::FRAC_PI_2).abs() < 1.0e-6);
 
@@ -1565,6 +1690,153 @@ mod tests {
             compare_generalized_tactic_estimates(&supported, &one_tick_faster, 0.01),
             std::cmp::Ordering::Greater
         );
+        assert_eq!(
+            compare_terminal_support_estimates(&supported, &one_tick_faster, 0.01),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn terminal_support_policy_clones_actions_from_the_nearest_successful_state() {
+        let near_action = action("near", 100.0, 100.0, 0.0, None, 100.0);
+        let far_action = action("far", 500.0, 10.0, 2.5, Some(7), -100.0);
+        let samples = vec![
+            GeneralizedTacticTrainingSample {
+                state_features: vec![0.0],
+                context: GeneralizedTacticContext {
+                    player_x: 0.0,
+                    ..GeneralizedTacticContext::default()
+                },
+                action: near_action.clone(),
+                outcome: GeneralizedTacticOutcome {
+                    terminal: 1.0,
+                    reward: 1.0,
+                    ..GeneralizedTacticOutcome::default()
+                },
+            },
+            GeneralizedTacticTrainingSample {
+                state_features: vec![1.0],
+                context: GeneralizedTacticContext {
+                    player_x: 1.0,
+                    ..GeneralizedTacticContext::default()
+                },
+                action: far_action.clone(),
+                outcome: GeneralizedTacticOutcome {
+                    terminal: 1.0,
+                    reward: 100.0,
+                    ..GeneralizedTacticOutcome::default()
+                },
+            },
+        ];
+        let model = GeneralizedTacticValueModel::fit(&samples).unwrap();
+
+        let ranked = model
+            .rank_terminal_support(
+                &[0.01],
+                &GeneralizedTacticContext {
+                    player_x: 0.01,
+                    ..GeneralizedTacticContext::default()
+                },
+                &[far_action, near_action.clone()],
+            )
+            .unwrap();
+
+        assert_eq!(ranked[0].descriptor.option_id, near_action.option_id);
+    }
+
+    #[test]
+    fn terminal_support_policy_advances_with_successful_trajectory_phase() {
+        let current_phase_action = action("current-phase", 100.0, 100.0, 0.0, None, 100.0);
+        let physically_near_past_action =
+            action("physically-near-past", 500.0, 10.0, 2.5, Some(7), -100.0);
+        let samples = [
+            GeneralizedTacticTrainingSample {
+                state_features: vec![0.0],
+                context: GeneralizedTacticContext {
+                    simulation_tick: 4.0,
+                    player_x: 100.0,
+                    ..GeneralizedTacticContext::default()
+                },
+                action: current_phase_action.clone(),
+                outcome: GeneralizedTacticOutcome {
+                    terminal: 1.0,
+                    reward: 1.0,
+                    ..GeneralizedTacticOutcome::default()
+                },
+            },
+            GeneralizedTacticTrainingSample {
+                state_features: vec![1.0],
+                context: GeneralizedTacticContext {
+                    simulation_tick: 0.0,
+                    player_x: 0.0,
+                    ..GeneralizedTacticContext::default()
+                },
+                action: physically_near_past_action.clone(),
+                outcome: GeneralizedTacticOutcome {
+                    terminal: 1.0,
+                    reward: 100.0,
+                    ..GeneralizedTacticOutcome::default()
+                },
+            },
+        ];
+        let model = GeneralizedTacticValueModel::fit(&samples).unwrap();
+
+        let ranked = model
+            .rank_terminal_support(
+                &[0.0],
+                &GeneralizedTacticContext {
+                    simulation_tick: 4.0,
+                    player_x: 0.0,
+                    ..GeneralizedTacticContext::default()
+                },
+                &[physically_near_past_action, current_phase_action.clone()],
+            )
+            .unwrap();
+
+        assert_eq!(
+            ranked[0].descriptor.option_id,
+            current_phase_action.option_id
+        );
+    }
+
+    #[test]
+    fn terminal_support_policy_preserves_prompted_action_availability() {
+        let demonstrated_roll = action("demonstrated-roll", 100.0, 100.0, 0.0, Some(20), 100.0);
+        let model = GeneralizedTacticValueModel::fit(&[
+            GeneralizedTacticTrainingSample {
+                state_features: vec![0.0],
+                context: GeneralizedTacticContext::default(),
+                action: demonstrated_roll.clone(),
+                outcome: GeneralizedTacticOutcome {
+                    terminal: 1.0,
+                    reward: 1.0,
+                    ..GeneralizedTacticOutcome::default()
+                },
+            },
+            GeneralizedTacticTrainingSample {
+                state_features: vec![1.0],
+                context: GeneralizedTacticContext::default(),
+                action: demonstrated_roll.clone(),
+                outcome: GeneralizedTacticOutcome {
+                    terminal: 1.0,
+                    reward: 1.0,
+                    ..GeneralizedTacticOutcome::default()
+                },
+            },
+        ])
+        .unwrap();
+        let generated_roll = action("generated-roll", 500.0, 10.0, 2.5, Some(7), -100.0);
+        let continuous_match = action("continuous-match", 100.0, 100.0, 0.0, None, 100.0);
+
+        let ranked = model
+            .rank_terminal_support(
+                &[0.0],
+                &GeneralizedTacticContext::default(),
+                &[continuous_match, generated_roll.clone()],
+            )
+            .unwrap();
+
+        assert_eq!(ranked[0].descriptor.option_id, generated_roll.option_id);
     }
 
     #[test]

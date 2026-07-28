@@ -1549,11 +1549,19 @@ impl TacticQCampaign {
                 .filter(|choice| choice.applicable)
                 .map(|choice| choice.descriptor.clone())
                 .collect::<Vec<_>>();
-            let ranked_applicable = model
-                .rank(&features, &context, &applicable_descriptors)?
-                .into_iter()
-                .map(|estimate| estimate.descriptor)
-                .collect::<Vec<_>>();
+            // Partition zero is the dedicated terminal-support policy lane.
+            // It behavior-clones the closest action at the nearest phase and
+            // physical state on any authenticated successful trajectory.
+            // Remaining partitions stay Q-ranked, preserving independent
+            // improvement and exploration.
+            let ranked_applicable = if acquisition_partition == 0 {
+                model.rank_terminal_support(&features, &context, &applicable_descriptors)?
+            } else {
+                model.rank(&features, &context, &applicable_descriptors)?
+            }
+            .into_iter()
+            .map(|estimate| estimate.descriptor)
+            .collect::<Vec<_>>();
             ensure_generalized_value_acquisition(
                 &ranked_applicable,
                 acquisition_partition,
