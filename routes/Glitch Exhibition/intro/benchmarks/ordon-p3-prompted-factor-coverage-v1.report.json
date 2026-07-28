@@ -1,0 +1,82 @@
+{
+  "schema": "dusklight-p3-prompted-factor-coverage/v1",
+  "date": "2026-07-28",
+  "parent_commit": "86e4bbbf3419753d714d31b0d605c06de8570af1",
+  "platform": "arm64 macOS",
+  "acceptance_passed": false,
+  "conclusion": "Terminal-support acquisition now preserves one learned candidate for every currently available prompted-button mask before filling duration and type coverage. On the fixed q131 demonstration frontier this restored the target-only action, produced an exact 25-tick terminal sibling, and independently retained it despite a different forced-exploration policy action. The complete suffix still costs 137 frames, so this proves generic prompted-factor discovery and retention but not improvement beyond the 131-frame demonstration.",
+  "fixed_plan": {
+    "optimization_request_path": "routes/Glitch Exhibition/intro/benchmarks/ordon-degraded-q131-cem-canary.request.json",
+    "seed": 104729,
+    "workers": 4,
+    "decisions": 4,
+    "proposals_per_decision": 4,
+    "branch_every_decisions": 4,
+    "refit_every_decisions": 2,
+    "epsilon_per_million": 500000,
+    "demonstration_chunk_ticks": 16,
+    "source_boundary_index": 506,
+    "demonstration_suffix_frames": 131
+  },
+  "before": {
+    "source_report_sha256": "83953f38e64bc0e7147870308c4bcca65cab7b18875582c7db9146fd4de363c0",
+    "critical_decision_index": 3,
+    "critical_acquisition_rank": 3,
+    "proposal_button_masks": [
+      "none",
+      "L+A",
+      "A",
+      "none"
+    ],
+    "proposal_durations": [
+      4,
+      16,
+      4,
+      24
+    ],
+    "terminal_proposals": 0,
+    "minimum_proposal_goal_distance": 151.3404
+  },
+  "after": {
+    "source_report_sha256": "05ae14f829c4b8c3d81f00f88ec0004088edb2e09c828fb6d6892f19a1bd0563",
+    "execution_plan_sha256": "ded61a01acc46f9314a22a3d4d426116db2362fc247ef6bbc75214c83d51fc4b",
+    "total_decisions": 4,
+    "total_native_ticks": 373,
+    "useful_decisions": 4,
+    "useful_training_transitions": 23,
+    "shared_training_replay_rows": 25,
+    "learner_updates": 3,
+    "replay_refreshes": 1,
+    "critical_decision_index": 3,
+    "critical_acquisition_rank": 3,
+    "proposal_button_masks": [
+      "none",
+      "A",
+      "L+A",
+      "L"
+    ],
+    "proposal_durations": [
+      4,
+      4,
+      16,
+      25
+    ],
+    "terminal_proposals": 1,
+    "terminal_option_id": "family/camera-lock-forward/61c1e84d7d55c417b922",
+    "terminal_option_ticks": 25,
+    "terminal_reward": 99.75,
+    "terminal_suffix_frames": 137,
+    "terminal_first_hit_index": 136,
+    "retained_success_artifact": "seed-000-104729/retained-successes/success-000643-000003-3b983f2ba3ddac85e3374543764bd6362a2d956ce2a93ce7c8f5bc5b582f39cf.dtqz",
+    "retained_success_content_sha256": "3b983f2ba3ddac85e3374543764bd6362a2d956ce2a93ce7c8f5bc5b582f39cf",
+    "retained_success_file_sha256": "f0044a70d5bdbcc612dec6a0cbdd8725fb1dfb9069b4032d2c7d745897130066",
+    "wall_micros": 302089528
+  },
+  "observations": {
+    "prompted_button_factors_are_covered_independently": true,
+    "terminal_sibling_discovered": true,
+    "terminal_sibling_retained_independently_of_policy_selection": true,
+    "learner_selected_terminal_action": false,
+    "learner_improved_beyond_demonstration": false
+  }
+}

@@ -136,6 +136,15 @@ at tick `125`.
   513.69 to 151.34, but still found no terminal. This validates live learning
   mechanics while leaving delayed-credit acceptance failed. Evidence:
   `ordon-p3-live-replay-ablation-v1.report.json`.
+- Terminal-support acquisition now reserves the highest learned candidate for
+  each currently available prompted-button mask before filling remaining
+  duration/type slots. On the same four-decision macOS diagnostic, the critical
+  batch changed from `none/L+A/A/none` to `none/A/L+A/L`; the target-only action
+  reached the terminal in 25 ticks and was independently persisted even though
+  forced exploration selected another action. The complete suffix still cost
+  137 frames versus the 131-frame demonstration, so prompted-factor discovery
+  and retention now work while learner selection and improvement remain open.
+  Evidence: `ordon-p3-prompted-factor-coverage-v1.report.json`.
 - The first two-seed replay-macro probe mined 26 candidates and completed 52
   held-out macro-versus-primitive comparisons. It spent 1,008 validation ticks
   and 149.4 seconds—about 26% of total wall time—but promoted nothing and

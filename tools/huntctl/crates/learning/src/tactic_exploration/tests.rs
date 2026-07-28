@@ -27,6 +27,20 @@ fn descriptor_with_duration(
     descriptor
 }
 
+fn descriptor_with_duration_and_buttons(
+    id: &str,
+    option_type: OptionType,
+    duration_ticks: u64,
+    button_mask: u64,
+) -> OptionActionDescriptor {
+    let mut descriptor = descriptor_with_duration(id, option_type, duration_ticks);
+    descriptor.parameters.insert(
+        "command_button_mask".into(),
+        OptionParameter::Unsigned(button_mask),
+    );
+    descriptor
+}
+
 fn choice(descriptor: OptionActionDescriptor) -> LearnerActionMaskEntry {
     LearnerActionMaskEntry {
         choice_id: descriptor.option_id.clone(),
@@ -1525,7 +1539,7 @@ fn terminal_support_batch_transfers_to_distinct_learned_action_factors() {
             .iter()
             .map(|proposal| proposal.descriptor.option_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["target/best", "roll/best", "neutral/best"]
+        vec!["roll/best", "target/best", "neutral/best"]
     );
     assert!(
         proposals[1..]
@@ -1589,7 +1603,53 @@ fn terminal_support_factor_transfer_preserves_long_movement_probe() {
             .iter()
             .map(|proposal| proposal.descriptor.option_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["move/long", "neutral/short", "roll/short"]
+        vec!["roll/short", "move/long", "neutral/short"]
+    );
+}
+
+#[test]
+fn terminal_support_factor_transfer_covers_each_prompted_button_mask() {
+    let exploratory =
+        descriptor_with_duration_and_buttons("move/epsilon", OptionType::MaintainHeading, 4, 0);
+    let ranked = vec![
+        descriptor_with_duration_and_buttons("curve/best", OptionType::Bezier, 24, 0),
+        descriptor_with_duration_and_buttons(
+            "target-roll/best",
+            OptionType::Custom("target_roll".into()),
+            16,
+            0x0140,
+        ),
+        descriptor_with_duration_and_buttons("roll/best", OptionType::Roll, 4, 0x0100),
+        descriptor_with_duration_and_buttons("target/best", OptionType::Target, 40, 0x0040),
+        descriptor_with_duration_and_buttons("move/second", OptionType::Move, 40, 0),
+    ];
+    let mut proposals = vec![SelectedTactic {
+        schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+        learner_snapshot_sha256: Digest([31; 32]),
+        decision_index: 7,
+        descriptor: exploratory.clone(),
+        reason: TacticSelectionReason::Epsilon,
+        exploration_draw: 1,
+    }];
+
+    ensure_terminal_support_factor_acquisitions(&ranked, 4, &mut proposals).unwrap();
+    retain_generalized_value_acquisition(&mut proposals).unwrap();
+
+    assert_eq!(proposals[0].descriptor, exploratory);
+    assert_eq!(proposals[0].reason, TacticSelectionReason::Epsilon);
+    assert_eq!(
+        proposals[1..]
+            .iter()
+            .map(|proposal| (
+                proposal.descriptor.option_id.as_str(),
+                action_button_mask(&proposal.descriptor),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("target-roll/best", 0x0140),
+            ("roll/best", 0x0100),
+            ("target/best", 0x0040),
+        ]
     );
 }
 
