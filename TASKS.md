@@ -67,10 +67,13 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
   camera orientation, exact A-button prompt-status bits, and the native
-  front-roll acceptance prompt (`0x79`). Executable action features independently
-  encode heading, duration, camera/target modifiers, button timing, and roll
-  cadence. These are observations and diagnostics only; learned delayed return
-  remains the sole utility ordering.
+  front-roll acceptance prompt (`BUTTON_STATUS_UNK_121`, `0x79`). Contextual
+  A-button tactics are absent from the live action mask when the game exposes
+  no Do prompt, and atomic front-roll tactics require that exact front-roll
+  prompt. Executable action features independently encode heading, duration,
+  camera/target modifiers, button timing, and roll cadence. These are
+  observations and diagnostics only; learned delayed return remains the sole
+  utility ordering.
 - Replay mining, entry-conditioned validation, promoted-tactic storage, and
   primitive-versus-macro competition exist. No tactic has yet earned promotion
   because the held-out probe contained no successful exploration observation.

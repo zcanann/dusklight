@@ -194,13 +194,15 @@ fn parameterized_batch_uses_family_instances_absent_from_the_state_catalog() {
         "../../../../../../tests/fixtures/automation/native_episode_v28.dseps"
     ))
     .unwrap();
-    let before = FactSnapshot::from_native_learning(
+    let mut before = FactSnapshot::from_native_learning(
         &shard.episodes[0].steps[0].pre_input,
         &[],
         None,
         Vec::new(),
     )
     .unwrap();
+    // Native `BUTTON_STATUS_UNK_121`: the contextual A action is front roll.
+    before.player.action_state.as_mut().unwrap().do_status = 0x79;
     let bootstrap = TacticAssetCatalog::new(vec![
         TacticCatalogEntry::new(
             "shield",
