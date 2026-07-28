@@ -676,6 +676,7 @@ mod tests {
         let mut initial_sticks_and_lock_frames = BTreeSet::new();
         let mut described_lock_frames = BTreeSet::new();
         for entry in camera_lock_entries {
+            assert_eq!(entry.description().option.option_type, OptionType::Target);
             assert_eq!(
                 entry
                     .description()
@@ -770,6 +771,10 @@ mod tests {
 
         assert_eq!(entries.len(), 48);
         for entry in entries {
+            assert_eq!(
+                entry.description().option.option_type,
+                OptionType::Custom("target_roll".into())
+            );
             assert_eq!(
                 entry
                     .description()

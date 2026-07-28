@@ -933,6 +933,12 @@ impl TacticAssetAdapter for ControllerProgram {
         let provenance = ControllerObservationProvenance::for_program(self);
         let required_observations = controller_requirements(&provenance);
         let statically_realizable = provenance.is_static();
+        let option_type = if statically_realizable {
+            static_prompted_controller_option_type(self)
+                .unwrap_or_else(|| OptionType::Custom("reactive_controller".into()))
+        } else {
+            OptionType::Custom("reactive_controller".into())
+        };
         let mut parameters = BTreeMap::new();
         parameters.insert(
             "program_sha256".into(),
@@ -1000,7 +1006,7 @@ impl TacticAssetAdapter for ControllerProgram {
             content_sha256: digest(&canonical),
             option: OptionActionDescriptor {
                 option_id: option_id.into(),
-                option_type: OptionType::Custom("reactive_controller".into()),
+                option_type,
                 parameters,
             },
             duration: TacticDurationBounds {
@@ -1084,6 +1090,21 @@ impl TacticAssetAdapter for ControllerProgram {
         let exact = ExactTacticRealization { tape, execution };
         exact.validate_against(&description)?;
         Ok(Some(exact))
+    }
+}
+
+fn static_prompted_controller_option_type(program: &ControllerProgram) -> Option<OptionType> {
+    let tape = compile_static_controller(program).ok()?;
+    let button_mask = tape
+        .frames
+        .iter()
+        .fold(0_u16, |mask, frame| mask | frame.pads[0].buttons);
+    const BUTTON_L: u16 = 0x0040;
+    const BUTTON_A: u16 = 0x0100;
+    match button_mask & (BUTTON_L | BUTTON_A) {
+        BUTTON_L => Some(OptionType::Target),
+        value if value == BUTTON_L | BUTTON_A => Some(OptionType::Custom("target_roll".into())),
+        _ => None,
     }
 }
 
@@ -1525,6 +1546,7 @@ mod tests {
 
         let description = controller.describe("camera-lock-forward").unwrap();
 
+        assert_eq!(description.option.option_type, OptionType::Target);
         assert!(
             (parameter_f32(&description, "command_initial_heading") - std::f32::consts::FRAC_PI_2)
                 .abs()
@@ -1537,6 +1559,20 @@ mod tests {
         assert_eq!(
             description.option.parameters.get("command_button_mask"),
             Some(&OptionParameter::Unsigned(0x0040))
+        );
+
+        let target_roll = ControllerProgram::parse(
+            "duskcontrol 1\nframes 2\n\
+             bezier replace from 0 for 1 p0 -127 0 p1 -127 0 p2 -127 0 p3 -127 0\n\
+             buttons from 0 for 1 L A\n\
+             bezier replace from 1 for 1 p0 0 127 p1 0 127 p2 0 127 p3 0 127\n",
+        )
+        .unwrap()
+        .describe("camera-lock-roll-forward")
+        .unwrap();
+        assert_eq!(
+            target_roll.option.option_type,
+            OptionType::Custom("target_roll".into())
         );
     }
 
