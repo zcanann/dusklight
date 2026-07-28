@@ -225,24 +225,22 @@ pub(super) fn publish_completed_seed_replay(
         .zip(&completion.generated_training.routes)
         .zip(&completion.generated_training.episode_groups)
     {
-        let matching = completion
-            .result
-            .trace
-            .iter()
-            .filter(|decision| {
-                decision.before.snapshot_sha256 == transition.before_state_sha256
-                    && decision.proposal_batch.iter().any(|proposal| {
-                        proposal.option_id == transition.value_sample.action.option_id
-                            && proposal.emitted_tape_sha256
-                                == transition.value_sample.realized_tape_sha256
-                            && proposal.after_snapshot_sha256 == transition.after_state_sha256
-                            && proposal.terminal == transition.value_sample.terminal
-                    })
-            })
-            .collect::<Vec<_>>();
-        let [decision] = matching.as_slice() else {
+        // The same exact transition may be evaluated again at a revisited
+        // frontier. Replay retains the first admission, so resume repair must
+        // bind it to the first learner decision as well.
+        let decision = completion.result.trace.iter().find(|decision| {
+            decision.before.snapshot_sha256 == transition.before_state_sha256
+                && decision.proposal_batch.iter().any(|proposal| {
+                    proposal.option_id == transition.value_sample.action.option_id
+                        && proposal.emitted_tape_sha256
+                            == transition.value_sample.realized_tape_sha256
+                        && proposal.after_snapshot_sha256 == transition.after_state_sha256
+                        && proposal.terminal == transition.value_sample.terminal
+                })
+        });
+        let Some(decision) = decision else {
             return Err(route_message(
-                "generated replay row does not name exactly one learner decision",
+                "generated replay row does not name a learner decision",
             ));
         };
         if decision.learner_snapshot_sha256 == Digest::ZERO
