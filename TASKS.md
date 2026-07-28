@@ -125,6 +125,18 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   hindsight reachability is now real and ablatable, but this formulation does
   not solve the terminal barrier. Evidence:
   `ordon-p3-q131-local-replay-ablation-v1.report.json`.
+- Supported achieved-goal return now outranks cold-start novelty when choosing
+  among equally fresh retained frontiers, without granting native-terminal or
+  promotion authority. A matched 4x16 native follow-up exercised that learned
+  acquisition on all `11` retained-frontier branches and reached the known
+  roughly `1,500`-distance plateau sooner than the recorded goal-relabeled
+  treatment, but reduced useful decisions (`36` to `29`), useful training
+  transitions (`122` to `107`), and visited states (`278` to `202`). Its
+  selected routes never moved west of roughly `x=-426`, while the successful
+  replay is already near `x=-1,357` before rounding the corner. The deeper
+  full-budget cell is therefore not justified: learned achieved-goal return is
+  authoritative for continuation, but still follows the wrong corridor.
+  Evidence: `ordon-p3-q131-local-replay-ablation-v1.report.json`.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
   camera orientation, exact A-button prompt-status bits, and the native
@@ -169,10 +181,6 @@ tie is diagnostic evidence only.
 
 ## P3 - Prove delayed-credit continuous-control learning
 
-- [ ] Validate that supported achieved-goal return, rather than cold-start
-      novelty alone, selects among equally fresh retained frontiers. Keep
-      native-terminal authority separate and ablate against the recorded
-      goal-relabeled treatment.
 - [ ] Demonstrate that ordinary suboptimal human replay improves sample
       efficiency without capping the policy or becoming required for success.
 

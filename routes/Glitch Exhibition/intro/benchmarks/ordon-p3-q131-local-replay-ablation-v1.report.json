@@ -322,6 +322,77 @@
     },
     "conclusion": "Goal relabeling learned and transferred exact achieved-goal tick return without fabricating terminal support. It improved early geometric depth and state coverage against the current matched local control, but reduced useful evidence and converged on the existing approximately 1,496-distance full-budget plateau with no terminal. This treatment is not the P3 solution."
   },
+  "achieved_goal_frontier_follow_up": {
+    "campaign_control_plane_commits": [
+      "8fa886e50b0a1d85d4607b2303f07854118300f3",
+      "2557ba07d119c34a8d04563ca11a1e518fbcc52c"
+    ],
+    "change": "Before native terminal support exists, equally fresh retained frontiers are ordered first by supported achieved-goal return and then by least-expanded spatial reachability. Procedure, event, actor, and action-provenance modes remain in the retained archive and proposal mechanisms but cannot outrank spatial reachability during this cold-start branch acquisition. Achieved-goal support remains distinct from native-terminal and promotion authority.",
+    "synthetic_gate": {
+      "equally_fresh_frontiers_ordered_by_achieved_goal_return": true,
+      "native_terminal_support_required": false,
+      "relabeled_terminal_support": false,
+      "promotion_authority": false
+    },
+    "native_ablation": {
+      "treatment": {
+        "source_report_path": "build/campaigns/ordon-p3-q131-spatial-reachability-goal-relabeled-4x16-b4-w4-v1-20260728/report.json",
+        "source_report_sha256": "e3ccd7a6d4fe84d0722413a57829444823deb8808680fcb93048cc5e7e7c12e6",
+        "execution_plan_sha256": "268fab04f5c81c49d85ead7fd87fb43b1cc0d864890cfbc8099eebdda8628023",
+        "value_treatment": "goal_relabeled_fitted_q_knn_v2",
+        "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
+        "feature_schema_sha256": "d66e350d141de26e2afbdbc60602e958d89478aea9aba3a72c63df5408e2f662",
+        "terminal_seeds": 0,
+        "best_authenticated_tick": null,
+        "native_ticks": 6540,
+        "useful_decisions": 29,
+        "useful_training_transitions": 107,
+        "proposal_transitions": 252,
+        "visited_states_sum": 202,
+        "minimum_proposal_goal_distance": 1499.7,
+        "model_update_micros": 9843799,
+        "wall_micros": 85539109,
+        "retained_frontier_acquisitions": 11,
+        "achieved_goal_value_supported_acquisitions": 11,
+        "terminal_value_supported_acquisitions": 0,
+        "selected_endpoint_minimum_x": -426.0,
+        "selected_endpoint_minimum_z": -3461.1
+      },
+      "recorded_goal_relabel_control": {
+        "source_report_path": "build/campaigns/ordon-p3-q131-goal-relabel-scratch-4x16-b4-w4-v2-20260728/report.json",
+        "source_report_sha256": "2d3a64f7147559bc2320bdb9754e3e0b1afca24e5e0f954ae328051220eb5a69",
+        "execution_plan_sha256": "268fab04f5c81c49d85ead7fd87fb43b1cc0d864890cfbc8099eebdda8628023",
+        "terminal_seeds": 0,
+        "native_ticks": 6972,
+        "useful_decisions": 36,
+        "useful_training_transitions": 122,
+        "proposal_transitions": 254,
+        "visited_states_sum": 278,
+        "minimum_proposal_goal_distance": 1610.8,
+        "model_update_micros": 9343927,
+        "retained_frontier_acquisitions": 9,
+        "achieved_goal_value_supported_acquisitions": 0,
+        "terminal_value_supported_acquisitions": 0,
+        "selected_endpoint_minimum_x": -959.6,
+        "selected_endpoint_minimum_z": -3031.4
+      },
+      "treatment_deltas": {
+        "terminal_seeds": 0,
+        "native_ticks": -432,
+        "useful_decisions": -7,
+        "useful_training_transitions": -15,
+        "proposal_transitions": -2,
+        "visited_states_sum": -76,
+        "minimum_proposal_goal_distance": -111.1,
+        "model_update_micros": 499872
+      },
+      "successful_replay_reference": {
+        "player_x_near_frame_586": -1357,
+        "interpretation": "The treatment reaches the existing direct-corridor distance plateau but does not acquire the westward pre-corner route envelope demonstrated by a successful replay."
+      }
+    },
+    "conclusion": "Supported achieved-goal return demonstrably controls retained-frontier continuation without acquiring terminal authority, and spatial reachability reaches the known approximately 1,500-distance plateau within the short cell. It does not escape the around-corner local optimum, reduces useful retained evidence, and fails to approach the successful replay's westward envelope. A deeper repeat would mine the same wrong corridor and is not justified."
+  },
   "observations": {
     "ordinary_suboptimal_replay_improves_terminal_sample_efficiency": true,
     "generated_policy_differs_from_recorded_tape": true,
@@ -335,6 +406,9 @@
     "sustained_heading_breaks_terminal_plateau": false,
     "goal_relabeling_improves_diagnostic_depth": true,
     "goal_relabeling_breaks_terminal_plateau": false,
+    "achieved_goal_return_controls_frontier_continuation": true,
+    "achieved_goal_return_has_native_terminal_authority": false,
+    "spatial_reachability_breaks_terminal_plateau": false,
     "p3_task_complete": false
   }
 }
