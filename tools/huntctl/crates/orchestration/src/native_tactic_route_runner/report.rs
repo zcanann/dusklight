@@ -204,7 +204,20 @@ pub struct NativeTacticRouteTiming {
     /// Total non-native preparation/fact-extraction occupancy across workers.
     pub tactic_preparation_and_fact_extraction_micros: u64,
     pub model_update_micros: u64,
+    /// Legacy aggregate retained for report and resume compatibility.
     pub evidence_projection_and_persistence_micros: u64,
+    #[serde(default)]
+    pub evidence_projection_micros: u64,
+    #[serde(default)]
+    pub persistence_micros: u64,
+    /// Active coordinator work outside learner updates, evidence projection,
+    /// persistence, and time blocked on native workers.
+    #[serde(default)]
+    pub orchestration_micros: u64,
+    #[serde(default)]
+    pub result_validation_and_fact_extraction_micros: u64,
+    #[serde(default)]
+    pub campaign_admission_micros: u64,
     /// Candidate-only artifact generation after native terminal admission.
     /// Exploration-only seeds keep this at zero; cold replay is a separate
     /// explicit command and is never charged here.

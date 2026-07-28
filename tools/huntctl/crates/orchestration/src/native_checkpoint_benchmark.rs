@@ -32,6 +32,7 @@ use std::time::Instant;
 pub const NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V1: &str = "dusklight-native-checkpoint-benchmark/v1";
 pub const NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V2: &str = "dusklight-native-checkpoint-benchmark/v2";
 pub const NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V3: &str = "dusklight-native-checkpoint-benchmark/v3";
+pub const NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V4: &str = "dusklight-native-checkpoint-benchmark/v4";
 
 pub struct NativeCheckpointBenchmarkConfig<'a> {
     pub repository_root: &'a Path,
@@ -74,9 +75,12 @@ pub struct NativeCheckpointFrontierMeasurement {
     pub label: String,
     pub route_ticks: u64,
     pub authenticated_root_replay: NativeCheckpointBatchMeasurement,
-    pub process_local_restore: NativeCheckpointBatchMeasurement,
-    pub portable_reconstruction: NativeCheckpointBatchMeasurement,
-    pub checkpoint_capture: NativeCheckpointCaptureMeasurement,
+    #[serde(alias = "process_local_restore")]
+    pub process_local_follow_up: NativeCheckpointBatchMeasurement,
+    #[serde(alias = "portable_reconstruction")]
+    pub authenticated_replay_fallback: NativeCheckpointBatchMeasurement,
+    #[serde(alias = "checkpoint_capture")]
+    pub endpoint_retention: NativeCheckpointCaptureMeasurement,
     pub evidence_projection: NativeEvidenceProjectionMeasurement,
     pub parity: NativeCheckpointParityMeasurement,
 }
@@ -105,6 +109,8 @@ pub struct NativeCheckpointBatchMeasurement {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeCheckpointCaptureMeasurement {
+    #[serde(default)]
+    pub storage_kind: String,
     pub checkpoint_bytes: u64,
     pub host_snapshot_bytes: u64,
     pub machine_capture_micros: u64,
@@ -165,6 +171,7 @@ impl NativeCheckpointBenchmarkReport {
             NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V1
                 | NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V2
                 | NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V3
+                | NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V4
         ) || self.optimization_request_sha256 == Digest::ZERO
             || self.execution_sha256 == Digest::ZERO
             || self.executable_sha256 == Digest::ZERO
@@ -187,14 +194,17 @@ impl NativeCheckpointBenchmarkReport {
                 && (self.schema == NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V1
                     || frontier.parity.semantic_state_digest_exact);
             let v2_or_later = self.schema != NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V1;
-            let headless_audit_valid = self.schema != NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V3
-                || [
-                    &frontier.authenticated_root_replay,
-                    &frontier.process_local_restore,
-                    &frontier.portable_reconstruction,
-                ]
-                .into_iter()
-                .all(validate_headless_measurement);
+            let headless_audit_valid = matches!(
+                self.schema.as_str(),
+                NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V1 | NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V2
+            ) || [
+                &frontier.authenticated_root_replay,
+                &frontier.process_local_follow_up,
+                &frontier.authenticated_replay_fallback,
+            ]
+            .into_iter()
+            .all(validate_headless_measurement);
+            let live_endpoint = self.schema == NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V4;
             let checks = [
                 ("label", frontier.label == labels[index]),
                 ("route_ticks", frontier.route_ticks != 0),
@@ -204,42 +214,59 @@ impl NativeCheckpointBenchmarkReport {
                 ),
                 (
                     "process_local_source",
-                    frontier.process_local_restore.source_kind == "direct_process_local_restore",
+                    frontier.process_local_follow_up.source_kind
+                        == if live_endpoint {
+                            "direct_process_local_continuation"
+                        } else {
+                            "direct_process_local_restore"
+                        },
                 ),
                 (
-                    "portable_source",
-                    frontier.portable_reconstruction.source_kind == "authenticated_root_restore",
+                    "fallback_source",
+                    frontier.authenticated_replay_fallback.source_kind
+                        == "authenticated_root_restore",
                 ),
                 (
                     "process_local_tick_count",
-                    frontier.process_local_restore.simulated_ticks == 1,
+                    frontier.process_local_follow_up.simulated_ticks == 1,
+                ),
+                (
+                    "storage_kind",
+                    if live_endpoint {
+                        frontier.endpoint_retention.storage_kind == "live_endpoint"
+                    } else {
+                        frontier.endpoint_retention.storage_kind.is_empty()
+                            || frontier.endpoint_retention.storage_kind == "portable_image"
+                    },
                 ),
                 (
                     "checkpoint_bytes",
-                    frontier.checkpoint_capture.checkpoint_bytes != 0,
+                    (frontier.endpoint_retention.checkpoint_bytes == 0) == live_endpoint,
                 ),
                 (
                     "host_snapshot_bytes",
-                    frontier.checkpoint_capture.host_snapshot_bytes != 0,
+                    frontier.endpoint_retention.host_snapshot_bytes != 0,
                 ),
                 (
                     "machine_capture_time",
-                    frontier.checkpoint_capture.machine_capture_micros != 0,
+                    (frontier.endpoint_retention.machine_capture_micros == 0) == live_endpoint,
                 ),
                 (
                     "host_snapshot_transfer",
-                    !frontier
-                        .checkpoint_capture
-                        .host_snapshot_transfer_kind
-                        .is_empty(),
+                    frontier.endpoint_retention.host_snapshot_transfer_kind
+                        == if live_endpoint {
+                            "process_local_live_endpoint"
+                        } else {
+                            "in_process_capture_and_move_into_resident_cache"
+                        },
                 ),
                 (
                     "host_snapshot_capture_time",
-                    frontier.checkpoint_capture.host_snapshot_capture_nanos != 0,
+                    frontier.endpoint_retention.host_snapshot_capture_nanos != 0,
                 ),
                 (
-                    "total_capture_time",
-                    frontier.checkpoint_capture.total_capture_micros != 0,
+                    "total_retention_time",
+                    frontier.endpoint_retention.total_capture_micros != 0,
                 ),
                 (
                     "semantic_scope",
@@ -326,6 +353,7 @@ pub fn run_native_checkpoint_benchmark(
         None,
         None,
         false,
+        false,
     )?;
     let initial_batch_path = output_root.join("launch.batch.json");
     let initial_result_path = output_root.join("launch.result.json");
@@ -388,7 +416,7 @@ pub fn run_native_checkpoint_benchmark(
     let measured_wall_micros = elapsed_micros(measured_started);
     let measured_native_simulation_micros = frontiers
         .iter()
-        .map(|frontier| frontier.process_local_restore.native_simulation_micros)
+        .map(|frontier| frontier.process_local_follow_up.native_simulation_micros)
         .sum();
     let useful_transitions = u64::try_from(frontiers.len())?;
     let direct_restore_requests = useful_transitions;
@@ -421,7 +449,7 @@ pub fn run_native_checkpoint_benchmark(
     let passed = frontiers.iter().all(|frontier| frontier.parity.passed)
         && throughput.direct_restore_rate_millionths == 1_000_000;
     let report = NativeCheckpointBenchmarkReport {
-        schema: NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V3.into(),
+        schema: NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V4.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_sha256: config.execution.content_sha256,
         executable_sha256: config.execution.executable.sha256,
@@ -457,6 +485,7 @@ fn measure_frontier(
         &format!("{prefix}-materialize"),
         None,
         None,
+        false,
         true,
     )?;
     let (materialized, materialized_raw, materialized_wall) = run_batch(
@@ -517,6 +546,7 @@ fn measure_frontier(
         Some(&retained),
         Some(retained_boundary_fingerprint),
         false,
+        false,
     )?;
     let (direct, direct_raw, direct_wall) =
         run_batch(worker, output_root, &prefix, "direct", &direct_batch)?;
@@ -525,16 +555,17 @@ fn measure_frontier(
         process_tape,
         0,
         route_ticks + 1,
-        &format!("{prefix}-portable-replay"),
+        &format!("{prefix}-authenticated-replay-fallback"),
         None,
         None,
+        false,
         false,
     )?;
     let (replay, replay_raw, replay_wall) = run_batch(
         worker,
         output_root,
         &prefix,
-        "portable-replay",
+        "authenticated-replay-fallback",
         &replay_batch,
     )?;
     let direct_shard = NativeEpisodeShard::read(Path::new(&direct.episode_shard_path))?;
@@ -548,7 +579,7 @@ fn measure_frontier(
         .episodes
         .first()
         .and_then(|episode| episode.steps.last())
-        .ok_or("portable-replay episode has no transition")?;
+        .ok_or("authenticated replay fallback episode has no transition")?;
     let direct_candidate = direct_raw
         .candidates
         .first()
@@ -556,7 +587,7 @@ fn measure_frontier(
     let replay_candidate = replay_raw
         .candidates
         .first()
-        .ok_or("portable-replay result has no candidate")?;
+        .ok_or("authenticated replay fallback result has no candidate")?;
     let direct_state_digest = direct_candidate
         .state_tick_digests
         .as_ref()
@@ -604,9 +635,9 @@ fn measure_frontier(
             &materialized_raw,
             materialized_wall,
         )?,
-        process_local_restore: measurement(&direct, &direct_raw, direct_wall)?,
-        portable_reconstruction: measurement(&replay, &replay_raw, replay_wall)?,
-        checkpoint_capture: capture_measurement(&retained),
+        process_local_follow_up: measurement(&direct, &direct_raw, direct_wall)?,
+        authenticated_replay_fallback: measurement(&replay, &replay_raw, replay_wall)?,
+        endpoint_retention: capture_measurement(&retained),
         evidence_projection: NativeEvidenceProjectionMeasurement {
             episode_decode_micros,
             fact_extraction_micros,
@@ -630,7 +661,7 @@ fn compare_checkpoint_entries(
         .filter(|entries| !entries.is_empty())
         .ok_or("portable-replay result lacks terminal checkpoint-entry digests")?;
     if direct_entries.len() != replay_entries.len() {
-        return Err("direct and portable checkpoint manifests have different lengths".into());
+        return Err("direct and replayed checkpoint manifests have different lengths".into());
     }
     let mut divergent = Vec::new();
     for (direct_entry, replay_entry) in direct_entries.iter().zip(replay_entries) {
@@ -638,7 +669,7 @@ fn compare_checkpoint_entries(
             || direct_entry.kind != replay_entry.kind
             || direct_entry.bytes != replay_entry.bytes
         {
-            return Err("direct and portable checkpoint manifests differ".into());
+            return Err("direct and replayed checkpoint manifests differ".into());
         }
         if direct_entry.digest != replay_entry.digest {
             divergent.push(direct_entry.name.clone());
@@ -656,6 +687,7 @@ fn batch(
     retained: Option<&NativeRetainedCheckpointResult>,
     retained_boundary_fingerprint: Option<&str>,
     retain_candidate_checkpoints: bool,
+    retain_live_endpoint: bool,
 ) -> Result<NativeSuffixBatch, Box<dyn Error>> {
     if retained.is_some() != retained_boundary_fingerprint.is_some() {
         return Err("cached checkpoint identity and boundary must be supplied together".into());
@@ -696,7 +728,7 @@ fn batch(
             source_identity: retained.map(|checkpoint| checkpoint.restore_identity.clone()),
             source_route_ticks,
             retain_candidate_checkpoints,
-            retain_live_endpoint: false,
+            retain_live_endpoint,
         }),
         candidates: vec![NativeSuffixCandidate {
             id: id.into(),
@@ -769,10 +801,16 @@ fn capture_measurement(
     retained: &NativeRetainedCheckpointResult,
 ) -> NativeCheckpointCaptureMeasurement {
     NativeCheckpointCaptureMeasurement {
+        storage_kind: retained.storage_kind.clone(),
         checkpoint_bytes: retained.checkpoint_bytes,
         host_snapshot_bytes: retained.host_snapshot_bytes,
         machine_capture_micros: retained.machine_capture_micros,
-        host_snapshot_transfer_kind: "in_process_capture_and_move_into_resident_cache".into(),
+        host_snapshot_transfer_kind: if retained.storage_kind == "live_endpoint" {
+            "process_local_live_endpoint"
+        } else {
+            "in_process_capture_and_move_into_resident_cache"
+        }
+        .into(),
         host_snapshot_capture_nanos: retained.host_snapshot_capture_nanos,
         total_capture_micros: retained.capture_micros,
     }
@@ -856,3 +894,6 @@ fn per_second_millionths(transitions: u64, micros: u64) -> u64 {
 fn elapsed_micros(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
 }
+
+#[cfg(test)]
+mod tests;

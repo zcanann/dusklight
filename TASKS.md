@@ -38,11 +38,16 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   comparison passed with one campaign-owned fitter, immutable snapshots, and
   zero lane-local fits. Evidence:
   `ordon-p1-online-replay-scaling-v2.report.json`.
-- Checkpoint retention is the measured throughput bottleneck. Each ordinary
-  retained machine image is about 295 MB and takes roughly 4.4-5.5 seconds for
-  the full retention operation, while the host checkpoint handle itself is
-  only 224 bytes. Exact direct-restore/replay parity is already proved.
-  Evidence: `ordon-p2-checkpoint-path-v2.report.json`.
+- Selected route endpoints now remain as bounded process-local continuations
+  instead of copying a roughly 295 MB machine image on the decision hot path.
+  The representative early/middle/late benchmark proved exact continuation
+  versus authenticated-replay parity with 296-byte live endpoints and zero
+  machine capture. An ordinary width-4/four-worker Ordon campaign kept all 32
+  proposal transitions, used live continuation for all seven warm selected
+  follow-ups, captured no portable checkpoints, and measured orchestration
+  plus persistence at 3% of native simulation. Evidence:
+  `ordon-p2-live-checkpoint-path-v1.report.json` and
+  `ordon-p2-live-fixed-route-v1.report.json`.
 - Suppressing presentation work did not materially improve proof-mode wall
   time. State proof and checkpoint work dominate, so further speculative
   renderer stripping is not the next priority. Evidence:
@@ -91,31 +96,6 @@ tie is diagnostic evidence only.
   capture, learner update, orchestration, persistence, and evidence projection.
 - First-hit comparisons bind the same source checkpoint, terminal predicate,
   game bytes, card fixture, fidelity, and source boundary.
-
-## P2 - Remove checkpoint retention from the hot path
-
-- [ ] Redesign ordinary selected-endpoint retention so a persistent worker can
-      continue from its process-local checkpoint without synchronously copying
-      and persisting a full portable machine image at every decision.
-- [ ] Preserve bounded per-worker residency, explicit byte accounting,
-      eviction reasons, process-loss handling, and exact authenticated replay
-      fallback. Do not replace the current bounded cache with hidden emulator
-      copies.
-- [ ] Make portable recovery material lazy or cadence-bound while retaining
-      exact interruption recovery from the authenticated root and input
-      lineage.
-- [ ] Repeat the representative early/middle/late benchmark and a fixed route
-      campaign with capture, transfer, persistence, restore, eviction, replay,
-      native simulation, and wall time reported separately.
-
-Exit gate:
-
-- Ordinary warm follow-ups use direct restore without a full-image capture on
-  the decision hot path.
-- Direct continuation and replay fallback produce byte-identical decoded
-  transitions, terminal evidence, and authenticated terminal boundaries.
-- Orchestration plus persistence no longer dominates native simulation on the
-  fixed throughput campaign.
 
 ## P3 - Prove delayed-credit continuous-control learning
 

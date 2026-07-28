@@ -111,6 +111,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V25: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V26: &str = "dusklight-native-tactic-route-report/v26";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V27: &str = "dusklight-native-tactic-route-report/v27";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V28: &str = "dusklight-native-tactic-route-report/v28";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V29: &str = "dusklight-native-tactic-route-report/v29";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -646,7 +647,7 @@ pub fn run_native_tactic_route(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V28.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V29.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,

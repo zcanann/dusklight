@@ -776,6 +776,11 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
             tactic_preparation_and_fact_extraction_micros: 100_000,
             model_update_micros: 200_000,
             evidence_projection_and_persistence_micros: 300_000,
+            evidence_projection_micros: 100_000,
+            persistence_micros: 200_000,
+            orchestration_micros: 50_000,
+            result_validation_and_fact_extraction_micros: 20_000,
+            campaign_admission_micros: 20_000,
             ..NativeTacticRouteTiming::default()
         },
         selection_counts: BTreeMap::new(),
@@ -793,6 +798,11 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
     assert_eq!(timing.native_ticks_per_second_millionths, 15_000_000);
     assert_eq!(timing.episodes_per_second_millionths, 1_000_000);
     assert_eq!(timing.native_simulation_micros, 900_000);
+    assert_eq!(timing.evidence_projection_micros, 100_000);
+    assert_eq!(timing.persistence_micros, 200_000);
+    assert_eq!(timing.orchestration_micros, 50_000);
+    assert_eq!(timing.result_validation_and_fact_extraction_micros, 20_000);
+    assert_eq!(timing.campaign_admission_micros, 20_000);
 }
 
 #[test]

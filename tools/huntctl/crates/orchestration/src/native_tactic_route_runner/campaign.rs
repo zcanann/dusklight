@@ -306,9 +306,11 @@ pub(super) fn run_seed(
                     |_| true,
                 )
                 .map_err(route_error)?;
+            let branch_micros = elapsed_micros(branch_started.elapsed());
             timing.checkpoint_branching_micros = timing
                 .checkpoint_branching_micros
-                .saturating_add(elapsed_micros(branch_started.elapsed()));
+                .saturating_add(branch_micros);
+            timing.orchestration_micros = timing.orchestration_micros.saturating_add(branch_micros);
         }
 
         // Reserve horizon for the tactic Q actually selected at this state,
@@ -353,9 +355,12 @@ pub(super) fn run_seed(
                     demonstration_intervention_pending,
                 )
                 .map_err(route_error)?;
+            let selection_micros = elapsed_micros(selection_started.elapsed());
             timing.tactic_selection_micros = timing
                 .tactic_selection_micros
-                .saturating_add(elapsed_micros(selection_started.elapsed()));
+                .saturating_add(selection_micros);
+            timing.orchestration_micros =
+                timing.orchestration_micros.saturating_add(selection_micros);
             if let Some(session) = replay_session.as_mut() {
                 if let Some(snapshot) = session.refresh_if_required(&mut campaign)? {
                     consumed_learner_snapshot = snapshot;
@@ -474,9 +479,11 @@ pub(super) fn run_seed(
                     |_| true,
                 )
                 .map_err(route_error)?;
+            let branch_micros = elapsed_micros(branch_started.elapsed());
             timing.checkpoint_branching_micros = timing
                 .checkpoint_branching_micros
-                .saturating_add(elapsed_micros(branch_started.elapsed()));
+                .saturating_add(branch_micros);
+            timing.orchestration_micros = timing.orchestration_micros.saturating_add(branch_micros);
         };
         demonstration_intervention_pending = false;
 
@@ -489,12 +496,20 @@ pub(super) fn run_seed(
             .join("native")
             .join(format!("decision-{decision_index:06}"));
         fs::create_dir_all(&paths_root).map_err(route_error)?;
-        let execution_started = Instant::now();
         let source_snapshot = campaign.current.snapshot.clone();
         let source_route_tape = campaign.route_tape.clone();
+        let source_tape_persistence_started = Instant::now();
         let source_route_tape_ref = decision_content_store
             .store_tape(&source_route_tape)
             .map_err(route_error)?;
+        let source_tape_persistence_micros =
+            elapsed_micros(source_tape_persistence_started.elapsed());
+        timing.persistence_micros = timing
+            .persistence_micros
+            .saturating_add(source_tape_persistence_micros);
+        timing.evidence_projection_and_persistence_micros = timing
+            .evidence_projection_and_persistence_micros
+            .saturating_add(source_tape_persistence_micros);
         let source_snapshot_sha256 = source_snapshot.content_sha256().map_err(route_error)?;
         let usable_cached_frontier = cached_frontier.as_ref().filter(|frontier| {
             pool.direct_restore_enabled
@@ -509,6 +524,7 @@ pub(super) fn run_seed(
         } else {
             NativeTacticRestoreSource::AuthenticatedRoot
         };
+        let execution_started = Instant::now();
         let proposal_work = pool.execute_batch(
             &proposal_batch.proposals,
             Arc::clone(&proposal_catalog),
@@ -519,6 +535,8 @@ pub(super) fn run_seed(
             true,
             &paths_root,
         )?;
+        let execution_elapsed = execution_started.elapsed();
+        let post_execution_orchestration_started = Instant::now();
         if proposal_work
             .iter()
             .any(|work| work.execution_plan_sha256 != execution_plan_sha256)
@@ -565,7 +583,6 @@ pub(super) fn run_seed(
                 }
             })
             .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
-        let execution_elapsed = execution_started.elapsed();
         timing.tactic_execution_micros = timing
             .tactic_execution_micros
             .saturating_add(elapsed_micros(execution_elapsed));
@@ -575,6 +592,14 @@ pub(super) fn run_seed(
         timing.tactic_preparation_and_fact_extraction_micros = timing
             .tactic_preparation_and_fact_extraction_micros
             .saturating_add(elapsed_micros(preparation_elapsed));
+        let result_validation_micros =
+            elapsed_micros(post_execution_orchestration_started.elapsed());
+        timing.result_validation_and_fact_extraction_micros = timing
+            .result_validation_and_fact_extraction_micros
+            .saturating_add(result_validation_micros);
+        timing.orchestration_micros = timing
+            .orchestration_micros
+            .saturating_add(result_validation_micros);
         if let Some(session) = replay_session.as_ref() {
             let publish = session.publish_evaluated(
                 decision_index,
@@ -593,6 +618,7 @@ pub(super) fn run_seed(
                 .model_update_micros
                 .saturating_add(publish.update.update_micros);
         }
+        let admission_orchestration_started = Instant::now();
         let terminal_candidates = evaluated
             .iter()
             .filter(|proposal| proposal.outcome.terminal)
@@ -697,6 +723,13 @@ pub(super) fn run_seed(
                 ));
             }
         };
+        let campaign_admission_micros = elapsed_micros(admission_orchestration_started.elapsed());
+        timing.campaign_admission_micros = timing
+            .campaign_admission_micros
+            .saturating_add(campaign_admission_micros);
+        timing.orchestration_micros = timing
+            .orchestration_micros
+            .saturating_add(campaign_admission_micros);
         let evidence_started = Instant::now();
         let selected = &step.step.decision.selected;
         *selection_counts
@@ -820,6 +853,14 @@ pub(super) fn run_seed(
             })
             .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
         let transition = evaluated[winner_index].transition.clone();
+        let evidence_micros = elapsed_micros(evidence_started.elapsed());
+        timing.evidence_projection_micros = timing
+            .evidence_projection_micros
+            .saturating_add(evidence_micros);
+        timing.evidence_projection_and_persistence_micros = timing
+            .evidence_projection_and_persistence_micros
+            .saturating_add(evidence_micros);
+        let persistence_started = Instant::now();
         append_tactic_decision_record(
             &seed_root,
             &decision_record(
@@ -843,9 +884,12 @@ pub(super) fn run_seed(
             )?;
         }
         if cancellation_requested(config) {
+            let persistence_micros = elapsed_micros(persistence_started.elapsed());
+            timing.persistence_micros =
+                timing.persistence_micros.saturating_add(persistence_micros);
             timing.evidence_projection_and_persistence_micros = timing
                 .evidence_projection_and_persistence_micros
-                .saturating_add(elapsed_micros(evidence_started.elapsed()));
+                .saturating_add(persistence_micros);
             timing.wall_micros =
                 prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
             persist_seed_performance(
@@ -873,9 +917,11 @@ pub(super) fn run_seed(
                 .map_err(route_error)?;
             advance_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint, checkpoint)?;
         }
+        let persistence_micros = elapsed_micros(persistence_started.elapsed());
+        timing.persistence_micros = timing.persistence_micros.saturating_add(persistence_micros);
         timing.evidence_projection_and_persistence_micros = timing
             .evidence_projection_and_persistence_micros
-            .saturating_add(elapsed_micros(evidence_started.elapsed()));
+            .saturating_add(persistence_micros);
     }
 
     let final_persistence_started = Instant::now();
@@ -913,9 +959,13 @@ pub(super) fn run_seed(
     } else {
         (None, None)
     };
+    let final_persistence_micros = elapsed_micros(final_persistence_started.elapsed());
+    timing.persistence_micros = timing
+        .persistence_micros
+        .saturating_add(final_persistence_micros);
     timing.evidence_projection_and_persistence_micros = timing
         .evidence_projection_and_persistence_micros
-        .saturating_add(elapsed_micros(final_persistence_started.elapsed()));
+        .saturating_add(final_persistence_micros);
     timing.wall_micros =
         prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
     timing.useful_decisions_per_second_millionths =

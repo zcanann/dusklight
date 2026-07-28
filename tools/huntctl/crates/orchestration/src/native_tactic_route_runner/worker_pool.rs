@@ -353,6 +353,22 @@ impl<'a, W> TimedTacticWorker<'a, W> {
         Ok(())
     }
 
+    fn record_route_replay(&mut self, route_frames: usize) -> Result<(), NativeTacticWorkerError>
+    where
+        W: PersistentTacticBatchWorker,
+    {
+        let source_frame = usize::try_from(self.identity().source_frame)
+            .map_err(|_| NativeTacticWorkerError::InvalidDuration)?;
+        let replayed_prefix_ticks = u64::try_from(route_frames.saturating_sub(source_frame))
+            .map_err(|_| NativeTacticWorkerError::InvalidDuration)?;
+        self.pending_accounting.replayed_prefix_ticks = self
+            .pending_accounting
+            .replayed_prefix_ticks
+            .saturating_add(replayed_prefix_ticks);
+        self.pending_accounting.refresh_rates();
+        Ok(())
+    }
+
     fn record_batch(
         &mut self,
         batch: &ValidatedNativeSuffixBatch,
@@ -568,29 +584,33 @@ pub(super) struct CachedTacticFrontier {
     pub(super) route_frames: usize,
 }
 
-fn primary_checkpoint_retention(
-    retain: bool,
-    proposal_count: usize,
-) -> NativeTacticCheckpointRetention {
+fn primary_checkpoint_retention(retain: bool) -> NativeTacticCheckpointRetention {
     if !retain {
         NativeTacticCheckpointRetention::None
-    } else if proposal_count == 1 {
-        NativeTacticCheckpointRetention::LiveEndpoint
     } else {
-        NativeTacticCheckpointRetention::PortableImage
+        NativeTacticCheckpointRetention::LiveEndpoint
     }
 }
 
 fn direct_frontier_eligible(
     direct_restore_enabled: bool,
     worker_count: usize,
-    proposal_count: usize,
     frontier: &CachedTacticFrontier,
 ) -> bool {
-    direct_restore_enabled
-        && frontier.worker_slot < worker_count
-        && !(frontier.source.storage == NativeTacticCheckpointStorage::LiveEndpoint
-            && proposal_count > 1)
+    direct_restore_enabled && frontier.worker_slot < worker_count
+}
+
+fn next_worker_excluding(
+    next_worker: &AtomicUsize,
+    worker_count: usize,
+    excluded: Option<usize>,
+) -> usize {
+    loop {
+        let worker = next_worker.fetch_add(1, Ordering::Relaxed) % worker_count;
+        if worker_count == 1 || Some(worker) != excluded {
+            return worker;
+        }
+    }
 }
 
 impl NativeTacticProposalPool {
@@ -611,60 +631,41 @@ impl NativeTacticProposalPool {
         if proposals.is_empty() {
             return Err(route_message("native tactic proposal batch is empty"));
         }
-        let primary_retention =
-            primary_checkpoint_retention(retain_primary_checkpoint, proposals.len());
+        let primary_retention = primary_checkpoint_retention(retain_primary_checkpoint);
         let replayed_prefix = source_route_tape
             .frames
             .len()
             .checked_sub(self.root_source_frame)
             .ok_or_else(|| route_message("tactic route precedes its authenticated root"))?;
-        if replayed_prefix != 0 {
-            let direct = cached_frontier.filter(|frontier| {
-                direct_frontier_eligible(
-                    self.direct_restore_enabled,
-                    self.senders.len(),
-                    proposals.len(),
-                    frontier,
-                )
-            });
-            let worker_slot = direct.map_or_else(
-                || self.next_worker.fetch_add(1, Ordering::Relaxed) % self.senders.len(),
+        let direct = (replayed_prefix != 0)
+            .then(|| {
+                cached_frontier.filter(|frontier| {
+                    direct_frontier_eligible(
+                        self.direct_restore_enabled,
+                        self.senders.len(),
+                        frontier,
+                    )
+                })
+            })
+            .flatten();
+        let mut responses = Vec::with_capacity(proposals.len());
+        // Counterfactual siblings replay the authenticated prefix independently.
+        // Submit them before the selected proposal so a one-worker pool ends
+        // with the selected live endpoint resident.
+        for proposal_index in (1..proposals.len()).chain(std::iter::once(0)) {
+            let selected = &proposals[proposal_index];
+            let (response, receiver) = mpsc::sync_channel(1);
+            let primary_source = (proposal_index == 0).then_some(direct).flatten();
+            let worker_slot = primary_source.map_or_else(
+                || {
+                    next_worker_excluding(
+                        &self.next_worker,
+                        self.senders.len(),
+                        direct.map(|frontier| frontier.worker_slot),
+                    )
+                },
                 |frontier| frontier.worker_slot,
             );
-            let (response, receiver) = mpsc::sync_channel(1);
-            self.senders[worker_slot]
-                .send(NativeTacticProposalJob {
-                    execution_plan_sha256: self.execution_plan_sha256,
-                    proposals: proposals
-                        .iter()
-                        .cloned()
-                        .enumerate()
-                        .map(|(proposal_index, selected)| IndexedNativeTacticProposal {
-                            proposal_index,
-                            selected,
-                        })
-                        .collect(),
-                    proposal_catalog,
-                    proposal_blueprints,
-                    source_snapshot: source_snapshot.clone(),
-                    source_route_tape: source_route_tape.clone(),
-                    checkpoint_source: direct.map(|frontier| frontier.source.clone()),
-                    materialize_frontier: direct.is_none(),
-                    primary_retention,
-                    execution_strategy: self.execution_strategy,
-                    paths_root: paths_root.to_path_buf(),
-                    response,
-                })
-                .map_err(|_| route_message("native tactic proposal pool stopped"))?;
-            return receiver
-                .recv()
-                .map_err(|_| route_message("native tactic proposal worker stopped"))?;
-        }
-
-        let mut responses = Vec::with_capacity(proposals.len());
-        for (proposal_index, selected) in proposals.iter().enumerate() {
-            let (response, receiver) = mpsc::sync_channel(1);
-            let worker_slot = self.next_worker.fetch_add(1, Ordering::Relaxed) % self.senders.len();
             self.senders[worker_slot]
                 .send(NativeTacticProposalJob {
                     execution_plan_sha256: self.execution_plan_sha256,
@@ -676,7 +677,7 @@ impl NativeTacticProposalPool {
                     proposal_blueprints: Arc::clone(&proposal_blueprints),
                     source_snapshot: source_snapshot.clone(),
                     source_route_tape: source_route_tape.clone(),
-                    checkpoint_source: None,
+                    checkpoint_source: primary_source.map(|frontier| frontier.source.clone()),
                     materialize_frontier: false,
                     primary_retention: if proposal_index == 0 {
                         primary_retention
@@ -688,18 +689,22 @@ impl NativeTacticProposalPool {
                     response,
                 })
                 .map_err(|_| route_message("native tactic proposal pool stopped"))?;
-            responses.push(receiver);
+            responses.push((proposal_index, receiver));
         }
-        responses
+        let mut work = responses
             .into_iter()
-            .map(|receiver| {
+            .map(|(proposal_index, receiver)| {
                 let mut work = receiver
                     .recv()
                     .map_err(|_| route_message("native tactic proposal worker stopped"))??;
-                work.pop()
-                    .ok_or_else(|| route_message("native tactic proposal result is absent"))
+                let work = work
+                    .pop()
+                    .ok_or_else(|| route_message("native tactic proposal result is absent"))?;
+                Ok((proposal_index, work))
             })
-            .collect()
+            .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
+        work.sort_by_key(|(proposal_index, _)| *proposal_index);
+        Ok(work.into_iter().map(|(_, work)| work).collect())
     }
 }
 
@@ -1236,6 +1241,14 @@ pub(super) fn run_tactic_proposal_worker(
                     job.execution_strategy,
                 );
             }
+            if outcome.is_ok() && checkpoint_source.is_none() {
+                if let Err(error) =
+                    timed_worker.record_route_replay(job.source_route_tape.frames.len())
+                {
+                    failed = Some(route_error(error));
+                    break;
+                }
+            }
             let native_elapsed = timed_worker.native_elapsed.saturating_sub(native_before);
             let restore_accounting = timed_worker.take_accounting();
             match outcome {
@@ -1353,23 +1366,19 @@ mod tests {
     }
 
     #[test]
-    fn only_single_proposal_decisions_retain_a_single_use_live_endpoint() {
+    fn every_selected_decision_retains_a_single_use_live_endpoint() {
         assert_eq!(
-            primary_checkpoint_retention(true, 1),
+            primary_checkpoint_retention(true),
             NativeTacticCheckpointRetention::LiveEndpoint
         );
         assert_eq!(
-            primary_checkpoint_retention(true, 4),
-            NativeTacticCheckpointRetention::PortableImage
-        );
-        assert_eq!(
-            primary_checkpoint_retention(false, 1),
+            primary_checkpoint_retention(false),
             NativeTacticCheckpointRetention::None
         );
     }
 
     #[test]
-    fn live_frontiers_are_not_misused_as_multi_proposal_branch_images() {
+    fn selected_live_frontiers_remain_directly_eligible_for_wide_decisions() {
         let frontier = CachedTacticFrontier {
             worker_slot: 1,
             source: NativeTacticCheckpointSource {
@@ -1381,11 +1390,19 @@ mod tests {
             state_sha256: Digest([3; 32]),
             route_frames: 546,
         };
-        assert!(direct_frontier_eligible(true, 2, 1, &frontier));
-        assert!(!direct_frontier_eligible(true, 2, 2, &frontier));
+        assert!(direct_frontier_eligible(true, 2, &frontier));
 
         let mut portable = frontier;
         portable.source.storage = NativeTacticCheckpointStorage::PortableImage;
-        assert!(direct_frontier_eligible(true, 2, 4, &portable));
+        assert!(direct_frontier_eligible(true, 2, &portable));
+    }
+
+    #[test]
+    fn counterfactual_replay_never_rearms_the_live_endpoint_owner_when_pool_is_wide() {
+        let next = AtomicUsize::new(0);
+        for _ in 0..8 {
+            assert_ne!(next_worker_excluding(&next, 4, Some(2)), 2);
+        }
+        assert_eq!(next_worker_excluding(&next, 1, Some(0)), 0);
     }
 }

@@ -109,6 +109,21 @@ pub(super) fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> Native
         timing.evidence_projection_and_persistence_micros = timing
             .evidence_projection_and_persistence_micros
             .saturating_add(seed.timing.evidence_projection_and_persistence_micros);
+        timing.evidence_projection_micros = timing
+            .evidence_projection_micros
+            .saturating_add(seed.timing.evidence_projection_micros);
+        timing.persistence_micros = timing
+            .persistence_micros
+            .saturating_add(seed.timing.persistence_micros);
+        timing.orchestration_micros = timing
+            .orchestration_micros
+            .saturating_add(seed.timing.orchestration_micros);
+        timing.result_validation_and_fact_extraction_micros = timing
+            .result_validation_and_fact_extraction_micros
+            .saturating_add(seed.timing.result_validation_and_fact_extraction_micros);
+        timing.campaign_admission_micros = timing
+            .campaign_admission_micros
+            .saturating_add(seed.timing.campaign_admission_micros);
         timing.retained_candidate_artifact_micros = timing
             .retained_candidate_artifact_micros
             .saturating_add(seed.timing.retained_candidate_artifact_micros);

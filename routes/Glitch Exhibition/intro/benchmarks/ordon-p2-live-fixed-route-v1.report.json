@@ -1,0 +1,63 @@
+{
+  "schema": "dusklight-p2-live-fixed-route-evidence/v1",
+  "optimization_request_sha256": "26b52fcbfdcb2b42ef57deac27068aac56f5b9b96259536cbe5599293eacad79",
+  "execution_binding_sha256": "cfa1d29b86bc5ef6a2466a50d72043b34f34433e43c912667b689600f08a3d32",
+  "execution_plan_sha256": "ab1d670c864d28be4a0388bfeed4bf83fcd48039423d63ffecf746f30d3e217c",
+  "huntctl_release_sha256": "56a9863b469103378ffdabf01c83fd56a0eeb529beed7a04ba7d20a27d06c0a9",
+  "platform": {
+    "os": "windows",
+    "arch": "x86_64",
+    "control_plane_profile": "release"
+  },
+  "plan": {
+    "seed": 181081,
+    "workers": 4,
+    "decisions": 8,
+    "proposals_per_decision": 4,
+    "branch_every_decisions": 8,
+    "refit_every_decisions": 1,
+    "epsilon_per_million": 350000
+  },
+  "result": {
+    "report_schema": "dusklight-native-tactic-route-report/v29",
+    "total_decisions": 8,
+    "total_native_ticks": 524,
+    "proposal_transitions": 32,
+    "useful_transitions": 15,
+    "wall_micros": 12406459,
+    "native_simulation_micros": 9394380,
+    "tactic_execution_wall_micros": 3206127,
+    "model_update_micros": 204017,
+    "evidence_projection_micros": 1293,
+    "persistence_micros": 115808,
+    "orchestration_micros": 161839,
+    "orchestration_plus_persistence_micros": 277647,
+    "orchestration_plus_persistence_to_native_simulation_millionths": 29555
+  },
+  "checkpoint_path": {
+    "native_requests": 32,
+    "authenticated_root_restore_requests": 25,
+    "direct_process_local_continuation_requests": 7,
+    "direct_restore_fallback_replays": 0,
+    "replayed_prefix_ticks": 1020,
+    "checkpoint_capture_attempts": 0,
+    "checkpoint_capture_successes": 0,
+    "checkpoint_capture_micros": 0,
+    "live_endpoint_retention_attempts": 8,
+    "live_endpoint_retention_successes": 8,
+    "live_endpoint_retention_nanos": 926300,
+    "peak_live_endpoint_entries_per_owner": 1,
+    "peak_live_endpoint_host_snapshot_bytes_per_owner": 296
+  },
+  "source_report": {
+    "path": "build/campaigns/ordon-p2-live-width4-fixed-route-20260728/report.json",
+    "sha256": "ceb07856bd2c3e66a52849b23d788778ec32bb8e9a8d2c79c141db520ee8ba2e"
+  },
+  "exit_gate": {
+    "ordinary_warm_followups_avoid_full_image_capture": true,
+    "counterfactual_siblings_remain_learning_evidence": true,
+    "bounded_live_residency_reported": true,
+    "orchestration_plus_persistence_below_native_simulation": true
+  },
+  "passed": true
+}
