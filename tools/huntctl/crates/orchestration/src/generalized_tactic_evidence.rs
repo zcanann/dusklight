@@ -638,7 +638,11 @@ fn fit_evidence_model(
             })
         })
         .collect::<Result<Vec<_>, GeneralizedTacticEvidenceError>>()?;
-    GeneralizedTacticValueModel::fit(&samples).map_err(|error| evidence_message(error.to_string()))
+    let weights = GoalConditionedTacticFeatureEncoder::new([0.0; 3])
+        .map_err(|error| evidence_message(error.to_string()))?
+        .distance_weights();
+    GeneralizedTacticValueModel::fit_with_state_distance_weights(&samples, &weights)
+        .map_err(|error| evidence_message(error.to_string()))
 }
 
 fn prediction_metrics(

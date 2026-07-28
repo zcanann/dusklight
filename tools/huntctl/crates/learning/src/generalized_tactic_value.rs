@@ -10,6 +10,7 @@ use crate::artifact::Digest;
 use crate::fact_snapshot::{FactSnapshot, OptionTrajectoryFactSnapshot};
 use crate::option_transition::OptionTransitionSample;
 use crate::option_values::OptionActionDescriptor;
+use crate::tactic_features::GoalConditionedTacticFeatureEncoder;
 use dusklight_control::option_execution::{OptionParameter, OptionType};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -25,6 +26,7 @@ const MAX_GENERALIZED_TACTIC_SAMPLES: usize = 100_000;
 const MAX_FITTED_Q_BACKUP_ITERATIONS: usize = 512;
 const NEIGHBORS: usize = 8;
 const STATE_NEIGHBORS: usize = 16;
+const MAX_RANGE_CALIBRATION_SAMPLES: usize = 2_048;
 const EXACT_STATE_DISTANCE_EPSILON: f32 = 1.0e-8;
 const MINIMUM_RETURN_COMPARISON_RESOLUTION: f64 = 1.0e-4;
 
@@ -277,6 +279,7 @@ struct EncodedSample {
 pub struct GeneralizedTacticValueModel {
     state_min: Vec<f32>,
     state_range: Vec<f32>,
+    state_distance_weights: Vec<f32>,
     behavior_context_min: [f32; GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH],
     behavior_context_range: [f32; GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH],
     action_min: [f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
@@ -304,7 +307,8 @@ impl GeneralizedTacticValueModel {
                 })
             })
             .collect::<Result<Vec<_>, GeneralizedTacticValueError>>()?;
-        let mut model = Self::fit(&samples)?;
+        let weights = transition_state_distance_weights(transitions, goal_distance_feature);
+        let mut model = Self::fit_with_state_distance_weights(&samples, &weights)?;
         model.return_comparison_resolution = observed_return_resolution(transitions);
         Ok(model)
     }
@@ -354,7 +358,8 @@ impl GeneralizedTacticValueModel {
             sample.outcome.duration_ticks =
                 fitted_q.exact_first_hit_ticks[index].unwrap_or(0) as f32;
         }
-        let mut model = Self::fit(&samples)?;
+        let weights = transition_state_distance_weights(transitions, goal_distance_feature);
+        let mut model = Self::fit_with_state_distance_weights(&samples, &weights)?;
         model.return_comparison_resolution = observed_return_resolution(transitions);
         Ok(model)
     }
@@ -362,11 +367,25 @@ impl GeneralizedTacticValueModel {
     pub fn fit(
         samples: &[GeneralizedTacticTrainingSample],
     ) -> Result<Self, GeneralizedTacticValueError> {
+        let state_width = samples
+            .first()
+            .map_or(0, |sample| sample.state_features.len());
+        Self::fit_with_state_distance_weights(samples, &vec![1.0; state_width])
+    }
+
+    pub fn fit_with_state_distance_weights(
+        samples: &[GeneralizedTacticTrainingSample],
+        state_distance_weights: &[f32],
+    ) -> Result<Self, GeneralizedTacticValueError> {
         if samples.len() < 2 || samples.len() > MAX_GENERALIZED_TACTIC_SAMPLES {
             return Err(GeneralizedTacticValueError::SampleCount);
         }
         let state_width = samples[0].state_features.len();
         if state_width == 0
+            || state_distance_weights.len() != state_width
+            || state_distance_weights
+                .iter()
+                .any(|weight| !weight.is_finite() || *weight <= 0.0)
             || samples.iter().any(|sample| {
                 sample.state_features.len() != state_width
                     || sample
@@ -399,6 +418,7 @@ impl GeneralizedTacticValueModel {
         Ok(Self {
             state_min,
             state_range,
+            state_distance_weights: state_distance_weights.to_vec(),
             behavior_context_min,
             behavior_context_range,
             action_min,
@@ -442,7 +462,7 @@ impl GeneralizedTacticValueModel {
     }
 
     /// Ranks executable actions as a behavior-cloning policy over the nearest
-    /// authenticated terminal-supported trajectory phase and physical state.
+    /// authenticated terminal-supported physical state.
     ///
     /// This is a separate acquisition lane, not a reward bonus. Other lanes
     /// remain Q-ranked, so a demonstration supplies a reproducible foothold
@@ -951,6 +971,29 @@ fn angle_delta(left: f32, right: f32) -> f32 {
     (left - right + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
+fn transition_state_distance_weights(
+    transitions: &[OptionTransitionSample],
+    goal_distance_feature: usize,
+) -> Vec<f32> {
+    let state_width = transitions
+        .first()
+        .map_or(0, |transition| transition.value_sample.state.len());
+    let Ok(encoder) = GoalConditionedTacticFeatureEncoder::new([0.0; 3]) else {
+        return vec![1.0; state_width];
+    };
+    if state_width == encoder.feature_width()
+        && goal_distance_feature == encoder.goal_distance_feature()
+        && transitions
+            .iter()
+            .all(|transition| transition.feature_schema_sha256 == encoder.schema_sha256)
+    {
+        encoder.distance_weights()
+    } else {
+        // Legacy or caller-defined feature schemas retain uniform weighting.
+        vec![1.0; state_width]
+    }
+}
+
 fn behavior_cloning_action_distance(
     left: &[f32],
     right: &[f32],
@@ -977,19 +1020,27 @@ fn behavior_cloning_action_distance(
 }
 
 fn feature_ranges<'a>(rows: impl Iterator<Item = &'a [f32]>, width: usize) -> (Vec<f32>, Vec<f32>) {
-    let mut minimum = vec![f32::INFINITY; width];
-    let mut maximum = vec![f32::NEG_INFINITY; width];
-    for row in rows {
-        for (index, value) in row.iter().copied().enumerate() {
-            minimum[index] = minimum[index].min(value);
-            maximum[index] = maximum[index].max(value);
-        }
+    let rows = rows.collect::<Vec<_>>();
+    let stride = rows.len().div_ceil(MAX_RANGE_CALIBRATION_SAMPLES).max(1);
+    let mut minimum = Vec::with_capacity(width);
+    let mut range = Vec::with_capacity(width);
+    for feature in 0..width {
+        let mut values = rows
+            .iter()
+            .step_by(stride)
+            .map(|row| row[feature])
+            .collect::<Vec<_>>();
+        values.sort_by(f32::total_cmp);
+        let tail = if values.len() >= 20 {
+            values.len() / 20
+        } else {
+            0
+        };
+        let low = values[tail];
+        let high = values[values.len() - 1 - tail];
+        minimum.push(low);
+        range.push((high - low).max(1.0e-6));
     }
-    let range = minimum
-        .iter()
-        .zip(&maximum)
-        .map(|(minimum, maximum)| (maximum - minimum).max(1.0e-6))
-        .collect();
     (minimum, range)
 }
 
@@ -1047,6 +1098,33 @@ fn normalized_distance(left: &[f32], right: &[f32], minimum: &[f32], range: &[f3
         0.0
     } else {
         total / active as f32
+    }
+}
+
+fn weighted_normalized_distance(
+    left: &[f32],
+    right: &[f32],
+    minimum: &[f32],
+    range: &[f32],
+    weights: &[f32],
+) -> f32 {
+    let mut total = 0.0_f32;
+    let mut active_weight = 0.0_f32;
+    for index in 0..left.len() {
+        if range[index] <= 1.0e-6
+            && (left[index] - minimum[index]).abs() <= 1.0e-6
+            && (right[index] - minimum[index]).abs() <= 1.0e-6
+        {
+            continue;
+        }
+        let delta = (left[index] - right[index]) / range[index];
+        total += delta.clamp(-4.0, 4.0).powi(2) * weights[index];
+        active_weight += weights[index];
+    }
+    if active_weight <= f32::EPSILON {
+        0.0
+    } else {
+        total / active_weight
     }
 }
 

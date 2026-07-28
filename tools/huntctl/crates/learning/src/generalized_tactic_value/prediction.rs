@@ -20,11 +20,12 @@ pub(super) fn estimate_actions(
         .iter()
         .map(|sample| {
             (
-                normalized_distance(
+                weighted_normalized_distance(
                     state_features,
                     &sample.state,
                     &model.state_min,
                     &model.state_range,
+                    &model.state_distance_weights,
                 ),
                 sample,
             )

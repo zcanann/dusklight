@@ -139,6 +139,34 @@ fn shared_multi_action_neighborhood_matches_independent_predictions() {
 }
 
 #[test]
+fn semantic_weights_prevent_bitset_width_from_swamping_movement() {
+    let left = vec![0.0; 33];
+    let mut movement_difference = left.clone();
+    movement_difference[0] = 1.0;
+    let mut flag_difference = left.clone();
+    flag_difference[1..].fill(1.0);
+    let minimum = vec![0.0; 33];
+    let range = vec![1.0; 33];
+    let mut weights = vec![1.0 / 32.0; 33];
+    weights[0] = 1.0;
+
+    let movement =
+        weighted_normalized_distance(&left, &movement_difference, &minimum, &range, &weights);
+    let flags = weighted_normalized_distance(&left, &flag_difference, &minimum, &range, &weights);
+    assert!((movement - flags).abs() < 1.0e-6);
+}
+
+#[test]
+fn state_range_calibration_resists_single_extreme_outlier() {
+    let mut rows = (0..20).map(|value| vec![value as f32]).collect::<Vec<_>>();
+    rows.push(vec![1.0e9]);
+    let (minimum, range) = feature_ranges(rows.iter().map(Vec::as_slice), 1);
+
+    assert_eq!(minimum, vec![1.0]);
+    assert_eq!(range, vec![18.0]);
+}
+
+#[test]
 fn terminal_support_excludes_censored_and_cyclic_components() {
     let digest = |byte| Digest([byte; 32]);
     let edges = [

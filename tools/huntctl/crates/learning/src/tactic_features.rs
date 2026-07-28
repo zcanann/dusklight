@@ -10,6 +10,7 @@ use crate::fact_snapshot::{
 };
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
@@ -378,6 +379,25 @@ impl GoalConditionedTacticFeatureEncoder {
         self.base.feature_width() + 3
     }
 
+    /// Gives each semantic feature family one unit of distance mass regardless
+    /// of how many scalar columns encode it. This prevents variable-width
+    /// bitsets and summaries from winning nearest-state lookup by cardinality.
+    pub fn distance_weights(&self) -> Vec<f32> {
+        let groups = self
+            .feature_names
+            .iter()
+            .map(|name| distance_group(name))
+            .collect::<Vec<_>>();
+        let mut counts = BTreeMap::<&str, usize>::new();
+        for group in &groups {
+            *counts.entry(group).or_default() += 1;
+        }
+        groups
+            .iter()
+            .map(|group| 1.0 / *counts.get(group.as_str()).unwrap() as f32)
+            .collect()
+    }
+
     pub fn encode(&self, facts: &FactSnapshot) -> Result<Vec<f32>, TacticFeatureError> {
         if self.schema != GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V3
             || self.schema_sha256 != goal_conditioned_feature_schema_digest(self.base.schema_sha256)
@@ -405,6 +425,64 @@ impl GoalConditionedTacticFeatureEncoder {
         }
         Ok(output)
     }
+}
+
+fn distance_group(name: &str) -> String {
+    let group = if name.starts_with("player_action_flag_") {
+        "player_action_flags"
+    } else if name.starts_with("player_procedure_context_") {
+        "player_procedure_context"
+    } else if name.starts_with("player_action_lane_") {
+        "player_action_phase"
+    } else if matches!(
+        name,
+        "actor_count"
+            | "same_room_actor_count"
+            | "portable_actor_fraction"
+            | "nearest_actor_available"
+            | "nearest_actor_name_hash"
+            | "nearest_actor_dx"
+            | "nearest_actor_dy"
+            | "nearest_actor_dz"
+            | "nearest_actor_distance"
+            | "mean_actor_dx"
+            | "mean_actor_dy"
+            | "mean_actor_dz"
+            | "mean_actor_speed"
+            | "known_actor_health_fraction"
+            | "mean_actor_health"
+    ) {
+        "actor_summary"
+    } else if name.contains("_flag_bits_") {
+        "flag_banks"
+    } else if name.starts_with("channel_") {
+        "channel_availability"
+    } else if name.starts_with("trajectory_") {
+        "recent_trajectory"
+    } else if name.starts_with("recent_option_") {
+        "recent_option"
+    } else if matches!(name, "player_x" | "player_y" | "player_z") {
+        "player_position"
+    } else if matches!(
+        name,
+        "velocity_available" | "velocity_x" | "velocity_y" | "velocity_z"
+    ) {
+        "player_velocity"
+    } else if matches!(name, "yaw_available" | "yaw_sin" | "yaw_cos") {
+        "player_yaw"
+    } else if name.starts_with("camera_yaw_") {
+        "camera_yaw"
+    } else if matches!(name, "goal_dx" | "goal_dy" | "goal_dz") {
+        "goal_delta"
+    } else if name.starts_with("goal_history_")
+        || name.starts_with("goal_trajectory_")
+        || name == "goal_closing_speed"
+    {
+        "goal_motion"
+    } else {
+        return name.into();
+    };
+    group.into()
 }
 
 fn encode_player_action(
@@ -1029,6 +1107,31 @@ mod tests {
             TacticFeatureEncoder::new().schema_sha256
         );
         assert!(GoalConditionedTacticFeatureEncoder::new([f32::NAN, 0.0, 0.0]).is_err());
+    }
+
+    #[test]
+    fn distance_weights_are_balanced_by_semantic_family() {
+        let encoder = GoalConditionedTacticFeatureEncoder::new([0.0; 3]).unwrap();
+        let weights = encoder.distance_weights();
+        assert_eq!(weights.len(), encoder.feature_width());
+        let group_weight = |prefix: &str| {
+            encoder
+                .feature_names
+                .iter()
+                .zip(&weights)
+                .filter(|(name, _)| name.starts_with(prefix))
+                .map(|(_, weight)| *weight)
+                .sum::<f32>()
+        };
+
+        assert!((group_weight("player_action_flag_") - 1.0).abs() < 1.0e-6);
+        assert!((group_weight("player_procedure_context_") - 1.0).abs() < 1.0e-6);
+        assert!((group_weight("player_action_lane_") - 1.0).abs() < 1.0e-6);
+        assert!(
+            weights
+                .iter()
+                .all(|weight| weight.is_finite() && *weight > 0.0)
+        );
     }
 
     #[test]
