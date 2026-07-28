@@ -901,17 +901,6 @@ fn tactic_checkpoints_follow_the_sealed_resume_interval_and_terminal() {
 }
 
 #[test]
-fn tactic_model_refits_once_initially_and_then_in_batches() {
-    assert!(tactic_model_refit_due(1, 4));
-    assert!(!tactic_model_refit_due(2, 4));
-    assert!(!tactic_model_refit_due(3, 4));
-    assert!(tactic_model_refit_due(4, 4));
-    assert!(tactic_model_refit_due(8, 4));
-    assert!(tactic_model_refit_required(false, 2, 4));
-    assert!(!tactic_model_refit_required(true, 2, 4));
-}
-
-#[test]
 fn tactic_macro_validation_waits_for_independent_seed_support() {
     assert!(!tactic_macro_promotion_has_seed_support(&[]));
     assert!(!tactic_macro_promotion_has_seed_support(&[104_729]));

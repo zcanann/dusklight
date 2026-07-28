@@ -531,6 +531,29 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         corpus.execution_authority_sha256,
         execution_authority_sha256
     );
+    let immutable_snapshot = TacticQImmutableLearnerSnapshot::fit(
+        corpus.clone(),
+        corpus.transitions.len() as u64,
+        7,
+        OptionValueConfig::default(),
+        0,
+    )
+    .unwrap();
+    let mut snapshot_consumer = TacticQCampaign::resume_without_model(checkpoint.clone()).unwrap();
+    assert!(snapshot_consumer.model().is_none());
+    assert_eq!(
+        snapshot_consumer
+            .consume_learner_snapshot(&immutable_snapshot)
+            .unwrap(),
+        0
+    );
+    assert!(snapshot_consumer.model().is_some());
+    assert_eq!(snapshot_consumer.model_revision(), 7);
+    assert!(snapshot_consumer.campaign_learner_authority_managed);
+    assert_eq!(
+        immutable_snapshot.sha256,
+        immutable_snapshot.manifest.content_sha256().unwrap()
+    );
     let corpus_root = std::env::temp_dir().join(format!(
         "dusklight-tactic-training-corpus-{}",
         std::process::id()

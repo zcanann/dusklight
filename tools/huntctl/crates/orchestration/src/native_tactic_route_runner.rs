@@ -21,13 +21,13 @@ use crate::tactic_q_campaign::{
     TACTIC_Q_DEMONSTRATION_EPISODE_GROUP, TacticCampaignDiagnostics, TacticCampaignGraphProjection,
     TacticCampaignGraphProjectionEdge, TacticCampaignGraphProjectionNode,
     TacticFrontierAcquisition, TacticQCampaign, TacticQCampaignError, TacticQDecision,
-    TacticQFinalResult, TacticQLearnerSnapshot, TacticQTrainingCorpus, has_no_progress_loop,
-    route_checkpoint,
+    TacticQFinalResult, TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot,
+    TacticQTrainingCorpus, has_no_progress_loop, route_checkpoint,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use crate::tactic_replay_control_plane::{
     TacticReplayAdmissionMetrics, TacticReplayAdmissionOutcome, TacticReplayControlPlane,
-    TacticReplayControlPlaneIdentity,
+    TacticReplayControlPlaneIdentity, TacticReplaySnapshot,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState};
@@ -105,6 +105,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V21: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V22: &str = "dusklight-native-tactic-route-report/v22";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V23: &str = "dusklight-native-tactic-route-report/v23";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V24: &str = "dusklight-native-tactic-route-report/v24";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V25: &str = "dusklight-native-tactic-route-report/v25";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -155,11 +156,11 @@ use report::{
 };
 pub use report::{
     NativeTacticDecisionTrace, NativeTacticDemonstrationReport, NativeTacticFrontierAvailability,
-    NativeTacticMacroDiscoveryReport, NativeTacticMacroReuseReport, NativeTacticMeasurementTrace,
-    NativeTacticProposalTrace, NativeTacticReplaySharingTelemetry, NativeTacticRestoreAccounting,
-    NativeTacticRestoreSource, NativeTacticRouteReport, NativeTacticRouteRunConfig,
-    NativeTacticRouteTiming, NativeTacticSeedResult, NativeTacticStateTrace,
-    NativeTacticValueTrace,
+    NativeTacticLearnerAuthorityReport, NativeTacticMacroDiscoveryReport,
+    NativeTacticMacroReuseReport, NativeTacticMeasurementTrace, NativeTacticProposalTrace,
+    NativeTacticReplaySharingTelemetry, NativeTacticRestoreAccounting, NativeTacticRestoreSource,
+    NativeTacticRouteReport, NativeTacticRouteRunConfig, NativeTacticRouteTiming,
+    NativeTacticSeedResult, NativeTacticStateTrace, NativeTacticValueTrace,
 };
 
 mod execution_plan;
@@ -170,6 +171,12 @@ pub use execution_plan::{
     NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest, NativeTacticGenerationPlan,
     NativeTacticInterventionPlan, NativeTacticLanePlan, NativeTacticLaneRole,
     NativeTacticPlanBudgets, NativeTacticReplaySharingPlan, NativeTacticResourceLimit,
+};
+
+mod learner_authority;
+use learner_authority::{
+    CampaignLearnerPublishResult, CampaignTacticLearnerAuthority, SharedTacticLearnerAuthority,
+    lock_learner_authority,
 };
 
 pub fn run_native_tactic_route(
@@ -353,8 +360,13 @@ pub fn run_native_tactic_route(
         )
         .map_err(route_error)?
     };
-    let replay_control_plane: SharedTacticReplayControlPlane =
-        Arc::new(Mutex::new(replay_control_plane));
+    let learner_authority: SharedTacticLearnerAuthority =
+        Arc::new(Mutex::new(CampaignTacticLearnerAuthority::new(
+            replay_control_plane,
+            route_option_value_config(execution_plan_sha256),
+            encoder.goal_distance_feature(),
+            config.execution_plan.refit_every_decisions,
+        )?));
 
     let (mut indexed_results, tactic_macro_discovery, shared_training_replay_rows, demonstration) =
         std::thread::scope(|scope| {
@@ -393,32 +405,30 @@ pub fn run_native_tactic_route(
                 )?;
                 let demonstration_report = demonstration.as_ref().map(|value| value.report.clone());
                 if let Some(demonstration) = &demonstration {
-                    let mut replay = lock_replay_control_plane(&replay_control_plane)?;
-                    publish_demonstration_replay(&mut replay, demonstration)?;
+                    let mut learner = lock_learner_authority(&learner_authority)?;
+                    publish_demonstration_replay(&mut learner, demonstration)?;
                 }
                 for generation in &config.execution_plan.generations {
-                    let inherited_snapshot = {
-                        let replay = lock_replay_control_plane(&replay_control_plane)?;
+                    let inherited_learner_snapshot = {
+                        let mut learner = lock_learner_authority(&learner_authority)?;
                         match config.execution_plan.replay_sharing {
                             NativeTacticReplaySharingPlan::GenerationBarrier => {
-                                let barrier_revision =
-                                    deterministic_generation_barrier_revision(&replay, generation)?;
-                                replay
-                                    .snapshot_through(barrier_revision)
-                                    .map_err(route_error)?
+                                let barrier_revision = deterministic_generation_barrier_revision(
+                                    learner.replay(),
+                                    generation,
+                                )?;
+                                learner.snapshot_through(barrier_revision)?
                             }
                             NativeTacticReplaySharingPlan::BoundedStaleness { .. } => {
-                                replay.snapshot().map_err(route_error)?
+                                learner.snapshot()
                             }
                         }
                     };
-                    let inherited_replay_revision = inherited_snapshot.version.revision;
-                    let inherited_training = std::slice::from_ref(&inherited_snapshot.corpus);
-                    let live_replay = matches!(
+                    let live_learner = matches!(
                         config.execution_plan.replay_sharing,
                         NativeTacticReplaySharingPlan::BoundedStaleness { .. }
                     )
-                    .then(|| Arc::clone(&replay_control_plane));
+                    .then(|| Arc::clone(&learner_authority));
                     let mut generation_results = std::thread::scope(|generation_scope| {
                         let coordinator_handles = generation
                             .lane_indices
@@ -433,7 +443,9 @@ pub fn run_native_tactic_route(
                                 let reward_spec = &reward_spec;
                                 let initial_facts = &initial_facts;
                                 let route_prefix = &route_prefix;
-                                let live_replay = live_replay.clone();
+                                let live_learner = live_learner.clone();
+                                let inherited_learner_snapshot =
+                                    Arc::clone(&inherited_learner_snapshot);
                                 generation_scope.spawn(move || {
                                     run_seed_coordinator(
                                         config,
@@ -446,9 +458,8 @@ pub fn run_native_tactic_route(
                                         action_schema_sha256,
                                         root_checkpoint_sha256,
                                         root_tape_ref,
-                                        inherited_training,
-                                        inherited_replay_revision,
-                                        live_replay,
+                                        inherited_learner_snapshot,
+                                        live_learner,
                                         seed_index,
                                         seed,
                                     )
@@ -470,10 +481,11 @@ pub fn run_native_tactic_route(
                     // the completed corpus here is an idempotent resume repair:
                     // if an older or interrupted campaign lost its shared
                     // journal, completed lane artifacts reconstruct authority.
-                    let mut replay = lock_replay_control_plane(&replay_control_plane)?;
+                    let mut learner = lock_learner_authority(&learner_authority)?;
                     for (_, completion) in &generation_results {
-                        publish_completed_seed_replay(&mut replay, completion)?;
+                        publish_completed_seed_replay(&mut learner, completion)?;
                     }
+                    learner.force_update()?;
                     results.extend(
                         generation_results
                             .into_iter()
@@ -494,7 +506,7 @@ pub fn run_native_tactic_route(
                     )
                 })()?;
                 let shared_training_replay_rows =
-                    lock_replay_control_plane(&replay_control_plane)?.len() as u64;
+                    lock_learner_authority(&learner_authority)?.replay().len() as u64;
                 Ok((
                     results,
                     completion,
@@ -532,7 +544,6 @@ pub fn run_native_tactic_route(
         .map(|(_, result)| result)
         .collect::<Vec<_>>();
     let useful_decisions = seed_results.iter().map(|seed| seed.useful_decisions).sum();
-    let learner_updates = seed_results.iter().map(|seed| seed.learner_updates).sum();
     let mut native_restore_accounting = NativeTacticRestoreAccounting::default();
     for seed in &seed_results {
         native_restore_accounting.merge(&seed.native_restore_accounting);
@@ -582,10 +593,30 @@ pub fn run_native_tactic_route(
                 total
             },
         );
-    let replay_control_plane = lock_replay_control_plane(&replay_control_plane)?;
-    let final_replay = replay_control_plane.snapshot().map_err(route_error)?;
+    let learner_authority = lock_learner_authority(&learner_authority)?;
+    let final_replay = learner_authority.replay().snapshot().map_err(route_error)?;
     let final_replay_snapshot = final_replay.version;
-    let replay_admission = replay_control_plane.invocation_metrics();
+    let replay_admission = learner_authority.replay().invocation_metrics();
+    let learner_metrics = learner_authority.invocation_metrics();
+    let learner_updates = learner_metrics.updates;
+    timing.model_update_micros = learner_metrics.update_micros;
+    let latest_learner_snapshot = learner_authority.snapshot();
+    let declared_model_snapshots_consumed = seed_results
+        .iter()
+        .flat_map(|seed| &seed.trace)
+        .map(|decision| decision.learner_snapshot_sha256)
+        .filter(|sha256| *sha256 != Digest::ZERO)
+        .collect::<BTreeSet<_>>()
+        .len() as u64;
+    let lane_local_model_updates = seed_results.iter().map(|seed| seed.learner_updates).sum();
+    let learner_authority_report = NativeTacticLearnerAuthorityReport {
+        model_snapshots_published: learner_metrics.snapshots_published,
+        latest_model_snapshot_sha256: latest_learner_snapshot.sha256,
+        latest_model_revision: latest_learner_snapshot.manifest.model_revision,
+        latest_training_replay_rows: latest_learner_snapshot.manifest.training_replay_rows,
+        declared_model_snapshots_consumed,
+        lane_local_model_updates,
+    };
     let replay_sharing = seed_results.iter().fold(
         NativeTacticReplaySharingTelemetry::default(),
         |mut total, seed| {
@@ -597,7 +628,7 @@ pub fn run_native_tactic_route(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V24.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V25.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
@@ -634,6 +665,7 @@ pub fn run_native_tactic_route(
             .saturating_add(tactic_macro_discovery.validation_native_ticks),
         total_decisions: seed_results.iter().map(|seed| seed.decisions).sum(),
         useful_decisions,
+        learner_authority: learner_authority_report,
         learner_updates,
         learner_updates_per_second_millionths: per_second_millionths(
             learner_updates,
@@ -683,9 +715,8 @@ use macro_discovery::{mine_and_store_tactic_macros, validate_and_store_tactic_ma
 
 mod replay_sharing;
 use replay_sharing::{
-    BoundedStalenessReplaySession, SharedTacticReplayControlPlane, build_replay_session,
-    deterministic_generation_barrier_revision, lane_generated_training_corpus,
-    lock_replay_control_plane, publish_completed_seed_replay, publish_demonstration_replay,
+    BoundedStalenessReplaySession, build_replay_session, deterministic_generation_barrier_revision,
+    lane_generated_training_corpus, publish_completed_seed_replay, publish_demonstration_replay,
 };
 
 mod worker_pool;
@@ -705,7 +736,6 @@ use timing_metrics::{
 mod candidate_retention;
 use candidate_retention::{
     final_result_promotes, load_best_retained_success, retain_successful_result,
-    shared_training_unique_rows,
 };
 mod campaign_persistence;
 use campaign_persistence::{
@@ -795,14 +825,6 @@ fn frontier_sampling_round(episode: u64) -> u64 {
 
 fn tactic_checkpoint_due(decision_index: u64, interval: u64, terminal: bool) -> bool {
     terminal || decision_index % interval == 0
-}
-
-fn tactic_model_refit_due(decision_count: u64, interval: u64) -> bool {
-    decision_count == 1 || decision_count % interval == 0
-}
-
-fn tactic_model_refit_required(model_available: bool, decision_count: u64, interval: u64) -> bool {
-    !model_available || tactic_model_refit_due(decision_count, interval)
 }
 
 fn advance_rolling_checkpoint(

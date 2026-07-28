@@ -114,13 +114,3 @@ pub(super) fn successful_route_rank_is_better(
     candidate_frames < incumbent_frames
         || (candidate_frames == incumbent_frames && candidate_sha256.0 < incumbent_sha256.0)
 }
-
-pub(super) fn shared_training_unique_rows(
-    corpora: &[TacticQTrainingCorpus],
-) -> Result<usize, NativeTacticRouteRunError> {
-    let mut identities = BTreeSet::new();
-    for transition in corpora.iter().flat_map(|corpus| corpus.transitions.iter()) {
-        identities.insert(transition.replay_identity_sha256().map_err(route_error)?);
-    }
-    Ok(identities.len())
-}

@@ -42,6 +42,7 @@ pub struct NativeTacticRouteReport {
     pub total_native_ticks: u64,
     pub total_decisions: u64,
     pub useful_decisions: u64,
+    pub learner_authority: NativeTacticLearnerAuthorityReport,
     pub learner_updates: u64,
     pub learner_updates_per_second_millionths: u64,
     pub useful_training_transitions: u64,
@@ -57,6 +58,17 @@ pub struct NativeTacticRouteReport {
     pub tactic_macro_discovery: NativeTacticMacroDiscoveryReport,
     pub timing: NativeTacticRouteTiming,
     pub seeds: Vec<NativeTacticSeedResult>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticLearnerAuthorityReport {
+    pub model_snapshots_published: u64,
+    pub latest_model_snapshot_sha256: Digest,
+    pub latest_model_revision: u64,
+    pub latest_training_replay_rows: u64,
+    pub declared_model_snapshots_consumed: u64,
+    pub lane_local_model_updates: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

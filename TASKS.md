@@ -37,8 +37,8 @@ at tick `125`.
   persisting frontiers.
 - The historical four-lane benchmark used a deterministic generation barrier:
   its lanes shared the input corpus but not each other's new experience.
-  Bounded-staleness online sharing now exists, but has not yet been measured on
-  this benchmark.
+  Bounded-staleness online sharing now uses one campaign-owned fitter and
+  immutable model snapshots, but has not yet been measured on this benchmark.
 
 A terminal hit, a reliable terminal hit, a 125 tie, or a faster search for the
 same tie is diagnostic evidence only.
@@ -77,10 +77,6 @@ same tie is diagnostic evidence only.
 
 ## P1 - Prove shared replay scales learner throughput
 
-- [ ] Replace duplicated lane-local replay refits with one campaign-owned
-      learner update authority. It must publish immutable model snapshots;
-      lanes consume a declared snapshot rather than independently fitting the
-      same replay prefix.
 - [ ] Repeat the fixed-plan comparison in
       `ordon-p1-online-replay-scaling-v1.report.json` and prove that scaling
       worker count increases unique useful evidence and learner updates per

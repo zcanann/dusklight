@@ -15,14 +15,12 @@ pub(super) fn run_seed(
     action_schema_sha256: Digest,
     root_checkpoint_sha256: Digest,
     root_tape_ref: StoredContentRef,
-    shared_training: &[TacticQTrainingCorpus],
-    inherited_replay_revision: u64,
-    live_replay: Option<SharedTacticReplayControlPlane>,
+    inherited_learner_snapshot: Arc<TacticQImmutableLearnerSnapshot>,
+    live_learner: Option<SharedTacticLearnerAuthority>,
     seed_index: usize,
     seed: u64,
 ) -> Result<CompletedNativeTacticSeed, NativeTacticRouteRunError> {
     let invocation_started = Instant::now();
-    let mut setup_model_update_micros = 0_u64;
     let execution_plan_sha256 = config.execution_plan.identity()?;
     let lane = config
         .execution_plan
@@ -60,17 +58,11 @@ pub(super) fn run_seed(
         )?;
         let mut resumed_campaign = resumed.0;
         let imported = if config.execution_plan.proposal_policy == TacticProposalPolicy::Learned {
-            if live_replay.is_some() {
-                let model_started = Instant::now();
-                let admitted = resumed_campaign
-                    .import_training_corpora(shared_training)
-                    .map_err(route_error)?;
-                if admitted > 0 {
-                    setup_model_update_micros = setup_model_update_micros
-                        .saturating_add(elapsed_micros(model_started.elapsed()));
-                }
-            }
-            shared_training_unique_rows(shared_training)?
+            resumed_campaign
+                .consume_learner_snapshot(&inherited_learner_snapshot)
+                .map_err(route_error)?;
+            usize::try_from(inherited_learner_snapshot.manifest.training_replay_rows)
+                .map_err(route_error)?
         } else {
             0
         };
@@ -119,15 +111,11 @@ pub(super) fn run_seed(
             .bind_execution_authority(execution_plan_sha256)
             .map_err(route_error)?;
         let imported = if config.execution_plan.proposal_policy == TacticProposalPolicy::Learned {
-            let model_started = Instant::now();
-            let imported = campaign
-                .import_training_corpora(shared_training)
+            campaign
+                .consume_learner_snapshot(&inherited_learner_snapshot)
                 .map_err(route_error)?;
-            if imported > 0 {
-                setup_model_update_micros = setup_model_update_micros
-                    .saturating_add(elapsed_micros(model_started.elapsed()));
-            }
-            imported
+            usize::try_from(inherited_learner_snapshot.manifest.training_replay_rows)
+                .map_err(route_error)?
         } else {
             0
         };
@@ -147,9 +135,6 @@ pub(super) fn run_seed(
         }
     };
     let mut timing = performance.timing;
-    timing.model_update_micros = timing
-        .model_update_micros
-        .saturating_add(setup_model_update_micros);
     let mut native_restore_accounting = performance.native_restore_accounting;
     let prior_wall_micros = timing.wall_micros;
     let mut useful_decisions = if has_performance {
@@ -164,11 +149,10 @@ pub(super) fn run_seed(
     let encode = |facts: &FactSnapshot| encoder.encode(facts);
     let demonstration_curriculum = lane.role == NativeTacticLaneRole::TerminalSupport
         && lane.intervention == NativeTacticInterventionPlan::DemonstrationFrontierOnce
-        && shared_training.iter().any(|corpus| {
-            corpus
-                .episode_groups
-                .contains(&TACTIC_Q_DEMONSTRATION_EPISODE_GROUP)
-        });
+        && inherited_learner_snapshot
+            .training_corpus()
+            .episode_groups
+            .contains(&TACTIC_Q_DEMONSTRATION_EPISODE_GROUP);
     let demonstration_frontier_count = if demonstration_curriculum {
         campaign.demonstration_frontier_count()
     } else {
@@ -183,12 +167,6 @@ pub(super) fn run_seed(
     let checkpoint_content_root = tactic_content_store_path(&seed_root);
     let decision_content_store =
         TacticQContentStore::initialize(&checkpoint_content_root).map_err(route_error)?;
-    let learner_snapshot_store = TacticQContentStore::initialize(
-        config
-            .output_root
-            .join(NATIVE_TACTIC_CONTENT_STORE_DIRECTORY),
-    )
-    .map_err(route_error)?;
     let mut rolling_checkpoint = None;
     // Process-local handles intentionally do not survive campaign resume.
     let mut cached_frontier: Option<CachedTacticFrontier> = None;
@@ -203,10 +181,11 @@ pub(super) fn run_seed(
     )?;
     let mut replay_session = build_replay_session(
         config.execution_plan,
-        live_replay,
+        live_learner,
         lane,
-        inherited_replay_revision,
+        inherited_learner_snapshot.replay_revision,
     )?;
+    let mut consumed_learner_snapshot = inherited_learner_snapshot;
 
     while campaign.decision_index < config.execution_plan.budgets.decisions_per_lane
         && native_ticks < config.optimization.budgets.simulated_tick_budget
@@ -225,11 +204,8 @@ pub(super) fn run_seed(
             return Err(route_cancelled("native tactic route paused"));
         }
         if let Some(session) = replay_session.as_mut() {
-            let model_started = Instant::now();
-            if session.refresh_if_required(&mut campaign)? > 0 {
-                timing.model_update_micros = timing
-                    .model_update_micros
-                    .saturating_add(elapsed_micros(model_started.elapsed()));
+            if let Some(snapshot) = session.refresh_if_required(&mut campaign)? {
+                consumed_learner_snapshot = snapshot;
             }
         }
         let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
@@ -365,11 +341,8 @@ pub(super) fn run_seed(
                 .tactic_selection_micros
                 .saturating_add(elapsed_micros(selection_started.elapsed()));
             if let Some(session) = replay_session.as_mut() {
-                let model_started = Instant::now();
-                if session.refresh_if_required(&mut campaign)? > 0 {
-                    timing.model_update_micros = timing
-                        .model_update_micros
-                        .saturating_add(elapsed_micros(model_started.elapsed()));
+                if let Some(snapshot) = session.refresh_if_required(&mut campaign)? {
+                    consumed_learner_snapshot = snapshot;
                     continue;
                 }
             }
@@ -490,20 +463,9 @@ pub(super) fn run_seed(
 
         let decision_index = campaign.decision_index;
         let decision_episode_group = campaign.episode_group;
-        let learner_snapshot = campaign.learner_snapshot().map_err(route_error)?;
-        let learner_snapshot_sha256 = learner_snapshot_store
-            .store_learner_snapshot(&learner_snapshot)
-            .map_err(route_error)?
-            .sha256;
+        let learner_snapshot_sha256 = consumed_learner_snapshot.sha256;
         let replay_rows_at_decision = campaign.training_replay_len() as u64;
         let acquisition_rank = lane.acquisition.rank(decision_index);
-        let refit_model = tactic_model_refit_required(
-            campaign.model().is_some(),
-            decision_index
-                .checked_add(1)
-                .ok_or_else(|| route_message("decision index overflowed"))?,
-            config.execution_plan.refit_every_decisions,
-        );
         let paths_root = seed_root
             .join("native")
             .join(format!("decision-{decision_index:06}"));
@@ -583,14 +545,6 @@ pub(super) fn run_seed(
                 }
             })
             .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
-        if let Some(session) = replay_session.as_ref() {
-            session.publish_evaluated(
-                decision_index,
-                learner_snapshot_sha256,
-                &evaluated,
-                &evaluated_episode_groups,
-            )?;
-        }
         let execution_elapsed = execution_started.elapsed();
         timing.tactic_execution_micros = timing
             .tactic_execution_micros
@@ -601,6 +555,24 @@ pub(super) fn run_seed(
         timing.tactic_preparation_and_fact_extraction_micros = timing
             .tactic_preparation_and_fact_extraction_micros
             .saturating_add(elapsed_micros(preparation_elapsed));
+        if let Some(session) = replay_session.as_ref() {
+            let publish = session.publish_evaluated(
+                decision_index,
+                learner_snapshot_sha256,
+                &evaluated,
+                &evaluated_episode_groups,
+            )?;
+            if publish.admitted_rows.saturating_add(publish.duplicate_rows)
+                != evaluated.len() as u64
+            {
+                return Err(route_message(
+                    "campaign learner did not account for every published proposal",
+                ));
+            }
+            timing.model_update_micros = timing
+                .model_update_micros
+                .saturating_add(publish.update.update_micros);
+        }
         let terminal_candidates = evaluated
             .iter()
             .filter(|proposal| proposal.outcome.terminal)
@@ -625,7 +597,6 @@ pub(super) fn run_seed(
                 proposal.outcome.execution.duration.realized_ticks,
             ))
         });
-        let model_started = Instant::now();
         let newly_admitted_training_rows =
             campaign.admit_evaluated_replay(&evaluated, &evaluated_episode_groups)? as u64;
         let duplicate_training_transitions = evaluated
@@ -654,7 +625,7 @@ pub(super) fn run_seed(
                 &encode,
                 |_| true,
                 reward_spec,
-                refit_model,
+                false,
             )
             .map_err(route_error)?;
         if step.step.transition != expected_transition
@@ -664,9 +635,6 @@ pub(super) fn run_seed(
                 "retained tactic proposal differs from its pre-admission evaluation",
             ));
         }
-        timing.model_update_micros = timing
-            .model_update_micros
-            .saturating_add(elapsed_micros(model_started.elapsed()));
         cached_frontier = match (
             winning_outcome.retained_native_checkpoint.as_ref(),
             winning_outcome
@@ -960,7 +928,7 @@ pub(super) fn run_seed(
             imported_training_replay_rows,
             duplicate_training_transitions,
             censored_training_transitions,
-            learner_updates: campaign.model_revision(),
+            learner_updates: 0,
             replay_sharing,
             visited_states: campaign.visited_state_count(),
             useful_decisions,

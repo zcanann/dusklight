@@ -679,6 +679,13 @@ impl TacticReplayControlPlane {
         validate_learner_snapshot_identity(&self.identity, &snapshot)?;
         Ok(snapshot)
     }
+
+    pub fn learner_snapshot(
+        &self,
+        sha256: Digest,
+    ) -> Result<TacticQLearnerSnapshot, TacticReplayControlPlaneError> {
+        self.validate_learner_snapshot(sha256)
+    }
 }
 
 fn validate_stored_entry(

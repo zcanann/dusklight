@@ -183,7 +183,7 @@ pub(super) fn resume_seed(
             "paused tactic checkpoint does not match this authenticated run",
         ));
     }
-    let campaign = TacticQCampaign::resume(checkpoint).map_err(route_error)?;
+    let campaign = TacticQCampaign::resume_without_model(checkpoint).map_err(route_error)?;
     if campaign.replay.len() as u64 != campaign.decision_index {
         return Err(route_message(
             "paused tactic checkpoint has a detached decision history",

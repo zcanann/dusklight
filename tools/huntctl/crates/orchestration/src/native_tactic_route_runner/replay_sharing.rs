@@ -1,17 +1,7 @@
 use super::*;
 
-pub(super) type SharedTacticReplayControlPlane = Arc<Mutex<TacticReplayControlPlane>>;
-
-pub(super) fn lock_replay_control_plane(
-    replay: &SharedTacticReplayControlPlane,
-) -> Result<std::sync::MutexGuard<'_, TacticReplayControlPlane>, NativeTacticRouteRunError> {
-    replay
-        .lock()
-        .map_err(|_| route_message("tactic replay control plane lock is poisoned"))
-}
-
 pub(super) struct BoundedStalenessReplaySession {
-    replay: SharedTacticReplayControlPlane,
+    learner: SharedTacticLearnerAuthority,
     publisher_lane: u32,
     maximum_stale_replay_revisions: u64,
     consumed_revision: u64,
@@ -20,13 +10,13 @@ pub(super) struct BoundedStalenessReplaySession {
 
 impl BoundedStalenessReplaySession {
     pub(super) fn new(
-        replay: SharedTacticReplayControlPlane,
+        learner: SharedTacticLearnerAuthority,
         publisher_lane: usize,
         maximum_stale_replay_revisions: u64,
         consumed_revision: u64,
     ) -> Result<Self, NativeTacticRouteRunError> {
         Ok(Self {
-            replay,
+            learner,
             publisher_lane: u32::try_from(publisher_lane).map_err(route_error)?,
             maximum_stale_replay_revisions,
             consumed_revision,
@@ -37,10 +27,11 @@ impl BoundedStalenessReplaySession {
     pub(super) fn refresh_if_required(
         &mut self,
         campaign: &mut TacticQCampaign,
-    ) -> Result<usize, NativeTacticRouteRunError> {
+    ) -> Result<Option<Arc<TacticQImmutableLearnerSnapshot>>, NativeTacticRouteRunError> {
         let snapshot = {
-            let replay = lock_replay_control_plane(&self.replay)?;
-            let current_revision = replay.replay_snapshot().revision;
+            let learner = lock_learner_authority(&self.learner)?;
+            let snapshot = learner.snapshot();
+            let current_revision = snapshot.replay_revision;
             let observed_staleness = current_revision.saturating_sub(self.consumed_revision);
             self.telemetry.maximum_observed_stale_revisions = self
                 .telemetry
@@ -51,19 +42,17 @@ impl BoundedStalenessReplaySession {
                 current_revision,
                 self.maximum_stale_replay_revisions,
             ) {
-                return Ok(0);
+                return Ok(None);
             }
-            replay
-                .snapshot_from(self.consumed_revision)
-                .map_err(route_error)?
+            snapshot
         };
         let admitted = campaign
-            .import_training_corpora(std::slice::from_ref(&snapshot.corpus))
+            .consume_learner_snapshot(&snapshot)
             .map_err(route_error)?;
-        self.consumed_revision = snapshot.version.revision;
+        self.consumed_revision = snapshot.replay_revision;
         self.telemetry.refreshes = self.telemetry.refreshes.saturating_add(1);
         self.telemetry.imported_rows = self.telemetry.imported_rows.saturating_add(admitted as u64);
-        Ok(admitted)
+        Ok(Some(snapshot))
     }
 
     pub(super) fn publish_evaluated(
@@ -72,15 +61,17 @@ impl BoundedStalenessReplaySession {
         learner_snapshot_sha256: Digest,
         evaluated: &[EvaluatedRewardedTacticOutcome],
         episode_groups: &[u64],
-    ) -> Result<(), NativeTacticRouteRunError> {
+    ) -> Result<CampaignLearnerPublishResult, NativeTacticRouteRunError> {
         if evaluated.len() != episode_groups.len() {
             return Err(route_message(
                 "published tactic replay batch has detached episode lineages",
             ));
         }
-        let mut replay = lock_replay_control_plane(&self.replay)?;
+        let mut learner = lock_learner_authority(&self.learner)?;
+        let mut admitted_rows = 0_u64;
+        let mut duplicate_rows = 0_u64;
         for (proposal, episode_group) in evaluated.iter().zip(episode_groups) {
-            replay
+            match learner
                 .publish(
                     self.publisher_lane,
                     publisher_decision,
@@ -89,9 +80,22 @@ impl BoundedStalenessReplaySession {
                     &proposal.outcome.route_tape,
                     *episode_group,
                 )
-                .map_err(route_error)?;
+                .map_err(route_error)?
+            {
+                TacticReplayAdmissionOutcome::Admitted { .. } => {
+                    admitted_rows = admitted_rows.saturating_add(1);
+                }
+                TacticReplayAdmissionOutcome::Duplicate { .. } => {
+                    duplicate_rows = duplicate_rows.saturating_add(1);
+                }
+            }
         }
-        Ok(())
+        learner.finish_decision(
+            admitted_rows,
+            duplicate_rows,
+            evaluated.iter().any(|proposal| proposal.outcome.terminal),
+            self.maximum_stale_replay_revisions,
+        )
     }
 
     pub(super) fn telemetry(&self) -> NativeTacticReplaySharingTelemetry {
@@ -101,11 +105,11 @@ impl BoundedStalenessReplaySession {
 
 pub(super) fn build_replay_session(
     execution_plan: &NativeTacticExecutionPlan,
-    live_replay: Option<SharedTacticReplayControlPlane>,
+    live_learner: Option<SharedTacticLearnerAuthority>,
     lane: &NativeTacticLanePlan,
     inherited_replay_revision: u64,
 ) -> Result<Option<BoundedStalenessReplaySession>, NativeTacticRouteRunError> {
-    match (live_replay, execution_plan.replay_sharing) {
+    match (live_learner, execution_plan.replay_sharing) {
         (
             Some(replay),
             NativeTacticReplaySharingPlan::BoundedStaleness {
@@ -181,7 +185,7 @@ pub(super) fn deterministic_generation_barrier_revision(
 }
 
 pub(super) fn publish_demonstration_replay(
-    replay: &mut TacticReplayControlPlane,
+    learner: &mut CampaignTacticLearnerAuthority,
     demonstration: &NativeTacticDemonstration,
 ) -> Result<(), NativeTacticRouteRunError> {
     let learner_snapshot = TacticQLearnerSnapshot::from_demonstration(
@@ -189,7 +193,8 @@ pub(super) fn publish_demonstration_replay(
         route_option_value_config(demonstration.corpus.execution_authority_sha256),
     )
     .map_err(route_error)?;
-    let learner_snapshot_sha256 = replay
+    let learner_snapshot_sha256 = learner
+        .replay()
         .publish_learner_snapshot(&learner_snapshot)
         .map_err(route_error)?;
     for (decision, ((transition, route), episode_group)) in demonstration
@@ -200,7 +205,7 @@ pub(super) fn publish_demonstration_replay(
         .zip(&demonstration.corpus.episode_groups)
         .enumerate()
     {
-        replay
+        learner
             .publish(
                 u32::MAX,
                 decision as u64,
@@ -211,11 +216,12 @@ pub(super) fn publish_demonstration_replay(
             )
             .map_err(route_error)?;
     }
+    learner.force_update()?;
     Ok(())
 }
 
 pub(super) fn publish_completed_seed_replay(
-    replay: &mut TacticReplayControlPlane,
+    learner: &mut CampaignTacticLearnerAuthority,
     completion: &CompletedNativeTacticSeed,
 ) -> Result<(), NativeTacticRouteRunError> {
     for ((transition, route), episode_group) in completion
@@ -251,7 +257,7 @@ pub(super) fn publish_completed_seed_replay(
                 "generated replay learner authority is detached",
             ));
         }
-        let outcome = replay
+        let outcome = learner
             .publish(
                 u32::try_from(decision.lane_index).map_err(route_error)?,
                 decision.decision_index,

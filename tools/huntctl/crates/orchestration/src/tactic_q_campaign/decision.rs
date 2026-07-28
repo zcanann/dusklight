@@ -606,11 +606,6 @@ impl TacticQCampaign {
         A: Fn(&TacticAssetDescription) -> bool,
         R: Fn(&FactSnapshot, &FactSnapshot, &OptionExecution) -> f32,
     {
-        if !refit_model && self.model.is_none() {
-            return Err(TacticQCampaignError::InvalidState(
-                "a tactic campaign needs an initial fitted model before batching refits",
-            ));
-        }
         if decision.selected != outcome.selected
             || decision.selected.decision_index != self.decision_index
             || decision.selected.learner_snapshot_sha256 != self.current.snapshot_sha256
@@ -708,8 +703,9 @@ impl TacticQCampaign {
             // action representation. Clear it once a dynamic controller
             // universe exceeds its categorical capacity; the shared
             // state-action outcome model continues to consume every row.
-            self.model = model;
+            self.model = model.map(Arc::new);
             self.model_revision = self.model_revision.saturating_add(1);
+            self.campaign_learner_authority_managed = false;
         }
         self.decision_index =
             self.decision_index

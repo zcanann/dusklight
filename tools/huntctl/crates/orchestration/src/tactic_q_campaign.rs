@@ -367,8 +367,9 @@ pub struct TacticQCampaign {
     frontier_archive: BehaviorArchive,
     model_config: OptionValueConfig,
     exploration: TacticExplorationConfig,
-    model: Option<OptionValueModel>,
+    model: Option<Arc<OptionValueModel>>,
     model_revision: u64,
+    campaign_learner_authority_managed: bool,
     generalized_model: RefCell<Option<CachedGeneralizedTacticValueModel>>,
     visited_states: BTreeSet<TacticStateDescriptor>,
     hindsight: HindsightOptionReplay,
@@ -396,90 +397,6 @@ pub struct TacticQTrainingCorpus {
     pub transitions: Vec<OptionTransitionSample>,
     pub routes: Vec<InputTape>,
     pub episode_groups: Vec<u64>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TacticQLearnerSnapshotKind {
-    Learned,
-    Demonstration,
-}
-
-/// Immutable identity of one fitted policy and the exact replay root that
-/// produced it.
-///
-/// The transition journal remains the source of full training rows. This
-/// compact manifest binds their ordered authenticated identities, episode
-/// groups, learner configuration, and serialized fitted model without
-/// duplicating a growing corpus into every decision record.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct TacticQLearnerSnapshot {
-    pub schema: String,
-    pub kind: TacticQLearnerSnapshotKind,
-    pub execution_authority_sha256: Digest,
-    pub feature_schema_sha256: Digest,
-    pub objective_sha256: Digest,
-    pub root_checkpoint_sha256: Digest,
-    pub training_replay_rows: u64,
-    pub training_replay_sha256: Digest,
-    pub model_revision: u64,
-    pub model_config: OptionValueConfig,
-    pub model_sha256: Option<Digest>,
-}
-
-impl TacticQLearnerSnapshot {
-    pub fn from_demonstration(
-        corpus: &TacticQTrainingCorpus,
-        model_config: OptionValueConfig,
-    ) -> Result<Self, TacticQCampaignError> {
-        validate_training_corpus(corpus)?;
-        let snapshot = Self {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1.into(),
-            kind: TacticQLearnerSnapshotKind::Demonstration,
-            execution_authority_sha256: corpus.execution_authority_sha256,
-            feature_schema_sha256: corpus.feature_schema_sha256,
-            objective_sha256: corpus.objective_sha256,
-            root_checkpoint_sha256: corpus.root_checkpoint_sha256,
-            training_replay_rows: corpus.transitions.len() as u64,
-            training_replay_sha256: training_replay_sha256(
-                &corpus.transitions,
-                &corpus.episode_groups,
-            )?,
-            model_revision: 0,
-            model_config,
-            model_sha256: None,
-        };
-        snapshot.validate()?;
-        Ok(snapshot)
-    }
-
-    pub fn content_sha256(&self) -> Result<Digest, TacticQCampaignError> {
-        self.validate()?;
-        let raw = serde_cbor::to_vec(self)
-            .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-        Ok(sha256(&raw))
-    }
-
-    pub fn validate(&self) -> Result<(), TacticQCampaignError> {
-        if self.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1
-            || self.execution_authority_sha256 == Digest::ZERO
-            || self.feature_schema_sha256 == Digest::ZERO
-            || self.objective_sha256 == Digest::ZERO
-            || self.root_checkpoint_sha256 == Digest::ZERO
-            || self.training_replay_sha256 == Digest::ZERO
-            || (self.kind == TacticQLearnerSnapshotKind::Demonstration
-                && (self.model_revision != 0 || self.model_sha256.is_some()))
-            || self.model_sha256 == Some(Digest::ZERO)
-        {
-            return Err(TacticQCampaignError::InvalidState(
-                "tactic learner snapshot is invalid",
-            ));
-        }
-        serde_cbor::to_vec(&self.model_config)
-            .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-        Ok(())
-    }
 }
 
 impl TacticQTrainingCorpus {
@@ -610,6 +527,7 @@ impl TacticQCampaign {
             exploration,
             model: None,
             model_revision: 0,
+            campaign_learner_authority_managed: false,
             generalized_model: RefCell::new(None),
             visited_states,
             hindsight,
@@ -617,7 +535,7 @@ impl TacticQCampaign {
     }
 
     pub fn model(&self) -> Option<&OptionValueModel> {
-        self.model.as_ref()
+        self.model.as_deref()
     }
 
     pub fn model_revision(&self) -> u64 {
@@ -629,7 +547,7 @@ impl TacticQCampaign {
             .model
             .as_ref()
             .map(|model| {
-                serde_cbor::to_vec(model)
+                serde_cbor::to_vec(model.as_ref())
                     .map(|raw| sha256(&raw))
                     .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))
             })
@@ -654,6 +572,45 @@ impl TacticQCampaign {
         Ok(snapshot)
     }
 
+    /// Consume a campaign-published immutable policy and its authenticated
+    /// evidence without fitting either model in this lane.
+    pub fn consume_learner_snapshot(
+        &mut self,
+        snapshot: &TacticQImmutableLearnerSnapshot,
+    ) -> Result<usize, TacticQCampaignError> {
+        snapshot.manifest.validate()?;
+        if snapshot.sha256 != snapshot.manifest.content_sha256()?
+            || snapshot.manifest.execution_authority_sha256 != self.execution_authority_sha256
+            || snapshot.manifest.feature_schema_sha256 != self.feature_schema_sha256
+            || snapshot.manifest.objective_sha256 != self.objective_sha256
+            || snapshot.manifest.root_checkpoint_sha256 != self.root_checkpoint_sha256
+            || snapshot.manifest.model_config != self.model_config
+            || snapshot.manifest.training_replay_rows
+                != snapshot.training_corpus.transitions.len() as u64
+            || snapshot.replay_revision != snapshot.manifest.training_replay_rows
+        {
+            return Err(TacticQCampaignError::InvalidState(
+                "immutable learner snapshot belongs to another campaign",
+            ));
+        }
+        let admitted = self.import_training_corpora_without_refit(std::slice::from_ref(
+            snapshot.training_corpus(),
+        ))?;
+        self.model = snapshot.model.clone();
+        self.model_revision = snapshot.manifest.model_revision;
+        self.campaign_learner_authority_managed = true;
+        *self.generalized_model.borrow_mut() =
+            snapshot
+                .generalized_model
+                .as_ref()
+                .map(|model| CachedGeneralizedTacticValueModel {
+                    goal_distance_feature: snapshot.goal_distance_feature,
+                    model_revision: snapshot.manifest.model_revision,
+                    model: Arc::clone(model),
+                });
+        Ok(admitted)
+    }
+
     pub fn bind_execution_authority(
         &mut self,
         execution_authority_sha256: Digest,
@@ -676,6 +633,14 @@ impl TacticQCampaign {
         &self,
         goal_distance_feature: usize,
     ) -> Result<Option<Arc<GeneralizedTacticValueModel>>, TacticQCampaignError> {
+        if self.campaign_learner_authority_managed {
+            return Ok(self
+                .generalized_model
+                .borrow()
+                .as_ref()
+                .filter(|cached| cached.goal_distance_feature == goal_distance_feature)
+                .map(|cached| Arc::clone(&cached.model)));
+        }
         if self.training_replay.len() < 2 {
             return Ok(None);
         }
@@ -743,6 +708,21 @@ impl TacticQCampaign {
         &mut self,
         corpora: &[TacticQTrainingCorpus],
     ) -> Result<usize, TacticQCampaignError> {
+        self.import_training_corpora_with_refit(corpora, true)
+    }
+
+    pub fn import_training_corpora_without_refit(
+        &mut self,
+        corpora: &[TacticQTrainingCorpus],
+    ) -> Result<usize, TacticQCampaignError> {
+        self.import_training_corpora_with_refit(corpora, false)
+    }
+
+    fn import_training_corpora_with_refit(
+        &mut self,
+        corpora: &[TacticQTrainingCorpus],
+        refit: bool,
+    ) -> Result<usize, TacticQCampaignError> {
         let mut training_replay = self.training_replay.clone();
         let mut training_replay_routes = self.training_replay_routes.clone();
         let mut training_episode_groups = self.training_episode_groups.clone();
@@ -805,24 +785,36 @@ impl TacticQCampaign {
         if admitted == 0 {
             return Ok(0);
         }
-        let model = replay_model(
-            self.feature_schema_sha256,
-            self.objective_sha256,
-            &training_replay,
-            &training_episode_groups,
-            &self.model_config,
-        )?;
+        let model = refit
+            .then(|| {
+                replay_model(
+                    self.feature_schema_sha256,
+                    self.objective_sha256,
+                    &training_replay,
+                    &training_episode_groups,
+                    &self.model_config,
+                )
+            })
+            .transpose()?;
         self.training_replay = training_replay;
         self.training_replay_routes = training_replay_routes;
         self.training_episode_groups = training_episode_groups;
         self.training_identities = identities;
         self.frontier_archive = frontier_archive;
         self.visited_states = visited_states;
-        self.model = model;
-        self.model_revision = self.model_revision.saturating_add(1);
+        if let Some(model) = model {
+            self.model = model.map(Arc::new);
+            self.model_revision = self.model_revision.saturating_add(1);
+            self.campaign_learner_authority_managed = false;
+        }
         Ok(admitted)
     }
 }
+
+mod learner_snapshot;
+pub use learner_snapshot::{
+    TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot, TacticQLearnerSnapshotKind,
+};
 
 mod decision;
 mod frontier;
@@ -1122,13 +1114,6 @@ pub(crate) fn validate_checkpoint(
             "retained replay is absent from training replay",
         ));
     }
-    replay_model(
-        checkpoint.feature_schema_sha256,
-        checkpoint.objective_sha256,
-        training_replay,
-        training_groups,
-        &checkpoint.model_config,
-    )?;
     Ok(())
 }
 

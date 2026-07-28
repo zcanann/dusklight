@@ -126,20 +126,32 @@ impl TacticQCampaign {
         )
     }
 
-    pub fn resume(mut checkpoint: TacticQCampaignCheckpoint) -> Result<Self, TacticQCampaignError> {
+    pub fn resume(checkpoint: TacticQCampaignCheckpoint) -> Result<Self, TacticQCampaignError> {
+        Self::resume_with_model(checkpoint, true)
+    }
+
+    fn resume_with_model(
+        mut checkpoint: TacticQCampaignCheckpoint,
+        fit_model: bool,
+    ) -> Result<Self, TacticQCampaignError> {
         validate_checkpoint(&checkpoint)?;
         if checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V2 {
             checkpoint.training_replay = checkpoint.replay.clone();
             checkpoint.training_replay_routes = checkpoint.replay_routes.clone();
             checkpoint.training_episode_groups = checkpoint.episode_groups.clone();
         }
-        let model = replay_model(
-            checkpoint.feature_schema_sha256,
-            checkpoint.objective_sha256,
-            &checkpoint.training_replay,
-            &checkpoint.training_episode_groups,
-            &checkpoint.model_config,
-        )?;
+        let model = if fit_model {
+            replay_model(
+                checkpoint.feature_schema_sha256,
+                checkpoint.objective_sha256,
+                &checkpoint.training_replay,
+                &checkpoint.training_episode_groups,
+                &checkpoint.model_config,
+            )?
+            .map(Arc::new)
+        } else {
+            None
+        };
         let mut visited_states = BTreeSet::from([tactic_state_descriptor(
             &checkpoint.current.snapshot,
             checkpoint.current.snapshot.terminal.reached == Some(true),
@@ -189,10 +201,20 @@ impl TacticQCampaign {
             exploration: checkpoint.exploration,
             model,
             model_revision: checkpoint.model_revision,
+            campaign_learner_authority_managed: false,
             generalized_model: RefCell::new(None),
             visited_states,
             hindsight,
         })
+    }
+
+    /// Resume authenticated lane state without rebuilding a lane-local model.
+    /// Native route orchestration immediately installs the campaign authority's
+    /// declared immutable snapshot.
+    pub fn resume_without_model(
+        checkpoint: TacticQCampaignCheckpoint,
+    ) -> Result<Self, TacticQCampaignError> {
+        Self::resume_with_model(checkpoint, false)
     }
 
     pub fn final_result(&self) -> Result<TacticQFinalResult, TacticQCampaignError> {
