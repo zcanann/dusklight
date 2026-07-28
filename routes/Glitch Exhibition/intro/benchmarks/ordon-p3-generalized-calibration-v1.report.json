@@ -1,0 +1,116 @@
+{
+  "schema": "dusklight-generalized-tactic-calibration/v1",
+  "source_transition_sha256": "3f6769d983c7474bb3789b1f3cc97e55119bff937c6d6738aa41a4a116185cdd",
+  "source_transitions": 18,
+  "goal_distance_feature": 155,
+  "target_kind": "full_authenticated_transition_graph_fitted_q",
+  "config": {
+    "state_region_width": 64.0,
+    "group_folds": 3,
+    "validation_fold": 0,
+    "test_fold": 1,
+    "interval_coverage_millionths": 900000,
+    "fitted_q_iterations": 32,
+    "per_tick_discount": 0.999
+  },
+  "state_region": {
+    "axis": "state_region",
+    "training_samples": 9,
+    "training_groups": [
+      "F_SP103:1:3:3:10:-37"
+    ],
+    "validation_groups": [
+      "F_SP103:1:3:14:10:-29",
+      "F_SP103:1:3:4:10:-37"
+    ],
+    "test_groups": [
+      "F_SP103:1:3:14:10:-30"
+    ],
+    "group_overlap_count": 0,
+    "validation": {
+      "samples": 6,
+      "mean_error": 0.05951927478114764,
+      "mean_absolute_error": 0.13890942061940828,
+      "root_mean_squared_error": 0.15953248428044275,
+      "mean_raw_uncertainty": 0.464440335617803,
+      "interval_coverage": 1.0,
+      "mean_interval_radius": 0.464440335617803,
+      "comparable_states": 2,
+      "ranking_wins": 0,
+      "ranking_win_rate": 0.0,
+      "mean_observed_regret": 0.1012704037129879
+    },
+    "test": {
+      "samples": 3,
+      "mean_error": 0.12611628075440726,
+      "mean_absolute_error": 0.13922125597794852,
+      "root_mean_squared_error": 0.163695199570923,
+      "mean_raw_uncertainty": 0.4751955930581681,
+      "interval_coverage": 1.0,
+      "mean_interval_radius": 0.4751955930581681,
+      "comparable_states": 1,
+      "ranking_wins": 0,
+      "ranking_win_rate": 0.0,
+      "mean_observed_regret": 0.19619125127792358
+    },
+    "conformal_multiplier": 1.0,
+    "nominal_interval_coverage": 0.9,
+    "test_coverage_at_least_nominal": true
+  },
+  "action_realization": {
+    "axis": "action_realization",
+    "training_samples": 8,
+    "training_groups": [
+      "16517f64d9fac9bfa268f2283ee8576d4944087a88a9b56697c8aa7225da54dd",
+      "2de77784b521795500c9592db1ec742b057105dc377d46ff11b69222a0c0c36a",
+      "72422ff23f73d2939bb76da57fdbaca5435c115b68ab38ba0d1f790742dc311d",
+      "7b72522b55fd1e56d8e57dafd9c2d2785f31e667fb76cf818801a1681c067770",
+      "fbe76994675289dd30d5fa05d118c145b875f8c25e2124e7b3e5516da41adf99"
+    ],
+    "validation_groups": [
+      "0c9f673cd78513a6c23c871a42de58893005d92c694c5dc232865f0631d86573",
+      "17273d257a3902f8cdcce624d6d05a015f088e402fca1627295c2f4883ad9b29",
+      "3d7a564a653feb07ae57b90a190177b955e882c962348775b4710ff3b46436f3",
+      "76e956fb821ea9559c0efd44f2a13d13f0c8a362d7f88dc9fdb1241bf4bb529e",
+      "b8698c4d68221daf1b4768537442eb5b6d7b519468500aab094bfd31fe3eb735"
+    ],
+    "test_groups": [
+      "16400eaeb33be283b037ddfe8641c8c5fc88ec4b1dcd95c886fed13be4b8ce08",
+      "20c190d939e9bc028a2248f50682fd0c695e9916a1612289c376f0a371216471",
+      "5be6f9400e88e3a5bd19374a5b656814e3904d8e178ef693c259133458ac24da",
+      "77e011463c739397cc8d85404d7d8983d265a47bf02a2a15718137cc047cee5e",
+      "e23f1dbd194958125895bed512c4b3d7af253675cdbebe2d5ce0d0c037bf7f14"
+    ],
+    "group_overlap_count": 0,
+    "validation": {
+      "samples": 5,
+      "mean_error": 0.0790946513414383,
+      "mean_absolute_error": 0.10529992878437042,
+      "root_mean_squared_error": 0.11128566299223196,
+      "mean_raw_uncertainty": 0.333746862995448,
+      "interval_coverage": 1.0,
+      "mean_interval_radius": 0.36432863528593007,
+      "comparable_states": 1,
+      "ranking_wins": 1,
+      "ranking_win_rate": 1.0,
+      "mean_observed_regret": 0.0
+    },
+    "test": {
+      "samples": 5,
+      "mean_error": 0.1403263881802559,
+      "mean_absolute_error": 0.18817466944456102,
+      "root_mean_squared_error": 0.2174100810892467,
+      "mean_raw_uncertainty": 0.35928958877968636,
+      "interval_coverage": 0.8,
+      "mean_interval_radius": 0.39221188291538034,
+      "comparable_states": 1,
+      "ranking_wins": 0,
+      "ranking_win_rate": 0.0,
+      "mean_observed_regret": 0.08254081010818481
+    },
+    "conformal_multiplier": 1.0916316396684729,
+    "nominal_interval_coverage": 0.9,
+    "test_coverage_at_least_nominal": false
+  },
+  "report_sha256": "519eaed0b263192f18e15a1e1d4f56afe8d1d0af5c2f06aeec97564493226d9e"
+}

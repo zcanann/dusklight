@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-mod fitted_q;
+pub(crate) mod fitted_q;
 mod prediction;
 
 pub const GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH: usize = 71;

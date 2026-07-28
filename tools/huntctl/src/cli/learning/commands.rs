@@ -386,6 +386,7 @@ mod frozen_and_tactics;
 mod native_views;
 mod q_training;
 mod reachability;
+mod tactic_calibration;
 
 pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
@@ -440,6 +441,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
         ) => native_views::command(args),
         Some("inspect" | "baseline" | "calibrate") => baselines::command(args),
         Some("double-q" | "fit" | "benchmark") => q_training::command(args),
+        Some("calibrate-tactic-value") => tactic_calibration::command(args),
         _ => usage_error(),
     }
 }

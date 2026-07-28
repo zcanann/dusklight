@@ -82,6 +82,15 @@ at tick `125`.
   wall time remained effectively unchanged from v2 (1,143.3 versus 1,142.3
   seconds), confirming that state proof and checkpoint work dominate rather
   than presentation. Evidence: `ordon-p2-headless-path-v1.report.json`.
+- A fresh current-code arm64 macOS campaign now feeds a deterministic
+  group-isolated value audit. Complete spatial regions and complete typed
+  action realizations are assigned to disjoint train, conformal-calibration,
+  and test partitions; serialized overlap and coverage claims are recomputed
+  on load. On the initial 18-transition corpus, spatial test coverage was
+  100% at the 90% target, but unseen-action coverage was only 80% and the
+  single comparable unseen-action ranking lost with 0.083 observed regret.
+  This is a P3 failure signal, not acceptance. Evidence:
+  `ordon-p3-generalized-calibration-v1.report.json`.
 
 A terminal hit, a reliable terminal hit, a 125 tie, or a faster search for the
 same tie is diagnostic evidence only.

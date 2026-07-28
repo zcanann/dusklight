@@ -1,12 +1,12 @@
 use super::*;
 
-pub(super) struct FittedQResult {
+pub(crate) struct FittedQResult {
     pub values: Vec<f32>,
     pub exact_terminal_supported: BTreeSet<usize>,
     pub exact_first_hit_ticks: Vec<Option<u64>>,
 }
 
-pub(super) fn fit_transition_returns(
+pub(crate) fn fit_transition_returns(
     transitions: &[OptionTransitionSample],
     minimum_iterations: usize,
     per_tick_discount: f32,

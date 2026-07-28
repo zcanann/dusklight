@@ -233,12 +233,9 @@ impl TacticQCampaign {
             ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
         }
         if policy == TacticProposalPolicy::Learned
-            && self.training_replay.len() >= 2
             && let Some(goal_distance_feature) = goal_distance_feature
+            && let Some(model) = self.generalized_model(goal_distance_feature)?
         {
-            let model = self
-                .generalized_model(goal_distance_feature)?
-                .expect("two replay rows guarantee a generalized model");
             let context = GeneralizedTacticContext::from_facts(&self.current.snapshot)?;
             let applicable_descriptors = ranking
                 .choices

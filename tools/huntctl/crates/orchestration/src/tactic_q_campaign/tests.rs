@@ -550,6 +550,27 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert!(snapshot_consumer.model().is_some());
     assert_eq!(snapshot_consumer.model_revision(), 7);
     assert!(snapshot_consumer.campaign_learner_authority_managed);
+    // A lane can admit local rows before the campaign-owned fitter publishes
+    // its next immutable snapshot. Proposal selection must keep exploring
+    // instead of assuming local replay count implies a shared model exists.
+    snapshot_consumer
+        .training_replay
+        .push(checkpoint.training_replay[0].clone());
+    assert_eq!(snapshot_consumer.training_replay_len(), 2);
+    assert!(snapshot_consumer.generalized_model(0).unwrap().is_none());
+    snapshot_consumer
+        .decide_parameterized_batch_with_policy::<&'static str, _>(
+            &catalog,
+            &[],
+            Digest([9; 32]),
+            &encode,
+            1,
+            0,
+            TacticProposalPolicy::Learned,
+            Some(0),
+            false,
+        )
+        .unwrap();
     assert_eq!(
         immutable_snapshot.sha256,
         immutable_snapshot.manifest.content_sha256().unwrap()
