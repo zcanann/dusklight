@@ -17,9 +17,9 @@ use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::f32::consts::{PI, TAU};
 
-pub const PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V4: &str =
-    "dusklight-parameterized-tactic-families/v4";
-pub const MAX_PARAMETERIZED_PROPOSALS: usize = 128;
+pub const PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V5: &str =
+    "dusklight-parameterized-tactic-families/v5";
+pub const MAX_PARAMETERIZED_PROPOSALS: usize = 192;
 const MAX_PARAMETERIZED_TACTIC_TICKS: u32 = 4_096;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -108,7 +108,7 @@ pub struct ParameterizedTacticProposalCatalog {
 
 pub fn parameterized_tactic_family_schema_sha256() -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V4.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V5.as_bytes());
     hasher.update((MAX_PARAMETERIZED_PROPOSALS as u64).to_le_bytes());
     hasher.update(MAX_PARAMETERIZED_TACTIC_TICKS.to_le_bytes());
     for family in [
@@ -163,7 +163,6 @@ pub fn propose_parameterized_tactics(
             context.maximum_ticks,
         )?;
     }
-
     // One exact goal-relative heading plus a complete direction lattice keeps
     // straight movement available without assigning it utility. Noncentral
     // bins retain seeded continuous jitter for off-grid exploration.
@@ -185,7 +184,13 @@ pub fn propose_parameterized_tactics(
         7.0 * PI / 8.0,
         PI,
     ];
-    let durations = [4_u32];
+    // Heading and duration are independent primitive factors. Keeping every
+    // alternative heading at four ticks forces the policy to rediscover and
+    // reselect the same turn repeatedly, while long actions are available
+    // only through goal-seek or camera-lock composites. Expose the same
+    // bounded temporal lattice as seek so ordinary analog movement can sustain
+    // a turn without embedding a route or assigning that turn utility.
+    let durations = [4_u32, 8, 16, 40].map(|ticks| ticks.min(context.maximum_ticks));
     for (index, offset) in heading_offsets.iter().copied().enumerate() {
         let magnitude = 127;
         let heading = if index == 0 {
@@ -344,7 +349,7 @@ fn insert(
 ) -> Result<(), TacticAssetError> {
     let canonical = source.canonical_bytes()?;
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V4.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V5.as_bytes());
     hasher.update(family.slug().as_bytes());
     hasher.update((canonical.len() as u64).to_le_bytes());
     hasher.update(canonical);
@@ -363,7 +368,7 @@ fn insert(
 
 fn proposal_draw(context: ParameterizedTacticProposalContext) -> u64 {
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V4.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V5.as_bytes());
     hasher.update(context.seed.to_le_bytes());
     hasher.update(context.decision_index.to_le_bytes());
     hasher.update(context.state_sha256.0);
@@ -577,7 +582,7 @@ mod tests {
         assert!(
             heading_durations
                 .values()
-                .all(|durations| durations == &BTreeSet::from([4]))
+                .all(|durations| durations == &BTreeSet::from([4, 8, 16, 40]))
         );
         assert!(proposals.blueprints.is_empty());
     }
