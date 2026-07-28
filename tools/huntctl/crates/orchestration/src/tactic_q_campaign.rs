@@ -40,7 +40,8 @@ use dusklight_learning::tactic_exploration::{
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_proposals::behavior_archive::{
-    BehaviorArchive, TacticEndpointDescriptor, TacticStateDescriptor, tactic_state_descriptor,
+    BehaviorArchive, MAX_BEHAVIOR_ARCHIVE_ENTRIES, TacticEndpointDescriptor, TacticStateDescriptor,
+    tactic_state_descriptor,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -592,6 +593,28 @@ impl TacticQCampaign {
                 .map_err(|error| TacticQCampaignError::Frontier(error.to_string()))?;
         }
         Ok(archive)
+    }
+
+    /// Count the bounded semantic frontier without cloning every retained
+    /// transition and complete route tape.
+    ///
+    /// Native orchestration records this count after every decision. Building
+    /// the executable archive there made a diagnostic integer perform the
+    /// same allocation-heavy reconstruction used for an actual branch. The
+    /// archive owns one elite per state descriptor, so the count can be
+    /// derived directly and capped by the same archive bound.
+    pub fn frontier_cell_count(&self) -> usize {
+        self.training_replay
+            .iter()
+            .zip(&self.training_episode_groups)
+            .filter(|(transition, episode_group)| {
+                **episode_group != TACTIC_Q_MODEL_ONLY_EPISODE_GROUP
+                    && !transition.value_sample.terminal
+            })
+            .map(|(transition, _)| tactic_state_descriptor(&transition.after, false))
+            .collect::<BTreeSet<_>>()
+            .len()
+            .min(MAX_BEHAVIOR_ARCHIVE_ENTRIES)
     }
 
     pub fn graph(&self) -> Result<TacticCampaignGraph, TacticQCampaignError> {
@@ -3413,14 +3436,17 @@ mod tests {
             .training_episode_groups
             .fill(TACTIC_Q_MODEL_ONLY_EPISODE_GROUP);
         assert_eq!(model_only.frontier_archive().unwrap().tactic_len(), 0);
+        assert_eq!(model_only.frontier_cell_count(), 0);
         let mut demonstration = TacticQCampaign::resume(restored.checkpoint().unwrap()).unwrap();
         demonstration
             .training_episode_groups
             .fill(TACTIC_Q_DEMONSTRATION_EPISODE_GROUP);
         assert_eq!(demonstration.frontier_archive().unwrap().tactic_len(), 1);
+        assert_eq!(demonstration.frontier_cell_count(), 1);
         let mut terminal_leaf = TacticQCampaign::resume(restored.checkpoint().unwrap()).unwrap();
         terminal_leaf.training_replay[0].value_sample.terminal = true;
         assert_eq!(terminal_leaf.frontier_archive().unwrap().tactic_len(), 0);
+        assert_eq!(terminal_leaf.frontier_cell_count(), 0);
         let mut forged_native_frontier = frontier_branch.clone();
         forged_native_frontier.restorable_native_checkpoint =
             Some(RestorableNativeTacticCheckpoint {

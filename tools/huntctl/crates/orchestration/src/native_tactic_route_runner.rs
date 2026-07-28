@@ -3527,10 +3527,7 @@ fn run_seed(
             .first()
             .map(|ranked| ranked.mean_q);
         native_ticks = native_ticks.saturating_add(evaluated_native_ticks);
-        let frontier_cells = campaign
-            .frontier_archive()
-            .map_err(route_error)?
-            .tactic_len();
+        let frontier_cells = campaign.frontier_cell_count();
         let before_features = encoder
             .encode(&step.step.transition.before)
             .map_err(route_error)?;
