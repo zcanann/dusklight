@@ -1,4 +1,3 @@
-
 use super::*;
 use dusklight_route_planner::graph::PLANNER_GRAPH_SCHEMA;
 
