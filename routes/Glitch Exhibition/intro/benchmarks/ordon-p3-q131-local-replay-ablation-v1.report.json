@@ -3,7 +3,7 @@
   "date": "2026-07-28",
   "campaign_control_plane_commit": "4d99a87173dede8f547e52ce29c168a8e469e929",
   "acceptance_passed": false,
-  "conclusion": "Ordinary 131-tick human replay materially improved sample efficiency under the support-aware local fitted-Q treatment, but did not satisfy P3. At the full matched budget, demonstration-assisted learning discovered authenticated terminals in 3/4 seeds while scratch discovered 0/4, increased useful training transitions per wall second by 21%, and increased useful decisions per wall second by 47%. Generated primitive actions improved the best replay-assisted candidate from tick 136 at the diagnostic budget to tick 135 at the full budget, so the learner was not merely replaying the recorded tape. It still failed to beat the tick-131 demonstration, and scratch still required demonstration support to succeed at this capacity. Generic executable-factor coverage did not produce a diagnostic scratch terminal. A subsequent terminal-support-aware cold-start correction increased useful decisions, useful training transitions, and visited states at the full scratch budget, but again found 0/4 terminals and reached the same roughly 1,496-distance plateau. Cold-start acquisition was defective but is not the terminal barrier.",
+  "conclusion": "Ordinary 131-tick human replay materially improved sample efficiency under the support-aware local fitted-Q treatment, but did not satisfy P3. At the full matched budget, demonstration-assisted learning discovered authenticated terminals in 3/4 seeds while scratch discovered 0/4, increased useful training transitions per wall second by 21%, and increased useful decisions per wall second by 47%. Generated primitive actions improved the best replay-assisted candidate from tick 136 at the diagnostic budget to tick 135 at the full budget, so the learner was not merely replaying the recorded tape. It still failed to beat the tick-131 demonstration, and scratch still required demonstration support to succeed at this capacity. Generic executable-factor coverage did not produce a diagnostic scratch terminal. A subsequent terminal-support-aware cold-start correction increased useful decisions, useful training transitions, and visited states at the full scratch budget, but again found 0/4 terminals and reached the same roughly 1,496-distance plateau. Extending relative-heading primitives across 4/8/16/40 ticks further increased useful diagnostic evidence without producing a terminal or matching that depth. Cold-start acquisition and primitive duration coverage were defective but are not the terminal barrier.",
   "fixed_authority": {
     "optimization_request_path": "routes/Glitch Exhibition/intro/benchmarks/ordon-p3-q131-learning-ablation-v1.request.json",
     "optimization_request_sha256": "81a24a41ccf521d186def8556a6c9e6ab38cd047876866ef13e50238660264cc",
@@ -195,6 +195,35 @@
     },
     "conclusion": "The correction increased retained exploration breadth and useful evidence, and reached the old full-budget depth in one diagnostic seed after only 16 decisions. At 64 decisions it still converged on the same approximately 1,496-distance frontier without a terminal. The remaining blocker is downstream of cold-start frontier acquisition."
   },
+  "sustained_heading_follow_up": {
+    "campaign_control_plane_commit": "6814d1f3e62ed88c3a899dfb0bae345e5179828f",
+    "change": "Ordinary relative-heading primitives expose 4, 8, 16, and 40 tick durations instead of only four ticks. This makes heading and duration independently available without embedding a route or assigning movement utility.",
+    "source_report_path": "build/campaigns/ordon-p3-q131-sustained-heading-scratch-4x16-b4-w4-v1-20260728/report.json",
+    "source_report_sha256": "6ccb3b2e2bfc39f82afb8cac861892f302671d1c0a7ad3d6d004a1e010929670",
+    "execution_plan_sha256": "a647d949726428264f091e156c1ace16dbba76e75fcff170ff3c5ea6bbb88580",
+    "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
+    "terminal_seeds": 0,
+    "best_authenticated_tick": null,
+    "native_ticks": 6800,
+    "useful_decisions": 47,
+    "useful_training_transitions": 157,
+    "proposal_transitions": 256,
+    "visited_states_sum": 242,
+    "minimum_proposal_goal_distance_by_seed": {
+      "104729": 1704.7,
+      "130363": 2237.8,
+      "155921": 1902.8,
+      "181081": 1982.1
+    },
+    "cold_start_diagnostic_deltas": {
+      "terminal_seeds": 0,
+      "useful_decisions": 15,
+      "useful_training_transitions": 42,
+      "visited_states_sum": -13,
+      "best_minimum_proposal_goal_distance": 208.4
+    },
+    "conclusion": "Longer ordinary heading actions increased useful retained evidence but did not improve terminal discovery or geometric depth. The best proposal remained farther from the terminal than the cold-start diagnostic, so a full-budget continuation is not justified."
+  },
   "observations": {
     "ordinary_suboptimal_replay_improves_terminal_sample_efficiency": true,
     "generated_policy_differs_from_recorded_tape": true,
@@ -204,6 +233,8 @@
     "demonstration_is_not_required_for_success": false,
     "cold_start_acquisition_increases_useful_evidence": true,
     "cold_start_acquisition_breaks_terminal_plateau": false,
+    "sustained_heading_increases_useful_evidence": true,
+    "sustained_heading_breaks_terminal_plateau": false,
     "p3_task_complete": false
   }
 }

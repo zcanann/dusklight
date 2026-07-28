@@ -102,7 +102,12 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   transitions from `513` to `572`, and visited states from `571` to `668`,
   but still found `0/4` terminals and stopped at the same roughly
   `1,496`-distance frontier. Cold-start acquisition was a real throughput
-  defect, but is not the terminal barrier. Evidence:
+  defect, but is not the terminal barrier. Extending ordinary relative-heading
+  primitives from a fixed four ticks to the same `4/8/16/40` duration lattice
+  increased diagnostic useful decisions from `32` to `47` and useful training
+  transitions from `115` to `157`, but again found `0/4` terminals and
+  regressed the best proposal frontier from roughly `1,496` to `1,705`.
+  Primitive duration coverage also is not the terminal barrier. Evidence:
   `ordon-p3-q131-local-replay-ablation-v1.report.json`.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
