@@ -31,7 +31,6 @@ tools/route-planner/crates/engine/src/orig_world.rs	2094
 tools/route-planner/crates/engine/src/refinement.rs	2544
 tools/route-planner/crates/engine/src/relevance.rs	1776
 tools/route-planner/crates/engine/src/route_book.rs	1595
-tools/route-planner/crates/engine/src/solver.rs	11607
 tools/route-planner/crates/engine/src/state.rs	1655
 tools/route-planner/crates/engine/src/title_boundary.rs	4403
 tools/route-planner/crates/engine/src/transition.rs	2612
