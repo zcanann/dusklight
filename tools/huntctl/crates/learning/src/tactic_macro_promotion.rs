@@ -166,37 +166,40 @@ pub fn discover_replay_macros(
             if width > observation.tape.frames.len() || width > MAX_DISCOVERED_MACRO_TICKS {
                 continue;
             }
-            for start in 0..=observation.tape.frames.len() - width {
-                let tape = InputTape {
-                    boot: observation.tape.boot.clone(),
-                    tick_rate_numerator: observation.tape.tick_rate_numerator,
-                    tick_rate_denominator: observation.tape.tick_rate_denominator,
-                    frames: observation.tape.frames[start..start + width].to_vec(),
-                };
-                let candidate_sha256 = macro_tape_sha256(&tape)?;
-                let bucket = buckets
-                    .entry(candidate_sha256)
-                    .or_insert_with(|| MacroBucket {
-                        tape,
-                        sources: BTreeMap::new(),
-                        terminal_sources: 0,
-                    });
-                if bucket
-                    .sources
-                    .insert(
-                        observation.transition_sha256,
-                        MacroSourceProvenance {
-                            seed: observation.seed,
-                            frontier_state_sha256: observation.frontier_state_sha256,
-                            transition_sha256: observation.transition_sha256,
-                            option_id: observation.option_id.clone(),
-                            entry: observation.entry.clone(),
-                        },
-                    )
-                    .is_none()
-                {
-                    bucket.terminal_sources += usize::from(observation.terminal);
-                }
+            // Only prefixes have an authenticated entry observation without
+            // another native replay. Interior fragments would inherit the
+            // enclosing option's pre-input state and fabricate their entry
+            // condition. Connected decision sequences are mined separately
+            // from exact journal boundaries.
+            let tape = InputTape {
+                boot: observation.tape.boot.clone(),
+                tick_rate_numerator: observation.tape.tick_rate_numerator,
+                tick_rate_denominator: observation.tape.tick_rate_denominator,
+                frames: observation.tape.frames[..width].to_vec(),
+            };
+            let candidate_sha256 = macro_tape_sha256(&tape)?;
+            let bucket = buckets
+                .entry(candidate_sha256)
+                .or_insert_with(|| MacroBucket {
+                    tape,
+                    sources: BTreeMap::new(),
+                    terminal_sources: 0,
+                });
+            if bucket
+                .sources
+                .insert(
+                    observation.transition_sha256,
+                    MacroSourceProvenance {
+                        seed: observation.seed,
+                        frontier_state_sha256: observation.frontier_state_sha256,
+                        transition_sha256: observation.transition_sha256,
+                        option_id: observation.option_id.clone(),
+                        entry: observation.entry.clone(),
+                    },
+                )
+                .is_none()
+            {
+                bucket.terminal_sources += usize::from(observation.terminal);
             }
         }
     }
@@ -571,6 +574,26 @@ mod tests {
         let entry = longest.catalog_entry().unwrap();
         let exact = entry.exact_static_realization().unwrap().unwrap();
         assert_eq!(exact.tape, longest.tape);
+    }
+
+    #[test]
+    fn interior_fragments_without_boundary_observations_are_not_candidates() {
+        let mut left = observation(11, 1, 3);
+        let mut right = observation(13, 2, 4);
+        left.tape.frames[..4]
+            .iter_mut()
+            .for_each(|frame| frame.pads[0].stick_x = -80);
+        right.tape.frames[..4]
+            .iter_mut()
+            .for_each(|frame| frame.pads[0].stick_x = 80);
+        left.tape.frames[4..]
+            .iter_mut()
+            .for_each(|frame| frame.pads[0].stick_x = 40);
+        right.tape.frames[4..]
+            .iter_mut()
+            .for_each(|frame| frame.pads[0].stick_x = 40);
+
+        assert!(discover_replay_macros(&[left, right]).unwrap().is_empty());
     }
 
     #[test]
