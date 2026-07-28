@@ -238,6 +238,7 @@ pub(super) fn retain_bounded_macro_observations(observations: &mut Vec<MacroDisc
     observations.truncate(MAX_DISCOVERY_OBSERVATIONS);
 }
 
+#[derive(Clone)]
 pub(super) struct TacticMacroValidationFrontier {
     pub(super) seed: u64,
     pub(super) state_sha256: Digest,
@@ -259,6 +260,35 @@ pub(super) struct TacticMacroValidationAccounting {
     native_simulation_micros: u64,
     preparation_micros: u64,
     restore: NativeTacticRestoreAccounting,
+}
+
+impl TacticMacroValidationAccounting {
+    fn merge(&mut self, other: &Self) {
+        self.native_ticks = self.native_ticks.saturating_add(other.native_ticks);
+        self.native_simulation_micros = self
+            .native_simulation_micros
+            .saturating_add(other.native_simulation_micros);
+        self.preparation_micros = self
+            .preparation_micros
+            .saturating_add(other.preparation_micros);
+        self.restore.merge(&other.restore);
+    }
+}
+
+struct TacticMacroValidationJob {
+    candidate: DiscoveredMacroCandidate,
+    frontier: TacticMacroValidationFrontier,
+    comparison_index: u64,
+    output_root: PathBuf,
+}
+
+struct TacticMacroValidationResult {
+    candidate_sha256: Digest,
+    frontier_seed: u64,
+    frontier_state_sha256: Digest,
+    candidate_outcome: TacticMacroMeasuredOutcome,
+    primitive_outcome: TacticMacroMeasuredOutcome,
+    accounting: TacticMacroValidationAccounting,
 }
 
 pub(super) fn validate_and_store_tactic_macros(
@@ -285,10 +315,7 @@ pub(super) fn validate_and_store_tactic_macros(
         } else {
             Vec::new()
         };
-    let mut accounting = TacticMacroValidationAccounting::default();
-    let mut validation_state_count = 0_u64;
-    let mut comparison_count = 0_u64;
-    let mut reused_primitive_baseline_count = 0_u64;
+    let mut jobs = Vec::new();
     for candidate in candidates {
         let mut used_seeds = BTreeSet::new();
         let mut used_states = BTreeSet::new();
@@ -309,23 +336,6 @@ pub(super) fn validate_and_store_tactic_macros(
             ) {
                 continue;
             }
-            let primitive_outcome = frontier.primitive_baseline;
-            reused_primitive_baseline_count = reused_primitive_baseline_count.saturating_add(1);
-            let candidate_entry = candidate.catalog_entry().map_err(route_error)?;
-            let candidate_catalog =
-                Arc::new(TacticAssetCatalog::new(vec![candidate_entry]).map_err(route_error)?);
-            let candidate_proposals = candidate_catalog
-                .option_descriptors()
-                .cloned()
-                .map(|descriptor| SelectedTactic {
-                    schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
-                    learner_snapshot_sha256: frontier.state_sha256,
-                    decision_index: comparison_index,
-                    descriptor,
-                    reason: TacticSelectionReason::BatchDiversity,
-                    exploration_draw: 0,
-                })
-                .collect::<Vec<_>>();
             let validation_root = config
                 .output_root
                 .join("tactic-macro-validation")
@@ -334,53 +344,61 @@ pub(super) fn validate_and_store_tactic_macros(
                     "seed-{}-comparison-{comparison_index:02}",
                     frontier.seed
                 ));
-            let outcomes = evaluate_tactic_macro_validation_batch(
-                pool,
-                candidate_catalog,
-                Arc::new(Vec::new()),
-                &candidate_proposals,
-                frontier,
-                encoder,
-                &validation_root,
-                &mut accounting,
-            )?;
-            let [(option_id, candidate_outcome)] = outcomes.as_slice() else {
-                return Err(route_message(
-                    "macro validation candidate batch did not produce one outcome",
-                ));
-            };
-            if option_id != &candidate.option_id {
-                return Err(route_message(
-                    "macro validation candidate outcome identity is detached",
-                ));
-            }
-            mined
-                .registry
-                .observe(
-                    MacroComparisonEvidence::new(
-                        candidate.candidate_sha256,
-                        frontier.seed,
-                        frontier.state_sha256,
-                        candidate_outcome.terminal,
-                        candidate_outcome.progress,
-                        candidate_outcome.ticks,
-                        primitive_outcome.terminal,
-                        primitive_outcome.progress,
-                        primitive_outcome.ticks,
-                    )
-                    .map_err(route_error)?,
-                )
-                .map_err(route_error)?;
+            jobs.push(TacticMacroValidationJob {
+                candidate: candidate.clone(),
+                frontier: frontier.clone(),
+                comparison_index,
+                output_root: validation_root,
+            });
             used_seeds.insert(frontier.seed);
             used_states.insert(frontier.state_sha256);
-            validation_state_count = validation_state_count.saturating_add(1);
-            comparison_count = comparison_count.saturating_add(1);
             comparison_index = comparison_index.saturating_add(1);
             if comparison_index >= 2 {
                 break;
             }
         }
     }
+    let results = std::thread::scope(|scope| {
+        let handles = jobs
+            .into_iter()
+            .map(|job| {
+                let pool = pool.clone();
+                scope.spawn(move || run_tactic_macro_validation_job(&pool, encoder, job))
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .map_err(|_| route_message("tactic macro validation worker panicked"))?
+            })
+            .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()
+    })?;
+    let mut accounting = TacticMacroValidationAccounting::default();
+    for result in &results {
+        accounting.merge(&result.accounting);
+        mined
+            .registry
+            .observe(
+                MacroComparisonEvidence::new(
+                    result.candidate_sha256,
+                    result.frontier_seed,
+                    result.frontier_state_sha256,
+                    result.candidate_outcome.terminal,
+                    result.candidate_outcome.progress,
+                    result.candidate_outcome.ticks,
+                    result.primitive_outcome.terminal,
+                    result.primitive_outcome.progress,
+                    result.primitive_outcome.ticks,
+                )
+                .map_err(route_error)?,
+            )
+            .map_err(route_error)?;
+    }
+    let validation_state_count = results.len() as u64;
+    let comparison_count = results.len() as u64;
+    let reused_primitive_baseline_count = results.len() as u64;
     let validated_path = config.output_root.join(format!(
         "tactic-macros-validated.{TACTIC_MACRO_REGISTRY_EXTENSION}"
     ));
@@ -428,6 +446,57 @@ pub(super) fn validate_and_store_tactic_macros(
     mined.report.registry_path = path_text(&validated_path);
     mined.report.registry_sha256 = registry_sha256;
     Ok(mined.report)
+}
+
+fn run_tactic_macro_validation_job(
+    pool: &NativeTacticProposalPool,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+    job: TacticMacroValidationJob,
+) -> Result<TacticMacroValidationResult, NativeTacticRouteRunError> {
+    let candidate_entry = job.candidate.catalog_entry().map_err(route_error)?;
+    let candidate_catalog =
+        Arc::new(TacticAssetCatalog::new(vec![candidate_entry]).map_err(route_error)?);
+    let candidate_proposals = candidate_catalog
+        .option_descriptors()
+        .cloned()
+        .map(|descriptor| SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: job.frontier.state_sha256,
+            decision_index: job.comparison_index,
+            descriptor,
+            reason: TacticSelectionReason::BatchDiversity,
+            exploration_draw: 0,
+        })
+        .collect::<Vec<_>>();
+    let mut accounting = TacticMacroValidationAccounting::default();
+    let outcomes = evaluate_tactic_macro_validation_batch(
+        pool,
+        candidate_catalog,
+        Arc::new(Vec::new()),
+        &candidate_proposals,
+        &job.frontier,
+        encoder,
+        &job.output_root,
+        &mut accounting,
+    )?;
+    let [(option_id, candidate_outcome)] = outcomes.as_slice() else {
+        return Err(route_message(
+            "macro validation candidate batch did not produce one outcome",
+        ));
+    };
+    if option_id != &job.candidate.option_id {
+        return Err(route_message(
+            "macro validation candidate outcome identity is detached",
+        ));
+    }
+    Ok(TacticMacroValidationResult {
+        candidate_sha256: job.candidate.candidate_sha256,
+        frontier_seed: job.frontier.seed,
+        frontier_state_sha256: job.frontier.state_sha256,
+        candidate_outcome: *candidate_outcome,
+        primitive_outcome: job.frontier.primitive_baseline,
+        accounting,
+    })
 }
 
 pub(super) fn tactic_macro_promotion_has_seed_support(exploration_seeds: &[u64]) -> bool {
