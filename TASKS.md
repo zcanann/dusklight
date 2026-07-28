@@ -35,10 +35,10 @@ at tick `125`.
   four-lane run reported a 100% cache-hit rate and about 27.5 ms mean restore,
   but multi-lane orchestration still spends too much time rebuilding and
   persisting frontiers.
-- A four-lane run is one generation. Its lanes share the input corpus but not
-  each other's new experience; only a later generation consumes the merged
-  results. One-generation results must not be described as online shared
-  learning.
+- The historical four-lane benchmark used a deterministic generation barrier:
+  its lanes shared the input corpus but not each other's new experience.
+  Bounded-staleness online sharing now exists, but has not yet been measured on
+  this benchmark.
 
 A terminal hit, a reliable terminal hit, a 125 tie, or a faster search for the
 same tie is diagnostic evidence only.
@@ -75,7 +75,7 @@ same tie is diagnostic evidence only.
 - First-hit comparisons must bind the same source checkpoint, terminal
   predicate, game bytes, card fixture, fidelity, and source boundary.
 
-## P1 - Build a real shared replay and learner control plane
+## P1 - Finish shared replay capacity evidence
 
 - [ ] Measure learner updates per second, useful transitions per update, and
       explicitly censored rows. Replay admission latency, exact duplicates,
@@ -84,8 +84,6 @@ same tie is diagnostic evidence only.
 
 Acceptance:
 
-- A second lane can learn from a first lane's admitted transition at the next
-  declared sharing boundary.
 - Scaling worker count increases useful learner updates instead of merely
   multiplying independent searches.
 
