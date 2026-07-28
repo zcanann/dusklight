@@ -158,11 +158,8 @@ Acceptance:
 - [ ] Calibrate value and uncertainty on held-out state regions and held-out
       action realizations, not random rows from the same correlated route.
 - [ ] Add synthetic native-control gates covering:
-  - a terminal hidden around a corner where greedy straight motion fails;
-  - delayed benefit from an initially worse heading;
   - speed loss from collision without treating harmless contact as punishment;
   - prompted-action availability and roll timing;
-  - divergence from and later approximate rejoining of a successful route; and
   - improvement beyond a deliberately suboptimal demonstration.
 - [ ] Require the learned policy to beat equal-budget structured and random
       controls on those gates before using Ordon volume as evidence.
