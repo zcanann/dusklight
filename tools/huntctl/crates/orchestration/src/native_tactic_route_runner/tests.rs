@@ -798,13 +798,14 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
 #[test]
 fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
     let mut first = NativeTacticRestoreAccounting {
-        native_requests: 3,
+        native_requests: 4,
         authenticated_root_restore_requests: 1,
         direct_process_local_restore_requests: 2,
+        direct_process_local_continuation_requests: 1,
         direct_restore_fallback_replays: 1,
         prefix_materializations: 1,
         replayed_prefix_ticks: 40,
-        restore_samples: 3,
+        restore_samples: 4,
         restore_micros: 30,
         cache_hits: 2,
         cache_misses: 1,
@@ -812,10 +813,15 @@ fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
         checkpoint_capture_attempts: 3,
         checkpoint_capture_successes: 2,
         checkpoint_capture_micros: 50,
+        live_endpoint_retention_attempts: 1,
+        live_endpoint_retention_successes: 1,
+        live_endpoint_retention_nanos: 100,
         peak_resident_entries: 2,
         peak_resident_bytes: 600,
         peak_resident_checkpoint_bytes: 590,
         peak_resident_host_snapshot_bytes: 10,
+        peak_live_endpoint_entries: 1,
+        peak_live_endpoint_host_snapshot_bytes: 64,
         proposal_transitions: 2,
         useful_transitions: 1,
         ..NativeTacticRestoreAccounting::default()
@@ -832,10 +838,15 @@ fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
         checkpoint_capture_attempts: 1,
         checkpoint_capture_successes: 1,
         checkpoint_capture_micros: 20,
+        live_endpoint_retention_attempts: 1,
+        live_endpoint_retention_successes: 1,
+        live_endpoint_retention_nanos: 50,
         peak_resident_entries: 1,
         peak_resident_bytes: 300,
         peak_resident_checkpoint_bytes: 295,
         peak_resident_host_snapshot_bytes: 5,
+        peak_live_endpoint_entries: 1,
+        peak_live_endpoint_host_snapshot_bytes: 32,
         proposal_transitions: 2,
         useful_transitions: 2,
         ..NativeTacticRestoreAccounting::default()
@@ -844,19 +855,24 @@ fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
 
     first.merge(&second);
 
-    assert_eq!(first.native_requests, 4);
-    assert_eq!(first.restore_samples, 4);
+    assert_eq!(first.native_requests, 5);
+    assert_eq!(first.restore_samples, 5);
     assert_eq!(first.restore_micros, 60);
-    assert_eq!(first.mean_restore_micros, 15);
-    assert_eq!(first.direct_restore_request_rate_per_million, 500_000);
+    assert_eq!(first.mean_restore_micros, 12);
+    assert_eq!(first.direct_restore_request_rate_per_million, 600_000);
     assert_eq!(first.direct_restore_fallback_replays, 3);
     assert_eq!(first.cache_hit_rate_per_million, 500_000);
     assert_eq!(first.cache_evictions, 7);
     assert_eq!(first.replayed_prefix_ticks, 40);
+    assert_eq!(first.live_endpoint_retention_attempts, 2);
+    assert_eq!(first.live_endpoint_retention_successes, 2);
+    assert_eq!(first.live_endpoint_retention_nanos, 150);
+    assert_eq!(first.peak_live_endpoint_entries, 1);
+    assert_eq!(first.peak_live_endpoint_host_snapshot_bytes, 64);
     assert_eq!(first.peak_resident_bytes, 600);
     assert_eq!(first.proposal_transitions, 4);
     assert_eq!(first.useful_transitions, 3);
-    assert_eq!(first.useful_transitions_per_restore_millionths, 750_000);
+    assert_eq!(first.useful_transitions_per_restore_millionths, 600_000);
 }
 
 #[test]

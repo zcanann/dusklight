@@ -77,6 +77,12 @@ pub enum NativeTacticCheckpointRetention {
     LiveEndpoint,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeTacticCheckpointStorage {
+    PortableImage,
+    LiveEndpoint,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeTacticWorkerPaths {
     pub request: PathBuf,
@@ -88,6 +94,7 @@ pub struct NativeTacticCheckpointSource {
     pub restore_identity: String,
     pub boundary_fingerprint: String,
     pub route_ticks: usize,
+    pub storage: NativeTacticCheckpointStorage,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -301,6 +308,7 @@ pub fn materialize_tactic_frontier<W: PersistentTacticBatchWorker>(
                 .terminal_boundary_fingerprint
                 .clone(),
             route_ticks: replay_frames.len(),
+            storage: NativeTacticCheckpointStorage::PortableImage,
         },
         episode_shard_sha256: shard.content_sha256,
     })

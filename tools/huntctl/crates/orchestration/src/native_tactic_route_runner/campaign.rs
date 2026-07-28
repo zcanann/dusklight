@@ -676,6 +676,15 @@ pub(super) fn run_seed(
                         restore_identity: checkpoint.restore_identity.clone(),
                         boundary_fingerprint: boundary_fingerprint.clone(),
                         route_ticks: checkpoint.route_ticks as usize,
+                        storage: match checkpoint.storage_kind.as_str() {
+                            "portable_image" => NativeTacticCheckpointStorage::PortableImage,
+                            "live_endpoint" => NativeTacticCheckpointStorage::LiveEndpoint,
+                            _ => {
+                                return Err(route_message(
+                                    "retained native checkpoint has an unknown storage kind",
+                                ));
+                            }
+                        },
                     },
                     state_sha256: step.step.transition.after_state_sha256,
                     route_frames: winning_outcome.route_tape.frames.len(),

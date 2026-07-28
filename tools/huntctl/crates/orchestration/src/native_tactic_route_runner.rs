@@ -8,9 +8,10 @@ use crate::native_suffix_worker::{
 };
 use crate::native_tactic_worker::{
     NativeGenericExecutionStrategy, NativeTacticCheckpointRetention, NativeTacticCheckpointSource,
-    NativeTacticWorkerError, NativeTacticWorkerOutcome, NativeTacticWorkerPaths,
-    PersistentTacticBatchWorker, execute_selected_tactic_with_checkpoint_retention_and_strategy,
-    materialize_tactic_frontier, tactic_root_checkpoint_sha256,
+    NativeTacticCheckpointStorage, NativeTacticWorkerError, NativeTacticWorkerOutcome,
+    NativeTacticWorkerPaths, PersistentTacticBatchWorker,
+    execute_selected_tactic_with_checkpoint_retention_and_strategy, materialize_tactic_frontier,
+    tactic_root_checkpoint_sha256,
 };
 use crate::optimization_request::OptimizationRequest;
 use crate::tactic_macro_store::{

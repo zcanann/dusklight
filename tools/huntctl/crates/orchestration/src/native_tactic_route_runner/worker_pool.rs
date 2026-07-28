@@ -375,7 +375,7 @@ impl<'a, W> TimedTacticWorker<'a, W> {
                 "tactic batch cache accounting",
             ));
         };
-        let direct_restore = match cache.source_kind.as_str() {
+        let expected_cache_hit = match cache.source_kind.as_str() {
             "authenticated_root_restore" => {
                 self.pending_accounting.authenticated_root_restore_requests = self
                     .pending_accounting
@@ -390,6 +390,14 @@ impl<'a, W> TimedTacticWorker<'a, W> {
                     .direct_process_local_restore_requests
                     .saturating_add(1);
                 true
+            }
+            "direct_process_local_continuation" => {
+                self.pending_accounting
+                    .direct_process_local_continuation_requests = self
+                    .pending_accounting
+                    .direct_process_local_continuation_requests
+                    .saturating_add(1);
+                false
             }
             _ => {
                 return Err(NativeTacticWorkerError::DetachedResult(
@@ -412,7 +420,7 @@ impl<'a, W> TimedTacticWorker<'a, W> {
         self.prior_cache_hits = cache.hits;
         self.prior_cache_misses = cache.misses;
         self.prior_cache_evictions = cache.evictions;
-        if cache_misses != 0 || direct_restore != (cache_hits != 0) {
+        if cache_misses != 0 || expected_cache_hit != (cache_hits != 0) {
             return Err(NativeTacticWorkerError::DetachedResult(
                 "tactic cache lookup accounting",
             ));
@@ -441,6 +449,18 @@ impl<'a, W> TimedTacticWorker<'a, W> {
             .pending_accounting
             .checkpoint_capture_micros
             .saturating_add(cache.batch_capture_micros);
+        self.pending_accounting.live_endpoint_retention_attempts = self
+            .pending_accounting
+            .live_endpoint_retention_attempts
+            .saturating_add(cache.batch_live_retention_attempts);
+        self.pending_accounting.live_endpoint_retention_successes = self
+            .pending_accounting
+            .live_endpoint_retention_successes
+            .saturating_add(cache.batch_live_retention_successes);
+        self.pending_accounting.live_endpoint_retention_nanos = self
+            .pending_accounting
+            .live_endpoint_retention_nanos
+            .saturating_add(cache.batch_live_retention_nanos);
         self.pending_accounting.peak_resident_entries = self
             .pending_accounting
             .peak_resident_entries
@@ -457,6 +477,15 @@ impl<'a, W> TimedTacticWorker<'a, W> {
             .pending_accounting
             .peak_resident_host_snapshot_bytes
             .max(cache.resident_host_snapshot_bytes);
+        self.pending_accounting.peak_live_endpoint_entries = self
+            .pending_accounting
+            .peak_live_endpoint_entries
+            .max(cache.live_endpoint_resident_entries);
+        self.pending_accounting
+            .peak_live_endpoint_host_snapshot_bytes = self
+            .pending_accounting
+            .peak_live_endpoint_host_snapshot_bytes
+            .max(cache.live_endpoint_resident_host_snapshot_bytes);
         Ok(())
     }
 }
@@ -501,7 +530,7 @@ pub(super) struct NativeTacticProposalJob {
     source_route_tape: InputTape,
     checkpoint_source: Option<NativeTacticCheckpointSource>,
     materialize_frontier: bool,
-    retain_primary_checkpoint: bool,
+    primary_retention: NativeTacticCheckpointRetention,
     execution_strategy: NativeGenericExecutionStrategy,
     paths_root: PathBuf,
     response: mpsc::SyncSender<Result<Vec<NativeTacticProposalWork>, NativeTacticRouteRunError>>,
@@ -539,6 +568,31 @@ pub(super) struct CachedTacticFrontier {
     pub(super) route_frames: usize,
 }
 
+fn primary_checkpoint_retention(
+    retain: bool,
+    proposal_count: usize,
+) -> NativeTacticCheckpointRetention {
+    if !retain {
+        NativeTacticCheckpointRetention::None
+    } else if proposal_count == 1 {
+        NativeTacticCheckpointRetention::LiveEndpoint
+    } else {
+        NativeTacticCheckpointRetention::PortableImage
+    }
+}
+
+fn direct_frontier_eligible(
+    direct_restore_enabled: bool,
+    worker_count: usize,
+    proposal_count: usize,
+    frontier: &CachedTacticFrontier,
+) -> bool {
+    direct_restore_enabled
+        && frontier.worker_slot < worker_count
+        && !(frontier.source.storage == NativeTacticCheckpointStorage::LiveEndpoint
+            && proposal_count > 1)
+}
+
 impl NativeTacticProposalPool {
     pub(super) fn execute_batch(
         &self,
@@ -557,6 +611,8 @@ impl NativeTacticProposalPool {
         if proposals.is_empty() {
             return Err(route_message("native tactic proposal batch is empty"));
         }
+        let primary_retention =
+            primary_checkpoint_retention(retain_primary_checkpoint, proposals.len());
         let replayed_prefix = source_route_tape
             .frames
             .len()
@@ -564,7 +620,12 @@ impl NativeTacticProposalPool {
             .ok_or_else(|| route_message("tactic route precedes its authenticated root"))?;
         if replayed_prefix != 0 {
             let direct = cached_frontier.filter(|frontier| {
-                self.direct_restore_enabled && frontier.worker_slot < self.senders.len()
+                direct_frontier_eligible(
+                    self.direct_restore_enabled,
+                    self.senders.len(),
+                    proposals.len(),
+                    frontier,
+                )
             });
             let worker_slot = direct.map_or_else(
                 || self.next_worker.fetch_add(1, Ordering::Relaxed) % self.senders.len(),
@@ -589,7 +650,7 @@ impl NativeTacticProposalPool {
                     source_route_tape: source_route_tape.clone(),
                     checkpoint_source: direct.map(|frontier| frontier.source.clone()),
                     materialize_frontier: direct.is_none(),
-                    retain_primary_checkpoint,
+                    primary_retention,
                     execution_strategy: self.execution_strategy,
                     paths_root: paths_root.to_path_buf(),
                     response,
@@ -617,7 +678,11 @@ impl NativeTacticProposalPool {
                     source_route_tape: source_route_tape.clone(),
                     checkpoint_source: None,
                     materialize_frontier: false,
-                    retain_primary_checkpoint: retain_primary_checkpoint && proposal_index == 0,
+                    primary_retention: if proposal_index == 0 {
+                        primary_retention
+                    } else {
+                        NativeTacticCheckpointRetention::None
+                    },
                     execution_strategy: self.execution_strategy,
                     paths_root: paths_root.to_path_buf(),
                     response,
@@ -1118,8 +1183,8 @@ pub(super) fn run_tactic_proposal_worker(
                     request: proposal_root.join("request.json"),
                     result: proposal_root.join("result.json"),
                 },
-                if job.retain_primary_checkpoint && proposal.proposal_index == 0 {
-                    NativeTacticCheckpointRetention::PortableImage
+                if proposal.proposal_index == 0 {
+                    job.primary_retention
                 } else {
                     NativeTacticCheckpointRetention::None
                 },
@@ -1163,8 +1228,8 @@ pub(super) fn run_tactic_proposal_worker(
                         request: fallback_root.join("request.json"),
                         result: fallback_root.join("result.json"),
                     },
-                    if job.retain_primary_checkpoint && proposal.proposal_index == 0 {
-                        NativeTacticCheckpointRetention::PortableImage
+                    if proposal.proposal_index == 0 {
+                        job.primary_retention
                     } else {
                         NativeTacticCheckpointRetention::None
                     },
@@ -1285,5 +1350,42 @@ mod tests {
         assert_eq!(accounting.prefix_materializations, 1);
         assert_eq!(accounting.replayed_prefix_ticks, 24);
         assert_eq!(accounting.direct_restore_fallback_replays, 1);
+    }
+
+    #[test]
+    fn only_single_proposal_decisions_retain_a_single_use_live_endpoint() {
+        assert_eq!(
+            primary_checkpoint_retention(true, 1),
+            NativeTacticCheckpointRetention::LiveEndpoint
+        );
+        assert_eq!(
+            primary_checkpoint_retention(true, 4),
+            NativeTacticCheckpointRetention::PortableImage
+        );
+        assert_eq!(
+            primary_checkpoint_retention(false, 1),
+            NativeTacticCheckpointRetention::None
+        );
+    }
+
+    #[test]
+    fn live_frontiers_are_not_misused_as_multi_proposal_branch_images() {
+        let frontier = CachedTacticFrontier {
+            worker_slot: 1,
+            source: NativeTacticCheckpointSource {
+                restore_identity: "a".repeat(32),
+                boundary_fingerprint: "b".repeat(32),
+                route_ticks: 40,
+                storage: NativeTacticCheckpointStorage::LiveEndpoint,
+            },
+            state_sha256: Digest([3; 32]),
+            route_frames: 546,
+        };
+        assert!(direct_frontier_eligible(true, 2, 1, &frontier));
+        assert!(!direct_frontier_eligible(true, 2, 2, &frontier));
+
+        let mut portable = frontier;
+        portable.source.storage = NativeTacticCheckpointStorage::PortableImage;
+        assert!(direct_frontier_eligible(true, 2, 4, &portable));
     }
 }

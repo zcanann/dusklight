@@ -158,6 +158,7 @@ fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
         restore_identity: "a".repeat(32),
         boundary_fingerprint: "b".repeat(32),
         route_ticks: 40,
+        storage: NativeTacticCheckpointStorage::PortableImage,
     };
     let restored = tactic_batch(
         &identity,

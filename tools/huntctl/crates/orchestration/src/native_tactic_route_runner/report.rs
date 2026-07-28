@@ -222,6 +222,8 @@ pub struct NativeTacticRestoreAccounting {
     pub native_requests: u64,
     pub authenticated_root_restore_requests: u64,
     pub direct_process_local_restore_requests: u64,
+    #[serde(default)]
+    pub direct_process_local_continuation_requests: u64,
     /// Direct requests whose owner-local handle had been evicted and were
     /// reconstructed by exact authenticated-root replay.
     #[serde(default)]
@@ -245,10 +247,20 @@ pub struct NativeTacticRestoreAccounting {
     pub checkpoint_capture_attempts: u64,
     pub checkpoint_capture_successes: u64,
     pub checkpoint_capture_micros: u64,
+    #[serde(default)]
+    pub live_endpoint_retention_attempts: u64,
+    #[serde(default)]
+    pub live_endpoint_retention_successes: u64,
+    #[serde(default)]
+    pub live_endpoint_retention_nanos: u64,
     pub peak_resident_entries: u64,
     pub peak_resident_bytes: u64,
     pub peak_resident_checkpoint_bytes: u64,
     pub peak_resident_host_snapshot_bytes: u64,
+    #[serde(default)]
+    pub peak_live_endpoint_entries: u64,
+    #[serde(default)]
+    pub peak_live_endpoint_host_snapshot_bytes: u64,
     /// Logical proposal outcomes admitted to batch evaluation. A transition is
     /// useful when it reaches terminal, has positive shaped reward, or reduces
     /// goal distance from its shared source.
@@ -266,6 +278,9 @@ impl NativeTacticRestoreAccounting {
         self.direct_process_local_restore_requests = self
             .direct_process_local_restore_requests
             .saturating_add(other.direct_process_local_restore_requests);
+        self.direct_process_local_continuation_requests = self
+            .direct_process_local_continuation_requests
+            .saturating_add(other.direct_process_local_continuation_requests);
         self.direct_restore_fallback_replays = self
             .direct_restore_fallback_replays
             .saturating_add(other.direct_restore_fallback_replays);
@@ -289,6 +304,15 @@ impl NativeTacticRestoreAccounting {
         self.checkpoint_capture_micros = self
             .checkpoint_capture_micros
             .saturating_add(other.checkpoint_capture_micros);
+        self.live_endpoint_retention_attempts = self
+            .live_endpoint_retention_attempts
+            .saturating_add(other.live_endpoint_retention_attempts);
+        self.live_endpoint_retention_successes = self
+            .live_endpoint_retention_successes
+            .saturating_add(other.live_endpoint_retention_successes);
+        self.live_endpoint_retention_nanos = self
+            .live_endpoint_retention_nanos
+            .saturating_add(other.live_endpoint_retention_nanos);
         self.peak_resident_entries = self.peak_resident_entries.max(other.peak_resident_entries);
         self.peak_resident_bytes = self.peak_resident_bytes.max(other.peak_resident_bytes);
         self.peak_resident_checkpoint_bytes = self
@@ -297,6 +321,12 @@ impl NativeTacticRestoreAccounting {
         self.peak_resident_host_snapshot_bytes = self
             .peak_resident_host_snapshot_bytes
             .max(other.peak_resident_host_snapshot_bytes);
+        self.peak_live_endpoint_entries = self
+            .peak_live_endpoint_entries
+            .max(other.peak_live_endpoint_entries);
+        self.peak_live_endpoint_host_snapshot_bytes = self
+            .peak_live_endpoint_host_snapshot_bytes
+            .max(other.peak_live_endpoint_host_snapshot_bytes);
         self.proposal_transitions = self
             .proposal_transitions
             .saturating_add(other.proposal_transitions);
@@ -312,7 +342,8 @@ impl NativeTacticRestoreAccounting {
             .checked_div(self.restore_samples)
             .unwrap_or(0);
         self.direct_restore_request_rate_per_million = ratio_per_million(
-            self.direct_process_local_restore_requests,
+            self.direct_process_local_restore_requests
+                .saturating_add(self.direct_process_local_continuation_requests),
             self.native_requests,
         );
         self.cache_hit_rate_per_million = ratio_per_million(
