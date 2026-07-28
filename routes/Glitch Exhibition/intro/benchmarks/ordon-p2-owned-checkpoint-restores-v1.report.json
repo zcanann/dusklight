@@ -1,0 +1,122 @@
+{
+  "schema": "dusklight-owned-checkpoint-restore-report/v1",
+  "date": "2026-07-28",
+  "source_commit": "4988ec41ba9882da6a1b347361faf6569de32c8f",
+  "acceptance_passed": true,
+  "conclusion": "Multi-seed campaigns now retain the policy-selected native endpoint, route each ordinary follow-up to the checkpoint's owning persistent worker, and reconstruct evicted handles by exact authenticated-root replay. All four lanes traced authenticated_root, process_local_checkpoint, process_local_checkpoint. Six of eight planned process-local follow-ups encountered bounded-cache eviction and completed through the explicit fallback instead of aborting.",
+  "platform": {
+    "operating_system": "macOS 26.5.1 (25F80)",
+    "architecture": "arm64",
+    "processor": "Apple M4 Pro",
+    "physical_cpus": 14,
+    "logical_cpus": 14,
+    "memory_bytes": 51539607552
+  },
+  "provenance": {
+    "optimization_request_sha256": "0c71fb96d17e6371f0badbd3514361b7683b5935ec5f24e08767764cbac2863f",
+    "execution_binding_sha256": "a4b523b681de6ea795b7ff912e717c985feaaadb1fcdc070f12e913f7b2a2711",
+    "execution_plan_sha256": "8b6e1b71cb10cdf0a4469bf79501c735fe9afb6265b91b42f94a23056e4daa58",
+    "objective_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57",
+    "feature_schema_sha256": "ce93f724ae070dd5732d58a8fae1ac5c56af96881c40e30ef0b0095b66b49d06",
+    "action_schema_sha256": "d1ef788806eba299aae6651e24ccfb76ad9f2b4fdd7f7f96787a1ee5a156810a",
+    "huntctl_sha256": "cc48977cae1c69c4ef106176bdd9527201f4afab80e386237fdaf445a088ae69",
+    "source_report_sha256": "7b581e24dec5345559485b426e787600af35a77d0e5300221ebaad6d35bb573c",
+    "replay_snapshot_sha256": "e7916ee5189cbccab679d39c3f87587962dde7d4ac4668ad65de57195fab126a"
+  },
+  "plan": {
+    "proposal_policy": "learned",
+    "execution_strategy": "native_controller",
+    "workers": 2,
+    "seeds": [
+      95094580,
+      95094581,
+      95094582,
+      95094583
+    ],
+    "lanes_per_generation": 4,
+    "decisions_per_seed": 3,
+    "proposals_per_decision": 1,
+    "branch_every_decisions": 3,
+    "refit_every_decisions": 1,
+    "maximum_stale_replay_revisions": 0,
+    "checkpoint_ownership": "worker_local",
+    "checkpoint_fallback": "authenticated_root_replay",
+    "cross_decision_direct_restore": true,
+    "cache_capacity_bytes_per_worker": 671088640,
+    "cache_capacity_entries_per_worker": 2
+  },
+  "campaign": {
+    "total_decisions": 12,
+    "total_native_ticks": 1300,
+    "useful_decisions": 8,
+    "useful_training_transitions": 8,
+    "wall_micros": 129958796,
+    "native_requests": 18,
+    "authenticated_root_restore_requests": 10,
+    "direct_process_local_restore_requests": 8,
+    "direct_restore_fallback_replays": 6,
+    "prefix_materializations": 6,
+    "replayed_prefix_ticks": 204,
+    "restore_micros": 93888,
+    "cache_hits": 16,
+    "cache_misses": 6,
+    "cache_evictions": 14,
+    "checkpoint_capture_attempts": 18,
+    "checkpoint_capture_successes": 18,
+    "checkpoint_capture_micros": 54237608,
+    "peak_resident_entries_per_worker": 2,
+    "peak_resident_bytes_per_worker": 589389944,
+    "restore_sources_by_seed": [
+      {
+        "seed": 95094580,
+        "sources": [
+          "authenticated_root",
+          "process_local_checkpoint",
+          "process_local_checkpoint"
+        ]
+      },
+      {
+        "seed": 95094581,
+        "sources": [
+          "authenticated_root",
+          "process_local_checkpoint",
+          "process_local_checkpoint"
+        ]
+      },
+      {
+        "seed": 95094582,
+        "sources": [
+          "authenticated_root",
+          "process_local_checkpoint",
+          "process_local_checkpoint"
+        ]
+      },
+      {
+        "seed": 95094583,
+        "sources": [
+          "authenticated_root",
+          "process_local_checkpoint",
+          "process_local_checkpoint"
+        ]
+      }
+    ]
+  },
+  "full_measured_boundary": {
+    "native_requests": 94,
+    "authenticated_root_restore_requests": 48,
+    "direct_process_local_restore_requests": 46,
+    "direct_restore_fallback_replays": 6,
+    "prefix_materializations": 44,
+    "replayed_prefix_ticks": 1116,
+    "restore_micros": 469952,
+    "cache_hits": 92,
+    "cache_misses": 6,
+    "cache_evictions": 34,
+    "checkpoint_capture_attempts": 56,
+    "checkpoint_capture_successes": 56,
+    "checkpoint_capture_micros": 176743302,
+    "peak_resident_entries_per_worker": 2,
+    "peak_resident_bytes_per_worker": 589389944
+  },
+  "remaining_p2_evidence": "This closes worker ownership and the multi-seed enablement tasks. It does not close byte-identical direct-versus-replay parity, process-loss recovery, representative early/middle/late phase decomposition, or the checkpoint-residency audit. Capture cost and eviction pressure remain explicit follow-up work."
+}

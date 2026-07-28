@@ -45,6 +45,15 @@ at tick `125`.
   validation wall time fell from 192.7 seconds at one worker to 96.2 seconds at
   two and 49.1 seconds at four. Full measured wall time fell from 417.2 to
   288.5 to 222.2 seconds.
+- Multi-seed lanes now retain the policy-selected endpoint and route follow-up
+  work to its owning persistent worker. A two-worker/four-seed macOS stress run
+  traced every lane as authenticated root, process-local checkpoint,
+  process-local checkpoint. Six of eight follow-ups encountered explicitly
+  reported bounded-cache eviction and reconstructed the exact source by
+  authenticated replay instead of aborting.
+- Checkpoint capture is now the measured P2 bottleneck. The 12-decision stress
+  run spent 54.2 seconds capturing 18 campaign checkpoints; its two-entry,
+  640-MiB-per-worker caches evicted 14 entries during campaign work.
 
 A terminal hit, a reliable terminal hit, a 125 tie, or a faster search for the
 same tie is diagnostic evidence only.
@@ -86,10 +95,6 @@ same tie is diagnostic evidence only.
 - [ ] Benchmark, separately, process launch, authenticated-root replay,
       process-local restore, host snapshot transfer, fact extraction, and
       checkpoint capture at representative early, middle, and late frontiers.
-- [ ] Keep process-local checkpoint handles owned by persistent workers and
-      route follow-up jobs to the owning worker.
-- [ ] Remove the current coupling that disables cross-decision direct restore
-      merely because a campaign has multiple seeds.
 - [ ] Add a bounded checkpoint residency policy with explicit byte accounting,
       eviction, replay fallback, and no hidden unbounded emulator copies.
 - [ ] Preserve exact portable replay reconstruction for evicted or
