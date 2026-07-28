@@ -198,31 +198,57 @@
   "sustained_heading_follow_up": {
     "campaign_control_plane_commit": "6814d1f3e62ed88c3a899dfb0bae345e5179828f",
     "change": "Ordinary relative-heading primitives expose 4, 8, 16, and 40 tick durations instead of only four ticks. This makes heading and duration independently available without embedding a route or assigning movement utility.",
-    "source_report_path": "build/campaigns/ordon-p3-q131-sustained-heading-scratch-4x16-b4-w4-v1-20260728/report.json",
-    "source_report_sha256": "6ccb3b2e2bfc39f82afb8cac861892f302671d1c0a7ad3d6d004a1e010929670",
-    "execution_plan_sha256": "a647d949726428264f091e156c1ace16dbba76e75fcff170ff3c5ea6bbb88580",
     "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
-    "terminal_seeds": 0,
-    "best_authenticated_tick": null,
-    "native_ticks": 6800,
-    "useful_decisions": 47,
-    "useful_training_transitions": 157,
-    "proposal_transitions": 256,
-    "visited_states_sum": 242,
-    "minimum_proposal_goal_distance_by_seed": {
-      "104729": 1704.7,
-      "130363": 2237.8,
-      "155921": 1902.8,
-      "181081": 1982.1
-    },
-    "cold_start_diagnostic_deltas": {
+    "diagnostic": {
+      "source_report_path": "build/campaigns/ordon-p3-q131-sustained-heading-scratch-4x16-b4-w4-v1-20260728/report.json",
+      "source_report_sha256": "6ccb3b2e2bfc39f82afb8cac861892f302671d1c0a7ad3d6d004a1e010929670",
+      "execution_plan_sha256": "a647d949726428264f091e156c1ace16dbba76e75fcff170ff3c5ea6bbb88580",
       "terminal_seeds": 0,
-      "useful_decisions": 15,
-      "useful_training_transitions": 42,
-      "visited_states_sum": -13,
-      "best_minimum_proposal_goal_distance": 208.4
+      "best_authenticated_tick": null,
+      "native_ticks": 6800,
+      "useful_decisions": 47,
+      "useful_training_transitions": 157,
+      "proposal_transitions": 256,
+      "visited_states_sum": 242,
+      "minimum_proposal_goal_distance_by_seed": {
+        "104729": 1704.7,
+        "130363": 2237.8,
+        "155921": 1902.8,
+        "181081": 1982.1
+      },
+      "cold_start_diagnostic_deltas": {
+        "terminal_seeds": 0,
+        "useful_decisions": 15,
+        "useful_training_transitions": 42,
+        "visited_states_sum": -13,
+        "best_minimum_proposal_goal_distance": 208.4
+      }
     },
-    "conclusion": "Longer ordinary heading actions increased useful retained evidence but did not improve terminal discovery or geometric depth. The best proposal remained farther from the terminal than the cold-start diagnostic, so a full-budget continuation is not justified."
+    "coverage_saturation_probe": {
+      "source_report_path": "build/campaigns/ordon-p3-q131-heading-duration-scratch-1x64-b8-w4-v2-20260728/report.json",
+      "source_report_sha256": "fe376d00d09ac59672d4a6bdb77c0c4f4a4dd9405682e676e88307d136d1a094",
+      "execution_plan_sha256": "7dda28e4b33e4b22cf337a9f1bfdd29dcf140b96a3babfa5c5032fefb0347a19",
+      "seed": 104729,
+      "decisions": 64,
+      "proposals_per_decision": 8,
+      "terminal_discovered": false,
+      "best_authenticated_tick": null,
+      "native_ticks": 7272,
+      "useful_decisions": 38,
+      "useful_training_transitions": 296,
+      "proposal_transitions": 511,
+      "visited_states": 36,
+      "minimum_proposal_goal_distance": 1496.1,
+      "relative_heading_proposals": 54,
+      "relative_heading_duration_counts": {
+        "4": 17,
+        "8": 20,
+        "16": 8,
+        "40": 9
+      },
+      "minimum_relative_heading_goal_distance": 1713.9
+    },
+    "conclusion": "Longer ordinary heading actions increased useful retained evidence but did not improve terminal discovery or geometric depth. A full 64-decision single-seed probe widened every decision to eight proposals, evaluated all four heading durations repeatedly, and still converged on the same approximately 1,496-distance frontier. Simple duration-lattice under-sampling is not the terminal barrier."
   },
   "observations": {
     "ordinary_suboptimal_replay_improves_terminal_sample_efficiency": true,
