@@ -100,9 +100,8 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   for the coarse replay, while visited states increased from `555` to `745`.
   Ordinary suboptimal replay therefore improves terminal sample efficiency and
   does not cap the learned policy: generated actions beat the `131` sample.
-  P3 still fails because scratch still requires replay support to succeed at
-  this capacity. A subsequent generic cold-start correction stopped treating
-  pre-terminal sparse action cost as goal evidence and instead acquired
+  A subsequent generic cold-start correction stopped treating pre-terminal
+  sparse action cost as goal evidence and instead acquired
   least-expanded, semantically diverse frontiers. At the full matched scratch
   budget it increased useful decisions from `128` to `153`, useful training
   transitions from `513` to `572`, and visited states from `571` to `668`,
@@ -142,6 +141,18 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   discovery horizon. The next diagnostic is therefore a larger discovery
   horizon with native terminal, promotion, and final tick authority unchanged,
   not more mining at the truncated horizon. Evidence:
+  `ordon-p3-q131-local-replay-ablation-v1.report.json`.
+- The `160`-tick discovery horizon was only `5.3` seconds at 30 Hz and
+  invalidated the inference that scratch could not reach the terminal. A
+  sealed `256`-tick scratch probe found and retained a real load-zone hit at
+  tick `206` on decision `15`. By decision `20`, learned terminal value caused
+  the policy to greedily select a terminal-producing action at Q `98.824`;
+  `10` later retained-frontier acquisitions had native terminal support. No
+  demonstration transitions or authored route coordinates were used. Scratch
+  terminal learning is therefore real and replay-independent, but the route is
+  still slow and only one seed has succeeded. Discovery horizons must be
+  generous or adaptive; the `131`/`125` thresholds govern shortening and
+  promotion, not whether initial exploration may continue. Evidence:
   `ordon-p3-q131-local-replay-ablation-v1.report.json`.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
@@ -187,11 +198,13 @@ tie is diagnostic evidence only.
 
 ## P3 - Prove delayed-credit continuous-control learning
 
-- [ ] Use ordinary suboptimal human replay as optional state-coverage and
-      delayed-credit evidence, not as a movement policy to clone. Demonstrate
-      improved terminal sample efficiency, a learned policy that beats the
-      replay by discovering its own compositions, and from-scratch success
-      without replay support.
+- [ ] Replace the incumbent-adjacent fixed discovery horizon with a generous
+      or adaptive terminal-discovery horizon. Retain intermediate native states
+      and terminal evidence, then shorten learned successful routes under the
+      separate `131`/`125` promotion authority.
+- [ ] Make scratch terminal discovery reliable across independent seeds and
+      use learned terminal return to shorten the authenticated tick-`206`
+      scratch route below the tick-`131` demonstration.
 
 Exit gate:
 

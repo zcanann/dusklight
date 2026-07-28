@@ -3,7 +3,7 @@
   "date": "2026-07-28",
   "campaign_control_plane_commit": "4d99a87173dede8f547e52ce29c168a8e469e929",
   "acceptance_passed": false,
-  "conclusion": "Ordinary 131-tick human replay materially improved sample efficiency under the support-aware local fitted-Q treatment, but did not satisfy P3. At the full matched budget, demonstration-assisted learning discovered authenticated terminals in 3/4 seeds while scratch discovered 0/4, increased useful training transitions per wall second by 21%, and increased useful decisions per wall second by 47%. Generated primitive actions improved the best replay-assisted candidate from tick 136 at the diagnostic budget to tick 135 at the full budget, so the learner was not merely replaying the recorded tape. It still failed to beat the tick-131 demonstration, and scratch still required demonstration support to succeed at this capacity. Generic executable-factor coverage did not produce a diagnostic scratch terminal. A subsequent terminal-support-aware cold-start correction increased useful decisions, useful training transitions, and visited states at the full scratch budget, but again found 0/4 terminals and reached the same roughly 1,496-distance plateau. Extending relative-heading primitives across 4/8/16/40 ticks further increased useful diagnostic evidence without producing a terminal or matching that depth. Cold-start acquisition and primitive duration coverage were defective but are not the terminal barrier.",
+  "conclusion": "Four-tick demonstration exposure proved that ordinary 131-tick human replay can improve terminal sample efficiency without capping the generated policy: the learner retained a tick-130 authenticated candidate. More importantly, the prior scratch failures were confounded by a 160-tick per-route discovery cap. A scratch-only 256-tick focused probe found and retained a real load-zone terminal at tick 206, propagated terminal value, and subsequently chose terminal-producing actions greedily. Scratch terminal learning is therefore real and does not require replay support. P3 remains incomplete because scratch success is not yet reliable and the scratch policy has not shortened its route below the 131-tick demonstration.",
   "fixed_authority": {
     "optimization_request_path": "routes/Glitch Exhibition/intro/benchmarks/ordon-p3-q131-learning-ablation-v1.request.json",
     "optimization_request_sha256": "81a24a41ccf521d186def8556a6c9e6ab38cd047876866ef13e50238660264cc",
@@ -559,7 +559,81 @@
       "scratch_reaches_terminal": false,
       "p3_exit_gate_passed": false
     },
-    "conclusion": "Finer replay state/action resolution raised terminal discovery from 3/4 to 4/4 and improved the best generated candidate from tick 135 to tick 130, strictly beating the ordinary tick-131 sample. The policy is not capped by replay and does not execute recorded chunks. Scratch remains 0/4, so replay is still required for success at current capacity and P3 remains open."
+    "conclusion": "Finer replay state/action resolution raised terminal discovery from 3/4 to 4/4 and improved the best generated candidate from tick 135 to tick 130, strictly beating the ordinary tick-131 sample. The policy is not capped by replay and does not execute recorded chunks. Scratch remained 0/4 under the later-proven-confounded 160-tick discovery horizon; the expanded-horizon follow-up records replay-independent scratch success."
+  },
+  "discovery_horizon_follow_up": {
+    "change": "The per-route discovery horizon is treated as terminal-discovery capacity, independently of the unchanged 131-tick promotion threshold and final route objective.",
+    "confounded_control": {
+      "exploration_horizon_ticks": 160,
+      "wall_seconds_at_30_hz": 5.333333,
+      "source_report_path": "build/campaigns/ordon-p3-q131-goal-relabel-frontier-spatial-4x64-b4-w4-v1-20260728/report.json",
+      "source_report_sha256": "fe105bf67ebd933f924a018ad6d7e8998613db836718fa85c7eda79b7153aa5e",
+      "terminal_seeds": 0,
+      "maximum_route_suffix_ticks": 160,
+      "interpretation": "The earlier no-terminal result cannot distinguish learner failure from route truncation because its deepest useful route consumed the complete discovery horizon."
+    },
+    "sealed_treatment_authority": {
+      "optimization_request_path": "routes/Glitch Exhibition/intro/benchmarks/ordon-p3-q131-horizon-256-v1.request.json",
+      "optimization_request_sha256": "740575071ffcfc417cae4fbb087a1aade4847bacd9362c97a74053e15d3efc77",
+      "execution_binding_path": "build/campaigns/ordon-p3-q131-horizon-256-execution-v1-20260728/execution.json",
+      "execution_binding_sha256": "e6a5f42501b19ba9c3ded8d709f5d72ccd25b461742ffbbfa6f9754e33e8a3f5",
+      "exploration_horizon_ticks": 256,
+      "wall_seconds_at_30_hz": 8.533333,
+      "promotion_before_tick": 131,
+      "simulated_tick_budget": 327812,
+      "terminal_predicate_unchanged": true,
+      "authored_route_coordinates_used": false
+    },
+    "short_diagnostic": {
+      "source_report_path": "build/campaigns/ordon-p3-q131-horizon256-goal-relabel-frontier-spatial-4x16-b4-w4-v1-20260728/report.json",
+      "source_report_sha256": "df02e530ec648471776132e94251ebb822cacc1c947f53177f341bb26d19aa81",
+      "execution_plan_sha256": "268fab04f5c81c49d85ead7fd87fb43b1cc0d864890cfbc8099eebdda8628023",
+      "terminal_seeds": 0,
+      "maximum_route_suffix_ticks": 148,
+      "useful_decisions": 35,
+      "useful_training_transitions": 139,
+      "interpretation": "The 16-decision cell never assembled a route longer than the old 160-tick cap and therefore did not exercise the treatment variable."
+    },
+    "focused_scratch_probe": {
+      "source_report_path": "build/campaigns/ordon-p3-q131-horizon256-goal-relabel-frontier-spatial-1x64-b4-w1-v1-20260728/report.json",
+      "source_report_sha256": "c47d45d15bf4d268aef712303b4b3cc595b1b485019afe4e32ac7fad027f6a27",
+      "execution_plan_sha256": "3840514e0800c38db63b75bda64cc1adf53086f19b3f7042eefc2389df4e6260",
+      "seed": 155921,
+      "terminal_seeds": 1,
+      "best_authenticated_tick": 206,
+      "promotion_successful_seeds": 0,
+      "native_ticks": 3337,
+      "useful_decisions": 34,
+      "useful_training_transitions": 147,
+      "proposal_transitions": 256,
+      "training_replay_rows": 235,
+      "visited_states": 26,
+      "maximum_route_suffix_ticks": 234,
+      "wall_micros": 182460074,
+      "model_update_micros": 13093312,
+      "first_terminal_proposal": {
+        "decision_index": 15,
+        "route_suffix_ticks": 200,
+        "option_id": "family/seek-target/5b03429dbc48bb9dd3e0",
+        "selection_reason": "unsupported_bootstrap",
+        "retained_independently_of_policy_selection": true
+      },
+      "first_greedy_terminal_selection": {
+        "decision_index": 20,
+        "route_suffix_ticks": 208,
+        "option_id": "family/seek-target/5b03429dbc48bb9dd3e0",
+        "selected_q": 98.82394421057617,
+        "terminal": true
+      },
+      "retained_frontier_acquisitions": 13,
+      "achieved_goal_value_supported_acquisitions": 3,
+      "terminal_value_supported_acquisitions": 10,
+      "best_terminal_tape_path": "build/campaigns/ordon-p3-q131-horizon256-goal-relabel-frontier-spatial-1x64-b4-w1-v1-20260728/seed-000-155921/best-terminal.tape",
+      "best_terminal_tape_sha256": "3105781a6c9b6af2e03f97de89b949bb0e76655f675f28381a59981acad26bdf",
+      "best_terminal_result_path": "build/campaigns/ordon-p3-q131-horizon256-goal-relabel-frontier-spatial-1x64-b4-w1-v1-20260728/seed-000-155921/best-terminal-result.dtqz",
+      "best_terminal_result_sha256": "f36c3ecf7216dfb151c51aa6b7f837b7dd672f467333da55bb26e71114ba00d4"
+    },
+    "conclusion": "The learner reached the real terminal from scratch as soon as a route was allowed to exceed 160 ticks, retained a terminal found outside policy selection, propagated its value, and then selected terminal-producing actions greedily. Prior 160-tick scratch failures were horizon-confounded. Future discovery must use a generous or adaptive horizon; strict 131/125 authority applies only to shortening and promotion."
   },
   "observations": {
     "ordinary_suboptimal_replay_improves_terminal_sample_efficiency": true,
@@ -567,8 +641,8 @@
     "generated_policy_improves_over_its_first_discovered_terminal": true,
     "generated_policy_beats_demonstration": true,
     "fine_replay_resolution_improves_terminal_discovery": true,
-    "scratch_reaches_terminal": false,
-    "demonstration_is_not_required_for_success": false,
+    "scratch_reaches_terminal": true,
+    "demonstration_is_not_required_for_success": true,
     "cold_start_acquisition_increases_useful_evidence": true,
     "cold_start_acquisition_breaks_terminal_plateau": false,
     "sustained_heading_increases_useful_evidence": true,
@@ -580,6 +654,8 @@
     "spatial_reachability_breaks_recorded_geometric_plateau": true,
     "spatial_reachability_breaks_terminal_plateau": false,
     "best_spatial_route_is_discovery_horizon_limited": true,
+    "prior_scratch_failures_are_discovery_horizon_confounded": true,
+    "expanded_horizon_enables_scratch_terminal_learning": true,
     "p3_task_complete": false
   }
 }
