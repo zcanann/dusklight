@@ -17,7 +17,7 @@ use crate::tactic_macro_store::{
     TACTIC_MACRO_REGISTRY_EXTENSION, read_tactic_macro_registry, write_tactic_macro_registry,
 };
 use crate::tactic_q_campaign::{
-    TACTIC_Q_CHECKPOINT_EXTENSION, TACTIC_Q_MODEL_ONLY_EPISODE_GROUP, TacticCampaignDiagnostics,
+    TACTIC_Q_CHECKPOINT_EXTENSION, TACTIC_Q_DEMONSTRATION_EPISODE_GROUP, TacticCampaignDiagnostics,
     TacticCampaignGraphProjection, TacticCampaignGraphProjectionEdge,
     TacticCampaignGraphProjectionNode, TacticFrontierAcquisition, TacticQCampaign,
     TacticQCampaignError, TacticQDecision, TacticQTrainingCorpus, has_no_progress_loop,
@@ -94,6 +94,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V16: &str = "dusklight-native-tactic-route-report/v16";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V17: &str = "dusklight-native-tactic-route-report/v17";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V18: &str = "dusklight-native-tactic-route-report/v18";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19: &str = "dusklight-native-tactic-route-report/v19";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -951,7 +952,7 @@ pub fn run_native_tactic_route(
             },
         );
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V18.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -2534,7 +2535,7 @@ fn load_or_capture_demonstration(
         route = outcome.route_tape;
         transitions.push(transition);
         routes.push(route.clone());
-        episode_groups.push(TACTIC_Q_MODEL_ONLY_EPISODE_GROUP);
+        episode_groups.push(TACTIC_Q_DEMONSTRATION_EPISODE_GROUP);
         if outcome.terminal {
             first_hit_tick = outcome_first_hit_tick;
             restore_accounting.useful_transitions =
@@ -2635,7 +2636,7 @@ fn demonstration_corpus_is_attached(
         || corpus
             .episode_groups
             .iter()
-            .any(|group| *group != TACTIC_Q_MODEL_ONLY_EPISODE_GROUP)
+            .any(|group| *group != TACTIC_Q_DEMONSTRATION_EPISODE_GROUP)
     {
         return false;
     }
@@ -3084,6 +3085,12 @@ fn run_seed(
     };
     let maximum_tactic_ticks = u64::from(maximum_tactic_ticks);
     let encode = |facts: &FactSnapshot| encoder.encode(facts);
+    let demonstration_curriculum = generalized_acquisition_partition(seed_index) == 0
+        && shared_training.iter().any(|corpus| {
+            corpus
+                .episode_groups
+                .contains(&TACTIC_Q_DEMONSTRATION_EPISODE_GROUP)
+        });
     let checkpoint_root = seed_root.join("checkpoints");
     let checkpoint_content_root = tactic_content_store_path(&seed_root);
     let decision_content_store =
@@ -3127,6 +3134,7 @@ fn run_seed(
                     frontier_sampling_round(episode),
                     &[],
                     maximum_frontier_frames,
+                    demonstration_curriculum,
                     encoder.goal_distance_feature(),
                     &encode,
                     &|state| {
@@ -3271,6 +3279,7 @@ fn run_seed(
                     frontier_sampling_round(episode),
                     &[],
                     maximum_frontier_frames,
+                    demonstration_curriculum,
                     encoder.goal_distance_feature(),
                     &encode,
                     &|state| {
