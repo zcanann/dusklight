@@ -157,6 +157,11 @@ tie is diagnostic evidence only.
 
 ## P3 - Prove delayed-credit continuous-control learning
 
+- [ ] Run a matched scratch ablation of the goal-relabeled fitted-Q treatment.
+      It must learn only negative native ticks to exact replay-achieved goals,
+      generalize that return to the authored goal-conditioned state, and retain
+      zero terminal/promotion authority until native evaluation reaches the
+      real terminal.
 - [ ] Demonstrate that ordinary suboptimal human replay improves sample
       efficiency without capping the policy or becoming required for success.
 

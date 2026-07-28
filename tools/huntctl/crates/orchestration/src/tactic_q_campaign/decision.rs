@@ -249,10 +249,14 @@ impl TacticQCampaign {
             let terminal_support_acquisition = acquisition_partition == 0 || force_exploration;
             if let Some(goal_distance_feature) = goal_distance_feature {
                 let ranked_applicable = match self.value_treatment {
-                    TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => self
+                    TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+                    | TacticValueTreatment::GoalRelabeledFittedQKnnV2 => self
                         .generalized_model(goal_distance_feature)?
                         .map(|model| {
-                            if terminal_support_acquisition {
+                            if terminal_support_acquisition
+                                && self.value_treatment
+                                    == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+                            {
                                 model.rank_terminal_support(
                                     &features,
                                     &context,

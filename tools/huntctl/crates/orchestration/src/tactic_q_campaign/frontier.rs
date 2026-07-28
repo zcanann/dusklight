@@ -401,8 +401,11 @@ impl TacticQCampaign {
         let tie_offset = seeded_frontier_index(seed, round, choices.len());
         let choice_count = choices.len();
         let generalized_model = if !demonstration_curriculum
-            && self.value_treatment == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
-        {
+            && matches!(
+                self.value_treatment,
+                TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+                    | TacticValueTreatment::GoalRelabeledFittedQKnnV2
+            ) {
             self.generalized_model(goal_distance_feature)?
         } else {
             None

@@ -74,11 +74,14 @@ fn value_treatment(learn_args: &[String]) -> Result<TacticValueTreatment, Box<dy
         None | Some("local_generalized_fitted_q_knn") => {
             Ok(TacticValueTreatment::LocalGeneralizedFittedQKnnV1)
         }
+        Some("goal_relabeled_fitted_q_knn") => {
+            Ok(TacticValueTreatment::GoalRelabeledFittedQKnnV2)
+        }
         Some("continuous_fitted_q_forest") => {
             Ok(TacticValueTreatment::ContinuousFittedQForestV1)
         }
         Some(value) => Err(format!(
-            "unsupported --value-treatment {value:?}; expected continuous_fitted_q_forest or local_generalized_fitted_q_knn"
+            "unsupported --value-treatment {value:?}; expected continuous_fitted_q_forest, goal_relabeled_fitted_q_knn, or local_generalized_fitted_q_knn"
         )
         .into()),
     }
@@ -123,10 +126,18 @@ mod tests {
     }
 
     #[test]
-    fn local_knn_is_default_and_continuous_forest_remains_an_explicit_control() {
+    fn local_knn_is_default_and_alternate_treatments_are_explicit() {
         assert_eq!(
             value_treatment(&[]).unwrap(),
             TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+        );
+        assert_eq!(
+            value_treatment(&[
+                "--value-treatment".into(),
+                "goal_relabeled_fitted_q_knn".into(),
+            ])
+            .unwrap(),
+            TacticValueTreatment::GoalRelabeledFittedQKnnV2
         );
         assert_eq!(
             value_treatment(&[

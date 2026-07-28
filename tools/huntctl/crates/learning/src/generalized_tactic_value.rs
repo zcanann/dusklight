@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
+mod achieved_goal;
 pub(crate) mod fitted_q;
 pub(crate) mod prediction;
 
@@ -289,6 +290,21 @@ pub struct GeneralizedTacticValueModel {
 }
 
 impl GeneralizedTacticValueModel {
+    /// Fits a universal goal-conditioned acquisition model from goals that
+    /// native exploration actually reached.
+    ///
+    /// Each exact replay endpoint becomes a temporary coordinate goal. Exact
+    /// predecessor edges receive the negative native ticks required to reach
+    /// that endpoint. The resulting rows train ordinary state/action return
+    /// prediction, but carry no terminal-support authority for the authored
+    /// objective.
+    pub fn fit_achieved_goal_returns(
+        transitions: &[OptionTransitionSample],
+        goal_distance_feature: usize,
+    ) -> Result<Self, GeneralizedTacticValueError> {
+        achieved_goal::fit(transitions, goal_distance_feature)
+    }
+
     pub fn fit_transitions(
         transitions: &[OptionTransitionSample],
         goal_distance_feature: usize,

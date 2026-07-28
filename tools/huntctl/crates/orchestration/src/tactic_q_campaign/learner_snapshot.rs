@@ -135,19 +135,26 @@ impl TacticQImmutableLearnerSnapshot {
             &model_config,
         )?
         .map(Arc::new);
-        let generalized_model = if corpus.transitions.len() >= 2
-            && value_treatment == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
-        {
-            Some(Arc::new(
-                GeneralizedTacticValueModel::fit_fitted_q_transitions(
-                    &corpus.transitions,
-                    goal_distance_feature,
-                    model_config.fitted_q.iterations,
-                    model_config.fitted_q.discount,
-                )?,
-            ))
-        } else {
+        let generalized_model = if corpus.transitions.len() < 2 {
             None
+        } else {
+            match value_treatment {
+                TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => Some(Arc::new(
+                    GeneralizedTacticValueModel::fit_fitted_q_transitions(
+                        &corpus.transitions,
+                        goal_distance_feature,
+                        model_config.fitted_q.iterations,
+                        model_config.fitted_q.discount,
+                    )?,
+                )),
+                TacticValueTreatment::GoalRelabeledFittedQKnnV2 => Some(Arc::new(
+                    GeneralizedTacticValueModel::fit_achieved_goal_returns(
+                        &corpus.transitions,
+                        goal_distance_feature,
+                    )?,
+                )),
+                TacticValueTreatment::ContinuousFittedQForestV1 => None,
+            }
         };
         let continuous_model = if corpus.transitions.len() >= 2
             && value_treatment == TacticValueTreatment::ContinuousFittedQForestV1

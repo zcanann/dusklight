@@ -68,6 +68,51 @@ fn generalized_context_ignores_absolute_replay_position() {
     );
 }
 
+#[test]
+fn achieved_goal_relabeling_learns_direction_without_native_terminal_support() {
+    let mut east = transition(
+        "east",
+        -std::f32::consts::FRAC_PI_2,
+        [0.0, 0.0],
+        [10.0, 0.0],
+        3,
+        3,
+        -0.01,
+        false,
+        0,
+    );
+    let mut north = transition("north", 0.0, [0.0, 0.0], [0.0, 10.0], 3, 3, -0.01, false, 0);
+    let target = east.after.player.position_f32_bits.map(f32::from_bits);
+    let encoder = GoalConditionedTacticFeatureEncoder::new(target).unwrap();
+    for row in [&mut east, &mut north] {
+        row.feature_schema_sha256 = encoder.schema_sha256;
+        row.value_sample.state = encoder.encode(&row.before).unwrap();
+        row.value_sample.next_state = encoder.encode(&row.after).unwrap();
+    }
+    let state = encoder.encode(&east.before).unwrap();
+    let context = GeneralizedTacticContext::from_facts(&east.before).unwrap();
+    let actions = [
+        east.value_sample.action.clone(),
+        north.value_sample.action.clone(),
+    ];
+
+    let ranked = GeneralizedTacticValueModel::fit_achieved_goal_returns(
+        &[east, north],
+        encoder.goal_distance_feature(),
+    )
+    .unwrap()
+    .rank(&state, &context, &actions)
+    .unwrap();
+
+    assert_eq!(ranked[0].descriptor.option_id, "east");
+    assert_eq!(ranked[0].outcome.terminal, 0.0);
+    assert!(ranked.iter().all(|estimate| {
+        estimate.terminal_support_distance.is_none()
+            && estimate.outcome.reward.is_finite()
+            && estimate.outcome.reward < 0.0
+    }));
+}
+
 fn set_player_state(facts: &mut FactSnapshot, x: f32, z: f32, procedure: u16) {
     facts.player.position_f32_bits[0] = x.to_bits();
     facts.player.position_f32_bits[2] = z.to_bits();

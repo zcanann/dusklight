@@ -23,6 +23,7 @@ const CONTINUOUS_FOREST_SEED: u64 = 0x4754_4351_4649_0001;
 pub enum TacticValueTreatment {
     #[default]
     LocalGeneralizedFittedQKnnV1,
+    GoalRelabeledFittedQKnnV2,
     ContinuousFittedQForestV1,
 }
 
