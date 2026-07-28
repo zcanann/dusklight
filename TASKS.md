@@ -132,10 +132,6 @@ Acceptance:
 
 ## P3 - Prove that the learner solves delayed continuous-control credit
 
-- [ ] Audit the complete state/action feature path. Verify that typed
-      kinematics, past-only trajectory, momentum loss, contacts, camera state,
-      prompted-action availability, action phase, and action composition are
-      present, masked correctly, and not leaked from the future.
 - [ ] Audit normalization and distance weighting so high-cardinality or mostly
       irrelevant fields cannot swamp movement-relevant variation.
 - [ ] Compare the current local generalized model against at least:
