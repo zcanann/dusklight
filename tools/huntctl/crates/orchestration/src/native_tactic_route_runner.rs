@@ -24,6 +24,9 @@ use crate::tactic_q_campaign::{
     has_no_progress_loop, route_checkpoint,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
+use crate::tactic_replay_control_plane::{
+    TacticReplayAdmissionOutcome, TacticReplayControlPlane, TacticReplayControlPlaneIdentity,
+};
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState};
 use dusklight_control::option_execution::{OptionParameter, OptionType};
@@ -96,9 +99,11 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V17: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V18: &str = "dusklight-native-tactic-route-report/v18";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19: &str = "dusklight-native-tactic-route-report/v19";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V20: &str = "dusklight-native-tactic-route-report/v20";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V21: &str = "dusklight-native-tactic-route-report/v21";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
+pub const NATIVE_TACTIC_REPLAY_CONTROL_PLANE_FILE: &str = "campaign-replay.dtrp";
 pub const NATIVE_TACTIC_CONTENT_STORE_DIRECTORY: &str = "objects";
 const NATIVE_TACTIC_DEMONSTRATION_CORPUS_FILE: &str = "demonstration-training.dtqc";
 const NATIVE_TACTIC_DEMONSTRATION_REPORT_FILE: &str = "demonstration-report.json";
@@ -314,6 +319,34 @@ pub fn run_native_tactic_route(
     let reward_spec = route_tactic_reward_spec();
     let root_source_frame = usize::try_from(initial_facts.tape_frame)
         .map_err(|_| route_message("native tactic source frame exceeds platform limits"))?;
+    let replay_control_plane_path = config
+        .output_root
+        .join(NATIVE_TACTIC_REPLAY_CONTROL_PLANE_FILE);
+    let replay_control_plane_identity = TacticReplayControlPlaneIdentity::new(
+        execution_plan_sha256,
+        encoder.schema_sha256,
+        config.optimization.terminal_predicate.definition_sha256,
+        root_checkpoint_sha256,
+    )
+    .map_err(route_error)?;
+    let replay_content_root = config
+        .output_root
+        .join(NATIVE_TACTIC_CONTENT_STORE_DIRECTORY);
+    let mut replay_control_plane = if replay_control_plane_path.exists() {
+        TacticReplayControlPlane::open(
+            &replay_control_plane_path,
+            &replay_content_root,
+            &replay_control_plane_identity,
+        )
+        .map_err(route_error)?
+    } else {
+        TacticReplayControlPlane::create(
+            &replay_control_plane_path,
+            &replay_content_root,
+            replay_control_plane_identity,
+        )
+        .map_err(route_error)?
+    };
 
     let (mut indexed_results, tactic_macro_discovery, shared_training_replay_rows, demonstration) =
         std::thread::scope(|scope| {
@@ -340,7 +373,6 @@ pub fn run_native_tactic_route(
             };
             let coordinator_results = (|| {
                 let mut results = Vec::with_capacity(config.execution_plan.lanes.len());
-                let mut shared_training = Vec::<TacticQTrainingCorpus>::new();
                 let demonstration = load_or_capture_demonstration(
                     config,
                     &pool,
@@ -352,11 +384,18 @@ pub fn run_native_tactic_route(
                     root_checkpoint_sha256,
                 )?;
                 let demonstration_report = demonstration.as_ref().map(|value| value.report.clone());
-                if let Some(demonstration) = demonstration {
-                    shared_training.push(demonstration.corpus);
+                if let Some(demonstration) = &demonstration {
+                    publish_demonstration_replay(&mut replay_control_plane, demonstration)?;
                 }
                 for generation in &config.execution_plan.generations {
-                    let inherited_training = shared_training.as_slice();
+                    let barrier_revision = deterministic_generation_barrier_revision(
+                        &replay_control_plane,
+                        generation,
+                    )?;
+                    let inherited_snapshot = replay_control_plane
+                        .snapshot_through(barrier_revision)
+                        .map_err(route_error)?;
+                    let inherited_training = std::slice::from_ref(&inherited_snapshot.corpus);
                     let mut generation_results = std::thread::scope(|generation_scope| {
                         let coordinator_handles = generation
                             .lane_indices
@@ -402,7 +441,7 @@ pub fn run_native_tactic_route(
                     })?;
                     generation_results.sort_by_key(|(seed_index, _)| *seed_index);
                     for (_, completion) in &generation_results {
-                        shared_training.push(completion.generated_training.clone());
+                        publish_completed_seed_replay(&mut replay_control_plane, completion)?;
                     }
                     results.extend(
                         generation_results
@@ -423,8 +462,7 @@ pub fn run_native_tactic_route(
                         mined,
                     )
                 })()?;
-                let shared_training_replay_rows =
-                    shared_training_unique_rows(&shared_training)? as u64;
+                let shared_training_replay_rows = replay_control_plane.len() as u64;
                 Ok((
                     results,
                     completion,
@@ -511,12 +549,16 @@ pub fn run_native_tactic_route(
                 total
             },
         );
+    let final_replay_snapshot = replay_control_plane.replay_snapshot();
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V20.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V21.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
         execution_plan_path: path_text(&execution_plan_path),
+        replay_control_plane_path: path_text(&replay_control_plane_path),
+        replay_revision: final_replay_snapshot.revision,
+        replay_snapshot_sha256: final_replay_snapshot.sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
         feature_schema_sha256: encoder.schema_sha256,
         action_schema_sha256,
@@ -579,6 +621,12 @@ pub fn run_native_tactic_route(
 
 mod macro_discovery;
 use macro_discovery::{mine_and_store_tactic_macros, validate_and_store_tactic_macros};
+
+mod replay_sharing;
+use replay_sharing::{
+    deterministic_generation_barrier_revision, publish_completed_seed_replay,
+    publish_demonstration_replay,
+};
 
 mod worker_pool;
 use worker_pool::{

@@ -136,6 +136,17 @@ pub struct TacticReplaySnapshot {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TacticReplayAdmissionMetadata {
+    pub sequence: u64,
+    pub publisher_lane: u32,
+    pub publisher_decision: u64,
+    pub learner_snapshot_sha256: Digest,
+    pub transition_identity_sha256: Digest,
+    pub episode_group: u64,
+    pub replay_snapshot: TacticReplaySnapshotVersion,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TacticReplayAdmissionOutcome {
     Admitted {
         sequence: u64,
@@ -485,6 +496,24 @@ impl TacticReplayControlPlane {
         self.replay_snapshot
     }
 
+    pub fn admissions(&self) -> Vec<TacticReplayAdmissionMetadata> {
+        self.entries
+            .iter()
+            .map(|entry| TacticReplayAdmissionMetadata {
+                sequence: entry.sequence,
+                publisher_lane: entry.publisher_lane,
+                publisher_decision: entry.publisher_decision,
+                learner_snapshot_sha256: entry.learner_snapshot_sha256,
+                transition_identity_sha256: entry.transition_identity_sha256,
+                episode_group: entry.episode_group,
+                replay_snapshot: TacticReplaySnapshotVersion {
+                    revision: entry.sequence + 1,
+                    sha256: entry.replay_snapshot_sha256,
+                },
+            })
+            .collect()
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -494,7 +523,34 @@ impl TacticReplayControlPlane {
     }
 
     pub fn snapshot(&self) -> Result<TacticReplaySnapshot, TacticReplayControlPlaneError> {
-        self.snapshot_from(0)
+        self.snapshot_through(self.replay_snapshot.revision)
+    }
+
+    /// Materialize the immutable replay prefix at an exact admitted revision.
+    ///
+    /// Deterministic generation barriers use this to keep a valid, partially
+    /// published next generation invisible after an interrupted resume.
+    pub fn snapshot_through(
+        &self,
+        revision: u64,
+    ) -> Result<TacticReplaySnapshot, TacticReplayControlPlaneError> {
+        let end = usize::try_from(revision).map_err(|_| {
+            TacticReplayControlPlaneError::Invalid("replay snapshot revision overflows")
+        })?;
+        if end > self.entries.len() {
+            return Err(TacticReplayControlPlaneError::Invalid(
+                "replay snapshot revision is outside the journal",
+            ));
+        }
+        let version = if end == 0 {
+            initial_snapshot_version(&self.identity)?
+        } else {
+            TacticReplaySnapshotVersion {
+                revision,
+                sha256: self.entries[end - 1].replay_snapshot_sha256,
+            }
+        };
+        self.materialize_snapshot(&self.entries[..end], version)
     }
 
     pub fn snapshot_from(
@@ -509,10 +565,18 @@ impl TacticReplayControlPlane {
                 "replay snapshot offset is outside the journal",
             ));
         }
-        let mut transitions = Vec::with_capacity(self.entries.len() - first);
-        let mut routes = Vec::with_capacity(self.entries.len() - first);
-        let mut episode_groups = Vec::with_capacity(self.entries.len() - first);
-        for entry in &self.entries[first..] {
+        self.materialize_snapshot(&self.entries[first..], self.replay_snapshot)
+    }
+
+    fn materialize_snapshot(
+        &self,
+        entries: &[StoredTacticReplayAdmission],
+        version: TacticReplaySnapshotVersion,
+    ) -> Result<TacticReplaySnapshot, TacticReplayControlPlaneError> {
+        let mut transitions = Vec::with_capacity(entries.len());
+        let mut routes = Vec::with_capacity(entries.len());
+        let mut episode_groups = Vec::with_capacity(entries.len());
+        for entry in entries {
             transitions.push(
                 self.content_store
                     .load_option_transition(entry.transition)
@@ -537,7 +601,7 @@ impl TacticReplayControlPlane {
         validate_training_corpus(&corpus).map_err(domain_error)?;
         Ok(TacticReplaySnapshot {
             schema: TACTIC_REPLAY_SNAPSHOT_SCHEMA_V1.into(),
-            version: self.replay_snapshot,
+            version,
             corpus,
         })
     }
@@ -853,6 +917,13 @@ mod tests {
             .unwrap();
         assert_eq!(service.len(), 2);
         assert_eq!(service.snapshot().unwrap().corpus.transitions.len(), 2);
+        let first_barrier = service.snapshot_through(1).unwrap();
+        assert_eq!(first_barrier.version.revision, 1);
+        assert_eq!(first_barrier.corpus.transitions, vec![first]);
+        let admissions = service.admissions();
+        assert_eq!(admissions.len(), 2);
+        assert_eq!(admissions[0].publisher_lane, 0);
+        assert_eq!(admissions[1].publisher_lane, 1);
         drop(service);
         fs::remove_dir_all(root).unwrap();
     }
