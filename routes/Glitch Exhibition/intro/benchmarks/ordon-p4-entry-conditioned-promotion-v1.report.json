@@ -1,0 +1,81 @@
+{
+  "schema": "dusklight-p4-entry-conditioned-promotion/v1",
+  "date": "2026-07-28",
+  "platform": "macos-arm64",
+  "source_commit": "eadd3bf136ad710c7988e15f2a5efd60dfe108b3",
+  "acceptance_passed": false,
+  "conclusion": "Source-exact prefix mining and typed entry compatibility removed fabricated macro entry states and most irrelevant validation work. Candidate count fell from 26 to 12, comparisons from 52 to 17, validation ticks from 1008 to 508, and validation wall time from 149.4 to 51.1 seconds under the matched two-seed plan. No exploration observation reached the authenticated terminal, so the terminal-only promotion authority correctly promoted and reused nothing. The implementation is now cheaper and semantically defensible, but reusable held-out search value remains unproved.",
+  "source_report_sha256": "09d0d243d2f2a5f8c43fed2b4509042c55056456923df19152425f79780f8b8f",
+  "baseline_report": "ordon-p4-macro-promotion-probe-v1.report.json",
+  "fixed_plan": {
+    "optimization_request_sha256": "83cf1d0f8bf8f6364962f7ee15bbe72b30d771542eec1cb37dc44ddc3322990d",
+    "execution_binding_sha256": "5a6ece0c1c18417a7ed1cf27e3f4d1f3d49e5275164168b143826766cdbb11b5",
+    "execution_plan_sha256": "2e4383d3d6b960b93acebae0ada4690da72bcf1046e52b81aef5256eb2b39e83",
+    "execution_plan_file_sha256": "b839134ef5c95e5624cdd0b7fdf8967586263b0af505d518484ac5cb4e04536a",
+    "replay_snapshot_sha256": "8e9d148b5ce59134583d681f95bcc5adf6fe00ff6257ae84ff2cf4337f106ead",
+    "objective_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57",
+    "feature_schema_sha256": "ce93f724ae070dd5732d58a8fae1ac5c56af96881c40e30ef0b0095b66b49d06",
+    "action_schema_sha256": "d1ef788806eba299aae6651e24ccfb76ad9f2b4fdd7f7f96787a1ee5a156810a",
+    "seeds": [
+      104729,
+      130363
+    ],
+    "workers": 4,
+    "decisions_per_seed": 8,
+    "proposals_per_decision": 4,
+    "branch_every_decisions": 4,
+    "refit_every_decisions": 2,
+    "epsilon_per_million": 500000,
+    "demonstration_chunk_ticks": 16
+  },
+  "campaign": {
+    "demonstration_transitions": 9,
+    "total_decisions": 16,
+    "total_native_ticks": 1540,
+    "useful_decisions": 15,
+    "useful_training_transitions": 58,
+    "shared_training_replay_rows": 73,
+    "learner_updates": 2,
+    "successful_seeds": 0,
+    "wall_micros": 459540095
+  },
+  "macro_validation": {
+    "observation_count": 64,
+    "high_value_observation_count": 0,
+    "mined_observation_count": 64,
+    "candidate_count": 12,
+    "entry_condition_count": 12,
+    "held_out_compatible_candidate_count": 11,
+    "source_state_exclusion_count": 38,
+    "entry_incompatible_frontier_count": 108,
+    "proposed_count": 12,
+    "promoted_count": 0,
+    "demoted_count": 0,
+    "validation_state_count": 17,
+    "comparison_count": 17,
+    "reused_primitive_baseline_count": 17,
+    "validation_native_ticks": 508,
+    "validation_wall_micros": 51077662,
+    "validation_native_simulation_micros": 161782433,
+    "validation_preparation_micros": 1082462,
+    "checkpoint_capture_micros": 76690547,
+    "registry_content_sha256": "3a18928d6268550ec077c20fd77bf18abefc5ebcbf9431ae13009ad9de586b5f",
+    "registry_file_sha256": "3ed75a0d1961d9c0ecafabe717326eb9f402cd799ae6bf89f683ecd27066d25c",
+    "reuse": null
+  },
+  "matched_baseline_delta": {
+    "candidate_reduction_millionths": 538461,
+    "comparison_reduction_millionths": 673076,
+    "validation_native_tick_reduction_millionths": 496031,
+    "validation_wall_reduction_millionths": 658163,
+    "total_wall_reduction_millionths": 205042
+  },
+  "observations": {
+    "source_states_excluded_from_validation": true,
+    "entry_semantics_filtered_validation": true,
+    "every_candidate_received_independent_seed_support": false,
+    "promotion_produced_a_reusable_action": false,
+    "validation_share_of_reported_native_ticks_millionths": 329870,
+    "validation_wall_share_millionths": 111149
+  }
+}

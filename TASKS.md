@@ -129,6 +129,15 @@ at tick `125`.
   emitted no reusable action. Macro discovery is therefore implemented
   machinery, not yet demonstrated search value. Evidence:
   `ordon-p4-macro-promotion-probe-v1.report.json`.
+- A matched current-code arm64 macOS rerun now mines only authenticated option
+  prefixes and connected decision sequences, excludes exact source states, and
+  admits held-out frontiers through typed entry semantics. Candidates fell from
+  26 to 12, comparisons from 52 to 17, validation ticks from 1,008 to 508, and
+  validation wall time from 149.4 to 51.1 seconds. No exploration observation
+  reached the terminal, so terminal-only promotion correctly produced no
+  reusable action. The machinery is cheaper and semantically defensible, but
+  P4 search value remains unproved. Evidence:
+  `ordon-p4-entry-conditioned-promotion-v1.report.json`.
 
 A terminal hit, a reliable terminal hit, a 125 tie, or a faster search for the
 same tie is diagnostic evidence only.
