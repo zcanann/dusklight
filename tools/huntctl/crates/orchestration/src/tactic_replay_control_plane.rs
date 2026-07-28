@@ -890,6 +890,13 @@ mod tests {
     }
 
     fn row(lineage_button: bool) -> (OptionTransitionSample, InputTape) {
+        row_with_terminal(lineage_button, false)
+    }
+
+    fn row_with_terminal(
+        lineage_button: bool,
+        terminal: bool,
+    ) -> (OptionTransitionSample, InputTape) {
         let shard = NativeEpisodeShard::decode(include_bytes!(
             "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
         ))
@@ -908,8 +915,13 @@ mod tests {
         before.terminal.reached = Some(false);
         before.terminal.reason = FactTerminalReason::None;
         after.terminal.configured = Some(true);
-        after.terminal.reached = Some(false);
-        after.terminal.reason = FactTerminalReason::None;
+        after.terminal.reached = Some(terminal);
+        after.terminal.reason = if terminal {
+            FactTerminalReason::GoalReached
+        } else {
+            FactTerminalReason::None
+        };
+        after.terminal.first_hit_tick = terminal.then_some(after.simulation_tick);
         let mut route = InputTape {
             frames: vec![InputFrame::default(); after.tape_frame as usize + 1],
             ..InputTape::default()
@@ -955,7 +967,7 @@ mod tests {
             execution,
             &route,
             -0.01,
-            false,
+            terminal,
             |facts| Ok::<_, &'static str>(vec![facts.player.position_f32_bits[0] as f32]),
         )
         .unwrap();
@@ -1014,7 +1026,7 @@ mod tests {
         assert!(metrics.maximum_admission_micros <= metrics.admission_micros);
         drop(service);
 
-        let reopened = TacticReplayControlPlane::open(&journal, &objects, &expected).unwrap();
+        let mut reopened = TacticReplayControlPlane::open(&journal, &objects, &expected).unwrap();
         assert_eq!(reopened.len(), 1);
         assert_eq!(
             reopened.invocation_metrics(),
@@ -1026,6 +1038,24 @@ mod tests {
         assert_eq!(snapshot.corpus.transitions, vec![transition]);
         assert_eq!(snapshot.corpus.routes, vec![route]);
         assert_eq!(snapshot.corpus.episode_groups, vec![11]);
+        assert!(matches!(
+            reopened
+                .publish(
+                    9,
+                    99,
+                    learner_snapshot_sha256,
+                    &snapshot.corpus.transitions[0],
+                    &snapshot.corpus.routes[0],
+                    77,
+                )
+                .unwrap(),
+            TacticReplayAdmissionOutcome::Duplicate {
+                existing_sequence: 0,
+                replay_snapshot: duplicate_snapshot,
+                ..
+            } if duplicate_snapshot == replay_snapshot
+        ));
+        assert_eq!(reopened.len(), 1);
         drop(reopened);
         fs::remove_dir_all(root).unwrap();
     }
@@ -1066,7 +1096,7 @@ mod tests {
     }
 
     #[test]
-    fn opening_discards_only_an_incomplete_tail() {
+    fn interrupted_tail_resumes_replay_frontier_learner_and_candidate_authority() {
         let root = test_root("tail");
         let journal = root.join("replay.dtrp");
         let objects = root.join("objects");
@@ -1074,10 +1104,14 @@ mod tests {
         let mut service =
             TacticReplayControlPlane::create(&journal, &objects, expected.clone()).unwrap();
         let learner_snapshot_sha256 = learner_snapshot(&service);
-        let (transition, route) = row(false);
+        let (transition, route) = row_with_terminal(false, true);
+        let transition_identity = transition.replay_identity_sha256().unwrap();
+        let source_frontier = transition.source_checkpoint_sha256;
+        let next_frontier = transition.next_checkpoint_sha256;
         service
             .publish(0, 0, learner_snapshot_sha256, &transition, &route, 1)
             .unwrap();
+        let replay_snapshot = service.replay_snapshot();
         let complete_len = fs::metadata(&journal).unwrap().len();
         drop(service);
         OpenOptions::new()
@@ -1088,9 +1122,46 @@ mod tests {
             .unwrap();
         assert!(fs::metadata(&journal).unwrap().len() > complete_len);
 
-        let reopened = TacticReplayControlPlane::open(&journal, &objects, &expected).unwrap();
+        let mut reopened = TacticReplayControlPlane::open(&journal, &objects, &expected).unwrap();
         assert_eq!(reopened.len(), 1);
         assert_eq!(fs::metadata(&journal).unwrap().len(), complete_len);
+        assert_eq!(reopened.replay_snapshot(), replay_snapshot);
+        let admission = reopened.admissions()[0];
+        assert_eq!(admission.learner_snapshot_sha256, learner_snapshot_sha256);
+        assert_eq!(admission.transition_identity_sha256, transition_identity);
+        let recovered = reopened.snapshot().unwrap();
+        assert_eq!(
+            recovered.corpus.transitions[0].source_checkpoint_sha256,
+            source_frontier
+        );
+        assert_eq!(
+            recovered.corpus.transitions[0].next_checkpoint_sha256,
+            next_frontier
+        );
+        assert!(recovered.corpus.transitions[0].value_sample.terminal);
+        assert_eq!(
+            recovered.corpus.transitions[0].after.terminal.reason,
+            FactTerminalReason::GoalReached
+        );
+        assert_eq!(recovered.corpus.routes[0], route);
+        assert!(matches!(
+            reopened
+                .publish(
+                    1,
+                    1,
+                    learner_snapshot_sha256,
+                    &transition,
+                    &recovered.corpus.routes[0],
+                    2,
+                )
+                .unwrap(),
+            TacticReplayAdmissionOutcome::Duplicate {
+                existing_sequence: 0,
+                replay_snapshot: duplicate_snapshot,
+                ..
+            } if duplicate_snapshot == replay_snapshot
+        ));
+        assert_eq!(reopened.len(), 1);
         drop(reopened);
         fs::remove_dir_all(root).unwrap();
     }

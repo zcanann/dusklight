@@ -678,9 +678,11 @@ use worker_pool::{
     parameterized_feedback_for_state, run_seed_coordinator, run_tactic_proposal_worker,
 };
 mod campaign;
-use campaign::{
-    NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1, aggregate_route_timing, decision_evaluated_ticks,
-    elapsed_micros, ratio_per_million, refresh_route_throughput, run_seed,
+use campaign::{NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1, run_seed};
+mod timing_metrics;
+use timing_metrics::{
+    aggregate_route_timing, decision_evaluated_ticks, decision_trace_is_useful, elapsed_micros,
+    per_second_millionths, ratio_per_million, refresh_route_throughput,
 };
 mod candidate_retention;
 use candidate_retention::{

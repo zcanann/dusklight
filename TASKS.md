@@ -77,22 +77,10 @@ same tie is diagnostic evidence only.
 
 ## P1 - Build a real shared replay and learner control plane
 
-- [ ] Add one append-only binary replay/frontier service per campaign. Workers
-      publish authenticated transitions; they do not own private authoritative
-      corpora.
-- [ ] Deduplicate by exact transition identity while preserving distinct input
-      lineages that reach similar observed states.
-- [ ] Publish immutable, versioned learner snapshots and bind every decision to
-      the exact snapshot used.
-- [ ] Support two explicit execution modes:
-  - deterministic generation barriers for reproducible comparisons; and
-  - bounded-staleness asynchronous updates for throughput.
-- [ ] In asynchronous mode, make newly admitted transitions and terminal
-      candidates visible without waiting for an entire four-lane generation.
-- [ ] Measure replay admission latency, learner updates per second, snapshot
-      staleness, useful transitions per update, and duplicate/censored rows.
-- [ ] Add interruption tests proving that replay, frontier, learner, and
-      candidate identities resume without lost or repeated authority.
+- [ ] Measure learner updates per second, useful transitions per update, and
+      explicitly censored rows. Replay admission latency, exact duplicates,
+      refresh counts, imported rows, and maximum observed snapshot staleness
+      are already reported by the campaign authority.
 
 Acceptance:
 

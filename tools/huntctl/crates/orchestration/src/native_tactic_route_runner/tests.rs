@@ -1,4 +1,3 @@
-use super::campaign::*;
 use super::campaign_persistence::*;
 use super::candidate_retention::*;
 use super::goal_target::*;
