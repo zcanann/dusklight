@@ -594,6 +594,9 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 serde_json::to_string_pretty(&json!({
                     "schema": report.schema,
                     "report": output.join("report.json"),
+                    "terminal_seeds": report.terminal_seeds,
+                    "best_authenticated_tick": report.best_authenticated_tick,
+                    "promotion_successful_seeds": report.promotion_successful_seeds,
                     "successful_seeds": report.successful_seeds,
                     "exploration_seeds": report.exploration_seeds,
                     "proposal_policy": report.proposal_policy,

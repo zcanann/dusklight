@@ -942,20 +942,28 @@ pub(super) fn run_seed(
         .write(&generated_training_path, &checkpoint_content_root)
         .map_err(route_error)?;
     remove_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint)?;
-    let (successful_tape, final_result) = if success {
-        let result = best_success.expect("promoted success was checked above");
+    let terminal_discovered = best_success.is_some();
+    let best_authenticated_tick = best_success
+        .as_ref()
+        .and_then(|result| authenticated_first_hit_tick(result, source_frame));
+    let (best_terminal_tape, best_terminal_result) = if let Some(result) = best_success.as_ref() {
         let retained_candidate_started = Instant::now();
-        let tape_path = seed_root.join("successful.tape");
+        let tape_path = seed_root.join("best-terminal.tape");
         write_new(
             &tape_path,
             &result.route_tape.encode().map_err(route_error)?,
         )?;
-        let result_path = seed_root.join("final-result.dtqz");
+        let result_path = seed_root.join("best-terminal-result.dtqz");
         result.write(&result_path).map_err(route_error)?;
         timing.retained_candidate_artifact_micros = timing
             .retained_candidate_artifact_micros
             .saturating_add(elapsed_micros(retained_candidate_started.elapsed()));
         (Some(path_text(&tape_path)), Some(path_text(&result_path)))
+    } else {
+        (None, None)
+    };
+    let (successful_tape, final_result) = if success {
+        (best_terminal_tape.clone(), best_terminal_result.clone())
     } else {
         (None, None)
     };
@@ -999,6 +1007,8 @@ pub(super) fn run_seed(
         result: NativeTacticSeedResult {
             execution_plan_sha256,
             seed,
+            terminal_discovered,
+            best_authenticated_tick,
             success,
             decisions: campaign.decision_index,
             episodes: episode + 1,
@@ -1019,6 +1029,8 @@ pub(super) fn run_seed(
             generated_training_corpus: Some(path_text(&generated_training_path)),
             final_checkpoint: None,
             graph: None,
+            best_terminal_tape,
+            best_terminal_result,
             successful_tape,
             final_result,
             trace,

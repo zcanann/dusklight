@@ -1,0 +1,52 @@
+{
+  "schema": "dusklight-p3-matched-controls-correction/v1",
+  "date": "2026-07-28",
+  "supersedes_terminal_claims_in": "ordon-p3-continuous-matched-controls-v2.report.json",
+  "acceptance_passed": false,
+  "conclusion": "The demonstration-assisted continuous fitted-Q cell did discover the authenticated terminal. It retained two tick-127 candidates, but the v2 summary treated the promotion-threshold field successful_seeds as terminal discovery and incorrectly reported no terminal. Neither candidate beat the tick-125 promotion threshold or the tick-125 replay used by this run. Because the replay was the incumbent rather than an ordinary suboptimal sample, this cell does not satisfy the remaining P3 demonstration-ablation task.",
+  "source": {
+    "campaign_report_path": "build/campaigns/ordon-p3-continuous-demo-1x16-b4-w4-v2-20260728/report.json",
+    "campaign_report_sha256": "c3c72add2216663d132a62b3342c30e1941dee693580a3cad4507690dc42d2f8",
+    "seed_result_path": "build/campaigns/ordon-p3-continuous-demo-1x16-b4-w4-v2-20260728/seed-000-104729/seed-result.json",
+    "seed_result_file_sha256": "671d2d1d146c7714b8ae61b5d7486380620918f65243e4f4a9a1e349e17a3952",
+    "source_boundary": 506,
+    "demonstration_first_hit_tick": 125,
+    "promotion_before_tick": 125
+  },
+  "retained_terminal_candidates": [
+    {
+      "decision": 3,
+      "route_frames": 634,
+      "first_hit_tick": 127,
+      "path": "build/campaigns/ordon-p3-continuous-demo-1x16-b4-w4-v2-20260728/seed-000-104729/retained-successes/success-000634-000003-83a7f500110b1a6ebf0d5fc945ea42233ec2ffba1f51e14d35fc1d8c60c01b33.dtqz",
+      "file_sha256": "237d2bf76f0d05f9c34119a6fcae802c38697948af2c3cdb91b86ace137e31dd"
+    },
+    {
+      "decision": 12,
+      "route_frames": 634,
+      "first_hit_tick": 127,
+      "path": "build/campaigns/ordon-p3-continuous-demo-1x16-b4-w4-v2-20260728/seed-000-104729/retained-successes/success-000634-000012-6d3a3b45ace1cd113cd8caa7a34fc572725c4b6a109976dfa6b492a6fb0ca8f7.dtqz",
+      "file_sha256": "cfe5858fb47c14b01adc178e7ca26888b54f25e423c2f3b4d63bfcb6b3cab5d6"
+    }
+  ],
+  "corrected_metrics": {
+    "terminal_seeds": 1,
+    "terminal_discovery_rate": 1.0,
+    "best_authenticated_tick": 127,
+    "promotion_successful_seeds": 0,
+    "beats_demonstration": false,
+    "uses_ordinary_suboptimal_demonstration": false
+  },
+  "implementation_correction": {
+    "route_report_schema": "dusklight-native-tactic-route-report/v31",
+    "new_fields": [
+      "terminal_seeds",
+      "best_authenticated_tick",
+      "promotion_successful_seeds"
+    ],
+    "seed_artifacts": [
+      "best_terminal_tape",
+      "best_terminal_result"
+    ]
+  }
+}

@@ -68,12 +68,16 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   `ordon-p3-continuous-independent-calibration-v1.report.json`.
 - The current continuous treatment completed matched scratch,
   ordinary-demonstration, and structured non-learning native cells under the
-  same fixed identities and budget caps. None reached the terminal.
-  Demonstration replay increased visited states from `11` to `18` and useful
-  decisions from `11` to `12`, but took over six times the scratch wall time
-  and did not improve terminal discovery or best tick. This is a recorded P3
-  failure, not acceptance.
-  Evidence: `ordon-p3-continuous-matched-controls-v2.report.json`.
+  same fixed identities and budget caps. Scratch and structured exploration
+  found no terminal. The demonstration-assisted cell retained two authenticated
+  terminal candidates at tick `127`, but the v2 summary incorrectly counted
+  only candidates beating the tick-`125` promotion threshold and therefore
+  reported no terminal. Route reports now expose terminal discovery, best
+  authenticated tick, and promotion success separately. The cell still failed:
+  it used the tick-`125` incumbent rather than an ordinary suboptimal sample,
+  was slower than scratch, and did not improve on the replay.
+  Evidence: `ordon-p3-continuous-matched-controls-v2.report.json` and its
+  correction `ordon-p3-continuous-matched-controls-v3.report.json`.
 - Four independent scratch seeds produced no terminal. Across disjoint
   semantic groups, continuous fitted-Q won `8/10` state orderings and `11/16`
   action-realization orderings; the structured shortest-valid-action control

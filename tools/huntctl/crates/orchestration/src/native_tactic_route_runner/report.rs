@@ -44,6 +44,14 @@ pub struct NativeTacticRouteReport {
     pub workers: usize,
     pub decisions_per_seed: u64,
     pub refit_every_decisions: u64,
+    /// Seeds that retained at least one authenticated terminal candidate,
+    /// regardless of whether it cleared the promotion threshold.
+    pub terminal_seeds: u64,
+    /// Best zero-based first-hit tick relative to the source boundary.
+    pub best_authenticated_tick: Option<u64>,
+    /// Seeds whose best terminal candidate cleared `promotion_before_tick`.
+    pub promotion_successful_seeds: u64,
+    /// Legacy alias for `promotion_successful_seeds`.
     pub successful_seeds: u64,
     pub total_native_ticks: u64,
     pub total_decisions: u64,
@@ -385,6 +393,12 @@ pub struct NativeTacticSeedResult {
     #[serde(default)]
     pub execution_plan_sha256: Digest,
     pub seed: u64,
+    /// Whether any evaluated proposal reached the authenticated terminal.
+    #[serde(default)]
+    pub terminal_discovered: bool,
+    /// Best zero-based terminal first-hit tick relative to the source.
+    #[serde(default)]
+    pub best_authenticated_tick: Option<u64>,
     pub success: bool,
     pub decisions: u64,
     pub episodes: u64,
@@ -415,6 +429,10 @@ pub struct NativeTacticSeedResult {
     #[serde(default)]
     pub final_checkpoint: Option<String>,
     pub graph: Option<String>,
+    #[serde(default)]
+    pub best_terminal_tape: Option<String>,
+    #[serde(default)]
+    pub best_terminal_result: Option<String>,
     pub successful_tape: Option<String>,
     pub final_result: Option<String>,
     pub trace: Vec<NativeTacticDecisionTrace>,

@@ -114,6 +114,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V27: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V28: &str = "dusklight-native-tactic-route-report/v28";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V29: &str = "dusklight-native-tactic-route-report/v29";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V30: &str = "dusklight-native-tactic-route-report/v30";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V31: &str = "dusklight-native-tactic-route-report/v31";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -650,7 +651,7 @@ pub fn run_native_tactic_route(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V30.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V31.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
@@ -678,6 +679,15 @@ pub fn run_native_tactic_route(
         workers: worker_count,
         decisions_per_seed: config.execution_plan.budgets.decisions_per_lane,
         refit_every_decisions: config.execution_plan.refit_every_decisions,
+        terminal_seeds: seed_results
+            .iter()
+            .filter(|seed| seed.terminal_discovered)
+            .count() as u64,
+        best_authenticated_tick: seed_results
+            .iter()
+            .filter_map(|seed| seed.best_authenticated_tick)
+            .min(),
+        promotion_successful_seeds: seed_results.iter().filter(|seed| seed.success).count() as u64,
         successful_seeds: seed_results.iter().filter(|seed| seed.success).count() as u64,
         total_native_ticks: seed_results
             .iter()
@@ -765,7 +775,8 @@ use timing_metrics::{
 };
 mod candidate_retention;
 use candidate_retention::{
-    final_result_promotes, load_best_retained_success, retain_successful_result,
+    authenticated_first_hit_tick, final_result_promotes, load_best_retained_success,
+    retain_successful_result,
 };
 mod campaign_persistence;
 use campaign_persistence::{

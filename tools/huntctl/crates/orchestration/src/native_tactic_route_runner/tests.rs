@@ -157,6 +157,18 @@ fn retained_success_ranking_minimizes_ticks_and_breaks_ties_deterministically() 
 #[test]
 fn terminal_route_success_is_strictly_better_than_the_promotion_tick() {
     let source_frame = 506;
+    assert_eq!(
+        route_frames_first_hit_tick(source_frame + 125, source_frame),
+        Some(124)
+    );
+    assert_eq!(
+        route_frames_first_hit_tick(source_frame + 126, source_frame),
+        Some(125)
+    );
+    assert_eq!(
+        route_frames_first_hit_tick(source_frame, source_frame),
+        None
+    );
     assert!(route_frames_promote(source_frame + 125, source_frame, 125));
     assert!(!route_frames_promote(source_frame + 126, source_frame, 125));
     assert!(!route_frames_promote(source_frame, source_frame, 125));
@@ -753,6 +765,8 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
     let seed = NativeTacticSeedResult {
         execution_plan_sha256: Digest::ZERO,
         seed: 7,
+        terminal_discovered: false,
+        best_authenticated_tick: None,
         success: false,
         decisions: 4,
         episodes: 2,
@@ -788,6 +802,8 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
         generated_training_corpus: None,
         final_checkpoint: None,
         graph: None,
+        best_terminal_tape: None,
+        best_terminal_result: None,
         successful_tape: None,
         final_result: None,
         trace: Vec::new(),

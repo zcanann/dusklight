@@ -299,10 +299,14 @@ pub(super) fn read_completed_seed_result(
         || result.seed != seed
         || result.decisions > decisions_per_seed
         || result.useful_decisions > result.decisions
+        || result.terminal_discovered != result.best_authenticated_tick.is_some()
+        || result.terminal_discovered != result.best_terminal_tape.is_some()
+        || result.terminal_discovered != result.best_terminal_result.is_some()
+        || (result.success && !result.terminal_discovered)
         || result.success != result.successful_tape.is_some()
         || result.success != result.final_result.is_some()
         || result.generated_training_corpus.is_some() == result.final_checkpoint.is_some()
-        || (!result.success && result.timing.retained_candidate_artifact_micros != 0)
+        || (!result.terminal_discovered && result.timing.retained_candidate_artifact_micros != 0)
         || result.trace.len() as u64 != result.decisions
         || result.trace.iter().enumerate().any(|(index, decision)| {
             decision.execution_plan_sha256 != execution_plan_sha256
@@ -330,6 +334,30 @@ pub(super) fn read_completed_seed_result(
         return Err(route_message(
             "completed tactic seed result is invalid or belongs to another run",
         ));
+    }
+    if let (Some(result_path), Some(tape_path), Some(first_hit_tick)) = (
+        result.best_terminal_result.as_deref(),
+        result.best_terminal_tape.as_deref(),
+        result.best_authenticated_tick,
+    ) {
+        let source_frame = result
+            .trace
+            .first()
+            .map(|decision| decision.before.tape_frame)
+            .ok_or_else(|| route_message("terminal seed result has no source decision"))?;
+        let terminal_result =
+            TacticQFinalResult::read(Path::new(result_path)).map_err(route_error)?;
+        let tape = InputTape::decode(&fs::read(tape_path).map_err(route_error)?)
+            .map_err(route_error)?
+            .tape;
+        if terminal_result.execution_authority_sha256 != execution_plan_sha256
+            || terminal_result.route_tape != tape
+            || authenticated_first_hit_tick(&terminal_result, source_frame) != Some(first_hit_tick)
+        {
+            return Err(route_message(
+                "completed tactic best-terminal artifacts belong to another execution plan",
+            ));
+        }
     }
     if let (Some(final_path), Some(tape_path)) = (
         result.final_result.as_deref(),

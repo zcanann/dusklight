@@ -94,14 +94,27 @@ pub(super) fn final_result_promotes(
     })
 }
 
+pub(super) fn authenticated_first_hit_tick(
+    result: &TacticQFinalResult,
+    source_frame: u64,
+) -> Option<u64> {
+    u64::try_from(result.route_tape.frames.len())
+        .ok()
+        .and_then(|route_frames| route_frames_first_hit_tick(route_frames, source_frame))
+}
+
+pub(super) fn route_frames_first_hit_tick(route_frames: u64, source_frame: u64) -> Option<u64> {
+    route_frames
+        .checked_sub(source_frame)
+        .and_then(|route_ticks| route_ticks.checked_sub(1))
+}
+
 pub(super) fn route_frames_promote(
     route_frames: u64,
     source_frame: u64,
     promotion_before_tick: u64,
 ) -> bool {
-    route_frames
-        .checked_sub(source_frame)
-        .and_then(|route_ticks| route_ticks.checked_sub(1))
+    route_frames_first_hit_tick(route_frames, source_frame)
         .is_some_and(|first_hit_tick| first_hit_tick < promotion_before_tick)
 }
 
