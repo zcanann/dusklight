@@ -618,6 +618,20 @@ impl TacticQCampaign {
             .min(MAX_BEHAVIOR_ARCHIVE_ENTRIES)
     }
 
+    pub fn demonstration_frontier_count(&self) -> usize {
+        self.training_replay
+            .iter()
+            .zip(&self.training_episode_groups)
+            .filter(|(transition, episode_group)| {
+                **episode_group == TACTIC_Q_DEMONSTRATION_EPISODE_GROUP
+                    && !transition.value_sample.terminal
+            })
+            .map(|(transition, _)| tactic_state_descriptor(&transition.after, false))
+            .collect::<BTreeSet<_>>()
+            .len()
+            .min(MAX_BEHAVIOR_ARCHIVE_ENTRIES)
+    }
+
     pub fn graph(&self) -> Result<TacticCampaignGraph, TacticQCampaignError> {
         let root = self
             .replay
@@ -3516,16 +3530,22 @@ mod tests {
             .fill(TACTIC_Q_MODEL_ONLY_EPISODE_GROUP);
         assert_eq!(model_only.frontier_archive().unwrap().tactic_len(), 0);
         assert_eq!(model_only.frontier_cell_count(), 0);
+        assert_eq!(model_only.demonstration_frontier_count(), 0);
         let mut demonstration = TacticQCampaign::resume(restored.checkpoint().unwrap()).unwrap();
         demonstration
             .training_episode_groups
             .fill(TACTIC_Q_DEMONSTRATION_EPISODE_GROUP);
         assert_eq!(demonstration.frontier_archive().unwrap().tactic_len(), 1);
         assert_eq!(demonstration.frontier_cell_count(), 1);
+        assert_eq!(demonstration.demonstration_frontier_count(), 1);
         let mut terminal_leaf = TacticQCampaign::resume(restored.checkpoint().unwrap()).unwrap();
+        terminal_leaf
+            .training_episode_groups
+            .fill(TACTIC_Q_DEMONSTRATION_EPISODE_GROUP);
         terminal_leaf.training_replay[0].value_sample.terminal = true;
         assert_eq!(terminal_leaf.frontier_archive().unwrap().tactic_len(), 0);
         assert_eq!(terminal_leaf.frontier_cell_count(), 0);
+        assert_eq!(terminal_leaf.demonstration_frontier_count(), 0);
         let mut forged_native_frontier = frontier_branch.clone();
         forged_native_frontier.restorable_native_checkpoint =
             Some(RestorableNativeTacticCheckpoint {

@@ -3091,6 +3091,16 @@ fn run_seed(
                 .episode_groups
                 .contains(&TACTIC_Q_DEMONSTRATION_EPISODE_GROUP)
         });
+    let demonstration_frontier_count = if demonstration_curriculum {
+        campaign.demonstration_frontier_count()
+    } else {
+        0
+    };
+    let mut first_demonstration_expansions = trace
+        .iter()
+        .filter_map(|decision| decision.branch_acquisition.as_ref())
+        .filter(|acquisition| acquisition.expansion_count == 0)
+        .count();
     let checkpoint_root = seed_root.join("checkpoints");
     let checkpoint_content_root = tactic_content_store_path(&seed_root);
     let decision_content_store =
@@ -3124,9 +3134,12 @@ fn run_seed(
             return Err(route_cancelled("native tactic route paused"));
         }
         let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
+        let demonstration_coverage_pending = demonstration_curriculum
+            && first_demonstration_expansions < demonstration_frontier_count;
         let periodic_branch = terminal_restart
             || (campaign.decision_index > 0
-                && campaign.decision_index % config.branch_every_decisions == 0);
+                && (demonstration_coverage_pending
+                    || campaign.decision_index % config.branch_every_decisions == 0));
         if !campaign.replay.is_empty() && periodic_branch {
             let branch_started = Instant::now();
             episode = episode
@@ -3170,6 +3183,14 @@ fn run_seed(
             .map_err(route_error)?;
             let prefer_root = terminal_restart || periodic_root_refresh_due(seed_index, episode);
             let selected_branch = if prefer_root { &root } else { &frontier };
+            if demonstration_curriculum
+                && selected_branch
+                    .acquisition
+                    .as_ref()
+                    .is_some_and(|acquisition| acquisition.expansion_count == 0)
+            {
+                first_demonstration_expansions = first_demonstration_expansions.saturating_add(1);
+            }
             demonstration_intervention_pending =
                 demonstration_curriculum && !prefer_root && selected_branch.acquisition.is_some();
             branch_acquisition = selected_branch.acquisition.clone();
@@ -3322,6 +3343,14 @@ fn run_seed(
             .map_err(route_error)?;
             let prefer_root = periodic_root_refresh_due(seed_index, episode);
             let selected_branch = if prefer_root { &root } else { &frontier };
+            if demonstration_curriculum
+                && selected_branch
+                    .acquisition
+                    .as_ref()
+                    .is_some_and(|acquisition| acquisition.expansion_count == 0)
+            {
+                first_demonstration_expansions = first_demonstration_expansions.saturating_add(1);
+            }
             demonstration_intervention_pending =
                 demonstration_curriculum && !prefer_root && selected_branch.acquisition.is_some();
             branch_acquisition = selected_branch.acquisition.clone();
