@@ -52,6 +52,8 @@ public:
     static JUTVideo* getManager() { return sManager; }
     static OSTick getVideoInterval() { return sVideoInterval; }
     static OSTick getVideoLastTick() { return sVideoLastTick; }
+    static const OSTick* getVideoIntervalStorage() { return &sVideoInterval; }
+    static const OSTick* getVideoLastTickStorage() { return &sVideoLastTick; }
 
     GXRenderModeObj* getRenderMode() const { return mRenderObj; }
 #if TARGET_PC

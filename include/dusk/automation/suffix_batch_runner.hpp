@@ -151,6 +151,7 @@ private:
         std::optional<std::size_t> firstHitTick;
         std::string stateSequenceDigest;
         std::vector<std::string> stateTickDigests;
+        std::vector<StateCheckpointEntryDigest> terminalStateEntryDigests;
         std::string terminalBoundaryFingerprint;
         std::string predicateEvidence;
         TerminalObservation terminal;
@@ -265,6 +266,7 @@ private:
     LearningEpisodeShardWriter mEpisodeShard;
     std::string mStateDigestMaterial;
     std::vector<std::string> mStateTickDigests;
+    std::vector<StateCheckpointEntryDigest> mTerminalStateEntryDigests;
     std::vector<CandidateResult> mResults;
     std::optional<std::size_t> mWinnerResultIndex;
     std::uint64_t mCaptureMicros = 0;

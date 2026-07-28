@@ -1,0 +1,191 @@
+{
+  "schema": "dusklight-native-checkpoint-benchmark/v2",
+  "optimization_request_sha256": "0c71fb96d17e6371f0badbd3514361b7683b5935ec5f24e08767764cbac2863f",
+  "execution_sha256": "ebf03e6796ec771792d8e27c93e5f6e960d96eeb6fd9fcbd39fbe174a5aa1de2",
+  "executable_sha256": "c1e30528106f09d25a767d43de5b46a26c651cb558cd1b37f03c05184695b149",
+  "game_data_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814",
+  "platform_os": "macos",
+  "platform_arch": "aarch64",
+  "source_frame": 506,
+  "cache_capacity_bytes": 671088640,
+  "cache_capacity_entries": 2,
+  "launch": {
+    "phases": {
+      "spawn_call_micros": 2921,
+      "handshake_micros": 106962,
+      "initial_batch_wait_micros": 57294662,
+      "artifact_validation_micros": 4078,
+      "total_micros": 57412799
+    },
+    "initial_batch_native_wall_micros": 54722595,
+    "initial_batch_native_simulation_micros": 1192
+  },
+  "frontiers": [
+    {
+      "label": "early",
+      "route_ticks": 15,
+      "authenticated_root_replay": {
+        "host_wall_micros": 46756322,
+        "native_batch_wall_micros": 46753323,
+        "native_simulation_micros": 16339,
+        "native_restore_micros": 4929,
+        "simulated_ticks": 15,
+        "source_kind": "authenticated_root_restore"
+      },
+      "process_local_restore": {
+        "host_wall_micros": 5602518,
+        "native_batch_wall_micros": 5598168,
+        "native_simulation_micros": 1063,
+        "native_restore_micros": 4768,
+        "simulated_ticks": 1,
+        "source_kind": "direct_process_local_restore"
+      },
+      "portable_reconstruction": {
+        "host_wall_micros": 44569006,
+        "native_batch_wall_micros": 44566401,
+        "native_simulation_micros": 17307,
+        "native_restore_micros": 4854,
+        "simulated_ticks": 16,
+        "source_kind": "authenticated_root_restore"
+      },
+      "checkpoint_capture": {
+        "checkpoint_bytes": 294694748,
+        "host_snapshot_bytes": 224,
+        "machine_capture_micros": 1766153,
+        "host_snapshot_transfer_kind": "in_process_capture_and_move_into_resident_cache",
+        "host_snapshot_capture_nanos": 93875,
+        "total_capture_micros": 4400355
+      },
+      "evidence_projection": {
+        "episode_decode_micros": 19565,
+        "fact_extraction_micros": 2192
+      },
+      "parity": {
+        "source_state_exact": true,
+        "transition_exact": true,
+        "checkpoint_wide_semantic_digest_scope": "registered parity-relevant checkpoint state; canonicalizes explicit host-ABI padding, JUT/VI presentation clocks, JUTProcBar, and the dPa particle heap while raw checkpoint restore remains byte-exact",
+        "semantic_state_digest_exact": true,
+        "checkpoint_entry_count": 21,
+        "divergent_checkpoint_entries": [],
+        "terminal_evidence_bytes_exact": true,
+        "terminal_boundary_exact": true,
+        "passed": true
+      }
+    },
+    {
+      "label": "middle",
+      "route_ticks": 62,
+      "authenticated_root_replay": {
+        "host_wall_micros": 170189858,
+        "native_batch_wall_micros": 170182323,
+        "native_simulation_micros": 67024,
+        "native_restore_micros": 4877,
+        "simulated_ticks": 62,
+        "source_kind": "authenticated_root_restore"
+      },
+      "process_local_restore": {
+        "host_wall_micros": 5722757,
+        "native_batch_wall_micros": 5710112,
+        "native_simulation_micros": 1004,
+        "native_restore_micros": 4748,
+        "simulated_ticks": 1,
+        "source_kind": "direct_process_local_restore"
+      },
+      "portable_reconstruction": {
+        "host_wall_micros": 168627102,
+        "native_batch_wall_micros": 168622140,
+        "native_simulation_micros": 68057,
+        "native_restore_micros": 4863,
+        "simulated_ticks": 63,
+        "source_kind": "authenticated_root_restore"
+      },
+      "checkpoint_capture": {
+        "checkpoint_bytes": 294694748,
+        "host_snapshot_bytes": 224,
+        "machine_capture_micros": 1765531,
+        "host_snapshot_transfer_kind": "in_process_capture_and_move_into_resident_cache",
+        "host_snapshot_capture_nanos": 97042,
+        "total_capture_micros": 4408648
+      },
+      "evidence_projection": {
+        "episode_decode_micros": 66924,
+        "fact_extraction_micros": 46
+      },
+      "parity": {
+        "source_state_exact": true,
+        "transition_exact": true,
+        "checkpoint_wide_semantic_digest_scope": "registered parity-relevant checkpoint state; canonicalizes explicit host-ABI padding, JUT/VI presentation clocks, JUTProcBar, and the dPa particle heap while raw checkpoint restore remains byte-exact",
+        "semantic_state_digest_exact": true,
+        "checkpoint_entry_count": 21,
+        "divergent_checkpoint_entries": [],
+        "terminal_evidence_bytes_exact": true,
+        "terminal_boundary_exact": true,
+        "passed": true
+      }
+    },
+    {
+      "label": "late",
+      "route_ticks": 109,
+      "authenticated_root_replay": {
+        "host_wall_micros": 294376145,
+        "native_batch_wall_micros": 294358874,
+        "native_simulation_micros": 119420,
+        "native_restore_micros": 5015,
+        "simulated_ticks": 109,
+        "source_kind": "authenticated_root_restore"
+      },
+      "process_local_restore": {
+        "host_wall_micros": 5571658,
+        "native_batch_wall_micros": 5551327,
+        "native_simulation_micros": 1074,
+        "native_restore_micros": 9036,
+        "simulated_ticks": 1,
+        "source_kind": "direct_process_local_restore"
+      },
+      "portable_reconstruction": {
+        "host_wall_micros": 286226575,
+        "native_batch_wall_micros": 286220846,
+        "native_simulation_micros": 118110,
+        "native_restore_micros": 4959,
+        "simulated_ticks": 110,
+        "source_kind": "authenticated_root_restore"
+      },
+      "checkpoint_capture": {
+        "checkpoint_bytes": 294694748,
+        "host_snapshot_bytes": 224,
+        "machine_capture_micros": 1773615,
+        "host_snapshot_transfer_kind": "in_process_capture_and_move_into_resident_cache",
+        "host_snapshot_capture_nanos": 98292,
+        "total_capture_micros": 5530415
+      },
+      "evidence_projection": {
+        "episode_decode_micros": 171246,
+        "fact_extraction_micros": 60
+      },
+      "parity": {
+        "source_state_exact": true,
+        "transition_exact": true,
+        "checkpoint_wide_semantic_digest_scope": "registered parity-relevant checkpoint state; canonicalizes explicit host-ABI padding, JUT/VI presentation clocks, JUTProcBar, and the dPa particle heap while raw checkpoint restore remains byte-exact",
+        "semantic_state_digest_exact": true,
+        "checkpoint_entry_count": 21,
+        "divergent_checkpoint_entries": [],
+        "terminal_evidence_bytes_exact": true,
+        "terminal_boundary_exact": true,
+        "passed": true
+      }
+    }
+  ],
+  "throughput": {
+    "useful_transition_definition": "one parity-verified continuation transition per representative frontier",
+    "useful_transitions": 3,
+    "non_root_expansion_requests": 3,
+    "direct_restore_requests": 3,
+    "direct_restore_rate_millionths": 1000000,
+    "useful_transitions_per_direct_restore_millionths": 1000000,
+    "useful_transitions_per_native_sim_second_millionths": 955109837,
+    "useful_transitions_per_wall_second_millionths": 2626,
+    "measured_wall_micros": 1142290768,
+    "measured_native_simulation_micros": 3141
+  },
+  "passed": true
+}

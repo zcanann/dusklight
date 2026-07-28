@@ -149,7 +149,8 @@ StateCheckpointError StateCheckpoint::addMemoryRegion(
 
 StateCheckpointError StateCheckpoint::addComponent(const std::string_view name,
     const std::size_t size, void* const context, const StateCheckpointCaptureCallback capture,
-    const StateCheckpointRestoreCallback restore) {
+    const StateCheckpointRestoreCallback restore,
+    const std::span<const StateCheckpointIgnoredRange> semanticIgnoredRanges) {
     const StateCheckpointError common = validateNameAndSize(name, size);
     if (common != StateCheckpointError::None) {
         return common;
@@ -158,6 +159,18 @@ StateCheckpointError StateCheckpoint::addComponent(const std::string_view name,
         return StateCheckpointError::MissingCallback;
     }
     try {
+        std::vector<StateCheckpointIgnoredRange> ignored(
+            semanticIgnoredRanges.begin(), semanticIgnoredRanges.end());
+        std::ranges::sort(ignored, {}, &StateCheckpointIgnoredRange::offset);
+        std::size_t previousEnd = 0;
+        for (const StateCheckpointIgnoredRange range : ignored) {
+            if (range.size == 0 || range.offset > size || range.size > size - range.offset ||
+                range.offset < previousEnd)
+            {
+                return StateCheckpointError::InvalidIgnoredRange;
+            }
+            previousEnd = range.offset + range.size;
+        }
         mEntries.push_back(Entry{
             .name = std::string(name),
             .kind = StateCheckpointEntryKind::Component,
@@ -165,6 +178,7 @@ StateCheckpointError StateCheckpoint::addComponent(const std::string_view name,
             .context = context,
             .capture = capture,
             .restore = restore,
+            .semanticIgnoredRanges = std::move(ignored),
         });
     } catch (const std::bad_alloc&) {
         return StateCheckpointError::AllocationFailed;
@@ -294,6 +308,13 @@ StateCheckpointError StateCheckpoint::currentDigestImpl(std::string& digest,
                 if (!entry.capture(entry.context, componentBytes)) {
                     XXH3_freeState(state);
                     return StateCheckpointError::CaptureFailed;
+                }
+                if (semantic) {
+                    for (const StateCheckpointIgnoredRange range :
+                        entry.semanticIgnoredRanges)
+                    {
+                        std::memset(componentBytes.data() + range.offset, 0, range.size);
+                    }
                 }
                 entryBytes = componentBytes.data();
             }

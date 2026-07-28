@@ -54,8 +54,9 @@ struct StateCheckpointEntryDigest {
  * A byte range that is preserved by checkpoint capture/restore and raw
  * integrity hashing, but canonicalized for gameplay-state comparisons.
  *
- * This is intentionally explicit. It is for proven host-ABI padding only,
- * never for state that merely appears unimportant in one scenario.
+ * This is intentionally explicit. It is for proven host-ABI padding or
+ * structurally identified presentation-only state, never for bytes that
+ * merely appear unimportant in one scenario.
  */
 struct StateCheckpointIgnoredRange {
     std::size_t offset = 0;
@@ -79,7 +80,8 @@ public:
         std::string_view name, void* address, std::size_t size,
         std::span<const StateCheckpointIgnoredRange> semanticIgnoredRanges = {});
     StateCheckpointError addComponent(std::string_view name, std::size_t size, void* context,
-        StateCheckpointCaptureCallback capture, StateCheckpointRestoreCallback restore);
+        StateCheckpointCaptureCallback capture, StateCheckpointRestoreCallback restore,
+        std::span<const StateCheckpointIgnoredRange> semanticIgnoredRanges = {});
 
     [[nodiscard]] StateCheckpointError capture(StateCheckpointImage& image) const;
     [[nodiscard]] StateCheckpointError restore(const StateCheckpointImage& image) const;
@@ -96,7 +98,7 @@ public:
         std::vector<StateCheckpointEntryDigest>* entryDigests = nullptr) const;
     /**
      * Hashes live state while canonicalizing only explicitly registered
-     * host-ABI padding. Raw checkpoint integrity remains byte exact.
+     * non-gameplay ranges. Raw checkpoint integrity remains byte exact.
      */
     [[nodiscard]] StateCheckpointError currentSemanticDigest(std::string& digest,
         std::vector<StateCheckpointEntryDigest>* entryDigests = nullptr) const;

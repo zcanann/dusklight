@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub const NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V1: &str = "dusklight-native-checkpoint-benchmark/v1";
+pub const NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V2: &str = "dusklight-native-checkpoint-benchmark/v2";
 
 pub struct NativeCheckpointBenchmarkConfig<'a> {
     pub repository_root: &'a Path,
@@ -115,6 +116,10 @@ pub struct NativeCheckpointParityMeasurement {
     pub transition_exact: bool,
     pub checkpoint_wide_semantic_digest_scope: String,
     pub semantic_state_digest_exact: bool,
+    #[serde(default)]
+    pub checkpoint_entry_count: u64,
+    #[serde(default)]
+    pub divergent_checkpoint_entries: Vec<String>,
     pub terminal_evidence_bytes_exact: bool,
     pub terminal_boundary_exact: bool,
     pub passed: bool,
@@ -144,8 +149,10 @@ impl NativeCheckpointBenchmarkReport {
 
     pub fn validate(&self) -> Result<(), Box<dyn Error>> {
         let labels = ["early", "middle", "late"];
-        if self.schema != NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V1
-            || self.optimization_request_sha256 == Digest::ZERO
+        if !matches!(
+            self.schema.as_str(),
+            NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V1 | NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V2
+        ) || self.optimization_request_sha256 == Digest::ZERO
             || self.execution_sha256 == Digest::ZERO
             || self.executable_sha256 == Digest::ZERO
             || self.game_data_sha256 == Digest::ZERO
@@ -163,7 +170,9 @@ impl NativeCheckpointBenchmarkReport {
             let parity_passed = frontier.parity.source_state_exact
                 && frontier.parity.transition_exact
                 && frontier.parity.terminal_evidence_bytes_exact
-                && frontier.parity.terminal_boundary_exact;
+                && frontier.parity.terminal_boundary_exact
+                && (self.schema == NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V1
+                    || frontier.parity.semantic_state_digest_exact);
             if frontier.label != labels[index]
                 || frontier.route_ticks == 0
                 || frontier.authenticated_root_replay.source_kind != "authenticated_root_restore"
@@ -183,6 +192,13 @@ impl NativeCheckpointBenchmarkReport {
                     .parity
                     .checkpoint_wide_semantic_digest_scope
                     .is_empty()
+                || self.schema == NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V2
+                    && frontier.parity.checkpoint_entry_count == 0
+                || self.schema == NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V2
+                    && (frontier.parity.semantic_state_digest_exact
+                        != frontier.parity.divergent_checkpoint_entries.is_empty()
+                        || frontier.parity.divergent_checkpoint_entries.len() as u64
+                            > frontier.parity.checkpoint_entry_count)
                 || frontier.parity.passed != parity_passed
             {
                 return Err(format!(
@@ -342,7 +358,7 @@ pub fn run_native_checkpoint_benchmark(
     let passed = frontiers.iter().all(|frontier| frontier.parity.passed)
         && throughput.direct_restore_rate_millionths == 1_000_000;
     let report = NativeCheckpointBenchmarkReport {
-        schema: NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V1.into(),
+        schema: NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V2.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_sha256: config.execution.content_sha256,
         executable_sha256: config.execution.executable.sha256,
@@ -486,16 +502,24 @@ fn measure_frontier(
         .state_tick_digests
         .as_ref()
         .and_then(|digests| digests.last());
+    let (checkpoint_entry_count, divergent_checkpoint_entries) =
+        compare_checkpoint_entries(direct_candidate, replay_candidate)?;
+    let semantic_state_digest_exact =
+        direct_state_digest.is_some() && direct_state_digest == replay_state_digest;
+    if semantic_state_digest_exact != divergent_checkpoint_entries.is_empty() {
+        return Err("checkpoint-wide and entry-level semantic digest comparisons disagree".into());
+    }
     let direct_terminal_bytes = terminal_evidence_bytes(direct_candidate)?;
     let replay_terminal_bytes = terminal_evidence_bytes(replay_candidate)?;
     let parity = NativeCheckpointParityMeasurement {
         source_state_exact: direct_step.pre_input == replay_step.pre_input,
         transition_exact: direct_step == replay_step,
         checkpoint_wide_semantic_digest_scope:
-            "diagnostic_only: includes automation allocator history outside the decoded learning transition"
+            "registered parity-relevant checkpoint state; canonicalizes explicit host-ABI padding, JUT/VI presentation clocks, JUTProcBar, and the dPa particle heap while raw checkpoint restore remains byte-exact"
                 .into(),
-        semantic_state_digest_exact: direct_state_digest.is_some()
-            && direct_state_digest == replay_state_digest,
+        semantic_state_digest_exact,
+        checkpoint_entry_count,
+        divergent_checkpoint_entries,
         terminal_evidence_bytes_exact: direct_terminal_bytes == replay_terminal_bytes,
         terminal_boundary_exact: direct_candidate.terminal_boundary_fingerprint
             == replay_candidate.terminal_boundary_fingerprint,
@@ -505,7 +529,8 @@ fn measure_frontier(
         passed: parity.source_state_exact
             && parity.transition_exact
             && parity.terminal_evidence_bytes_exact
-            && parity.terminal_boundary_exact,
+            && parity.terminal_boundary_exact
+            && parity.semantic_state_digest_exact,
         ..parity
     };
     Ok(NativeCheckpointFrontierMeasurement {
@@ -525,6 +550,38 @@ fn measure_frontier(
         },
         parity,
     })
+}
+
+fn compare_checkpoint_entries(
+    direct: &crate::native_suffix_result::NativeSuffixCandidateResult,
+    replay: &crate::native_suffix_result::NativeSuffixCandidateResult,
+) -> Result<(u64, Vec<String>), Box<dyn Error>> {
+    let direct_entries = direct
+        .terminal_state_entry_digests
+        .as_deref()
+        .filter(|entries| !entries.is_empty())
+        .ok_or("direct-restore result lacks terminal checkpoint-entry digests")?;
+    let replay_entries = replay
+        .terminal_state_entry_digests
+        .as_deref()
+        .filter(|entries| !entries.is_empty())
+        .ok_or("portable-replay result lacks terminal checkpoint-entry digests")?;
+    if direct_entries.len() != replay_entries.len() {
+        return Err("direct and portable checkpoint manifests have different lengths".into());
+    }
+    let mut divergent = Vec::new();
+    for (direct_entry, replay_entry) in direct_entries.iter().zip(replay_entries) {
+        if direct_entry.name != replay_entry.name
+            || direct_entry.kind != replay_entry.kind
+            || direct_entry.bytes != replay_entry.bytes
+        {
+            return Err("direct and portable checkpoint manifests differ".into());
+        }
+        if direct_entry.digest != replay_entry.digest {
+            divergent.push(direct_entry.name.clone());
+        }
+    }
+    Ok((u64::try_from(direct_entries.len())?, divergent))
 }
 
 fn batch(

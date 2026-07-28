@@ -55,17 +55,20 @@ at tick `125`.
 - Checkpoint capture is now the measured P2 bottleneck. The 12-decision stress
   run spent 54.2 seconds capturing 18 campaign checkpoints; its two-entry,
   640-MiB-per-worker caches evicted 14 entries during campaign work.
-- The representative checkpoint benchmark confirms the same cause: each
-  294,694,748-byte machine image took 1.68-1.79 seconds to capture and 2.10-3.16
+- The v2 representative checkpoint benchmark confirms the same cause: each
+  294,694,748-byte machine image took 1.77 seconds to capture and 4.40-5.53
   seconds for the whole retention operation. The 224-byte host snapshot took
-  only 95-101 microseconds to capture and move into the resident cache. Exact
+  only 94-98 microseconds to capture and move into the resident cache. Exact
   decoded learning transitions, terminal-evidence bytes, and terminal boundary
   fingerprints matched direct restore and authenticated replay at route ticks
   15, 62, and 109.
-- The checkpoint-wide semantic digest does not match those otherwise exact
-  continuations because it includes automation allocator history outside the
-  decoded learning transition. This digest is diagnostic, not promotion
-  authority, until its state boundary is narrowed and proven.
+- The checkpoint-wide semantic digest now covers all 21 registered
+  parity-relevant entries while canonicalizing identified presentation-only
+  state: JUT/VI clocks, JUTProcBar, the particle presentation heap, and explicit
+  host-ABI padding. Direct and portable continuation digests match at all three
+  representative frontiers with no divergent entries; raw checkpoint capture
+  and restore remain byte-exact. Evidence:
+  `ordon-p2-checkpoint-path-v2.report.json`.
 
 A terminal hit, a reliable terminal hit, a 125 tie, or a faster search for the
 same tie is diagnostic evidence only.
@@ -107,7 +110,7 @@ same tie is diagnostic evidence only.
 - [ ] Audit headless execution to prove which renderer, audio, pacing, and
       presentation systems still run. Disable only work whose removal preserves
       native state and terminal parity, then measure the result.
-- [ ] Narrow the checkpoint-wide semantic digest to parity-relevant native
+- [x] Narrow the checkpoint-wide semantic digest to parity-relevant native
       state, excluding automation allocator history, and prove that the direct
       and portable continuation digests then match.
 

@@ -340,6 +340,7 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
         std::min<std::size_t>(mDefinition.maximumTicks * 4096, 16 * 1024 * 1024));
     mStateDigestMaterial.clear();
     mStateTickDigests.clear();
+    mTerminalStateEntryDigests.clear();
     if (mDefinition.verifyStateHashes) {
         mStateDigestMaterial.reserve(mDefinition.maximumTicks * 32);
         mStateTickDigests.reserve(mDefinition.maximumTicks);
@@ -652,6 +653,7 @@ bool SuffixBatchRunner::restoreSource(std::uint64_t& simulationTick,
     mConsumedPads.clear();
     mStateDigestMaterial.clear();
     mStateTickDigests.clear();
+    mTerminalStateEntryDigests.clear();
     mConsumedCaptureFailed = false;
     mEpisodePreInputCaptured = false;
     return true;
@@ -1274,6 +1276,7 @@ bool SuffixBatchRunner::finishCandidate(
     if (mDefinition.verifyStateHashes) {
         result.stateSequenceDigest = xxh3_128_hex(mStateDigestMaterial);
         result.stateTickDigests = mStateTickDigests;
+        result.terminalStateEntryDigests = mTerminalStateEntryDigests;
     }
     result.terminalBoundaryFingerprint =
         compute_milestone_boundary_fingerprint(observation, input_tape_player().tape().boot);
@@ -1415,7 +1418,12 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
         AccumulateMicros validation(mProfile.stateValidationMicros);
         ++mProfile.stateValidationSamples;
         std::string digest;
-        const StateCheckpointError checkpointError = mCheckpoint.currentSemanticDigest(digest);
+        std::vector<StateCheckpointEntryDigest>* const terminalEntryDigests =
+            mCandidateTick + 1 == mDefinition.maximumTicks
+                ? &mTerminalStateEntryDigests
+                : nullptr;
+        const StateCheckpointError checkpointError =
+            mCheckpoint.currentSemanticDigest(digest, terminalEntryDigests);
         if (checkpointError != StateCheckpointError::None) {
             error = state_checkpoint_error_message(checkpointError);
             fail(error);
@@ -1526,6 +1534,18 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                   {"capture_micros", result.retainedCheckpoint->captureMicros},
                   {"route_ticks", activeSourceRouteTicks() + result.ticksExecuted},
               };
+        nlohmann::json terminalStateEntryDigests = nlohmann::json::array();
+        for (const StateCheckpointEntryDigest& entry :
+            result.terminalStateEntryDigests)
+        {
+            terminalStateEntryDigests.push_back({
+                {"name", entry.name},
+                {"kind", entry.kind == StateCheckpointEntryKind::MemoryRegion
+                    ? "memory_region" : "component"},
+                {"bytes", entry.size},
+                {"digest", entry.digest},
+            });
+        }
         candidates.push_back({
             {"id", result.id},
             {"success", result.success},
@@ -1536,6 +1556,10 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                     ? nlohmann::json(nullptr) : nlohmann::json(result.stateSequenceDigest)},
             {"state_tick_digests", result.stateTickDigests.empty()
                     ? nlohmann::json(nullptr) : nlohmann::json(result.stateTickDigests)},
+            {"terminal_state_entry_digests",
+                result.terminalStateEntryDigests.empty()
+                    ? nlohmann::json(nullptr)
+                    : std::move(terminalStateEntryDigests)},
             {"terminal_boundary_fingerprint", result.terminalBoundaryFingerprint},
             {"predicate_evidence", nlohmann::json::parse(result.predicateEvidence)},
             {"consumed_pad_states", std::move(consumed)},

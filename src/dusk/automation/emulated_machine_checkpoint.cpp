@@ -15,10 +15,15 @@
 #include "JSystem/JKernel/JKRDvdFile.h"
 #include "JSystem/JKernel/JKRFileLoader.h"
 #include "JSystem/JKernel/JKRHeap.h"
+#include "JSystem/JUtility/JUTProcBar.h"
+#include "JSystem/JUtility/JUTVideo.h"
 #include "Z2AudioLib/Z2Audience.h"
 #include "Z2AudioLib/Z2SoundHandles.h"
+#include "d/d_com_inf_game.h"
 #include "d/d_meter_HIO.h"
 
+#include <array>
+#include <cstddef>
 #include <cstring>
 #include <cstdio>
 #include <type_traits>
@@ -67,6 +72,15 @@ std::vector<StateCheckpointIgnoredRange> native_semantic_padding(
             });
         }
     };
+    const auto appendState = [&](const void* const state, const std::size_t size) {
+        const auto begin = reinterpret_cast<std::uintptr_t>(state);
+        if (regionBegin <= begin && begin <= regionEnd && size <= regionEnd - begin) {
+            result.push_back({
+                .offset = static_cast<std::size_t>(begin - regionBegin),
+                .size = size,
+            });
+        }
+    };
     appendPadding(reinterpret_cast<const std::byte*>(&g_drawHIO.field_0x4) +
             sizeof(g_drawHIO.field_0x4),
         &g_drawHIO.mLifeTopPosX);
@@ -91,6 +105,37 @@ std::vector<StateCheckpointIgnoredRange> native_semantic_padding(
     appendPadding(reinterpret_cast<const std::byte*>(&g_drawHIO.mLanternIconMeterSize) +
             sizeof(g_drawHIO.mLanternIconMeterSize),
         &g_drawHIO.mCollectScreen);
+    // These are host presentation clocks. They affect frame pacing and the
+    // process bar only; raw checkpoint capture still preserves them exactly.
+    appendState(JUTVideo::getVideoLastTickStorage(), sizeof(OSTick));
+    appendState(JUTVideo::getVideoIntervalStorage(), sizeof(OSTick));
+    return result;
+}
+
+std::vector<StateCheckpointIgnoredRange> mem1_semantic_presentation(
+    const std::span<std::byte> mem1) {
+    std::vector<StateCheckpointIgnoredRange> result;
+    const auto begin = reinterpret_cast<std::uintptr_t>(mem1.data());
+    const auto end = begin + mem1.size();
+    const auto append = [&](const void* const state, const std::size_t size) {
+        const auto address = reinterpret_cast<std::uintptr_t>(state);
+        if (state != nullptr && begin <= address && address <= end &&
+            size <= end - address)
+        {
+            result.push_back({
+                .offset = static_cast<std::size_t>(address - begin),
+                .size = size,
+            });
+        }
+    };
+    // JUTProcBar contains only debug-display timing and visibility state.
+    append(JUTProcBar::getManager(), sizeof(JUTProcBar));
+    // dPa owns particle emitters and particles. Their draw-side evolution is
+    // not gameplay state, but remains part of byte-exact checkpoint restore.
+    dPa_control_c* const particles = g_dComIfG_gameInfo.play.getParticle();
+    if (particles != nullptr && particles->getHeap() != nullptr) {
+        append(particles->getHeap()->getStartAddr(), particles->getHeap()->getSize());
+    }
     return result;
 }
 
@@ -323,7 +368,11 @@ bool restore_jut_gamepad(void*, const std::span<const std::byte> input) {
 StateCheckpointError register_emulated_machine_checkpoint(StateCheckpoint& checkpoint) {
     void* const mem1 = AuroraGetMEM1StorageAddress();
     const std::size_t mem1Size = AuroraGetMEM1StorageSize();
-    StateCheckpointError error = checkpoint.addMemoryRegion("mem1", mem1, mem1Size);
+    const std::vector<StateCheckpointIgnoredRange> mem1Ignored =
+        mem1_semantic_presentation(
+            {static_cast<std::byte*>(mem1), mem1Size});
+    StateCheckpointError error =
+        checkpoint.addMemoryRegion("mem1", mem1, mem1Size, mem1Ignored);
     if (error != StateCheckpointError::None) {
         return error;
     }
@@ -358,8 +407,14 @@ StateCheckpointError register_emulated_machine_checkpoint(StateCheckpoint& check
     if (error != StateCheckpointError::None) {
         return error;
     }
+    constexpr std::array viPresentation{
+        StateCheckpointIgnoredRange{
+            .offset = offsetof(VIState, retraceCount),
+            .size = sizeof(VIState::retraceCount),
+        },
+    };
     error = checkpoint.addComponent("emulated_vi", sizeof(VIState), nullptr,
-        capture_vi, restore_vi);
+        capture_vi, restore_vi, viPresentation);
     if (error != StateCheckpointError::None) {
         return error;
     }
@@ -380,8 +435,14 @@ StateCheckpointError register_emulated_machine_checkpoint(StateCheckpoint& check
     if (error != StateCheckpointError::None) {
         return error;
     }
+    constexpr std::array jfwPresentation{
+        StateCheckpointIgnoredRange{
+            .offset = 0,
+            .size = sizeof(JFWDisplayCheckpointState),
+        },
+    };
     error = checkpoint.addComponent("jfw_display", sizeof(JFWDisplayCheckpointState), nullptr,
-        capture_jfw_display, restore_jfw_display);
+        capture_jfw_display, restore_jfw_display, jfwPresentation);
     if (error != StateCheckpointError::None) {
         return error;
     }

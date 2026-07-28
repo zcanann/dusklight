@@ -146,6 +146,8 @@ pub struct NativeSuffixCandidateResult {
     pub state_sequence_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_tick_digests: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_state_entry_digests: Option<Vec<NativeStateCheckpointEntryDigestResult>>,
     pub terminal_boundary_fingerprint: String,
     pub predicate_evidence: NativePredicateEvidence,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -153,6 +155,15 @@ pub struct NativeSuffixCandidateResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retained_checkpoint: Option<NativeRetainedCheckpointResult>,
     pub terminal_observation: Value,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeStateCheckpointEntryDigestResult {
+    pub name: String,
+    pub kind: String,
+    pub bytes: u64,
+    pub digest: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -571,6 +582,24 @@ impl NativeSuffixCandidateResult {
                 ));
             }
         }
+        if let Some(entries) = &self.terminal_state_entry_digests {
+            let mut names = BTreeSet::new();
+            if !verify_state_hashes
+                || entries.is_empty()
+                || entries.len() > 1_024
+                || entries.iter().any(|entry| {
+                    entry.name.is_empty()
+                        || !names.insert(entry.name.as_str())
+                        || !matches!(entry.kind.as_str(), "memory_region" | "component")
+                        || entry.bytes == 0
+                        || !lower_hex(&entry.digest, 32)
+                })
+            {
+                return Err(result_error(
+                    "native suffix terminal checkpoint-entry digests are invalid",
+                ));
+            }
+        }
         match (&self.consumed_pad_states, exact_verdict) {
             (Some(pads), true) if pads.len() == self.ticks_executed as usize => {}
             (None, false) => {}
@@ -956,6 +985,7 @@ mod tests {
                 state_sequence_digest: verify_state_hashes.then(|| "7".repeat(32)),
                 state_tick_digests: verify_state_hashes
                     .then(|| vec!["8".repeat(32); ticks as usize]),
+                terminal_state_entry_digests: None,
                 terminal_boundary_fingerprint: "9".repeat(32),
                 predicate_evidence: NativePredicateEvidence {
                     schema: NativeMilestoneSchema {

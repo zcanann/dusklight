@@ -175,6 +175,30 @@ void test_semantic_padding_is_explicit_and_raw_integrity_stays_exact() {
     };
     REQUIRE(invalid.addMemoryRegion("overlap", memory.data(), memory.size(), overlapping) ==
             StateCheckpointError::InvalidIgnoredRange);
+
+    Component component{.value = 0x12345678};
+    const std::array componentPresentation{
+        StateCheckpointIgnoredRange{.offset = 0, .size = sizeof(component.value)},
+    };
+    StateCheckpoint componentCheckpoint;
+    REQUIRE(componentCheckpoint.addComponent("component", sizeof(component.value), &component,
+                capture_component, restore_component, componentPresentation) ==
+            StateCheckpointError::None);
+    std::string componentRawBefore;
+    std::string componentSemanticBefore;
+    REQUIRE(componentCheckpoint.currentDigest(componentRawBefore) ==
+            StateCheckpointError::None);
+    REQUIRE(componentCheckpoint.currentSemanticDigest(componentSemanticBefore) ==
+            StateCheckpointError::None);
+    component.value = 0x87654321;
+    std::string componentRawAfter;
+    std::string componentSemanticAfter;
+    REQUIRE(componentCheckpoint.currentDigest(componentRawAfter) ==
+            StateCheckpointError::None);
+    REQUIRE(componentCheckpoint.currentSemanticDigest(componentSemanticAfter) ==
+            StateCheckpointError::None);
+    REQUIRE(componentRawAfter != componentRawBefore);
+    REQUIRE(componentSemanticAfter == componentSemanticBefore);
 }
 
 }  // namespace
