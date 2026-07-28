@@ -1379,12 +1379,82 @@ impl TacticQCampaign {
                 "final result requires a native-authorized terminal replay boundary",
             ));
         }
-        let route_bytes = self
-            .route_tape
+        self.build_final_result(
+            self.route_tape.clone(),
+            self.replay.clone(),
+            self.replay_routes.clone(),
+            self.current.snapshot.clone(),
+        )
+    }
+
+    /// Seal an authenticated terminal sibling evaluated at the current
+    /// frontier without changing the policy-selected campaign trajectory.
+    ///
+    /// Native proposal batches are both learning evidence and a real bounded
+    /// candidate search. A terminal sibling is therefore eligible route
+    /// evidence even though it must not retroactively replace the learner's
+    /// selected action.
+    pub fn final_result_from_evaluated_terminal(
+        &self,
+        evaluated: &EvaluatedRewardedTacticOutcome,
+    ) -> Result<TacticQFinalResult, TacticQCampaignError> {
+        let outcome = &evaluated.outcome;
+        evaluated.transition.validate()?;
+        let source_checkpoint_sha256 =
+            route_checkpoint(self.root_checkpoint_sha256, &self.route_tape)?;
+        let terminal_state_sha256 = outcome
+            .next_facts
+            .content_sha256()
+            .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+        if !outcome.terminal
+            || outcome.next_facts.terminal.configured != Some(true)
+            || outcome.next_facts.terminal.reached != Some(true)
+            || outcome.selected.decision_index != self.decision_index
+            || outcome.selected.learner_snapshot_sha256 != self.current.snapshot_sha256
+            || outcome.source_checkpoint_sha256 != self.root_checkpoint_sha256
+            || !extends(&self.route_tape, &outcome.route_tape)
+            || evaluated.transition.before_state_sha256 != self.current.snapshot_sha256
+            || evaluated.transition.after_state_sha256 != terminal_state_sha256
+            || evaluated.transition.source_checkpoint_sha256 != source_checkpoint_sha256
+            || evaluated.transition.next_checkpoint_sha256
+                != route_checkpoint(self.root_checkpoint_sha256, &outcome.route_tape)?
+            || !evaluated.transition.value_sample.terminal
+            || evaluated.transition.value_sample.action != outcome.selected.descriptor
+            || evaluated.transition.execution != outcome.execution
+            || evaluated.transition.value_sample.reward.to_bits()
+                != evaluated.reward.training_reward.to_bits()
+        {
+            return Err(TacticQCampaignError::InvalidState(
+                "evaluated terminal tactic is detached from the current campaign frontier",
+            ));
+        }
+        let mut replay = self.replay.clone();
+        replay.push(evaluated.transition.clone());
+        let mut replay_routes = self.replay_routes.clone();
+        replay_routes.push(outcome.route_tape.clone());
+        self.build_final_result(
+            outcome.route_tape.clone(),
+            replay,
+            replay_routes,
+            outcome.next_facts.clone(),
+        )
+    }
+
+    fn build_final_result(
+        &self,
+        route_tape: InputTape,
+        replay: Vec<OptionTransitionSample>,
+        replay_routes: Vec<InputTape>,
+        terminal: FactSnapshot,
+    ) -> Result<TacticQFinalResult, TacticQCampaignError> {
+        let route_bytes = route_tape
             .encode()
             .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
-        let replay_bytes = serde_cbor::to_vec(&(&self.replay, &self.replay_routes))
+        let replay_bytes = serde_cbor::to_vec(&(&replay, &replay_routes))
             .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
+        let terminal_state_sha256 = terminal
+            .content_sha256()
+            .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
         let mut result = TacticQFinalResult {
             schema: TACTIC_Q_FINAL_RESULT_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
@@ -1392,13 +1462,14 @@ impl TacticQCampaign {
             root_checkpoint_sha256: self.root_checkpoint_sha256,
             route_tape_sha256: sha256(&route_bytes),
             replay_sha256: sha256(&replay_bytes),
-            terminal_state_sha256: self.current.snapshot_sha256,
-            route_tape: self.route_tape.clone(),
-            replay: self.replay.clone(),
-            replay_routes: self.replay_routes.clone(),
-            terminal: self.current.snapshot.clone(),
+            terminal_state_sha256,
+            route_tape,
+            replay,
+            replay_routes,
+            terminal,
         };
         result.content_sha256 = final_result_digest(&result)?;
+        validate_final_result(&result)?;
         Ok(result)
     }
 
@@ -3652,6 +3723,14 @@ mod tests {
             retained_native_checkpoint: None,
             retained_native_boundary_fingerprint: None,
         };
+        let evaluated_terminal = uninterrupted
+            .evaluate_rewarded_outcome(terminal_outcome.clone(), &encode, &reward_spec)
+            .unwrap();
+        let evaluated_terminal_result = uninterrupted
+            .final_result_from_evaluated_terminal(&evaluated_terminal)
+            .unwrap();
+        validate_final_result(&evaluated_terminal_result).unwrap();
+        assert!(uninterrupted.final_result().is_err());
         let uninterrupted_step = uninterrupted
             .retain_and_refit_rewarded(
                 uninterrupted_decision,
@@ -3703,6 +3782,10 @@ mod tests {
         assert_eq!(
             uninterrupted.final_result().unwrap(),
             resumed.final_result().unwrap()
+        );
+        assert_eq!(
+            uninterrupted.final_result().unwrap(),
+            evaluated_terminal_result
         );
     }
 }

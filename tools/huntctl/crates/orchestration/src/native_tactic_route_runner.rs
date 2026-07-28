@@ -3416,9 +3416,18 @@ fn run_seed(
         timing.tactic_preparation_and_fact_extraction_micros = timing
             .tactic_preparation_and_fact_extraction_micros
             .saturating_add(elapsed_micros(preparation_elapsed));
+        let terminal_candidates = evaluated
+            .iter()
+            .filter(|proposal| proposal.outcome.terminal)
+            .map(|proposal| {
+                campaign
+                    .final_result_from_evaluated_terminal(proposal)
+                    .map_err(route_error)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         // The policy-selected proposal is authoritative. Sibling proposals are
-        // native training evidence, not an outcome-peeking beam search that
-        // replaces the learner's action after observing handcrafted signals.
+        // native training and candidate evidence, not an outcome-peeking beam
+        // search that replaces the learner's action after observing results.
         let winner_index = 0;
         let winning_outcome = evaluated[winner_index].outcome.clone();
         let expected_transition = evaluated[winner_index].transition.clone();
@@ -3630,8 +3639,7 @@ fn run_seed(
             ),
         )?;
         trace.push(decision_trace);
-        if step.step.transition.value_sample.terminal {
-            let candidate = campaign.final_result().map_err(route_error)?;
+        for candidate in terminal_candidates {
             retain_successful_result(
                 &retained_success_root,
                 decision_index,
