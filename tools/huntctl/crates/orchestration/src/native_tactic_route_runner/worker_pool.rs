@@ -54,7 +54,7 @@ pub(super) fn run_seed_coordinator(
     initial_facts: &FactSnapshot,
     route_prefix: &InputTape,
     action_schema_sha256: Digest,
-    promoted_tactics: &[TacticCatalogEntry],
+    promoted_tactics: &[ImportedPromotedTactic],
     root_checkpoint_sha256: Digest,
     root_tape_ref: StoredContentRef,
     inherited_learner_snapshot: Arc<TacticQImmutableLearnerSnapshot>,
@@ -164,7 +164,7 @@ pub(super) fn parameterized_catalog_for_state_with_promoted(
     maximum_ticks: u32,
     feedback: Option<ParameterizedTacticFeedback>,
     action_schema_sha256: Digest,
-    promoted_tactics: &[TacticCatalogEntry],
+    promoted_tactics: &[ImportedPromotedTactic],
 ) -> Result<ParameterizedTacticProposalCatalog, NativeTacticRouteRunError> {
     let mut proposals = propose_parameterized_tactics(ParameterizedTacticProposalContext {
         seed,
@@ -179,7 +179,23 @@ pub(super) fn parameterized_catalog_for_state_with_promoted(
     .map_err(route_error)?;
     if !promoted_tactics.is_empty() {
         let mut entries = proposals.catalog.entries().to_vec();
-        entries.extend_from_slice(promoted_tactics);
+        let goal_distance =
+            encoder.encode(state).map_err(route_error)?[encoder.goal_distance_feature()];
+        entries.extend(
+            promoted_tactics
+                .iter()
+                .filter(|promoted| {
+                    promoted.condition.matches(
+                        &state.world.stage,
+                        state.world.room,
+                        state.player.procedure,
+                        state.player.contacts,
+                        goal_distance,
+                        TACTIC_MACRO_ENTRY_GOAL_DISTANCE_PADDING,
+                    )
+                })
+                .map(|promoted| promoted.entry.clone()),
+        );
         proposals.catalog = TacticAssetCatalog::new(entries).map_err(route_error)?;
     }
     validate_parameterized_policy_catalog(&proposals.catalog)?;

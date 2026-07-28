@@ -1,8 +1,13 @@
 use super::*;
 
 pub(super) struct ImportedPromotedTactics {
-    pub(super) entries: Vec<TacticCatalogEntry>,
+    pub(super) entries: Vec<ImportedPromotedTactic>,
     pub(super) report: NativeTacticImportedMacroReport,
+}
+
+pub(super) struct ImportedPromotedTactic {
+    pub(super) entry: TacticCatalogEntry,
+    pub(super) condition: TacticMacroEntryCondition,
 }
 
 pub fn tactic_macro_registry_identity(
@@ -32,7 +37,12 @@ pub(super) fn load_imported_promoted_tactics(
     let entries = artifact
         .registry
         .promoted()
-        .map(|record| record.candidate.catalog_entry().map_err(route_error))
+        .map(|record| {
+            Ok::<_, NativeTacticRouteRunError>(ImportedPromotedTactic {
+                entry: record.candidate.catalog_entry().map_err(route_error)?,
+                condition: record.candidate.entry_condition().map_err(route_error)?,
+            })
+        })
         .collect::<Result<Vec<_>, _>>()?;
     if entries.is_empty() {
         return Err(route_message(

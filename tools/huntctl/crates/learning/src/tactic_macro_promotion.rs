@@ -11,6 +11,7 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const TACTIC_MACRO_DISCOVERY_SCHEMA_V1: &str = "dusklight-tactic-macro-discovery/v1";
+pub const TACTIC_MACRO_DISCOVERY_SCHEMA_V2: &str = "dusklight-tactic-macro-discovery/v2";
 pub const MAX_DISCOVERY_OBSERVATIONS: usize = 4_096;
 pub const MAX_DISCOVERED_MACROS: usize = 32;
 pub const MAX_DISCOVERED_MACRO_TICKS: usize = 64;
@@ -23,10 +24,30 @@ pub struct MacroDiscoveryObservation {
     pub frontier_state_sha256: Digest,
     pub transition_sha256: Digest,
     pub option_id: String,
+    pub entry: MacroEntryObservation,
     pub tape: InputTape,
     pub reward: f32,
     pub goal_progress: f32,
     pub terminal: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MacroEntryObservation {
+    pub stage: String,
+    pub room: i8,
+    pub player_procedure: Option<u16>,
+    pub player_contacts: Option<u8>,
+    pub goal_distance_f32_bits: u32,
+}
+
+impl MacroEntryObservation {
+    fn validate(&self) -> Result<(), &'static str> {
+        let goal_distance = f32::from_bits(self.goal_distance_f32_bits);
+        if self.stage.is_empty() || !goal_distance.is_finite() || goal_distance < 0.0 {
+            return Err("macro entry observation is invalid");
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -35,6 +56,37 @@ pub struct MacroSourceProvenance {
     pub frontier_state_sha256: Digest,
     pub transition_sha256: Digest,
     pub option_id: String,
+    pub entry: MacroEntryObservation,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TacticMacroEntryCondition {
+    pub stages_and_rooms: BTreeSet<(String, i8)>,
+    pub player_procedures: BTreeSet<Option<u16>>,
+    pub player_contacts: BTreeSet<Option<u8>>,
+    pub minimum_goal_distance: f32,
+    pub maximum_goal_distance: f32,
+}
+
+impl TacticMacroEntryCondition {
+    pub fn matches(
+        &self,
+        stage: &str,
+        room: i8,
+        player_procedure: Option<u16>,
+        player_contacts: Option<u8>,
+        goal_distance: f32,
+        goal_distance_padding: f32,
+    ) -> bool {
+        goal_distance.is_finite()
+            && goal_distance_padding.is_finite()
+            && goal_distance_padding >= 0.0
+            && self.stages_and_rooms.contains(&(stage.to_owned(), room))
+            && self.player_procedures.contains(&player_procedure)
+            && self.player_contacts.contains(&player_contacts)
+            && goal_distance >= (self.minimum_goal_distance - goal_distance_padding).max(0.0)
+            && goal_distance <= self.maximum_goal_distance + goal_distance_padding
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -51,6 +103,30 @@ impl DiscoveredMacroCandidate {
             self.option_id.clone(),
             TacticAssetSource::RecordedTape(self.tape.clone()),
         )
+    }
+
+    pub fn entry_condition(&self) -> Result<TacticMacroEntryCondition, &'static str> {
+        validate_candidate(self)?;
+        let mut stages_and_rooms = BTreeSet::new();
+        let mut player_procedures = BTreeSet::new();
+        let mut player_contacts = BTreeSet::new();
+        let mut minimum_goal_distance = f32::INFINITY;
+        let mut maximum_goal_distance = f32::NEG_INFINITY;
+        for source in &self.sources {
+            stages_and_rooms.insert((source.entry.stage.clone(), source.entry.room));
+            player_procedures.insert(source.entry.player_procedure);
+            player_contacts.insert(source.entry.player_contacts);
+            let distance = f32::from_bits(source.entry.goal_distance_f32_bits);
+            minimum_goal_distance = minimum_goal_distance.min(distance);
+            maximum_goal_distance = maximum_goal_distance.max(distance);
+        }
+        Ok(TacticMacroEntryCondition {
+            stages_and_rooms,
+            player_procedures,
+            player_contacts,
+            minimum_goal_distance,
+            maximum_goal_distance,
+        })
     }
 }
 
@@ -114,6 +190,7 @@ pub fn discover_replay_macros(
                             frontier_state_sha256: observation.frontier_state_sha256,
                             transition_sha256: observation.transition_sha256,
                             option_id: observation.option_id.clone(),
+                            entry: observation.entry.clone(),
                         },
                     )
                     .is_none()
@@ -380,6 +457,7 @@ fn validate_observation(observation: &MacroDiscoveryObservation) -> Result<(), &
     {
         return Err("macro discovery observation is invalid");
     }
+    observation.entry.validate()?;
     Ok(())
 }
 
@@ -397,6 +475,7 @@ fn validate_candidate(candidate: &DiscoveredMacroCandidate) -> Result<(), &'stat
             source.frontier_state_sha256 == Digest::ZERO
                 || source.transition_sha256 == Digest::ZERO
                 || source.option_id.is_empty()
+                || source.entry.validate().is_err()
         })
         || macro_tape_sha256(&candidate.tape)? != candidate.candidate_sha256
     {
@@ -409,7 +488,7 @@ fn macro_tape_sha256(tape: &InputTape) -> Result<Digest, &'static str> {
     tape.validate().map_err(|_| "macro tape is invalid")?;
     let encoded = tape.encode().map_err(|_| "macro tape encoding failed")?;
     let mut hasher = Sha256::new();
-    hasher.update(TACTIC_MACRO_DISCOVERY_SCHEMA_V1.as_bytes());
+    hasher.update(TACTIC_MACRO_DISCOVERY_SCHEMA_V2.as_bytes());
     hasher.update((encoded.len() as u64).to_le_bytes());
     hasher.update(encoded);
     Ok(Digest(hasher.finalize().into()))
@@ -417,7 +496,7 @@ fn macro_tape_sha256(tape: &InputTape) -> Result<Digest, &'static str> {
 
 fn comparison_sha256(evidence: &MacroComparisonEvidence) -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(TACTIC_MACRO_DISCOVERY_SCHEMA_V1.as_bytes());
+    hasher.update(TACTIC_MACRO_DISCOVERY_SCHEMA_V2.as_bytes());
     hasher.update(evidence.candidate_sha256.0);
     hasher.update(evidence.seed.to_le_bytes());
     hasher.update(evidence.frontier_state_sha256.0);
@@ -466,6 +545,13 @@ mod tests {
             frontier_state_sha256: Digest([state; 32]),
             transition_sha256: Digest([transition; 32]),
             option_id: format!("family/move/{transition}"),
+            entry: MacroEntryObservation {
+                stage: "F_SP103".into(),
+                room: 1,
+                player_procedure: Some(3),
+                player_contacts: Some(1),
+                goal_distance_f32_bits: (100.0 + f32::from(state)).to_bits(),
+            },
             tape: tape(80, 8),
             reward: -0.08,
             goal_progress: -16.0,
@@ -497,18 +583,27 @@ mod tests {
                     frontier_state_sha256: Digest([1; 32]),
                     transition_sha256: Digest([3; 32]),
                     option_id: "family/seek/a".into(),
+                    entry: observation(11, 1, 3).entry,
                 },
                 MacroSourceProvenance {
                     seed: 11,
                     frontier_state_sha256: Digest([2; 32]),
                     transition_sha256: Digest([4; 32]),
                     option_id: "family/curve/b".into(),
+                    entry: observation(11, 2, 4).entry,
                 },
             ],
         )
         .unwrap();
         assert_eq!(candidate.tape.frames.len(), 16);
         assert_eq!(candidate.sources.len(), 2);
+        let condition = candidate.entry_condition().unwrap();
+        assert_eq!(
+            condition.stages_and_rooms,
+            BTreeSet::from([("F_SP103".into(), 1)])
+        );
+        assert_eq!(condition.minimum_goal_distance, 101.0);
+        assert_eq!(condition.maximum_goal_distance, 102.0);
         assert_eq!(
             candidate
                 .catalog_entry()

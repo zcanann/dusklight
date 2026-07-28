@@ -3,8 +3,8 @@
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_learning::tactic_macro_promotion::{
-    DiscoveredMacroCandidate, MacroComparisonEvidence, MacroPromotionStatus, MacroSourceProvenance,
-    TACTIC_MACRO_DISCOVERY_SCHEMA_V1, TacticMacroPromotionRegistry,
+    DiscoveredMacroCandidate, MacroComparisonEvidence, MacroEntryObservation, MacroPromotionStatus,
+    MacroSourceProvenance, TACTIC_MACRO_DISCOVERY_SCHEMA_V2, TacticMacroPromotionRegistry,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -15,9 +15,9 @@ use std::io::Write;
 use std::path::Path;
 
 pub const TACTIC_MACRO_REGISTRY_EXTENSION: &str = "dtmr";
-const TACTIC_MACRO_REGISTRY_SCHEMA_V1: &str = "dusklight-tactic-macro-registry/v1";
-const TACTIC_MACRO_REGISTRY_MAGIC: &[u8; 8] = b"DSKTMAC1";
-const TACTIC_MACRO_REGISTRY_VERSION: u16 = 1;
+const TACTIC_MACRO_REGISTRY_SCHEMA_V2: &str = "dusklight-tactic-macro-registry/v2";
+const TACTIC_MACRO_REGISTRY_MAGIC: &[u8; 8] = b"DSKTMAC2";
+const TACTIC_MACRO_REGISTRY_VERSION: u16 = 2;
 const TACTIC_MACRO_REGISTRY_HEADER_BYTES: usize = 8 + 2 + 2 + 8 + 8 + 32;
 const TACTIC_MACRO_REGISTRY_COMPRESSION_LEVEL: i32 = 3;
 const MAXIMUM_TACTIC_MACRO_REGISTRY_BYTES: usize = 64 * 1024 * 1024;
@@ -54,6 +54,11 @@ struct StoredSource {
     frontier_state_sha256: Digest,
     transition_sha256: Digest,
     option_id: String,
+    stage: String,
+    room: i8,
+    player_procedure: Option<u16>,
+    player_contacts: Option<u8>,
+    goal_distance_f32_bits: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -87,8 +92,8 @@ pub fn write_tactic_macro_registry(
         return Err(store_error("tactic macro registry extension is invalid"));
     }
     let stored = StoredRegistry {
-        schema: TACTIC_MACRO_REGISTRY_SCHEMA_V1.into(),
-        discovery_schema: TACTIC_MACRO_DISCOVERY_SCHEMA_V1.into(),
+        schema: TACTIC_MACRO_REGISTRY_SCHEMA_V2.into(),
+        discovery_schema: TACTIC_MACRO_DISCOVERY_SCHEMA_V2.into(),
         records: registry
             .records()
             .map(|record| {
@@ -109,6 +114,11 @@ pub fn write_tactic_macro_registry(
                             frontier_state_sha256: source.frontier_state_sha256,
                             transition_sha256: source.transition_sha256,
                             option_id: source.option_id.clone(),
+                            stage: source.entry.stage.clone(),
+                            room: source.entry.room,
+                            player_procedure: source.entry.player_procedure,
+                            player_contacts: source.entry.player_contacts,
+                            goal_distance_f32_bits: source.entry.goal_distance_f32_bits,
                         })
                         .collect(),
                     comparisons: record
@@ -156,8 +166,8 @@ pub fn read_tactic_macro_registry(
     let (content_sha256, raw) = decode_registry(&bytes)?;
     let stored: StoredRegistry =
         serde_cbor::from_slice(&raw).map_err(TacticMacroStoreError::domain)?;
-    if stored.schema != TACTIC_MACRO_REGISTRY_SCHEMA_V1
-        || stored.discovery_schema != TACTIC_MACRO_DISCOVERY_SCHEMA_V1
+    if stored.schema != TACTIC_MACRO_REGISTRY_SCHEMA_V2
+        || stored.discovery_schema != TACTIC_MACRO_DISCOVERY_SCHEMA_V2
     {
         return Err(store_error("tactic macro registry schema is invalid"));
     }
@@ -178,6 +188,13 @@ pub fn read_tactic_macro_registry(
                     frontier_state_sha256: source.frontier_state_sha256,
                     transition_sha256: source.transition_sha256,
                     option_id: source.option_id,
+                    entry: MacroEntryObservation {
+                        stage: source.stage,
+                        room: source.room,
+                        player_procedure: source.player_procedure,
+                        player_contacts: source.player_contacts,
+                        goal_distance_f32_bits: source.goal_distance_f32_bits,
+                    },
                 })
                 .collect(),
         };
@@ -367,6 +384,13 @@ mod tests {
             frontier_state_sha256: Digest([identity; 32]),
             transition_sha256: Digest([identity.saturating_add(16); 32]),
             option_id: format!("family/seek/{identity}"),
+            entry: MacroEntryObservation {
+                stage: "F_SP103".into(),
+                room: 1,
+                player_procedure: Some(3),
+                player_contacts: Some(1),
+                goal_distance_f32_bits: (100.0 + f32::from(identity)).to_bits(),
+            },
             tape: InputTape {
                 frames: vec![frame; 8],
                 ..InputTape::default()

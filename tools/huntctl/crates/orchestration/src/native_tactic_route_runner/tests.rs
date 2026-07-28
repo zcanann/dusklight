@@ -919,6 +919,62 @@ fn tactic_macro_validation_waits_for_independent_seed_support() {
 }
 
 #[test]
+fn tactic_macro_entry_conditions_admit_nearby_held_out_states_only() {
+    let shard = NativeEpisodeShard::decode(include_bytes!(
+        "../../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+    ))
+    .unwrap();
+    let snapshot = FactSnapshot::from_native_learning(
+        &shard.episodes[0].steps[0].pre_input,
+        &[],
+        None,
+        Vec::new(),
+    )
+    .unwrap();
+    let encoder = GoalConditionedTacticFeatureEncoder::new([0.0, 0.0, 0.0]).unwrap();
+    let goal_distance = encoder.encode(&snapshot).unwrap()[encoder.goal_distance_feature()];
+    let condition = dusklight_learning::tactic_macro_promotion::TacticMacroEntryCondition {
+        stages_and_rooms: BTreeSet::from([(snapshot.world.stage.clone(), snapshot.world.room)]),
+        player_procedures: BTreeSet::from([snapshot.player.procedure]),
+        player_contacts: BTreeSet::from([snapshot.player.contacts]),
+        minimum_goal_distance: goal_distance,
+        maximum_goal_distance: goal_distance,
+    };
+    let frontier = |snapshot: FactSnapshot| TacticMacroValidationFrontier {
+        seed: 11,
+        state_sha256: snapshot.content_sha256().unwrap(),
+        snapshot,
+        route_tape: InputTape {
+            frames: vec![InputFrame::default()],
+            ..InputTape::default()
+        },
+        primitive_baseline: TacticMacroMeasuredOutcome {
+            terminal: false,
+            progress: 0.0,
+            ticks: 4,
+        },
+    };
+
+    assert_eq!(
+        tactic_macro_entry_distance(&condition, &frontier(snapshot.clone()), &encoder).unwrap(),
+        Some(0.0)
+    );
+    let mut wrong_room = snapshot.clone();
+    wrong_room.world.room = wrong_room.world.room.saturating_add(1);
+    assert_eq!(
+        tactic_macro_entry_distance(&condition, &frontier(wrong_room), &encoder).unwrap(),
+        None
+    );
+    let mut too_far = snapshot;
+    too_far.player.position_f32_bits[0] =
+        (f32::from_bits(too_far.player.position_f32_bits[0]) + 1024.0).to_bits();
+    assert_eq!(
+        tactic_macro_entry_distance(&condition, &frontier(too_far), &encoder).unwrap(),
+        None
+    );
+}
+
+#[test]
 fn promoted_macro_reuse_accepts_only_an_exact_realized_prefix() {
     let first = InputFrame {
         owned_ports: 1,
@@ -1018,12 +1074,26 @@ fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
                 frontier_state_sha256: Digest([1; 32]),
                 transition_sha256: Digest([2; 32]),
                 option_id: "family/primitive/a".into(),
+                entry: MacroEntryObservation {
+                    stage: "F_SP103".into(),
+                    room: 1,
+                    player_procedure: Some(3),
+                    player_contacts: Some(1),
+                    goal_distance_f32_bits: 100.0_f32.to_bits(),
+                },
             },
             MacroSourceProvenance {
                 seed: 22,
                 frontier_state_sha256: Digest([3; 32]),
                 transition_sha256: Digest([4; 32]),
                 option_id: "family/primitive/b".into(),
+                entry: MacroEntryObservation {
+                    stage: "F_SP103".into(),
+                    room: 1,
+                    player_procedure: Some(3),
+                    player_contacts: Some(1),
+                    goal_distance_f32_bits: 90.0_f32.to_bits(),
+                },
             },
         ],
     )
@@ -1056,6 +1126,56 @@ fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
         Vec::new(),
     )
     .unwrap();
+    let target = snapshot.player.position_f32_bits.map(f32::from_bits);
+    let encoder = GoalConditionedTacticFeatureEncoder::new(target).unwrap();
+    let imported = ImportedPromotedTactic {
+        entry: candidate.catalog_entry().unwrap(),
+        condition: TacticMacroEntryCondition {
+            stages_and_rooms: BTreeSet::from([(snapshot.world.stage.clone(), snapshot.world.room)]),
+            player_procedures: BTreeSet::from([snapshot.player.procedure]),
+            player_contacts: BTreeSet::from([snapshot.player.contacts]),
+            minimum_goal_distance: 0.0,
+            maximum_goal_distance: 0.0,
+        },
+    };
+    let proposals = parameterized_catalog_for_state_with_promoted(
+        11,
+        3,
+        &snapshot,
+        &encoder,
+        40,
+        None,
+        Digest([8; 32]),
+        std::slice::from_ref(&imported),
+    )
+    .unwrap();
+    assert!(
+        proposals
+            .catalog
+            .entries()
+            .iter()
+            .any(|entry| entry.option_id().starts_with("promoted/"))
+    );
+    let mut wrong_room = snapshot.clone();
+    wrong_room.world.room = wrong_room.world.room.saturating_add(1);
+    let proposals = parameterized_catalog_for_state_with_promoted(
+        11,
+        3,
+        &wrong_room,
+        &encoder,
+        40,
+        None,
+        Digest([8; 32]),
+        std::slice::from_ref(&imported),
+    )
+    .unwrap();
+    assert!(
+        proposals
+            .catalog
+            .entries()
+            .iter()
+            .all(|entry| !entry.option_id().starts_with("promoted/"))
+    );
     let learner = LearnerState::build(snapshot, &FactRegistry::canonical(), &combined, &[], |_| {
         true
     })

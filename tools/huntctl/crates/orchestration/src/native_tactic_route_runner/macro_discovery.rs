@@ -8,6 +8,7 @@ pub(super) struct MinedTacticMacros {
 pub(super) fn mine_and_store_tactic_macros(
     output_root: &Path,
     exploration_seeds: &[u64],
+    encoder: &GoalConditionedTacticFeatureEncoder,
 ) -> Result<MinedTacticMacros, NativeTacticRouteRunError> {
     let mut observations = Vec::new();
     let mut observation_count = 0_u64;
@@ -49,6 +50,7 @@ pub(super) fn mine_and_store_tactic_macros(
                         proposal.inline_transition.as_ref(),
                     )?,
                     option_id: transition.value_sample.action.option_id,
+                    entry: macro_entry_observation(&transition.before, encoder)?,
                     tape: InputTape {
                         boot: root_tape.boot.clone(),
                         tick_rate_numerator: root_tape.tick_rate_numerator,
@@ -81,6 +83,7 @@ pub(super) fn mine_and_store_tactic_macros(
     candidates.extend(mine_connected_tactic_macro_compositions(
         output_root,
         exploration_seeds,
+        encoder,
     )?);
     let mut deduplicated = BTreeMap::<Digest, DiscoveredMacroCandidate>::new();
     for candidate in candidates {
@@ -141,6 +144,10 @@ pub(super) fn mine_and_store_tactic_macros(
             high_value_observation_count,
             mined_observation_count: observations.len() as u64,
             candidate_count: restored.registry.records().len() as u64,
+            entry_condition_count: restored.registry.records().len() as u64,
+            held_out_compatible_candidate_count: 0,
+            source_state_exclusion_count: 0,
+            entry_incompatible_frontier_count: 0,
             proposed_count,
             promoted_count,
             demoted_count,
@@ -159,9 +166,30 @@ pub(super) fn mine_and_store_tactic_macros(
     })
 }
 
+fn macro_entry_observation(
+    snapshot: &FactSnapshot,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+) -> Result<MacroEntryObservation, NativeTacticRouteRunError> {
+    let goal_distance =
+        encoder.encode(snapshot).map_err(route_error)?[encoder.goal_distance_feature()];
+    if !goal_distance.is_finite() || goal_distance < 0.0 {
+        return Err(route_message(
+            "macro discovery source has invalid goal distance",
+        ));
+    }
+    Ok(MacroEntryObservation {
+        stage: snapshot.world.stage.clone(),
+        room: snapshot.world.room,
+        player_procedure: snapshot.player.procedure,
+        player_contacts: snapshot.player.contacts,
+        goal_distance_f32_bits: goal_distance.to_bits(),
+    })
+}
+
 pub(super) fn mine_connected_tactic_macro_compositions(
     output_root: &Path,
     exploration_seeds: &[u64],
+    encoder: &GoalConditionedTacticFeatureEncoder,
 ) -> Result<Vec<DiscoveredMacroCandidate>, NativeTacticRouteRunError> {
     let mut candidates = Vec::new();
     for (seed_index, seed) in exploration_seeds.iter().copied().enumerate() {
@@ -203,6 +231,7 @@ pub(super) fn mine_connected_tactic_macro_compositions(
                         record.inline_transition.as_ref(),
                     )?,
                     option_id: transition.value_sample.action.option_id.clone(),
+                    entry: macro_entry_observation(&transition.before, encoder)?,
                 });
                 if sources.len() >= 2 {
                     candidates.push(
@@ -316,11 +345,45 @@ pub(super) fn validate_and_store_tactic_macros(
             Vec::new()
         };
     let mut jobs = Vec::new();
+    let mut held_out_compatible_candidate_count = 0_u64;
+    let mut source_state_exclusion_count = 0_u64;
+    let mut entry_incompatible_frontier_count = 0_u64;
     for candidate in candidates {
+        let source_states = candidate
+            .sources
+            .iter()
+            .map(|source| source.frontier_state_sha256)
+            .collect::<BTreeSet<_>>();
+        let entry_condition = candidate.entry_condition().map_err(route_error)?;
+        let mut compatible_frontiers = Vec::new();
+        for frontier in &validation_frontiers {
+            if source_states.contains(&frontier.state_sha256) {
+                source_state_exclusion_count = source_state_exclusion_count.saturating_add(1);
+                continue;
+            }
+            if let Some(distance) =
+                tactic_macro_entry_distance(&entry_condition, frontier, encoder)?
+            {
+                compatible_frontiers.push((distance, frontier));
+            } else {
+                entry_incompatible_frontier_count =
+                    entry_incompatible_frontier_count.saturating_add(1);
+            }
+        }
+        if !compatible_frontiers.is_empty() {
+            held_out_compatible_candidate_count =
+                held_out_compatible_candidate_count.saturating_add(1);
+        }
+        compatible_frontiers.sort_by(|left, right| {
+            left.0
+                .total_cmp(&right.0)
+                .then_with(|| left.1.seed.cmp(&right.1.seed))
+                .then_with(|| left.1.state_sha256.cmp(&right.1.state_sha256))
+        });
         let mut used_seeds = BTreeSet::new();
         let mut used_states = BTreeSet::new();
         let mut comparison_index = 0_u64;
-        for frontier in &validation_frontiers {
+        for (_, frontier) in compatible_frontiers {
             if used_seeds.contains(&frontier.seed) || used_states.contains(&frontier.state_sha256) {
                 continue;
             }
@@ -434,6 +497,9 @@ pub(super) fn validate_and_store_tactic_macros(
     mined.report.proposed_count = proposed_count;
     mined.report.promoted_count = promoted_count;
     mined.report.demoted_count = demoted_count;
+    mined.report.held_out_compatible_candidate_count = held_out_compatible_candidate_count;
+    mined.report.source_state_exclusion_count = source_state_exclusion_count;
+    mined.report.entry_incompatible_frontier_count = entry_incompatible_frontier_count;
     mined.report.validation_state_count = validation_state_count;
     mined.report.comparison_count = comparison_count;
     mined.report.reused_primitive_baseline_count = reused_primitive_baseline_count;
@@ -446,6 +512,33 @@ pub(super) fn validate_and_store_tactic_macros(
     mined.report.registry_path = path_text(&validated_path);
     mined.report.registry_sha256 = registry_sha256;
     Ok(mined.report)
+}
+
+pub(super) fn tactic_macro_entry_distance(
+    condition: &dusklight_learning::tactic_macro_promotion::TacticMacroEntryCondition,
+    frontier: &TacticMacroValidationFrontier,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+) -> Result<Option<f32>, NativeTacticRouteRunError> {
+    let snapshot = &frontier.snapshot;
+    let distance = encoder.encode(snapshot).map_err(route_error)?[encoder.goal_distance_feature()];
+    if !condition.matches(
+        &snapshot.world.stage,
+        snapshot.world.room,
+        snapshot.player.procedure,
+        snapshot.player.contacts,
+        distance,
+        TACTIC_MACRO_ENTRY_GOAL_DISTANCE_PADDING,
+    ) {
+        return Ok(None);
+    }
+    let entry_distance = if distance < condition.minimum_goal_distance {
+        condition.minimum_goal_distance - distance
+    } else if distance > condition.maximum_goal_distance {
+        distance - condition.maximum_goal_distance
+    } else {
+        0.0
+    };
+    Ok(Some(entry_distance))
 }
 
 fn run_tactic_macro_validation_job(

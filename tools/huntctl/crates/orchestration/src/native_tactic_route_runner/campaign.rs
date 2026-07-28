@@ -13,7 +13,7 @@ pub(super) fn run_seed(
     initial_facts: &FactSnapshot,
     route_prefix: &InputTape,
     action_schema_sha256: Digest,
-    promoted_tactics: &[TacticCatalogEntry],
+    promoted_tactics: &[ImportedPromotedTactic],
     root_checkpoint_sha256: Digest,
     root_tape_ref: StoredContentRef,
     inherited_learner_snapshot: Arc<TacticQImmutableLearnerSnapshot>,

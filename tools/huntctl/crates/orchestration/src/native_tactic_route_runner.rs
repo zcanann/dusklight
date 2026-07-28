@@ -58,8 +58,9 @@ use dusklight_learning::tactic_features::GoalConditionedTacticFeatureEncoder;
 use dusklight_learning::tactic_macro_promotion::{
     DiscoveredMacroCandidate, MAX_DISCOVERED_MACRO_TICKS, MAX_DISCOVERED_MACROS,
     MAX_DISCOVERY_OBSERVATIONS, MIN_PROMOTION_COMPARISONS, MacroComparisonEvidence,
-    MacroDiscoveryObservation, MacroPromotionStatus, MacroSourceProvenance,
-    TacticMacroPromotionRegistry, discover_replay_macros, replay_macro_candidate,
+    MacroDiscoveryObservation, MacroEntryObservation, MacroPromotionStatus, MacroSourceProvenance,
+    TacticMacroEntryCondition, TacticMacroPromotionRegistry, discover_replay_macros,
+    replay_macro_candidate,
 };
 use dusklight_objectives::milestone_dsl::{Comparison, Expression, Field, Value};
 use dusklight_proposals::behavior_archive::BehaviorArchive;
@@ -108,6 +109,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V24: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V25: &str = "dusklight-native-tactic-route-report/v25";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V26: &str = "dusklight-native-tactic-route-report/v26";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V27: &str = "dusklight-native-tactic-route-report/v27";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V28: &str = "dusklight-native-tactic-route-report/v28";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -150,6 +152,7 @@ const NAVIGABLE_SURFACE_PORTAL_CLEARANCE: f32 = 24.0;
 const MAX_RESUME_JSON_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ROUTE_ATTEMPTS: usize = 10_000;
 const TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2: &str = "dusklight-native-tactic-route-performance/v2";
+const TACTIC_MACRO_ENTRY_GOAL_DISTANCE_PADDING: f32 = 128.0;
 
 mod report;
 use report::{
@@ -509,6 +512,7 @@ pub fn run_native_tactic_route(
                     let mined = mine_and_store_tactic_macros(
                         config.output_root,
                         &config.execution_plan.seeds,
+                        &encoder,
                     )?;
                     validate_and_store_tactic_macros(
                         config,
@@ -641,7 +645,7 @@ pub fn run_native_tactic_route(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V27.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V28.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
@@ -729,8 +733,8 @@ pub fn run_native_tactic_route(
 mod macro_discovery;
 use macro_discovery::{mine_and_store_tactic_macros, validate_and_store_tactic_macros};
 mod macro_import;
-use macro_import::load_imported_promoted_tactics;
 pub use macro_import::tactic_macro_registry_identity;
+use macro_import::{ImportedPromotedTactic, load_imported_promoted_tactics};
 
 mod replay_sharing;
 use replay_sharing::{
