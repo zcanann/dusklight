@@ -596,6 +596,11 @@ pub use comparison::{
     GENERALIZED_TACTIC_CONTROL_COMPARISON_SCHEMA_V1, GeneralizedTacticControlComparisonReport,
     compare_generalized_tactic_controls,
 };
+mod cross;
+pub use cross::{
+    GENERALIZED_TACTIC_CROSS_CALIBRATION_SCHEMA_V1, GeneralizedTacticCrossCalibrationReport,
+    cross_calibrate_generalized_tactic_value,
+};
 
 #[cfg(test)]
 mod tests;

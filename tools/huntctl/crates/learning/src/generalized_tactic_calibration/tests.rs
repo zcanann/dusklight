@@ -208,3 +208,46 @@ fn compares_all_controls_on_the_same_whole_group_partitions() {
     mislabeled.report_sha256 = mislabeled.digest().unwrap();
     assert!(mislabeled.validate().is_err());
 }
+
+#[test]
+fn cross_calibration_tests_every_complete_group_exactly_once() {
+    let report = cross_calibrate_generalized_tactic_value(
+        &corpus(),
+        0,
+        GeneralizedTacticCalibrationConfig {
+            fitted_q_iterations: 8,
+            ..GeneralizedTacticCalibrationConfig::default()
+        },
+    )
+    .unwrap();
+
+    report.validate().unwrap();
+    assert_eq!(report.state_region.pooled_test.samples, 50);
+    assert_eq!(report.action_realization.pooled_test.samples, 50);
+    for axis in [&report.state_region, &report.action_realization] {
+        assert_eq!(axis.folds.len(), 5);
+        let tested = axis
+            .folds
+            .iter()
+            .flat_map(|fold| fold.test_groups.iter())
+            .collect::<BTreeSet<_>>();
+        let validated = axis
+            .folds
+            .iter()
+            .flat_map(|fold| fold.validation_groups.iter())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(tested, validated);
+        assert_eq!(
+            axis.folds
+                .iter()
+                .map(|fold| fold.test_samples)
+                .sum::<usize>(),
+            50
+        );
+    }
+
+    let mut detached = report;
+    detached.action_realization.folds[0].test_fold = 1;
+    detached.report_sha256 = detached.digest().unwrap();
+    assert!(detached.validate().is_err());
+}

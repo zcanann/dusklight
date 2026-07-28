@@ -1,0 +1,301 @@
+{
+  "schema": "dusklight-generalized-tactic-cross-calibration/v1",
+  "source_transition_sha256": "6bd55f888ecfa4f7e4a1fe5fd0dc294cffe0521b56cfdbde1e2c9431e88b3dfe",
+  "source_transitions": 36,
+  "goal_distance_feature": 155,
+  "target_kind": "full_authenticated_transition_graph_fitted_q",
+  "config": {
+    "state_region_width": 64.0,
+    "group_folds": 3,
+    "validation_fold": 0,
+    "test_fold": 1,
+    "interval_coverage_millionths": 900000,
+    "fitted_q_iterations": 32,
+    "per_tick_discount": 0.999
+  },
+  "fold_schedule": "test_each_fold_once_validation_preceding_fold_modulo_k",
+  "state_region": {
+    "axis": "state_region",
+    "folds": [
+      {
+        "validation_fold": 2,
+        "test_fold": 0,
+        "training_groups": [
+          "F_SP103:1:3:14:8:-34",
+          "F_SP103:1:3:4:10:-26",
+          "F_SP103:1:3:4:4:-42"
+        ],
+        "validation_groups": [
+          "F_SP103:1:3:14:9:-35",
+          "F_SP103:1:3:4:10:-36",
+          "F_SP103:1:3:4:5:-39"
+        ],
+        "test_groups": [
+          "F_SP103:1:3:14:6:-34",
+          "F_SP103:1:3:3:10:-37",
+          "F_SP103:1:3:4:4:-40",
+          "F_SP103:1:3:4:9:-36"
+        ],
+        "group_overlap_count": 0,
+        "training_samples": 9,
+        "validation_samples": 9,
+        "test_samples": 18,
+        "validation_conformal_multiplier": 2.0947970936253646
+      },
+      {
+        "validation_fold": 0,
+        "test_fold": 1,
+        "training_groups": [
+          "F_SP103:1:3:14:9:-35",
+          "F_SP103:1:3:4:10:-36",
+          "F_SP103:1:3:4:5:-39"
+        ],
+        "validation_groups": [
+          "F_SP103:1:3:14:6:-34",
+          "F_SP103:1:3:3:10:-37",
+          "F_SP103:1:3:4:4:-40",
+          "F_SP103:1:3:4:9:-36"
+        ],
+        "test_groups": [
+          "F_SP103:1:3:14:8:-34",
+          "F_SP103:1:3:4:10:-26",
+          "F_SP103:1:3:4:4:-42"
+        ],
+        "group_overlap_count": 0,
+        "training_samples": 9,
+        "validation_samples": 18,
+        "test_samples": 9,
+        "validation_conformal_multiplier": 1.2647518879474098
+      },
+      {
+        "validation_fold": 1,
+        "test_fold": 2,
+        "training_groups": [
+          "F_SP103:1:3:14:6:-34",
+          "F_SP103:1:3:3:10:-37",
+          "F_SP103:1:3:4:4:-40",
+          "F_SP103:1:3:4:9:-36"
+        ],
+        "validation_groups": [
+          "F_SP103:1:3:14:8:-34",
+          "F_SP103:1:3:4:10:-26",
+          "F_SP103:1:3:4:4:-42"
+        ],
+        "test_groups": [
+          "F_SP103:1:3:14:9:-35",
+          "F_SP103:1:3:4:10:-36",
+          "F_SP103:1:3:4:5:-39"
+        ],
+        "group_overlap_count": 0,
+        "training_samples": 18,
+        "validation_samples": 9,
+        "test_samples": 9,
+        "validation_conformal_multiplier": 1.41732803980062
+      }
+    ],
+    "pooled_validation": {
+      "samples": 36,
+      "mean_error": 0.0004974220775895648,
+      "mean_absolute_error": 0.0881387825227446,
+      "root_mean_squared_error": 0.1123503269027053,
+      "mean_raw_uncertainty": 0.14411352087362497,
+      "interval_coverage": 0.9722222222222222,
+      "mean_interval_radius": 0.3018885846781878,
+      "comparable_states": 12,
+      "ranking_wins": 6,
+      "ranking_win_rate": 0.5,
+      "mean_observed_regret": 0.05652117542922497
+    },
+    "pooled_test": {
+      "samples": 36,
+      "mean_error": 0.015151483938097954,
+      "mean_absolute_error": 0.08510456875794464,
+      "root_mean_squared_error": 0.11269361215815456,
+      "mean_raw_uncertainty": 0.15306216173476964,
+      "interval_coverage": 1.0,
+      "mean_interval_radius": 0.3206341715460109,
+      "comparable_states": 12,
+      "ranking_wins": 7,
+      "ranking_win_rate": 0.5833333333333334,
+      "mean_observed_regret": 0.039761582389473915
+    },
+    "conformal_multiplier": 2.0947970936253646,
+    "calibration_rule": "maximum_of_pooled_and_each_whole_fold_conformal_quantile",
+    "nominal_interval_coverage": 0.9,
+    "test_coverage_at_least_nominal": true
+  },
+  "action_realization": {
+    "axis": "action_realization",
+    "folds": [
+      {
+        "validation_fold": 2,
+        "test_fold": 0,
+        "training_groups": [
+          "0fc6127cd4f8cbe7abc390860d534461c777baa13be1807f0524c4b958ef95e8",
+          "190f437b12934d759a50169340a044dc0aa4f8ff24087d9a4e0e2596db7342b4",
+          "3791a29f0c90c9f6b04b7efd59e0aa41d29421e97dc57f1364ef2ad67faf77dd",
+          "58e9dc22d32371a1c022140d313647b66fc636a6bfb5d40019da7a7bd36a601d",
+          "79ce7d07f994ebbced79d0845f3810fa6179de3272c7f1eccd57b921ff797572",
+          "7f56925c93f5bdb0cc066c4192b38ca6595ca8dd13d83bfd7b5d2ff151209824",
+          "8d200f4bd16407344e9d50cbc375747f78c34998246354d550aeb57290e5fff8",
+          "aa3a41f2f1fe4af6c3d33901da5a93a23770b3d46f9b0b4612da022e79e8d488",
+          "d1f1962e74db63f3860bfb5c3d9bf29d37ab4ca96ffaf887e40d269c4dcc0a4b",
+          "f3524ea2382308a23c012d8b2e68caeaecb06b9ee93236cebb2c1f4ca58719cf"
+        ],
+        "validation_groups": [
+          "1736fe0ebbd81334ff95bceb708e094973a2c88a30d6be96d521a10b8cf6f74c",
+          "22ecf38d525943cf721657373fe8b376a8b2362bbd873324d46aa32dcb8f2be9",
+          "40cc3163c3764b6201f3e6747e6b0e96a6bce8ed978055264978b96aa966bb58",
+          "6a517b75935c91f505c5b7ad86b468226bac95b986c7ce895062c1cb16663d8e",
+          "7b0123e840075d0d6ee5f5acc954646aae2f0d1e0ff0ab199d25210339f569c8",
+          "8286b54a11ab5171ddfa324644709584966e374f9941dff45ad941122a7553b6",
+          "8d975b26f48768f46ddc1476cc384fb3983bc30674db22b3e9e0b91ed1fa4988",
+          "b3d8f0fa198ed77138404f3de771b9a73b8f676635a3eca68bc70ebe4421e15c",
+          "ee72b5b33394b1c0a885dcd77d6a843d57234adeb5d857496d36fcdc687818a2",
+          "fbe76994675289dd30d5fa05d118c145b875f8c25e2124e7b3e5516da41adf99"
+        ],
+        "test_groups": [
+          "0c9f673cd78513a6c23c871a42de58893005d92c694c5dc232865f0631d86573",
+          "18124e5b860b5d69050eafc9c2b36e4b1c946850847df8b361f55063be180ce6",
+          "3382291101fed949b23d7bc85924410626730ec6296dfbe2271c199a2c6dcc03",
+          "4eecc4ae87f4fb192f1183083bf6a9250060c33926f9f9634415bef4a952138f",
+          "72422ff23f73d2939bb76da57fdbaca5435c115b68ab38ba0d1f790742dc311d",
+          "7e1f2d677fcbe5900b4ddd4057bd3173600603d32652856dc0aa853aa0bb424f",
+          "880a9ae03362d87c19dbb7ebb4bd29085badeeac80c8a94aa16dd2df4a0dbfff",
+          "8fca5c87f29a5d1d6473c663c3af62291e407d9e56718302eee01a58a972540a",
+          "c8dbf091b0f420aa226df07b1711b348af58ceb570d1bdf06bcda9fafdbebb6a",
+          "f23c82f7a4be6a55bf25c267bd8e32da798df2932aed750607c3e2ecfb93818f",
+          "fc19cad99376592fa1aa2ae126ecc558306ae1b9248ee3ada3972db15ba78459"
+        ],
+        "group_overlap_count": 0,
+        "training_samples": 10,
+        "validation_samples": 14,
+        "test_samples": 12,
+        "validation_conformal_multiplier": 3.4705765939031545
+      },
+      {
+        "validation_fold": 0,
+        "test_fold": 1,
+        "training_groups": [
+          "1736fe0ebbd81334ff95bceb708e094973a2c88a30d6be96d521a10b8cf6f74c",
+          "22ecf38d525943cf721657373fe8b376a8b2362bbd873324d46aa32dcb8f2be9",
+          "40cc3163c3764b6201f3e6747e6b0e96a6bce8ed978055264978b96aa966bb58",
+          "6a517b75935c91f505c5b7ad86b468226bac95b986c7ce895062c1cb16663d8e",
+          "7b0123e840075d0d6ee5f5acc954646aae2f0d1e0ff0ab199d25210339f569c8",
+          "8286b54a11ab5171ddfa324644709584966e374f9941dff45ad941122a7553b6",
+          "8d975b26f48768f46ddc1476cc384fb3983bc30674db22b3e9e0b91ed1fa4988",
+          "b3d8f0fa198ed77138404f3de771b9a73b8f676635a3eca68bc70ebe4421e15c",
+          "ee72b5b33394b1c0a885dcd77d6a843d57234adeb5d857496d36fcdc687818a2",
+          "fbe76994675289dd30d5fa05d118c145b875f8c25e2124e7b3e5516da41adf99"
+        ],
+        "validation_groups": [
+          "0c9f673cd78513a6c23c871a42de58893005d92c694c5dc232865f0631d86573",
+          "18124e5b860b5d69050eafc9c2b36e4b1c946850847df8b361f55063be180ce6",
+          "3382291101fed949b23d7bc85924410626730ec6296dfbe2271c199a2c6dcc03",
+          "4eecc4ae87f4fb192f1183083bf6a9250060c33926f9f9634415bef4a952138f",
+          "72422ff23f73d2939bb76da57fdbaca5435c115b68ab38ba0d1f790742dc311d",
+          "7e1f2d677fcbe5900b4ddd4057bd3173600603d32652856dc0aa853aa0bb424f",
+          "880a9ae03362d87c19dbb7ebb4bd29085badeeac80c8a94aa16dd2df4a0dbfff",
+          "8fca5c87f29a5d1d6473c663c3af62291e407d9e56718302eee01a58a972540a",
+          "c8dbf091b0f420aa226df07b1711b348af58ceb570d1bdf06bcda9fafdbebb6a",
+          "f23c82f7a4be6a55bf25c267bd8e32da798df2932aed750607c3e2ecfb93818f",
+          "fc19cad99376592fa1aa2ae126ecc558306ae1b9248ee3ada3972db15ba78459"
+        ],
+        "test_groups": [
+          "0fc6127cd4f8cbe7abc390860d534461c777baa13be1807f0524c4b958ef95e8",
+          "190f437b12934d759a50169340a044dc0aa4f8ff24087d9a4e0e2596db7342b4",
+          "3791a29f0c90c9f6b04b7efd59e0aa41d29421e97dc57f1364ef2ad67faf77dd",
+          "58e9dc22d32371a1c022140d313647b66fc636a6bfb5d40019da7a7bd36a601d",
+          "79ce7d07f994ebbced79d0845f3810fa6179de3272c7f1eccd57b921ff797572",
+          "7f56925c93f5bdb0cc066c4192b38ca6595ca8dd13d83bfd7b5d2ff151209824",
+          "8d200f4bd16407344e9d50cbc375747f78c34998246354d550aeb57290e5fff8",
+          "aa3a41f2f1fe4af6c3d33901da5a93a23770b3d46f9b0b4612da022e79e8d488",
+          "d1f1962e74db63f3860bfb5c3d9bf29d37ab4ca96ffaf887e40d269c4dcc0a4b",
+          "f3524ea2382308a23c012d8b2e68caeaecb06b9ee93236cebb2c1f4ca58719cf"
+        ],
+        "group_overlap_count": 0,
+        "training_samples": 14,
+        "validation_samples": 12,
+        "test_samples": 10,
+        "validation_conformal_multiplier": 2.077920027985957
+      },
+      {
+        "validation_fold": 1,
+        "test_fold": 2,
+        "training_groups": [
+          "0c9f673cd78513a6c23c871a42de58893005d92c694c5dc232865f0631d86573",
+          "18124e5b860b5d69050eafc9c2b36e4b1c946850847df8b361f55063be180ce6",
+          "3382291101fed949b23d7bc85924410626730ec6296dfbe2271c199a2c6dcc03",
+          "4eecc4ae87f4fb192f1183083bf6a9250060c33926f9f9634415bef4a952138f",
+          "72422ff23f73d2939bb76da57fdbaca5435c115b68ab38ba0d1f790742dc311d",
+          "7e1f2d677fcbe5900b4ddd4057bd3173600603d32652856dc0aa853aa0bb424f",
+          "880a9ae03362d87c19dbb7ebb4bd29085badeeac80c8a94aa16dd2df4a0dbfff",
+          "8fca5c87f29a5d1d6473c663c3af62291e407d9e56718302eee01a58a972540a",
+          "c8dbf091b0f420aa226df07b1711b348af58ceb570d1bdf06bcda9fafdbebb6a",
+          "f23c82f7a4be6a55bf25c267bd8e32da798df2932aed750607c3e2ecfb93818f",
+          "fc19cad99376592fa1aa2ae126ecc558306ae1b9248ee3ada3972db15ba78459"
+        ],
+        "validation_groups": [
+          "0fc6127cd4f8cbe7abc390860d534461c777baa13be1807f0524c4b958ef95e8",
+          "190f437b12934d759a50169340a044dc0aa4f8ff24087d9a4e0e2596db7342b4",
+          "3791a29f0c90c9f6b04b7efd59e0aa41d29421e97dc57f1364ef2ad67faf77dd",
+          "58e9dc22d32371a1c022140d313647b66fc636a6bfb5d40019da7a7bd36a601d",
+          "79ce7d07f994ebbced79d0845f3810fa6179de3272c7f1eccd57b921ff797572",
+          "7f56925c93f5bdb0cc066c4192b38ca6595ca8dd13d83bfd7b5d2ff151209824",
+          "8d200f4bd16407344e9d50cbc375747f78c34998246354d550aeb57290e5fff8",
+          "aa3a41f2f1fe4af6c3d33901da5a93a23770b3d46f9b0b4612da022e79e8d488",
+          "d1f1962e74db63f3860bfb5c3d9bf29d37ab4ca96ffaf887e40d269c4dcc0a4b",
+          "f3524ea2382308a23c012d8b2e68caeaecb06b9ee93236cebb2c1f4ca58719cf"
+        ],
+        "test_groups": [
+          "1736fe0ebbd81334ff95bceb708e094973a2c88a30d6be96d521a10b8cf6f74c",
+          "22ecf38d525943cf721657373fe8b376a8b2362bbd873324d46aa32dcb8f2be9",
+          "40cc3163c3764b6201f3e6747e6b0e96a6bce8ed978055264978b96aa966bb58",
+          "6a517b75935c91f505c5b7ad86b468226bac95b986c7ce895062c1cb16663d8e",
+          "7b0123e840075d0d6ee5f5acc954646aae2f0d1e0ff0ab199d25210339f569c8",
+          "8286b54a11ab5171ddfa324644709584966e374f9941dff45ad941122a7553b6",
+          "8d975b26f48768f46ddc1476cc384fb3983bc30674db22b3e9e0b91ed1fa4988",
+          "b3d8f0fa198ed77138404f3de771b9a73b8f676635a3eca68bc70ebe4421e15c",
+          "ee72b5b33394b1c0a885dcd77d6a843d57234adeb5d857496d36fcdc687818a2",
+          "fbe76994675289dd30d5fa05d118c145b875f8c25e2124e7b3e5516da41adf99"
+        ],
+        "group_overlap_count": 0,
+        "training_samples": 12,
+        "validation_samples": 10,
+        "test_samples": 14,
+        "validation_conformal_multiplier": 1.2459174691242643
+      }
+    ],
+    "pooled_validation": {
+      "samples": 36,
+      "mean_error": -0.03804143445773257,
+      "mean_absolute_error": 0.1858831291190452,
+      "root_mean_squared_error": 0.23356947888318508,
+      "mean_raw_uncertainty": 0.18573965586368985,
+      "interval_coverage": 1.0,
+      "mean_interval_radius": 0.6446237022001491,
+      "comparable_states": 12,
+      "ranking_wins": 3,
+      "ranking_win_rate": 0.25,
+      "mean_observed_regret": 0.12305797015627225
+    },
+    "pooled_test": {
+      "samples": 36,
+      "mean_error": -0.10152648616996077,
+      "mean_absolute_error": 0.18415493911339176,
+      "root_mean_squared_error": 0.22043838693477444,
+      "mean_raw_uncertainty": 0.1830207286083237,
+      "interval_coverage": 1.0,
+      "mean_interval_radius": 0.6351874569071496,
+      "comparable_states": 12,
+      "ranking_wins": 3,
+      "ranking_win_rate": 0.25,
+      "mean_observed_regret": 0.15616619835297266
+    },
+    "conformal_multiplier": 3.4705765939031545,
+    "calibration_rule": "maximum_of_pooled_and_each_whole_fold_conformal_quantile",
+    "nominal_interval_coverage": 0.9,
+    "test_coverage_at_least_nominal": true
+  },
+  "report_sha256": "825316a057b44870cfde14195b5a89d18440b4b5f9626304e4d3ed06b28428c0"
+}

@@ -4,7 +4,7 @@ use crate::{option, required_path, usize_option};
 use huntctl::Digest;
 use huntctl::learning::generalized_tactic_calibration::{
     GeneralizedTacticCalibrationConfig, calibrate_generalized_tactic_value,
-    compare_generalized_tactic_controls,
+    compare_generalized_tactic_controls, cross_calibrate_generalized_tactic_value,
 };
 use huntctl::learning::option_transition::OptionTransitionSample;
 use huntctl::learning::tactic_features::GoalConditionedTacticFeatureEncoder;
@@ -17,6 +17,7 @@ use std::path::PathBuf;
 pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
         Some("calibrate-tactic-value") => command_calibrate(&args[1..]),
+        Some("cross-calibrate-tactic-value") => command_cross_calibrate(&args[1..]),
         Some("compare-tactic-value-controls") => command_compare(&args[1..]),
         _ => Err("unknown generalized tactic calibration command".into()),
     }
@@ -28,6 +29,37 @@ struct CalibrationSource {
     transitions: Vec<OptionTransitionSample>,
     replay_source: &'static str,
     root_checkpoint_sha256: Digest,
+}
+
+fn command_cross_calibrate(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
+    let source = load_source(learn_args)?;
+    let output = new_output(learn_args, "generalized tactic cross-calibration")?;
+    let report = cross_calibrate_generalized_tactic_value(
+        &source.transitions,
+        goal_distance_feature(learn_args)?,
+        calibration_config(learn_args)?,
+    )?;
+    write_report(&output, &report)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": report.schema,
+            "output": output,
+            "checkpoint": source.checkpoint_path,
+            "input": source.corpus_path,
+            "source_root_checkpoint_sha256": source.root_checkpoint_sha256,
+            "replay_source": source.replay_source,
+            "source_transitions": report.source_transitions,
+            "state_region_pooled_test": report.state_region.pooled_test,
+            "action_realization_pooled_test": report.action_realization.pooled_test,
+            "state_region_test_coverage_at_least_nominal":
+                report.state_region.test_coverage_at_least_nominal,
+            "action_realization_test_coverage_at_least_nominal":
+                report.action_realization.test_coverage_at_least_nominal,
+            "report_sha256": report.report_sha256,
+        }))?
+    );
+    Ok(())
 }
 
 fn command_calibrate(learn_args: &[String]) -> Result<(), Box<dyn Error>> {

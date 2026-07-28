@@ -238,6 +238,9 @@ fn print_usage() {
         "  huntctl learn calibrate-tactic-value (--checkpoint TACTIC-Q.dtqz | --input CORPUS.dtqc) --output REPORT.json [--goal-distance-feature N] [--state-region-width D] [--group-folds N] [--validation-fold N] [--test-fold N] [--interval-coverage-millionths N] [--fitted-q-iterations N] [--per-tick-discount D]"
     );
     eprintln!(
+        "  huntctl learn cross-calibrate-tactic-value (--checkpoint TACTIC-Q.dtqz | --input CORPUS.dtqc) --output REPORT.json [--goal-distance-feature N] [--state-region-width D] [--group-folds N] [--interval-coverage-millionths N] [--fitted-q-iterations N] [--per-tick-discount D]"
+    );
+    eprintln!(
         "  huntctl learn compare-tactic-value-controls (--checkpoint TACTIC-Q.dtqz | --input CORPUS.dtqc) --output REPORT.json [--goal-distance-feature N] [--state-region-width D] [--group-folds N] [--validation-fold N] [--test-fold N] [--fitted-q-iterations N] [--per-tick-discount D]"
     );
     eprintln!(

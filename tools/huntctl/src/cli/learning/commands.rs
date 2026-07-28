@@ -441,7 +441,11 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
         ) => native_views::command(args),
         Some("inspect" | "baseline" | "calibrate") => baselines::command(args),
         Some("double-q" | "fit" | "benchmark") => q_training::command(args),
-        Some("calibrate-tactic-value" | "compare-tactic-value-controls") => {
+        Some(
+            "calibrate-tactic-value"
+            | "cross-calibrate-tactic-value"
+            | "compare-tactic-value-controls",
+        ) => {
             tactic_calibration::command(args)
         }
         _ => usage_error(),

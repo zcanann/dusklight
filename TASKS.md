@@ -91,6 +91,14 @@ at tick `125`.
   single comparable unseen-action ranking lost with 0.083 observed regret.
   This is a P3 failure signal, not acceptance. Evidence:
   `ordon-p3-generalized-calibration-v1.report.json`.
+- A larger 36-transition seed now cross-calibrates every complete semantic
+  group once as test and once as validation. The robust conformal scale is the
+  maximum of the pooled quantile and each whole-fold quantile, so one
+  distribution-shifted fold cannot disappear inside the aggregate. Spatial
+  and unseen-action test coverage both reached 100% against the declared 90%
+  target, at mean interval radii 0.321 and 0.635. This calibrates uncertainty
+  but does not excuse poor unseen-action ordering: only 3 of 12 comparable
+  rankings won. Evidence: `ordon-p3-cross-calibration-v1.report.json`.
 - The same disjoint partitions now compare the live local generalized model
   with a continuous fitted-Q forest, neural Double-Q, conservative offline Q,
   and a structured non-learning control. On unseen action realizations the
@@ -171,7 +179,7 @@ Acceptance:
   - a double-Q or ensemble control;
   - a conservative offline control; and
   - a non-learning structured-search baseline.
-- [ ] Calibrate value and uncertainty on held-out state regions and held-out
+- [x] Calibrate value and uncertainty on held-out state regions and held-out
       action realizations, not random rows from the same correlated route.
 - [ ] Run matched demonstration-assisted and from-scratch ablations. The
       demonstration may improve sample efficiency but may not cap the policy at
