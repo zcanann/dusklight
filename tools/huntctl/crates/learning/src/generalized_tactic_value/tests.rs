@@ -98,7 +98,6 @@ fn shared_multi_action_neighborhood_matches_independent_predictions() {
         .map(|(index, descriptor)| GeneralizedTacticTrainingSample {
             state_features: vec![index as f32, 1.0],
             context: GeneralizedTacticContext {
-                simulation_tick: index as f32 * 4.0,
                 player_x: index as f32,
                 ..GeneralizedTacticContext::default()
             },
@@ -114,7 +113,6 @@ fn shared_multi_action_neighborhood_matches_independent_predictions() {
     let model = GeneralizedTacticValueModel::fit(&samples).unwrap();
     let state = [0.5, 1.0];
     let context = GeneralizedTacticContext {
-        simulation_tick: 2.0,
         player_x: 0.5,
         ..GeneralizedTacticContext::default()
     };
@@ -602,7 +600,7 @@ fn terminal_support_policy_clones_actions_from_the_nearest_successful_state() {
 }
 
 #[test]
-fn terminal_support_policy_advances_with_successful_trajectory_phase() {
+fn terminal_support_prefers_nearby_state_over_authored_route_phase() {
     let current_phase_action = action("current-phase", 100.0, 100.0, 0.0, None, 100.0);
     let physically_near_past_action =
         action("physically-near-past", 500.0, 10.0, 2.5, Some(7), -100.0);
@@ -610,7 +608,6 @@ fn terminal_support_policy_advances_with_successful_trajectory_phase() {
         GeneralizedTacticTrainingSample {
             state_features: vec![0.0],
             context: GeneralizedTacticContext {
-                simulation_tick: 4.0,
                 player_x: 100.0,
                 ..GeneralizedTacticContext::default()
             },
@@ -624,7 +621,6 @@ fn terminal_support_policy_advances_with_successful_trajectory_phase() {
         GeneralizedTacticTrainingSample {
             state_features: vec![1.0],
             context: GeneralizedTacticContext {
-                simulation_tick: 0.0,
                 player_x: 0.0,
                 ..GeneralizedTacticContext::default()
             },
@@ -642,17 +638,19 @@ fn terminal_support_policy_advances_with_successful_trajectory_phase() {
         .rank_terminal_support(
             &[0.0],
             &GeneralizedTacticContext {
-                simulation_tick: 4.0,
                 player_x: 0.0,
                 ..GeneralizedTacticContext::default()
             },
-            &[physically_near_past_action, current_phase_action.clone()],
+            &[
+                physically_near_past_action.clone(),
+                current_phase_action.clone(),
+            ],
         )
         .unwrap();
 
     assert_eq!(
         ranked[0].descriptor.option_id,
-        current_phase_action.option_id
+        physically_near_past_action.option_id
     );
 }
 

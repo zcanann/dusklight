@@ -79,7 +79,7 @@ fn successor_action_indices(
             if let Some(successors) = exact.get(&transition.after_state_sha256) {
                 return Ok(successors.clone());
             }
-            let after = &after_contexts[index][1..];
+            let after = &after_contexts[index];
             let nearest_distance = transitions
                 .iter()
                 .enumerate()
@@ -87,12 +87,7 @@ fn successor_action_indices(
                     *candidate != index && approximately_compatible(transition, successor)
                 })
                 .map(|(candidate, _)| {
-                    normalized_distance(
-                        after,
-                        &before_contexts[candidate][1..],
-                        &minimum[1..],
-                        &range[1..],
-                    )
+                    normalized_distance(after, &before_contexts[candidate], &minimum, &range)
                 })
                 .min_by(f32::total_cmp);
             Ok(nearest_distance.map_or_else(Vec::new, |nearest_distance| {
@@ -105,9 +100,9 @@ fn successor_action_indices(
                     .filter_map(|(candidate, _)| {
                         let distance = normalized_distance(
                             after,
-                            &before_contexts[candidate][1..],
-                            &minimum[1..],
-                            &range[1..],
+                            &before_contexts[candidate],
+                            &minimum,
+                            &range,
                         );
                         (distance <= nearest_distance + EXACT_STATE_DISTANCE_EPSILON)
                             .then_some(candidate)
@@ -132,6 +127,14 @@ fn approximately_compatible(
         && after.player.procedure == before.player.procedure
         && after.player.mode_flags == before.player.mode_flags
         && after.player.action_lanes == before.player.action_lanes
+        && after
+            .player
+            .action_state
+            .map(|action| (action.do_status, action.flags))
+            == before
+                .player
+                .action_state
+                .map(|action| (action.do_status, action.flags))
         && after.event == before.event
         && after.channels.player_action == before.channels.player_action
         && after.terminal.configured == before.terminal.configured

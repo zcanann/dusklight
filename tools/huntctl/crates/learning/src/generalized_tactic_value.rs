@@ -20,7 +20,7 @@ mod fitted_q;
 mod prediction;
 
 pub const GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH: usize = 71;
-const GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH: usize = 12;
+const GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH: usize = 11;
 const MAX_GENERALIZED_TACTIC_SAMPLES: usize = 100_000;
 const MAX_FITTED_Q_BACKUP_ITERATIONS: usize = 512;
 const NEIGHBORS: usize = 8;
@@ -30,7 +30,6 @@ const MINIMUM_RETURN_COMPARISON_RESOLUTION: f64 = 1.0e-4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GeneralizedTacticContext {
-    pub simulation_tick: f32,
     pub player_x: f32,
     pub player_z: f32,
     pub velocity_x: f32,
@@ -74,7 +73,6 @@ impl GeneralizedTacticContext {
             })
             .unwrap_or(0.0);
         let context = Self {
-            simulation_tick: facts.simulation_tick as f32,
             player_x: position[0],
             player_z: position[2],
             velocity_x: velocity[0],
@@ -95,7 +93,6 @@ impl GeneralizedTacticContext {
 
     fn values(self) -> [f32; GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH] {
         [
-            self.simulation_tick,
             self.player_x,
             self.player_z,
             self.velocity_x,

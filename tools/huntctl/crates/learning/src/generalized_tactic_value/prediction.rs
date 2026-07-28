@@ -40,8 +40,9 @@ pub(super) fn estimate_actions(
         state_neighbors.truncate(STATE_NEIGHBORS.min(state_neighbors.len()));
     }
 
-    // The nearest terminal phase/state cohort is likewise independent of the
-    // action. Only the final behavior-cloning action distance varies.
+    // The nearest terminal state cohort is likewise independent of the action.
+    // Absolute simulation/tape position is deliberately absent: successful
+    // demonstration timing is not a privileged route-phase key.
     let behavior_context = context.values();
     let terminal_distances = model
         .samples
@@ -49,46 +50,29 @@ pub(super) fn estimate_actions(
         .filter(|sample| sample.outcome.terminal > 0.0)
         .map(|sample| {
             (
-                (behavior_context[0] - sample.behavior_context[0]).abs(),
                 normalized_distance(
-                    &behavior_context[1..],
-                    &sample.behavior_context[1..],
-                    &model.behavior_context_min[1..],
-                    &model.behavior_context_range[1..],
+                    &behavior_context,
+                    &sample.behavior_context,
+                    &model.behavior_context_min,
+                    &model.behavior_context_range,
                 ),
                 sample,
             )
         })
         .collect::<Vec<_>>();
-    let minimum_tick_distance = terminal_distances
+    let minimum_state_distance = terminal_distances
         .iter()
-        .map(|(tick_distance, _, _)| *tick_distance)
+        .map(|(state_distance, _)| *state_distance)
         .min_by(f32::total_cmp);
-    let minimum_state_distance = minimum_tick_distance.and_then(|minimum_tick_distance| {
+    let terminal_cohort = minimum_state_distance.map_or_else(Vec::new, |minimum_state_distance| {
         terminal_distances
             .iter()
-            .filter(|(tick_distance, _, _)| {
-                *tick_distance <= minimum_tick_distance + EXACT_STATE_DISTANCE_EPSILON
+            .filter(|(state_distance, _)| {
+                *state_distance <= minimum_state_distance + EXACT_STATE_DISTANCE_EPSILON
             })
-            .map(|(_, state_distance, _)| *state_distance)
-            .min_by(f32::total_cmp)
+            .map(|(_, sample)| *sample)
+            .collect::<Vec<_>>()
     });
-    let terminal_cohort = minimum_tick_distance
-        .zip(minimum_state_distance)
-        .map_or_else(
-            Vec::new,
-            |(minimum_tick_distance, minimum_state_distance)| {
-                terminal_distances
-                    .iter()
-                    .filter(|(tick_distance, state_distance, _)| {
-                        *tick_distance <= minimum_tick_distance + EXACT_STATE_DISTANCE_EPSILON
-                            && *state_distance
-                                <= minimum_state_distance + EXACT_STATE_DISTANCE_EPSILON
-                    })
-                    .map(|(_, _, sample)| *sample)
-                    .collect::<Vec<_>>()
-            },
-        );
 
     descriptors
         .iter()

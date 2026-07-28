@@ -39,12 +39,31 @@ fn native_fact_pair() -> (FactSnapshot, FactSnapshot) {
     after.player.procedure = before.player.procedure;
     after.player.mode_flags = before.player.mode_flags;
     after.player.action_lanes = before.player.action_lanes.clone();
+    after.player.action_state = before.player.action_state;
     after.event = before.event.clone();
     after.channels.player_action = before.channels.player_action;
     after.terminal.configured = Some(true);
     after.terminal.reached = Some(false);
     after.terminal.reason = FactTerminalReason::None;
     (before, after)
+}
+
+#[test]
+fn generalized_context_ignores_absolute_replay_position() {
+    let (facts, _) = native_fact_pair();
+    let mut shifted = facts.clone();
+    shifted.boundary_index += 10_000;
+    shifted.simulation_tick += 10_000;
+    shifted.tape_frame += 10_000;
+
+    assert_eq!(
+        GeneralizedTacticContext::from_facts(&facts)
+            .unwrap()
+            .values(),
+        GeneralizedTacticContext::from_facts(&shifted)
+            .unwrap()
+            .values()
+    );
 }
 
 fn set_player_state(facts: &mut FactSnapshot, x: f32, z: f32, procedure: u16) {

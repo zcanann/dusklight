@@ -103,7 +103,21 @@ pub struct PlayerFactSnapshot {
     pub roof_height_f32_bits: Option<u32>,
     pub collision_correction_f32_bits: Option<[u32; 2]>,
     pub action_lanes: Vec<ActionLaneFactSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_state: Option<PlayerActionFactSnapshot>,
     pub previous_pad: Option<PadFactSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlayerActionFactSnapshot {
+    pub procedure_context_raw: [i16; 6],
+    pub damage_wait_timer: i16,
+    pub sword_at_up_time: u16,
+    pub ice_damage_wait_timer: i16,
+    pub sword_change_wait_timer: u8,
+    pub flags: u32,
+    pub do_status: u8,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -463,6 +477,17 @@ impl FactSnapshot {
                     .map(bits2)
                     .transpose()?,
                 action_lanes: player_action_lanes,
+                action_state: observation.player_action.as_ref().map(|action| {
+                    PlayerActionFactSnapshot {
+                        procedure_context_raw: action.procedure_context_raw,
+                        damage_wait_timer: action.damage_wait_timer,
+                        sword_at_up_time: action.sword_at_up_time,
+                        ice_damage_wait_timer: action.ice_damage_wait_timer,
+                        sword_change_wait_timer: action.sword_change_wait_timer,
+                        flags: action.flags,
+                        do_status: action.do_status,
+                    }
+                }),
                 previous_pad: Some(pad(observation.previous_input)),
             },
             event: Some(EventFactSnapshot {
@@ -565,6 +590,7 @@ impl FactSnapshot {
                     .iter()
                     .map(action_lane)
                     .collect::<Result<Vec<_>, _>>()?,
+                action_state: None,
                 previous_pad: None,
             },
             event: None,

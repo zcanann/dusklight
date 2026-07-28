@@ -14,9 +14,9 @@ use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
-pub const TACTIC_FEATURE_SCHEMA_V2: &str = "dusklight-tactic-features/v2";
-pub const GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V2: &str =
-    "dusklight-goal-conditioned-tactic-features/v2";
+pub const TACTIC_FEATURE_SCHEMA_V3: &str = "dusklight-tactic-features/v3";
+pub const GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V3: &str =
+    "dusklight-goal-conditioned-tactic-features/v3";
 const GOAL_FEATURE_NAMES: &[&str] = &[
     "goal_dx",
     "goal_dy",
@@ -46,6 +46,55 @@ const FEATURE_NAMES: &[&str] = &[
     "player_procedure",
     "player_mode_available",
     "player_mode",
+    "player_action_available",
+    "player_do_prompt_available",
+    "player_do_status",
+    "player_damage_wait_timer",
+    "player_sword_at_up_time",
+    "player_ice_damage_wait_timer",
+    "player_sword_change_wait_timer",
+    "player_procedure_context_0",
+    "player_procedure_context_1",
+    "player_procedure_context_2",
+    "player_procedure_context_3",
+    "player_procedure_context_4",
+    "player_procedure_context_5",
+    "player_action_lane_count",
+    "player_action_lane_frame_min",
+    "player_action_lane_frame_mean",
+    "player_action_lane_frame_max",
+    "player_action_flag_0",
+    "player_action_flag_1",
+    "player_action_flag_2",
+    "player_action_flag_3",
+    "player_action_flag_4",
+    "player_action_flag_5",
+    "player_action_flag_6",
+    "player_action_flag_7",
+    "player_action_flag_8",
+    "player_action_flag_9",
+    "player_action_flag_10",
+    "player_action_flag_11",
+    "player_action_flag_12",
+    "player_action_flag_13",
+    "player_action_flag_14",
+    "player_action_flag_15",
+    "player_action_flag_16",
+    "player_action_flag_17",
+    "player_action_flag_18",
+    "player_action_flag_19",
+    "player_action_flag_20",
+    "player_action_flag_21",
+    "player_action_flag_22",
+    "player_action_flag_23",
+    "player_action_flag_24",
+    "player_action_flag_25",
+    "player_action_flag_26",
+    "player_action_flag_27",
+    "player_action_flag_28",
+    "player_action_flag_29",
+    "player_action_flag_30",
+    "player_action_flag_31",
     "player_contacts_available",
     "player_contacts",
     "collision_correction_available",
@@ -153,7 +202,7 @@ impl TacticFeatureEncoder {
         let feature_names = FEATURE_NAMES.iter().map(|name| (*name).into()).collect();
         let schema_sha256 = feature_schema_digest(FEATURE_NAMES);
         Self {
-            schema: TACTIC_FEATURE_SCHEMA_V2.into(),
+            schema: TACTIC_FEATURE_SCHEMA_V3.into(),
             schema_sha256,
             feature_names,
         }
@@ -165,7 +214,7 @@ impl TacticFeatureEncoder {
 
     pub fn encode(&self, facts: &FactSnapshot) -> Result<Vec<f32>, TacticFeatureError> {
         facts.validate().map_err(TacticFeatureError::Facts)?;
-        if self.schema != TACTIC_FEATURE_SCHEMA_V2
+        if self.schema != TACTIC_FEATURE_SCHEMA_V3
             || self.schema_sha256 != feature_schema_digest(FEATURE_NAMES)
             || self.feature_names.len() != FEATURE_NAMES.len()
             || self
@@ -189,6 +238,7 @@ impl TacticFeatureEncoder {
         push_optional_bool(&mut output, facts.player.is_link);
         push_optional_u16(&mut output, facts.player.procedure);
         push_optional_u32(&mut output, facts.player.mode_flags);
+        encode_player_action(&mut output, facts)?;
         push_optional_u8(&mut output, facts.player.contacts);
         match facts.player.collision_correction_f32_bits {
             Some(bits) => {
@@ -312,7 +362,7 @@ impl GoalConditionedTacticFeatureEncoder {
         let mut feature_names = base.feature_names.clone();
         feature_names.extend(GOAL_FEATURE_NAMES.iter().map(|name| (*name).into()));
         Ok(Self {
-            schema: GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V2.into(),
+            schema: GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V3.into(),
             schema_sha256: goal_conditioned_feature_schema_digest(base.schema_sha256),
             feature_names,
             target_coordinate_f32_bits: target.map(f32::to_bits),
@@ -329,7 +379,7 @@ impl GoalConditionedTacticFeatureEncoder {
     }
 
     pub fn encode(&self, facts: &FactSnapshot) -> Result<Vec<f32>, TacticFeatureError> {
-        if self.schema != GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V2
+        if self.schema != GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V3
             || self.schema_sha256 != goal_conditioned_feature_schema_digest(self.base.schema_sha256)
             || self.feature_names.len() != self.base.feature_width() + GOAL_FEATURE_NAMES.len()
         {
@@ -355,6 +405,48 @@ impl GoalConditionedTacticFeatureEncoder {
         }
         Ok(output)
     }
+}
+
+fn encode_player_action(
+    output: &mut Vec<f32>,
+    facts: &FactSnapshot,
+) -> Result<(), TacticFeatureError> {
+    let action = facts.player.action_state;
+    output.push(bool_feature(
+        action.is_some() || !facts.player.action_lanes.is_empty(),
+    ));
+    if let Some(action) = action {
+        output.extend([
+            bool_feature(action.do_status != 0),
+            f32::from(action.do_status),
+            f32::from(action.damage_wait_timer),
+            f32::from(action.sword_at_up_time),
+            f32::from(action.ice_damage_wait_timer),
+            f32::from(action.sword_change_wait_timer),
+        ]);
+        output.extend(action.procedure_context_raw.map(f32::from));
+    } else {
+        output.extend([0.0; 12]);
+    }
+
+    let frames = facts
+        .player
+        .action_lanes
+        .iter()
+        .map(|lane| finite_f32(lane.frame_f32_bits))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (minimum, mean, maximum) = if frames.is_empty() {
+        (0.0, 0.0, 0.0)
+    } else {
+        let minimum = frames.iter().copied().min_by(f32::total_cmp).unwrap();
+        let maximum = frames.iter().copied().max_by(f32::total_cmp).unwrap();
+        let mean = frames.iter().sum::<f32>() / frames.len() as f32;
+        (minimum, mean, maximum)
+    };
+    output.extend([frames.len() as f32, minimum, mean, maximum]);
+    let flags = action.map_or(0, |action| action.flags);
+    output.extend((0..32).map(|bit| bool_feature(flags & (1 << bit) != 0)));
+    Ok(())
 }
 
 fn trajectory_summary(
@@ -498,7 +590,7 @@ fn planar_distance(left: [f32; 3], right: [f32; 3]) -> f32 {
 
 fn goal_conditioned_feature_schema_digest(base: Digest) -> Digest {
     let bytes = serde_json::to_vec(&(
-        GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V2,
+        GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V3,
         base,
         GOAL_FEATURE_NAMES,
     ))
@@ -767,7 +859,7 @@ fn symbol_feature(value: &str) -> f32 {
 
 fn feature_schema_digest(names: &[&str]) -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(TACTIC_FEATURE_SCHEMA_V2.as_bytes());
+    hasher.update(TACTIC_FEATURE_SCHEMA_V3.as_bytes());
     for name in names {
         hasher.update((name.len() as u64).to_le_bytes());
         hasher.update(name.as_bytes());
@@ -849,6 +941,61 @@ mod tests {
             encoder.encode(&facts).unwrap(),
             encoder.encode(&reversed).unwrap()
         );
+    }
+
+    #[test]
+    fn player_action_features_expose_prompt_availability_phase_and_flags() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let mut facts = FactSnapshot::from_native_learning(
+            &shard.episodes[0].steps[0].pre_input,
+            &[],
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        facts.player.action_state = Some(crate::fact_snapshot::PlayerActionFactSnapshot {
+            procedure_context_raw: [1, 2, 3, 4, 5, 6],
+            damage_wait_timer: 7,
+            sword_at_up_time: 8,
+            ice_damage_wait_timer: 9,
+            sword_change_wait_timer: 10,
+            flags: (1 << 3) | (1 << 19),
+            do_status: 4,
+        });
+        facts.player.action_lanes = vec![
+            crate::fact_snapshot::ActionLaneFactSnapshot {
+                resource_id: 11,
+                frame_f32_bits: 1.5_f32.to_bits(),
+            },
+            crate::fact_snapshot::ActionLaneFactSnapshot {
+                resource_id: 12,
+                frame_f32_bits: 3.5_f32.to_bits(),
+            },
+        ];
+        let encoder = TacticFeatureEncoder::new();
+        let encoded = encoder.encode(&facts).unwrap();
+        let feature = |name: &str| {
+            encoded[encoder
+                .feature_names
+                .iter()
+                .position(|candidate| candidate == name)
+                .unwrap()]
+        };
+
+        assert_eq!(feature("player_action_available"), 1.0);
+        assert_eq!(feature("player_do_prompt_available"), 1.0);
+        assert_eq!(feature("player_do_status"), 4.0);
+        assert_eq!(feature("player_procedure_context_5"), 6.0);
+        assert_eq!(feature("player_action_lane_count"), 2.0);
+        assert_eq!(feature("player_action_lane_frame_min"), 1.5);
+        assert_eq!(feature("player_action_lane_frame_mean"), 2.5);
+        assert_eq!(feature("player_action_lane_frame_max"), 3.5);
+        assert_eq!(feature("player_action_flag_3"), 1.0);
+        assert_eq!(feature("player_action_flag_19"), 1.0);
+        assert_eq!(feature("player_action_flag_20"), 0.0);
     }
 
     #[test]
