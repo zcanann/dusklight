@@ -33,7 +33,6 @@ tools/route-planner/crates/engine/src/route_book.rs	1595
 tools/route-planner/crates/engine/src/state.rs	1655
 tools/route-planner/crates/engine/src/title_boundary.rs	4403
 tools/route-planner/crates/engine/src/transition.rs	2612
-tools/route-planner/crates/engine/src/world_import.rs	5494
 tools/route-planner/src/main.rs	3016
 tools/route-planner/src/project.rs	1803
 tools/route-planner/src/service.rs	3241
