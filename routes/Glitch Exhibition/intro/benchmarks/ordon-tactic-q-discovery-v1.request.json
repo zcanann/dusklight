@@ -1,6 +1,6 @@
 {
   "schema": "dusklight-optimization-request/v2",
-  "content_sha256": "ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c",
+  "content_sha256": "26b52fcbfdcb2b42ef57deac27068aac56f5b9b96259536cbe5599293eacad79",
   "id": "ordon-tactic-q-discovery-v1",
   "campaign_class": "local_tas_refinement",
   "route": {
@@ -23,9 +23,16 @@
     "program_sha256": "b8cbfafaa025b883cecd2db4e4bef30696c801a591ce736d1281defd8af0c169",
     "definition_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57"
   },
+  "incumbent": {
+    "tape": {
+      "path": "routes/Glitch Exhibition/intro/segments/to_ordon_spring_q125.tape",
+      "sha256": "cf0b5cc3a9987b0c5944a30e6d636daaba52f7bc28dfd50fdc90babecf280152"
+    },
+    "first_hit_tick": 125
+  },
   "budgets": {
-    "exploration_horizon_ticks": 1024,
-    "promotion_before_tick": 1023,
+    "exploration_horizon_ticks": 160,
+    "promotion_before_tick": 125,
     "candidate_budget": 4096,
     "simulated_tick_budget": 1310845
   },
