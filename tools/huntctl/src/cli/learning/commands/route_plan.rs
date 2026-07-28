@@ -71,11 +71,11 @@ pub(super) fn native_tactic_execution_plan(
 fn value_treatment(learn_args: &[String]) -> Result<TacticValueTreatment, Box<dyn Error>> {
     let value = option(learn_args, "--value-treatment");
     match value.as_deref() {
-        None | Some("continuous_fitted_q_forest") => {
-            Ok(TacticValueTreatment::ContinuousFittedQForestV1)
-        }
-        Some("local_generalized_fitted_q_knn") => {
+        None | Some("local_generalized_fitted_q_knn") => {
             Ok(TacticValueTreatment::LocalGeneralizedFittedQKnnV1)
+        }
+        Some("continuous_fitted_q_forest") => {
+            Ok(TacticValueTreatment::ContinuousFittedQForestV1)
         }
         Some(value) => Err(format!(
             "unsupported --value-treatment {value:?}; expected continuous_fitted_q_forest or local_generalized_fitted_q_knn"
@@ -123,18 +123,18 @@ mod tests {
     }
 
     #[test]
-    fn continuous_forest_is_default_and_local_knn_remains_an_explicit_control() {
+    fn local_knn_is_default_and_continuous_forest_remains_an_explicit_control() {
         assert_eq!(
             value_treatment(&[]).unwrap(),
-            TacticValueTreatment::ContinuousFittedQForestV1
+            TacticValueTreatment::LocalGeneralizedFittedQKnnV1
         );
         assert_eq!(
             value_treatment(&[
                 "--value-treatment".into(),
-                "local_generalized_fitted_q_knn".into(),
+                "continuous_fitted_q_forest".into(),
             ])
             .unwrap(),
-            TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+            TacticValueTreatment::ContinuousFittedQForestV1
         );
         assert!(value_treatment(&["--value-treatment".into(), "unknown".into()]).is_err());
     }

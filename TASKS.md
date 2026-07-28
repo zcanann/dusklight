@@ -58,12 +58,14 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   a deliberately degraded `131`-tick demonstration, so delayed-credit route
   improvement remains unproved. Evidence:
   `ordon-p3-greedy-authority-v1.report.json`.
-- The continuous fitted-Q forest that led the held-out control comparison is
-  now the default live value treatment. Execution plans, immutable learner
-  snapshots, CLI selection, and reports seal its identity; the former local
-  generalized fitted-Q k-NN path remains an explicit control. It still lacks
-  matched native validation and is not yet evidence of route improvement.
-  Evidence: `ordon-p3-control-comparison-v1.report.json`.
+- The continuous fitted-Q forest remains a sealed explicit control, but is no
+  longer the live default. Independent semantic-group calibration found higher
+  weighted error than the local generalized fitted-Q k-NN treatment, and
+  positive demonstration replay caused unsupported actions to receive nearly
+  terminal-quality estimates. The local treatment is again the default while
+  native validation continues. Evidence:
+  `ordon-p3-control-comparison-v1.report.json` and
+  `ordon-p3-continuous-independent-calibration-v1.report.json`.
 - The current continuous treatment completed matched scratch,
   ordinary-demonstration, and structured non-learning native cells under the
   same fixed identities and budget caps. None reached the terminal.
