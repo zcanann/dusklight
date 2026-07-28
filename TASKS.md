@@ -1,67 +1,246 @@
-# Active task: build a route optimizer that beats the incumbent
+# Active tasks: make route learning auditable, scalable, and effective
 
-This file contains only unfinished learning-framework work. Completed work and
-implementation history belong in Git and benchmark reports.
+This file contains only unfinished learning-framework work. Completed
+implementation belongs in Git; benchmark history belongs in immutable reports.
 
-## Objective
+## Product objective
 
-Build a generic checkpointable search-and-learning system that:
+Build a generic checkpointable optimizer that:
 
 1. starts from an authenticated native checkpoint;
-2. observes typed game state and derived progress measurements;
-3. proposes controller tactics and bounded tactic compositions;
-4. evaluates many alternatives from retained states;
-5. learns which state/action transitions are valuable;
-6. discovers and promotes reusable tactics; and
-7. optimizes a terminal-reaching route for the fewest native input ticks.
+2. observes typed game state, action availability, and measured trajectories;
+3. proposes primitive controller actions and learned tactic compositions;
+4. evaluates alternatives from retained native states;
+5. shares authenticated transitions with a state/action learner;
+6. discovers and validates reusable tactics; and
+7. minimizes native input ticks to an authenticated terminal.
 
-Ordon is the current acceptance benchmark. Its authenticated incumbent first
-reaches the terminal at tick 125. A terminal reach, a reliable terminal reach,
-or a 125-tick tie is diagnostic evidence only. The framework has not succeeded
-on this benchmark until a machine-generated route first reaches the same
-terminal in fewer than 125 ticks and reproduces from cold boot.
+The UI is not a TAS authoring surface. A human recording may be optional
+experience, but it must not define privileged actions, observations, rewards,
+state, or terminal semantics.
 
-The browser workbench records, inspects, and replays execution graphs. It is not
-a TAS authoring surface. Human recordings may supply optional experience but
-must not define privileged actions, observations, state, or terminals.
+## Current benchmark truth
 
-## Non-negotiable architecture
+Ordon is the acceptance benchmark. The eligible request starts at authenticated
+boundary `506`; the human incumbent first reaches the actual load-zone terminal
+at tick `125`.
 
+- The best machine result currently ties first-hit tick `125`. It does not beat
+  the benchmark.
+- Four lanes with four proposals each completed 128 decisions and 10,203
+  evaluated native ticks in 202 seconds, yielding 373 useful transitions.
+- One lane widened to sixteen proposals took 339 seconds for only 32 decisions.
+  Wider sibling batches are not a substitute for learner iterations.
+- The native checkpoint primitive is functional and authenticated. The latest
+  four-lane run reported a 100% cache-hit rate and about 27.5 ms mean restore,
+  but multi-lane orchestration still spends too much time rebuilding and
+  persisting frontiers.
+- A four-lane run is one generation. Its lanes share the input corpus but not
+  each other's new experience; only a later generation consumes the merged
+  results. One-generation results must not be described as online shared
+  learning.
+
+A terminal hit, a reliable terminal hit, a 125 tie, or a faster search for the
+same tie is diagnostic evidence only.
+
+## Non-negotiable boundaries
+
+- Reward is authenticated terminal value minus native input cost. Trajectory,
+  velocity, collision, straightness, rolling, and prompted-action availability
+  are observations or auxiliary prediction targets, not handcrafted utility.
 - JSON is not an operational checkpoint, replay, transition, model, frontier,
-  or journal format.
-- Reuse the existing versioned binary envelopes, tape encoding, native episode
-  shards, transition corpus, content digests, and zstd support.
-- Keep serialization behind storage interfaces. In-memory learner types must
-  not depend on JSON or a particular file layout.
-- Small authored requests and exported human-readable reports may use JSON.
-- Hot exploration records only the data required to resume, learn, and verify
-  identities. Full evidence graphs and readable reports are projections
-  produced after a candidate is retained.
-- Every performance claim must include useful native simulation, restore,
-  orchestration, and persistence time. Do not hide overhead outside the
-  measured boundary.
+  journal, or learned-tactic format. Small authored requests and exported
+  reports may use JSON.
+- Every evaluated native transition is eligible learning evidence. Every exact
+  terminal candidate is retained independently of whether the policy selected
+  it. Evaluation results must never retroactively replace the policy action.
+- Human experience is ordinary, ablatable replay. The system must retain a
+  from-scratch lane and must be able to improve beyond the demonstration.
+- Performance reports include process launch, native simulation, restore,
+  checkpoint capture, learner update, orchestration, persistence, and evidence
+  projection. Do not move overhead outside the measured boundary.
+- First-hit comparisons must bind the same source checkpoint, terminal
+  predicate, game bytes, card fixture, fidelity, and source boundary.
 
-## P6 - Beat the authenticated Ordon incumbent
+## P0 - Make an experiment mean exactly what it says
 
-- [ ] Search until it produces a candidate whose first authenticated terminal
-      hit is strictly earlier than tick 125.
-- [ ] Minimize the complete successful controller tape without changing the
-      source checkpoint, terminal predicate, game build, or execution fidelity.
-- [ ] Cold-replay the complete winning tape at least twice from process boot
-      with the learner and controller out of the loop.
-- [ ] Require byte-identical input and identical authenticated terminal
-      evidence across the cold replays.
-- [ ] Publish total native simulation, wall time, worker count, peak memory,
-      winning lineage, first-hit tick, and proof identities.
+- [ ] Replace seed-count and seed-index policy side effects with an explicit,
+      sealed execution plan containing:
+  - generations and lanes per generation;
+  - proposal width per decision;
+  - lane role and acquisition rank;
+  - epsilon and intervention policy;
+  - branch and refit cadence;
+  - replay-sharing barrier or asynchronous staleness bound;
+  - native-checkpoint ownership and fallback behavior; and
+  - decision, native-tick, memory, and wall-time budgets.
+- [ ] Include the execution-plan identity in every job, transition, model
+      snapshot, checkpoint, retained candidate, and report.
+- [ ] Reject configurations whose worker count silently changes the learning
+      algorithm or proposal width.
+- [ ] Report, for every decision, the learner snapshot, replay row count,
+      replay generation, acquisition authority, frontier identity, restore
+      source, and result-admission version.
+- [ ] Split the monolithic native route runner into auditable components:
+  scheduler, frontier/checkpoint ownership, proposal execution, replay
+  admission, learner updates, evidence storage, and candidate promotion.
+- [ ] Add deterministic plan tests proving that equal plans produce equal jobs
+      and that every behavior-changing field changes the plan identity.
 
 Acceptance:
 
-- A machine-generated route reaches the authenticated Ordon terminal in fewer
-  than 125 ticks.
-- The route reproduces exactly from cold boot.
-- A report from any other optimization request or source boundary is
-  ineligible even when it uses the same terminal predicate. First-hit cost is
-  measured relative to boundary `506`; a later residual checkpoint cannot be
-  compared with the incumbent.
+- A report alone is sufficient to reconstruct which information each lane
+  could observe and when.
+- No policy behavior depends on undeclared lane-number arithmetic.
+- Scheduling and storage changes can be tested without invoking policy logic.
 
-Anything short of both conditions is progress evidence, not success.
+## P1 - Build a real shared replay and learner control plane
+
+- [ ] Add one append-only binary replay/frontier service per campaign. Workers
+      publish authenticated transitions; they do not own private authoritative
+      corpora.
+- [ ] Deduplicate by exact transition identity while preserving distinct input
+      lineages that reach similar observed states.
+- [ ] Publish immutable, versioned learner snapshots and bind every decision to
+      the exact snapshot used.
+- [ ] Support two explicit execution modes:
+  - deterministic generation barriers for reproducible comparisons; and
+  - bounded-staleness asynchronous updates for throughput.
+- [ ] In asynchronous mode, make newly admitted transitions and terminal
+      candidates visible without waiting for an entire four-lane generation.
+- [ ] Measure replay admission latency, learner updates per second, snapshot
+      staleness, useful transitions per update, and duplicate/censored rows.
+- [ ] Add interruption tests proving that replay, frontier, learner, and
+      candidate identities resume without lost or repeated authority.
+
+Acceptance:
+
+- A second lane can learn from a first lane's admitted transition at the next
+  declared sharing boundary.
+- Scaling worker count increases useful learner updates instead of merely
+  multiplying independent searches.
+
+## P2 - Make native checkpointing buy throughput
+
+- [ ] Benchmark, separately, process launch, authenticated-root replay,
+      process-local restore, host snapshot transfer, fact extraction, and
+      checkpoint capture at representative early, middle, and late frontiers.
+- [ ] Keep process-local checkpoint handles owned by persistent workers and
+      route follow-up jobs to the owning worker.
+- [ ] Remove the current coupling that disables cross-decision direct restore
+      merely because a campaign has multiple seeds.
+- [ ] Add a bounded checkpoint residency policy with explicit byte accounting,
+      eviction, replay fallback, and no hidden unbounded emulator copies.
+- [ ] Preserve exact portable replay reconstruction for evicted or
+      process-lost checkpoints.
+- [ ] Audit headless execution to prove which renderer, audio, pacing, and
+      presentation systems still run. Disable only work whose removal preserves
+      native state and terminal parity, then measure the result.
+- [ ] Report direct-restore rate and useful transitions per restore, per native
+      simulation second, and per wall second.
+
+Acceptance:
+
+- After warm-up, ordinary non-root expansions use direct restore unless an
+  explicitly reported ownership, eviction, or process-loss condition prevents
+  it.
+- The same transition and terminal evidence are byte-identical through direct
+  restore and authenticated replay fallback.
+- Orchestration plus persistence no longer dominates native simulation on the
+  fixed throughput benchmark.
+
+## P3 - Prove that the learner solves delayed continuous-control credit
+
+- [ ] Audit the complete state/action feature path. Verify that typed
+      kinematics, past-only trajectory, momentum loss, contacts, camera state,
+      prompted-action availability, action phase, and action composition are
+      present, masked correctly, and not leaked from the future.
+- [ ] Audit normalization and distance weighting so high-cardinality or mostly
+      irrelevant fields cannot swamp movement-relevant variation.
+- [ ] Replace or qualify exact-state-only Bellman connectivity for continuous
+      routes. Near states must be able to share value without fabricating an
+      exact replay edge.
+- [ ] Compare the current local generalized model against at least:
+  - fitted Q over a learned continuous representation;
+  - a double-Q or ensemble control;
+  - a conservative offline control; and
+  - a non-learning structured-search baseline.
+- [ ] Calibrate value and uncertainty on held-out state regions and held-out
+      action realizations, not random rows from the same correlated route.
+- [ ] Add synthetic native-control gates covering:
+  - a terminal hidden around a corner where greedy straight motion fails;
+  - delayed benefit from an initially worse heading;
+  - speed loss from collision without treating harmless contact as punishment;
+  - prompted-action availability and roll timing;
+  - divergence from and later approximate rejoining of a successful route; and
+  - improvement beyond a deliberately suboptimal demonstration.
+- [ ] Require the learned policy to beat equal-budget structured and random
+      controls on those gates before using Ordon volume as evidence.
+- [ ] Run matched demonstration-assisted and from-scratch ablations. The
+      demonstration may improve sample efficiency but may not cap the policy at
+      the demonstrated route.
+
+Acceptance:
+
+- Learned return is the only action-utility ordering.
+- Auxiliary signals improve representation or prediction without becoming
+  reward shaping.
+- The learner reliably escapes the around-corner local optimum and improves a
+  suboptimal demonstrated route.
+
+## P4 - Discover and reuse tactics instead of blessing a fixed list
+
+- [ ] Keep primitive actions generic and state-local: analog direction,
+      duration, camera modifier, and currently available prompted buttons.
+- [ ] Mine repeated successful action subsequences and parameter relationships
+      from authenticated replay.
+- [ ] Promote a tactic only after it improves terminal/tick return on held-out
+      source states relative to its primitive components.
+- [ ] Represent promoted tactics with typed entry conditions, bounded execution,
+      emitted controller input, outcome distributions, and exact lineage.
+- [ ] Allow primitive and promoted tactics to compete under the same learner;
+      promotion must not permanently remove primitive exploration.
+- [ ] Measure whether promotion improves useful transitions per wall second and
+      time-to-best-route on held-out seeds.
+
+Acceptance:
+
+- Useful compositions can be discovered without hard-coding an Ordon route.
+- A promoted tactic reproduces exactly and provides measurable held-out search
+  value.
+
+## P5 - Establish the capacity curve before buying 10x or 100x volume
+
+- [ ] Run fixed-plan scaling trials at 1, 2, 4, 8, and 16 workers after P0-P2.
+- [ ] Separate proposal parallelism, environment parallelism, and learner-update
+      parallelism in the report.
+- [ ] Plot useful transitions, learner updates, unique frontier cells, native
+      ticks, restore traffic, and best first-hit tick against wall time and
+      memory.
+- [ ] Identify the saturation point and the responsible resource: native
+      simulation, restore bandwidth, learner fit, persistence, scheduling, or
+      duplicated exploration.
+- [ ] Demonstrate at least a 10x improvement in time-to-fixed-evidence or explain
+      with measured scaling limits why additional hardware cannot provide it.
+- [ ] Do not plan 100x capacity until the 10x curve shows useful near-linear
+      scaling.
+
+## P6 - Beat and verify the authenticated Ordon incumbent
+
+- [ ] Produce a machine-generated candidate whose first authenticated load-zone
+      hit is strictly earlier than tick `125` from boundary `506`.
+- [ ] Continue to a credibility target of tick `123` or lower; a tick-124 result
+      clears the formal regression gate but is not strong evidence that the
+      framework is ready for harder routes.
+- [ ] Minimize the complete successful controller tape without changing source,
+      terminal, game build, fixture, or execution fidelity.
+- [ ] Cold-replay the complete minimized tape at least twice from process boot
+      with the learner and tactic executors out of the loop.
+- [ ] Require byte-identical input and identical authenticated terminal evidence
+      across cold replays.
+- [ ] Publish the execution plan, learner/replay lineage, complete timing,
+      worker topology, peak memory, winning route lineage, first-hit tick, and
+      proof identities.
+
+Anything short of the sub-125 cold-replay proof is progress evidence, not task
+completion.
