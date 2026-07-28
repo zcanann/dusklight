@@ -15,9 +15,12 @@ use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
-pub const TACTIC_FEATURE_SCHEMA_V3: &str = "dusklight-tactic-features/v3";
-pub const GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V3: &str =
-    "dusklight-goal-conditioned-tactic-features/v3";
+pub const TACTIC_FEATURE_SCHEMA_V4: &str = "dusklight-tactic-features/v4";
+pub const GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V4: &str =
+    "dusklight-goal-conditioned-tactic-features/v4";
+// `BUTTON_STATUS_UNK_121` in the native player action path: A dispatches
+// `procFrontRollInit`. `BUTTON_STATUS_ROLL` (0x47) instead rolls a world object.
+const FRONT_ROLL_DO_STATUS: u8 = 0x79;
 const GOAL_FEATURE_NAMES: &[&str] = &[
     "goal_dx",
     "goal_dy",
@@ -50,6 +53,15 @@ const FEATURE_NAMES: &[&str] = &[
     "player_action_available",
     "player_do_prompt_available",
     "player_do_status",
+    "player_do_status_bit_0",
+    "player_do_status_bit_1",
+    "player_do_status_bit_2",
+    "player_do_status_bit_3",
+    "player_do_status_bit_4",
+    "player_do_status_bit_5",
+    "player_do_status_bit_6",
+    "player_do_status_bit_7",
+    "player_front_roll_prompt_available",
     "player_damage_wait_timer",
     "player_sword_at_up_time",
     "player_ice_damage_wait_timer",
@@ -203,7 +215,7 @@ impl TacticFeatureEncoder {
         let feature_names = FEATURE_NAMES.iter().map(|name| (*name).into()).collect();
         let schema_sha256 = feature_schema_digest(FEATURE_NAMES);
         Self {
-            schema: TACTIC_FEATURE_SCHEMA_V3.into(),
+            schema: TACTIC_FEATURE_SCHEMA_V4.into(),
             schema_sha256,
             feature_names,
         }
@@ -215,7 +227,7 @@ impl TacticFeatureEncoder {
 
     pub fn encode(&self, facts: &FactSnapshot) -> Result<Vec<f32>, TacticFeatureError> {
         facts.validate().map_err(TacticFeatureError::Facts)?;
-        if self.schema != TACTIC_FEATURE_SCHEMA_V3
+        if self.schema != TACTIC_FEATURE_SCHEMA_V4
             || self.schema_sha256 != feature_schema_digest(FEATURE_NAMES)
             || self.feature_names.len() != FEATURE_NAMES.len()
             || self
@@ -363,7 +375,7 @@ impl GoalConditionedTacticFeatureEncoder {
         let mut feature_names = base.feature_names.clone();
         feature_names.extend(GOAL_FEATURE_NAMES.iter().map(|name| (*name).into()));
         Ok(Self {
-            schema: GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V3.into(),
+            schema: GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V4.into(),
             schema_sha256: goal_conditioned_feature_schema_digest(base.schema_sha256),
             feature_names,
             target_coordinate_f32_bits: target.map(f32::to_bits),
@@ -399,7 +411,7 @@ impl GoalConditionedTacticFeatureEncoder {
     }
 
     pub fn encode(&self, facts: &FactSnapshot) -> Result<Vec<f32>, TacticFeatureError> {
-        if self.schema != GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V3
+        if self.schema != GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V4
             || self.schema_sha256 != goal_conditioned_feature_schema_digest(self.base.schema_sha256)
             || self.feature_names.len() != self.base.feature_width() + GOAL_FEATURE_NAMES.len()
         {
@@ -428,7 +440,15 @@ impl GoalConditionedTacticFeatureEncoder {
 }
 
 fn distance_group(name: &str) -> String {
-    let group = if name.starts_with("player_action_flag_") {
+    let group = if name.starts_with("player_do_status_bit_")
+        || matches!(
+            name,
+            "player_do_prompt_available"
+                | "player_do_status"
+                | "player_front_roll_prompt_available"
+        ) {
+        "player_prompted_action"
+    } else if name.starts_with("player_action_flag_") {
         "player_action_flags"
     } else if name.starts_with("player_procedure_context_") {
         "player_procedure_context"
@@ -494,9 +514,11 @@ fn encode_player_action(
         action.is_some() || !facts.player.action_lanes.is_empty(),
     ));
     if let Some(action) = action {
+        let do_status = action.do_status;
+        output.extend([bool_feature(do_status != 0), f32::from(do_status)]);
+        output.extend((0..u8::BITS).map(|bit| bool_feature(do_status & (1_u8 << bit) != 0)));
         output.extend([
-            bool_feature(action.do_status != 0),
-            f32::from(action.do_status),
+            bool_feature(do_status == FRONT_ROLL_DO_STATUS),
             f32::from(action.damage_wait_timer),
             f32::from(action.sword_at_up_time),
             f32::from(action.ice_damage_wait_timer),
@@ -504,7 +526,7 @@ fn encode_player_action(
         ]);
         output.extend(action.procedure_context_raw.map(f32::from));
     } else {
-        output.extend([0.0; 12]);
+        output.extend([0.0; 21]);
     }
 
     let frames = facts
@@ -668,7 +690,7 @@ fn planar_distance(left: [f32; 3], right: [f32; 3]) -> f32 {
 
 fn goal_conditioned_feature_schema_digest(base: Digest) -> Digest {
     let bytes = serde_json::to_vec(&(
-        GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V3,
+        GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V4,
         base,
         GOAL_FEATURE_NAMES,
     ))
@@ -937,7 +959,7 @@ fn symbol_feature(value: &str) -> f32 {
 
 fn feature_schema_digest(names: &[&str]) -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(TACTIC_FEATURE_SCHEMA_V3.as_bytes());
+    hasher.update(TACTIC_FEATURE_SCHEMA_V4.as_bytes());
     for name in names {
         hasher.update((name.len() as u64).to_le_bytes());
         hasher.update(name.as_bytes());
@@ -1066,6 +1088,9 @@ mod tests {
         assert_eq!(feature("player_action_available"), 1.0);
         assert_eq!(feature("player_do_prompt_available"), 1.0);
         assert_eq!(feature("player_do_status"), 4.0);
+        assert_eq!(feature("player_do_status_bit_2"), 1.0);
+        assert_eq!(feature("player_do_status_bit_3"), 0.0);
+        assert_eq!(feature("player_front_roll_prompt_available"), 0.0);
         assert_eq!(feature("player_procedure_context_5"), 6.0);
         assert_eq!(feature("player_action_lane_count"), 2.0);
         assert_eq!(feature("player_action_lane_frame_min"), 1.5);
@@ -1074,6 +1099,22 @@ mod tests {
         assert_eq!(feature("player_action_flag_3"), 1.0);
         assert_eq!(feature("player_action_flag_19"), 1.0);
         assert_eq!(feature("player_action_flag_20"), 0.0);
+
+        facts.player.action_state.as_mut().unwrap().do_status = FRONT_ROLL_DO_STATUS;
+        let front_roll = encoder.encode(&facts).unwrap();
+        let feature = |name: &str| {
+            front_roll[encoder
+                .feature_names
+                .iter()
+                .position(|candidate| candidate == name)
+                .unwrap()]
+        };
+        assert_eq!(feature("player_do_status"), 121.0);
+        assert_eq!(feature("player_do_status_bit_0"), 1.0);
+        assert_eq!(feature("player_do_status_bit_1"), 0.0);
+        assert_eq!(feature("player_do_status_bit_3"), 1.0);
+        assert_eq!(feature("player_do_status_bit_7"), 0.0);
+        assert_eq!(feature("player_front_roll_prompt_available"), 1.0);
     }
 
     #[test]

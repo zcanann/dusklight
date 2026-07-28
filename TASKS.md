@@ -64,6 +64,13 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   generalized fitted-Q k-NN path remains an explicit control. It still lacks
   matched native validation and is not yet evidence of route improvement.
   Evidence: `ordon-p3-control-comparison-v1.report.json`.
+- The sealed tactic feature schema now exposes current velocity and speed,
+  recent straightness and momentum retention, contact plus measured slowdown,
+  camera orientation, exact A-button prompt-status bits, and the native
+  front-roll acceptance prompt (`0x79`). Executable action features independently
+  encode heading, duration, camera/target modifiers, button timing, and roll
+  cadence. These are observations and diagnostics only; learned delayed return
+  remains the sole utility ordering.
 - Replay mining, entry-conditioned validation, promoted-tactic storage, and
   primitive-versus-macro competition exist. No tactic has yet earned promotion
   because the held-out probe contained no successful exploration observation.
@@ -99,11 +106,6 @@ tie is diagnostic evidence only.
 
 ## P3 - Prove delayed-credit continuous-control learning
 
-- [ ] Feed the learner the complete typed observation and action-availability
-      state needed to infer momentum, straight travel, productive versus
-      slowing contact, rolling opportunities, prompted actions, and camera
-      state. Add missing signals as observations or auxiliary targets, never as
-      shaped reward.
 - [ ] Run matched from-scratch, ordinary-demonstration, and structured
       non-learning campaigns with equal native budgets and identical source,
       terminal, and execution bindings.
