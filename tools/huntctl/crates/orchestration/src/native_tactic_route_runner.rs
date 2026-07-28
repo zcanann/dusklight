@@ -3232,7 +3232,11 @@ fn run_seed(
                     action_schema_sha256,
                     &encode,
                     tactic_proposals_per_decision(config.workers, config.exploration_seeds.len()),
-                    generalized_acquisition_partition(seed_index),
+                    generalized_policy_acquisition_partition(
+                        seed_index,
+                        config.exploration_seeds.len(),
+                        campaign.decision_index,
+                    ),
                     config.proposal_policy,
                     Some(encoder.goal_distance_feature()),
                     demonstration_intervention_pending,
@@ -6708,6 +6712,30 @@ fn generalized_acquisition_partition(seed_index: usize) -> u64 {
     }
 }
 
+fn generalized_policy_acquisition_partition(
+    seed_index: usize,
+    seed_count: usize,
+    decision_index: u64,
+) -> u64 {
+    if seed_count != 1 {
+        return generalized_acquisition_partition(seed_index);
+    }
+    // A one-seed campaign enables process-local checkpoint reuse and can spend
+    // every native worker on alternatives from one frontier. It must not,
+    // however, collapse the learned policy to generation lane zero forever:
+    // that lane deliberately behavior-clones terminal-supported experience.
+    // Preserve one support decision per logical four-lane generation and use
+    // the other decisions to sweep consecutive fitted-Q acquisition ranks.
+    let lane = decision_index % LEARNED_EPISODES_PER_GENERATION as u64;
+    if lane == 0 {
+        0
+    } else {
+        (decision_index / LEARNED_EPISODES_PER_GENERATION as u64)
+            .saturating_mul((LEARNED_EPISODES_PER_GENERATION - 1) as u64)
+            .saturating_add(lane)
+    }
+}
+
 fn tactic_proposals_per_decision(worker_count: usize, seed_count: usize) -> usize {
     if seed_count == 1 {
         worker_count.min(MAX_TACTIC_PROPOSALS_PER_DECISION)
@@ -6878,6 +6906,20 @@ mod tests {
                 .map(generalized_acquisition_partition)
                 .collect::<Vec<_>>(),
             vec![0, 1, 2, 3, 0, 4, 5, 6, 0, 7, 8, 9]
+        );
+    }
+
+    #[test]
+    fn single_seed_cycles_support_and_q_ranks_without_losing_direct_restore() {
+        assert_eq!(
+            (0..12)
+                .map(|decision| generalized_policy_acquisition_partition(0, 1, decision))
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 0, 4, 5, 6, 0, 7, 8, 9]
+        );
+        assert_eq!(
+            generalized_policy_acquisition_partition(2, 4, 999),
+            generalized_acquisition_partition(2)
         );
     }
 
