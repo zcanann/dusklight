@@ -77,11 +77,15 @@ same tie is diagnostic evidence only.
 
 ## P1 - Prove shared replay scales learner throughput
 
-- [ ] Run a fixed-plan multi-worker comparison and prove that scaling worker
-      count increases useful learner updates instead of merely multiplying
-      independent searches. Compare learner updates per second, useful
-      transitions per update, censored rows, replay admission latency, exact
-      duplicates, refreshes, imported rows, and maximum snapshot staleness.
+- [ ] Replace duplicated lane-local replay refits with one campaign-owned
+      learner update authority. It must publish immutable model snapshots;
+      lanes consume a declared snapshot rather than independently fitting the
+      same replay prefix.
+- [ ] Repeat the fixed-plan comparison in
+      `ordon-p1-online-replay-scaling-v1.report.json` and prove that scaling
+      worker count increases unique useful evidence and learner updates per
+      wall second. The current 1/2/4-worker comparison failed this gate even
+      though native throughput increased.
 
 ## P2 - Make native checkpointing buy throughput
 
