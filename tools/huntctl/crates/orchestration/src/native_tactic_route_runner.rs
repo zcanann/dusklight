@@ -165,11 +165,11 @@ pub use report::{
 mod execution_plan;
 pub use execution_plan::{
     NATIVE_TACTIC_EXECUTION_PLAN_FILE, NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V1,
-    NativeTacticAcquisitionPlan, NativeTacticCheckpointFallback, NativeTacticCheckpointOwnership,
-    NativeTacticCheckpointPlan, NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest,
-    NativeTacticGenerationPlan, NativeTacticInterventionPlan, NativeTacticLanePlan,
-    NativeTacticLaneRole, NativeTacticPlanBudgets, NativeTacticReplaySharingPlan,
-    NativeTacticResourceLimit,
+    NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V2, NativeTacticAcquisitionPlan,
+    NativeTacticCheckpointFallback, NativeTacticCheckpointOwnership, NativeTacticCheckpointPlan,
+    NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest, NativeTacticGenerationPlan,
+    NativeTacticInterventionPlan, NativeTacticLanePlan, NativeTacticLaneRole,
+    NativeTacticPlanBudgets, NativeTacticReplaySharingPlan, NativeTacticResourceLimit,
 };
 
 pub fn run_native_tactic_route(

@@ -2,9 +2,11 @@ use super::*;
 
 pub const NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V1: &str =
     "dusklight-native-tactic-execution-plan/v1";
+pub const NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V2: &str =
+    "dusklight-native-tactic-execution-plan/v2";
 pub const NATIVE_TACTIC_EXECUTION_PLAN_FILE: &str = "execution-plan.dtp";
 const PLAN_MAGIC: &[u8; 8] = b"DSKTPN01";
-const PLAN_VERSION: u16 = 1;
+const PLAN_VERSION: u16 = 2;
 const PLAN_HEADER_BYTES: usize = 8 + 2 + 8 + 32;
 const MAXIMUM_PLAN_BYTES: usize = 4 * 1024 * 1024;
 pub(super) const EPISODE_GROUP_STRIDE: u64 = 1_000_000;
@@ -305,7 +307,7 @@ impl NativeTacticExecutionPlan {
         }
         let single_lane = request.seeds.len() == 1;
         let plan = Self {
-            schema: NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V1.into(),
+            schema: NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V2.into(),
             seeds: request.seeds,
             proposal_policy: request.proposal_policy,
             execution_strategy: request.execution_strategy,
@@ -379,7 +381,7 @@ impl NativeTacticExecutionPlan {
     }
 
     pub(super) fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
-        if self.schema != NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V1
+        if self.schema != NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V2
             || self.seeds.len() != self.lanes.len()
             || self.generations.is_empty()
             || self

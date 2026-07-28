@@ -124,8 +124,8 @@ pub(super) fn run_seed(
                 .import_training_corpora(shared_training)
                 .map_err(route_error)?;
             if imported > 0 {
-                setup_model_update_micros =
-                    setup_model_update_micros.saturating_add(elapsed_micros(model_started.elapsed()));
+                setup_model_update_micros = setup_model_update_micros
+                    .saturating_add(elapsed_micros(model_started.elapsed()));
             }
             imported
         } else {
