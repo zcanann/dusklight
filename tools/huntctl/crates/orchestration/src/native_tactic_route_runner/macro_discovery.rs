@@ -570,6 +570,7 @@ pub(super) fn reuse_promoted_tactic_macro(
         &frontier.snapshot,
         &frontier.route_tape,
         None,
+        false,
         &reuse_root,
     )?;
     if work.len() != 1 {
@@ -677,6 +678,7 @@ pub(super) fn evaluate_tactic_macro_validation_batch(
         &frontier.snapshot,
         &frontier.route_tape,
         None,
+        false,
         output_root,
     )?;
     let before_distance =

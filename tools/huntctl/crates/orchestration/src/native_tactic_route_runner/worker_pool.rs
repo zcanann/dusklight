@@ -451,6 +451,7 @@ pub(super) struct NativeTacticProposalJob {
     source_route_tape: InputTape,
     checkpoint_source: Option<NativeTacticCheckpointSource>,
     materialize_frontier: bool,
+    retain_primary_checkpoint: bool,
     execution_strategy: NativeGenericExecutionStrategy,
     paths_root: PathBuf,
     response: mpsc::SyncSender<Result<Vec<NativeTacticProposalWork>, NativeTacticRouteRunError>>,
@@ -497,6 +498,7 @@ impl NativeTacticProposalPool {
         source_snapshot: &FactSnapshot,
         source_route_tape: &InputTape,
         cached_frontier: Option<&CachedTacticFrontier>,
+        retain_primary_checkpoint: bool,
         paths_root: &Path,
     ) -> Result<Vec<NativeTacticProposalWork>, NativeTacticRouteRunError> {
         if self.senders.is_empty() {
@@ -537,6 +539,7 @@ impl NativeTacticProposalPool {
                     source_route_tape: source_route_tape.clone(),
                     checkpoint_source: direct.map(|frontier| frontier.source.clone()),
                     materialize_frontier: direct.is_none(),
+                    retain_primary_checkpoint,
                     execution_strategy: self.execution_strategy,
                     paths_root: paths_root.to_path_buf(),
                     response,
@@ -564,6 +567,7 @@ impl NativeTacticProposalPool {
                     source_route_tape: source_route_tape.clone(),
                     checkpoint_source: None,
                     materialize_frontier: false,
+                    retain_primary_checkpoint: retain_primary_checkpoint && proposal_index == 0,
                     execution_strategy: self.execution_strategy,
                     paths_root: paths_root.to_path_buf(),
                     response,
@@ -732,6 +736,7 @@ pub(super) fn load_or_capture_demonstration(
             &before,
             &route,
             None,
+            false,
             &paths_root,
         )?;
         if work.len() != 1 {
@@ -1063,7 +1068,7 @@ pub(super) fn run_tactic_proposal_worker(
                     request: proposal_root.join("request.json"),
                     result: proposal_root.join("result.json"),
                 },
-                false,
+                job.retain_primary_checkpoint && proposal.proposal_index == 0,
                 job.execution_strategy,
             );
             if outcome
@@ -1103,7 +1108,7 @@ pub(super) fn run_tactic_proposal_worker(
                         request: fallback_root.join("request.json"),
                         result: fallback_root.join("result.json"),
                     },
-                    false,
+                    job.retain_primary_checkpoint && proposal.proposal_index == 0,
                     job.execution_strategy,
                 );
             }

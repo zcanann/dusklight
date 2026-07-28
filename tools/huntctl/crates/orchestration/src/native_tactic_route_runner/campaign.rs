@@ -497,6 +497,7 @@ pub(super) fn run_seed(
             &source_snapshot,
             &source_route_tape,
             usable_cached_frontier,
+            true,
             &paths_root,
         )?;
         if proposal_work
