@@ -250,6 +250,78 @@
     },
     "conclusion": "Longer ordinary heading actions increased useful retained evidence but did not improve terminal discovery or geometric depth. A full 64-decision single-seed probe widened every decision to eight proposals, evaluated all four heading durations repeatedly, and still converged on the same approximately 1,496-distance frontier. Simple duration-lattice under-sampling is not the terminal barrier."
   },
+  "goal_relabel_follow_up": {
+    "campaign_control_plane_commit": "61e356d514a7efc00692279e1a944e50bd88dac0",
+    "change": "A separate value treatment relabels exact replay-achieved endpoint coordinates as temporary goals, backs negative native ticks through exact predecessor edges, and generalizes those goal-conditioned returns to live actions. Relabeled rows explicitly carry no native-terminal or promotion authority.",
+    "synthetic_gate": {
+      "learns_reached_direction_without_native_terminal_support": true,
+      "relabeled_terminal_support": false,
+      "utility": "negative_native_ticks_to_exact_replay_achieved_goal"
+    },
+    "matched_diagnostic": {
+      "goal_relabel": {
+        "source_report_path": "build/campaigns/ordon-p3-q131-goal-relabel-scratch-4x16-b4-w4-v2-20260728/report.json",
+        "source_report_sha256": "2d3a64f7147559bc2320bdb9754e3e0b1afca24e5e0f954ae328051220eb5a69",
+        "execution_plan_sha256": "268fab04f5c81c49d85ead7fd87fb43b1cc0d864890cfbc8099eebdda8628023",
+        "value_treatment": "goal_relabeled_fitted_q_knn_v2",
+        "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
+        "terminal_seeds": 0,
+        "best_authenticated_tick": null,
+        "native_ticks": 6972,
+        "useful_decisions": 36,
+        "useful_training_transitions": 122,
+        "proposal_transitions": 254,
+        "visited_states_sum": 278,
+        "minimum_proposal_goal_distance": 1610.8,
+        "model_update_micros": 9343927
+      },
+      "local_control": {
+        "source_report_path": "build/campaigns/ordon-p3-q131-state-novelty-local-4x16-b4-w4-v1-20260728/report.json",
+        "source_report_sha256": "d7c5dac1d698c5bb9826aee84cf089fa7dbe3b478b9011c762ac6d43d0a34a5b",
+        "execution_plan_sha256": "a647d949726428264f091e156c1ace16dbba76e75fcff170ff3c5ea6bbb88580",
+        "value_treatment": "local_generalized_fitted_q_knn_v1",
+        "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
+        "terminal_seeds": 0,
+        "best_authenticated_tick": null,
+        "native_ticks": 6952,
+        "useful_decisions": 40,
+        "useful_training_transitions": 152,
+        "proposal_transitions": 256,
+        "visited_states_sum": 248,
+        "minimum_proposal_goal_distance": 1790.3,
+        "model_update_micros": 7199402
+      },
+      "goal_relabel_deltas": {
+        "terminal_seeds": 0,
+        "native_ticks": 20,
+        "useful_decisions": -4,
+        "useful_training_transitions": -30,
+        "proposal_transitions": -2,
+        "visited_states_sum": 30,
+        "minimum_proposal_goal_distance": -179.5,
+        "model_update_micros": 2144525
+      },
+      "wall_time_comparable": false,
+      "wall_time_note": "The diagnostic cells overlapped in native execution, so wall-rate differences are intentionally not claimed."
+    },
+    "full_budget": {
+      "source_report_path": "build/campaigns/ordon-p3-q131-goal-relabel-scratch-4x64-b4-w4-v1-20260728/report.json",
+      "source_report_sha256": "00ba9a7210eff9f1d72a442709a83a7798acb5398d72a664eba68a876d87be7c",
+      "execution_plan_sha256": "25ce73d21924ccc8d68e5bab45f8606898e427f1dfc159905ced6368144b4954",
+      "value_treatment": "goal_relabeled_fitted_q_knn_v2",
+      "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
+      "terminal_seeds": 0,
+      "best_authenticated_tick": null,
+      "native_ticks": 20556,
+      "useful_decisions": 140,
+      "useful_training_transitions": 538,
+      "proposal_transitions": 1012,
+      "visited_states_sum": 683,
+      "minimum_proposal_goal_distance": 1496.2,
+      "model_update_micros": 142757886
+    },
+    "conclusion": "Goal relabeling learned and transferred exact achieved-goal tick return without fabricating terminal support. It improved early geometric depth and state coverage against the current matched local control, but reduced useful evidence and converged on the existing approximately 1,496-distance full-budget plateau with no terminal. This treatment is not the P3 solution."
+  },
   "observations": {
     "ordinary_suboptimal_replay_improves_terminal_sample_efficiency": true,
     "generated_policy_differs_from_recorded_tape": true,
@@ -261,6 +333,8 @@
     "cold_start_acquisition_breaks_terminal_plateau": false,
     "sustained_heading_increases_useful_evidence": true,
     "sustained_heading_breaks_terminal_plateau": false,
+    "goal_relabeling_improves_diagnostic_depth": true,
+    "goal_relabeling_breaks_terminal_plateau": false,
     "p3_task_complete": false
   }
 }

@@ -113,6 +113,18 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   `1,496` frontier. Primitive-duration availability and simple sampling width
   are not the terminal barrier. Evidence:
   `ordon-p3-q131-local-replay-ablation-v1.report.json`.
+- A distinct goal-relabeled fitted-Q treatment now turns exact replay-achieved
+  endpoints into temporary goals and learns only negative native ticks along
+  exact predecessor edges. Relabeled rows have zero native-terminal and
+  promotion authority. On a matched 4x16 scratch diagnostic it improved the
+  current local control's best proposal depth from roughly `1,790` to `1,611`
+  and visited `278` states instead of `248`, but produced fewer useful training
+  transitions (`122` versus `152`) and no terminal in either cell. At the full
+  4x64 budget it again found `0/4` terminals and converged on the same roughly
+  `1,496` frontier, while spending `143` seconds in model updates. Generic
+  hindsight reachability is now real and ablatable, but this formulation does
+  not solve the terminal barrier. Evidence:
+  `ordon-p3-q131-local-replay-ablation-v1.report.json`.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
   camera orientation, exact A-button prompt-status bits, and the native
@@ -157,11 +169,6 @@ tie is diagnostic evidence only.
 
 ## P3 - Prove delayed-credit continuous-control learning
 
-- [ ] Run a matched scratch ablation of the goal-relabeled fitted-Q treatment.
-      It must learn only negative native ticks to exact replay-achieved goals,
-      generalize that return to the authored goal-conditioned state, and retain
-      zero terminal/promotion authority until native evaluation reaches the
-      real terminal.
 - [ ] Demonstrate that ordinary suboptimal human replay improves sample
       efficiency without capping the policy or becoming required for success.
 
