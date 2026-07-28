@@ -4,13 +4,7 @@ tools/huntctl/crates/evidence/src/native_corpus_inspection.rs	2128
 tools/huntctl/crates/evidence/src/native_episode_shard.rs	5321
 tools/huntctl/crates/finalist-reduction/src/route.rs	1793
 tools/huntctl/crates/harness-contracts/src/run_contract.rs	1556
-tools/huntctl/crates/learning/src/native_generic_tactic.rs	1891
-tools/huntctl/crates/learning/src/native_goal_reachability.rs	2336
-tools/huntctl/crates/learning/src/offline_rl.rs	2360
 tools/huntctl/crates/oracles/src/semantic_oracle.rs	2122
-tools/huntctl/crates/orchestration/src/native_goal_learning_loop.rs	2188
-tools/huntctl/crates/orchestration/src/native_residual_campaign_runner.rs	2581
-tools/huntctl/crates/orchestration/src/native_tactic_worker.rs	2827
 tools/huntctl/crates/proposals/src/q_search.rs	2278
 tools/huntctl/crates/routes/src/timeline.rs	2590
 tools/huntctl/crates/search/src/residual_optimizer.rs	1506

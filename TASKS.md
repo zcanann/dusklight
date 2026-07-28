@@ -75,18 +75,6 @@ same tie is diagnostic evidence only.
 - First-hit comparisons must bind the same source checkpoint, terminal
   predicate, game bytes, card fixture, fidelity, and source boundary.
 
-## P0 - Make an experiment mean exactly what it says
-
-- [ ] Eliminate the remaining learning/orchestration production-file
-      exceptions in the source-size baseline. Split by owned behavior and lower
-      or remove the corresponding ceiling with every cleanup milestone.
-Acceptance:
-
-- A report alone is sufficient to reconstruct which information each lane
-  could observe and when.
-- No policy behavior depends on undeclared lane-number arithmetic.
-- Scheduling and storage changes can be tested without invoking policy logic.
-
 ## P1 - Build a real shared replay and learner control plane
 
 - [ ] Add one append-only binary replay/frontier service per campaign. Workers
@@ -157,10 +145,6 @@ Acceptance:
   - a non-learning structured-search baseline.
 - [ ] Calibrate value and uncertainty on held-out state regions and held-out
       action realizations, not random rows from the same correlated route.
-- [ ] Add synthetic native-control gates covering:
-  - speed loss from collision without treating harmless contact as punishment;
-  - prompted-action availability and roll timing;
-  - improvement beyond a deliberately suboptimal demonstration.
 - [ ] Require the learned policy to beat equal-budget structured and random
       controls on those gates before using Ordon volume as evidence.
 - [ ] Run matched demonstration-assisted and from-scratch ablations. The

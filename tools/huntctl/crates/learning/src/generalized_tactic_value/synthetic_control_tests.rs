@@ -245,6 +245,23 @@ fn succeeds(option_id: &str) -> bool {
     option_id == TURN
 }
 
+fn assert_beats_equal_budget_controls(
+    learned: &str,
+    structured: &str,
+    balanced_random: &[&str],
+    optimal: &str,
+) {
+    let budget = balanced_random.len();
+    let learned_successes = usize::from(learned == optimal) * budget;
+    let structured_successes = usize::from(structured == optimal) * budget;
+    let random_successes = balanced_random
+        .iter()
+        .filter(|action| **action == optimal)
+        .count();
+    assert!(learned_successes > structured_successes);
+    assert!(learned_successes > random_successes);
+}
+
 fn with_trajectory(
     mut transition: OptionTransitionSample,
     trajectory: OptionTrajectoryFactSnapshot,
@@ -321,14 +338,13 @@ fn learned_policy_beats_greedy_and_balanced_random_on_around_corner_gate() {
         "approximate credit must not fabricate exact terminal support"
     );
 
-    let learned_successes = usize::from(succeeds(&learned[0].descriptor.option_id)) * 2;
-    let structured_successes = usize::from(succeeds(STRAIGHT)) * 2;
-    let balanced_random_successes = [STRAIGHT, TURN]
-        .into_iter()
-        .filter(|action| succeeds(action))
-        .count();
-    assert!(learned_successes > structured_successes);
-    assert!(learned_successes > balanced_random_successes);
+    assert!(succeeds(&learned[0].descriptor.option_id));
+    assert_beats_equal_budget_controls(
+        &learned[0].descriptor.option_id,
+        STRAIGHT,
+        &[STRAIGHT, TURN],
+        TURN,
+    );
 }
 
 #[test]
@@ -442,6 +458,12 @@ fn prompted_roll_gate_learns_available_timing_and_never_hallucinates_the_action(
         .collect::<Vec<_>>();
     let ranked = model.rank(&state, &context, &available).unwrap();
     assert_eq!(ranked[0].descriptor.option_id, "roll-early");
+    assert_beats_equal_budget_controls(
+        &ranked[0].descriptor.option_id,
+        "continuous-only",
+        &["continuous-only", "roll-late", "roll-early"],
+        "roll-early",
+    );
 
     let unavailable = model
         .rank(
@@ -509,6 +531,12 @@ fn demonstration_gate_improves_beyond_an_ordinary_suboptimal_sample() {
         "learned-camera-lock-shortcut"
     );
     assert!(ranked[0].outcome.reward > ranked[1].outcome.reward);
+    assert_beats_equal_budget_controls(
+        &ranked[0].descriptor.option_id,
+        "human-demonstration",
+        &["human-demonstration", "learned-camera-lock-shortcut"],
+        "learned-camera-lock-shortcut",
+    );
     assert!(
         ranked[0].outcome.terminal < ranked[1].outcome.terminal,
         "the learned return must beat demonstration cloning without borrowing its proof"
