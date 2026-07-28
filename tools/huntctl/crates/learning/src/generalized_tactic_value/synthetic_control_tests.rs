@@ -1,7 +1,9 @@
 use super::*;
+use crate::double_q::{ConservativeQ, ConservativeQConfig, DoubleQ, DoubleQConfig};
 use crate::fact_snapshot::{
     FactSnapshot, FactTerminalReason, OptionTrajectoryFactSnapshot, RecentOptionFactSnapshot,
 };
+use crate::fqi::{FittedQ, FqiConfig, Transition};
 use crate::tape::{InputFrame, InputTape};
 use dusklight_control::option_execution::{
     OptionCondition, OptionEndReason, OptionExecution, OptionParameter, OptionType, TapeRange,
@@ -260,6 +262,20 @@ fn around_corner_replay() -> Vec<OptionTransitionSample> {
     ]
 }
 
+fn discrete_around_corner_replay(replay: &[OptionTransitionSample]) -> Vec<Transition> {
+    replay
+        .iter()
+        .map(|transition| Transition {
+            state: transition.value_sample.state.clone(),
+            action: u32::from(transition.value_sample.action.option_id == TURN),
+            duration: transition.value_sample.duration_ticks,
+            reward: transition.value_sample.reward,
+            next_state: transition.value_sample.next_state.clone(),
+            terminal: transition.value_sample.terminal,
+        })
+        .collect()
+}
+
 fn succeeds(option_id: &str) -> bool {
     option_id == TURN
 }
@@ -364,6 +380,64 @@ fn learned_policy_beats_greedy_and_balanced_random_on_around_corner_gate() {
         &[STRAIGHT, TURN],
         TURN,
     );
+}
+
+#[test]
+fn around_corner_gate_compares_discrete_q_and_conservative_controls() {
+    let replay = around_corner_replay();
+    let transitions = discrete_around_corner_replay(&replay);
+    let state = &transitions[0].state;
+    let actions = [0, 1];
+
+    let fitted = FittedQ::fit(
+        state.len(),
+        &actions,
+        &transitions,
+        &FqiConfig {
+            iterations: 16,
+            trees_per_action: 7,
+            max_tree_depth: 4,
+            bootstrap: false,
+            ..FqiConfig::default()
+        },
+    )
+    .unwrap();
+    let double_config = DoubleQConfig {
+        epochs: 128,
+        hidden_width: 16,
+        learning_rate: 0.01,
+        target_sync_steps: 16,
+        seed: 7,
+        ..DoubleQConfig::default()
+    };
+    let double = DoubleQ::fit(state.len(), &actions, &transitions, &double_config).unwrap();
+    let conservative = ConservativeQ::fit(
+        state.len(),
+        &actions,
+        &transitions,
+        &ConservativeQConfig {
+            double_q: DoubleQConfig {
+                seed: 11,
+                ..double_config
+            },
+            conservative_weight: 0.1,
+            temperature: 1.0,
+        },
+    )
+    .unwrap();
+
+    let structured_action = 0;
+    let fitted_action = fitted.rank_actions(state).unwrap()[0].action;
+    let double_action = double.rank_actions(state).unwrap()[0].action;
+    let conservative_action = conservative.rank_actions(state).unwrap()[0].action;
+    assert_eq!(
+        fitted_action, structured_action,
+        "the exact-edge continuous FQI control remains trapped by the local straight-line optimum"
+    );
+    assert_eq!(double_action, 1);
+    assert_eq!(conservative_action, 1);
+    assert_ne!(double_action, structured_action);
+    assert_ne!(conservative_action, structured_action);
 }
 
 #[test]
@@ -535,18 +609,29 @@ fn demonstration_gate_improves_beyond_an_ordinary_suboptimal_sample() {
         shortcut_finish.before_state_sha256
     );
     let replay = [demonstration, shortcut_setup, shortcut_finish];
-    let model = GeneralizedTacticValueModel::fit_fitted_q_transitions(&replay, 0, 8, 0.99).unwrap();
+    let assisted =
+        GeneralizedTacticValueModel::fit_fitted_q_transitions(&replay, 0, 8, 0.99).unwrap();
     let context = GeneralizedTacticContext::from_facts(&replay[0].before).unwrap();
     let candidates = [
         replay[0].value_sample.action.clone(),
         replay[1].value_sample.action.clone(),
     ];
-    let ranked = model
+    let ranked = assisted
         .rank(&replay[0].value_sample.state, &context, &candidates)
         .unwrap();
+    let scratch_replay = [replay[1].clone(), replay[2].clone()];
+    let from_scratch =
+        GeneralizedTacticValueModel::fit_fitted_q_transitions(&scratch_replay, 0, 8, 0.99)
+            .unwrap()
+            .rank(&replay[0].value_sample.state, &context, &candidates)
+            .unwrap();
 
     assert_eq!(
         ranked[0].descriptor.option_id,
+        "learned-camera-lock-shortcut"
+    );
+    assert_eq!(
+        from_scratch[0].descriptor.option_id,
         "learned-camera-lock-shortcut"
     );
     assert!(ranked[0].outcome.reward > ranked[1].outcome.reward);
