@@ -335,28 +335,28 @@
       "promotion_authority": false
     },
     "native_ablation": {
-      "treatment": {
-        "source_report_path": "build/campaigns/ordon-p3-q131-spatial-reachability-goal-relabeled-4x16-b4-w4-v1-20260728/report.json",
-        "source_report_sha256": "e3ccd7a6d4fe84d0722413a57829444823deb8808680fcb93048cc5e7e7c12e6",
+      "diagnostic_treatment": {
+        "source_report_path": "build/campaigns/ordon-p3-q131-goal-relabel-frontier-spatial-4x16-b4-w4-v1-20260728/report.json",
+        "source_report_sha256": "355295ca679c80ef12dfd02b7981811c2bf8f73d509a45b7626c887a4f03c576",
         "execution_plan_sha256": "268fab04f5c81c49d85ead7fd87fb43b1cc0d864890cfbc8099eebdda8628023",
         "value_treatment": "goal_relabeled_fitted_q_knn_v2",
         "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
         "feature_schema_sha256": "d66e350d141de26e2afbdbc60602e958d89478aea9aba3a72c63df5408e2f662",
         "terminal_seeds": 0,
         "best_authenticated_tick": null,
-        "native_ticks": 6540,
-        "useful_decisions": 29,
-        "useful_training_transitions": 107,
-        "proposal_transitions": 252,
-        "visited_states_sum": 202,
-        "minimum_proposal_goal_distance": 1499.7,
-        "model_update_micros": 9843799,
-        "wall_micros": 85539109,
+        "native_ticks": 6464,
+        "useful_decisions": 33,
+        "useful_training_transitions": 113,
+        "proposal_transitions": 251,
+        "visited_states_sum": 294,
+        "minimum_proposal_goal_distance": 1521.4297,
+        "minimum_acquired_frontier_goal_distance": 1838.7139,
+        "maximum_route_suffix_ticks": 160,
+        "model_update_micros": 8981073,
+        "wall_micros": 84234575,
         "retained_frontier_acquisitions": 11,
         "achieved_goal_value_supported_acquisitions": 11,
-        "terminal_value_supported_acquisitions": 0,
-        "selected_endpoint_minimum_x": -426.0,
-        "selected_endpoint_minimum_z": -3461.1
+        "terminal_value_supported_acquisitions": 0
       },
       "recorded_goal_relabel_control": {
         "source_report_path": "build/campaigns/ordon-p3-q131-goal-relabel-scratch-4x16-b4-w4-v2-20260728/report.json",
@@ -378,20 +378,80 @@
       },
       "treatment_deltas": {
         "terminal_seeds": 0,
-        "native_ticks": -432,
-        "useful_decisions": -7,
-        "useful_training_transitions": -15,
-        "proposal_transitions": -2,
-        "visited_states_sum": -76,
-        "minimum_proposal_goal_distance": -111.1,
-        "model_update_micros": 499872
+        "native_ticks": -508,
+        "useful_decisions": -3,
+        "useful_training_transitions": -9,
+        "proposal_transitions": -3,
+        "visited_states_sum": 16,
+        "minimum_proposal_goal_distance": -89.3703,
+        "model_update_micros": -362854
       },
-      "successful_replay_reference": {
-        "player_x_near_frame_586": -1357,
-        "interpretation": "The treatment reaches the existing direct-corridor distance plateau but does not acquire the westward pre-corner route envelope demonstrated by a successful replay."
+      "full_budget_treatment": {
+        "source_report_path": "build/campaigns/ordon-p3-q131-goal-relabel-frontier-spatial-4x64-b4-w4-v1-20260728/report.json",
+        "source_report_sha256": "fe105bf67ebd933f924a018ad6d7e8998613db836718fa85c7eda79b7153aa5e",
+        "execution_plan_sha256": "25ce73d21924ccc8d68e5bab45f8606898e427f1dfc159905ced6368144b4954",
+        "value_treatment": "goal_relabeled_fitted_q_knn_v2",
+        "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
+        "feature_schema_sha256": "d66e350d141de26e2afbdbc60602e958d89478aea9aba3a72c63df5408e2f662",
+        "terminal_seeds": 0,
+        "best_authenticated_tick": null,
+        "native_ticks": 19528,
+        "useful_decisions": 149,
+        "useful_training_transitions": 545,
+        "proposal_transitions": 1007,
+        "training_replay_rows": 976,
+        "visited_states_sum": 634,
+        "minimum_proposal_goal_distance": 1322.8678,
+        "minimum_acquired_frontier_goal_distance": 1646.2062,
+        "maximum_route_suffix_ticks": 160,
+        "model_update_micros": 147770384,
+        "tactic_selection_micros": 8965404,
+        "wall_micros": 603968204,
+        "retained_frontier_acquisitions": 49,
+        "achieved_goal_value_supported_acquisitions": 49,
+        "terminal_value_supported_acquisitions": 0,
+        "best_proposal": {
+          "seed": 155921,
+          "decision_index": 27,
+          "option_id": "family/seek-target/51acab4619115a080dd8",
+          "selection_reason": "batch_coverage",
+          "goal_distance_after": 1322.8678,
+          "route_suffix_ticks": 160,
+          "source_player_x": -1423.8524,
+          "source_player_z": -2857.9402
+        }
+      },
+      "recorded_goal_relabel_full_budget_control": {
+        "source_report_path": "build/campaigns/ordon-p3-q131-goal-relabel-scratch-4x64-b4-w4-v1-20260728/report.json",
+        "source_report_sha256": "00ba9a7210eff9f1d72a442709a83a7798acb5398d72a664eba68a876d87be7c",
+        "execution_plan_sha256": "25ce73d21924ccc8d68e5bab45f8606898e427f1dfc159905ced6368144b4954",
+        "terminal_seeds": 0,
+        "native_ticks": 20556,
+        "useful_decisions": 140,
+        "useful_training_transitions": 538,
+        "proposal_transitions": 1012,
+        "visited_states_sum": 683,
+        "minimum_proposal_goal_distance": 1496.2,
+        "model_update_micros": 142757886
+      },
+      "full_budget_treatment_deltas": {
+        "terminal_seeds": 0,
+        "native_ticks": -1028,
+        "useful_decisions": 9,
+        "useful_training_transitions": 7,
+        "proposal_transitions": -5,
+        "visited_states_sum": -49,
+        "minimum_proposal_goal_distance": -173.3322,
+        "model_update_micros": 5012498
+      },
+      "interpretation": {
+        "breaks_recorded_geometric_plateau": true,
+        "breaks_terminal_plateau": false,
+        "best_route_consumes_entire_discovery_horizon": true,
+        "next_hypothesis": "The best proposal starts from the westward envelope and consumes the complete 160-tick discovery horizon. Test a larger discovery horizon without changing native terminal, promotion, or final tick authority."
       }
     },
-    "conclusion": "Supported achieved-goal return demonstrably controls retained-frontier continuation without acquiring terminal authority, and spatial reachability reaches the known approximately 1,500-distance plateau within the short cell. It does not escape the around-corner local optimum, reduces useful retained evidence, and fails to approach the successful replay's westward envelope. A deeper repeat would mine the same wrong corridor and is not justified."
+    "conclusion": "Supported achieved-goal return demonstrably controls retained-frontier continuation without acquiring terminal authority. The matched full-budget treatment found no terminal, but improved the recorded goal-relabeled treatment's best proposal distance from approximately 1,496 to 1,323 and reached the replay's westward envelope. The best proposal consumed the complete 160-tick route horizon, making discovery-horizon truncation the next testable bottleneck rather than more mining at the same horizon."
   },
   "observations": {
     "ordinary_suboptimal_replay_improves_terminal_sample_efficiency": true,
@@ -408,7 +468,9 @@
     "goal_relabeling_breaks_terminal_plateau": false,
     "achieved_goal_return_controls_frontier_continuation": true,
     "achieved_goal_return_has_native_terminal_authority": false,
+    "spatial_reachability_breaks_recorded_geometric_plateau": true,
     "spatial_reachability_breaks_terminal_plateau": false,
+    "best_spatial_route_is_discovery_horizon_limited": true,
     "p3_task_complete": false
   }
 }

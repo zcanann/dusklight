@@ -127,16 +127,16 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   `ordon-p3-q131-local-replay-ablation-v1.report.json`.
 - Supported achieved-goal return now outranks cold-start novelty when choosing
   among equally fresh retained frontiers, without granting native-terminal or
-  promotion authority. A matched 4x16 native follow-up exercised that learned
-  acquisition on all `11` retained-frontier branches and reached the known
-  roughly `1,500`-distance plateau sooner than the recorded goal-relabeled
-  treatment, but reduced useful decisions (`36` to `29`), useful training
-  transitions (`122` to `107`), and visited states (`278` to `202`). Its
-  selected routes never moved west of roughly `x=-426`, while the successful
-  replay is already near `x=-1,357` before rounding the corner. The deeper
-  full-budget cell is therefore not justified: learned achieved-goal return is
-  authoritative for continuation, but still follows the wrong corridor.
-  Evidence: `ordon-p3-q131-local-replay-ablation-v1.report.json`.
+  promotion authority. In the matched 4x64 native follow-up, all `49`
+  retained-frontier acquisitions had achieved-goal support. It found no
+  terminal, but broke the recorded roughly `1,496`-distance plateau with a
+  `1,322.9` proposal from the replay's westward envelope, increased useful
+  decisions from `140` to `149`, and increased useful training transitions
+  from `538` to `545`. That best route consumed the complete `160`-tick
+  discovery horizon. The next diagnostic is therefore a larger discovery
+  horizon with native terminal, promotion, and final tick authority unchanged,
+  not more mining at the truncated horizon. Evidence:
+  `ordon-p3-q131-local-replay-ablation-v1.report.json`.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
   camera orientation, exact A-button prompt-status bits, and the native
@@ -181,8 +181,11 @@ tie is diagnostic evidence only.
 
 ## P3 - Prove delayed-credit continuous-control learning
 
-- [ ] Demonstrate that ordinary suboptimal human replay improves sample
-      efficiency without capping the policy or becoming required for success.
+- [ ] Use ordinary suboptimal human replay as optional state-coverage and
+      delayed-credit evidence, not as a movement policy to clone. Demonstrate
+      improved terminal sample efficiency, a learned policy that beats the
+      replay by discovering its own compositions, and from-scratch success
+      without replay support.
 
 Exit gate:
 
