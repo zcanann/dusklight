@@ -3675,7 +3675,13 @@ fn run_seed(
 
     let final_persistence_started = Instant::now();
     compact_tactic_decision_journal(&seed_root)?;
-    let success = best_success.is_some();
+    let success = best_success.as_ref().is_some_and(|result| {
+        final_result_promotes(
+            result,
+            source_frame,
+            config.optimization.budgets.promotion_before_tick,
+        )
+    });
     let generated_training = campaign
         .training_corpus_from(imported_training_replay_rows)
         .map_err(route_error)?;
@@ -3684,7 +3690,8 @@ fn run_seed(
         .write(&generated_training_path, &checkpoint_content_root)
         .map_err(route_error)?;
     remove_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint)?;
-    let (successful_tape, final_result) = if let Some(result) = best_success {
+    let (successful_tape, final_result) = if success {
+        let result = best_success.expect("promoted success was checked above");
         let retained_candidate_started = Instant::now();
         let tape_path = seed_root.join("successful.tape");
         write_new(
@@ -3837,6 +3844,23 @@ fn successful_result_is_better(
         incumbent.route_tape.frames.len(),
         incumbent.content_sha256,
     )
+}
+
+fn final_result_promotes(
+    result: &TacticQFinalResult,
+    source_frame: u64,
+    promotion_before_tick: u64,
+) -> bool {
+    u64::try_from(result.route_tape.frames.len()).is_ok_and(|route_frames| {
+        route_frames_promote(route_frames, source_frame, promotion_before_tick)
+    })
+}
+
+fn route_frames_promote(route_frames: u64, source_frame: u64, promotion_before_tick: u64) -> bool {
+    route_frames
+        .checked_sub(source_frame)
+        .and_then(|route_ticks| route_ticks.checked_sub(1))
+        .is_some_and(|first_hit_tick| first_hit_tick < promotion_before_tick)
 }
 
 fn successful_route_rank_is_better(
@@ -6954,6 +6978,14 @@ mod tests {
             125,
             Digest([1; 32])
         ));
+    }
+
+    #[test]
+    fn terminal_route_success_is_strictly_better_than_the_promotion_tick() {
+        let source_frame = 506;
+        assert!(route_frames_promote(source_frame + 125, source_frame, 125));
+        assert!(!route_frames_promote(source_frame + 126, source_frame, 125));
+        assert!(!route_frames_promote(source_frame, source_frame, 125));
     }
 
     #[test]
