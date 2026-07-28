@@ -36,4 +36,3 @@ tools/route-planner/src/main.rs	3016
 tools/route-planner/src/project.rs	1803
 tools/route-planner/src/service.rs	3241
 tools/route-planner/src/web.rs	1568
-tools/route-planner/src/workspace.rs	4667
