@@ -344,11 +344,23 @@ impl TacticQCampaign {
             self.sample_root_and_frontier(seed, round, reference, maximum_route_frames)?;
         let root_frames = root.route_tape.frames.len();
         let archive = self.frontier_archive()?;
-        let mut choices = archive.select_tactic_frontier_within_route_frames(
-            reference,
-            archive.tactic_len(),
-            maximum_route_frames,
-        );
+        let terminal_value_supported = self
+            .training_replay
+            .iter()
+            .any(|transition| transition.value_sample.terminal);
+        let mut choices = if !demonstration_curriculum && !terminal_value_supported {
+            archive.select_tactic_state_frontier_within_route_frames(
+                reference,
+                archive.tactic_len(),
+                maximum_route_frames,
+            )
+        } else {
+            archive.select_tactic_frontier_within_route_frames(
+                reference,
+                archive.tactic_len(),
+                maximum_route_frames,
+            )
+        };
         if demonstration_curriculum {
             let demonstration_endpoints = self
                 .training_replay
@@ -388,10 +400,6 @@ impl TacticQCampaign {
         }
         let tie_offset = seeded_frontier_index(seed, round, choices.len());
         let choice_count = choices.len();
-        let terminal_value_supported = self
-            .training_replay
-            .iter()
-            .any(|transition| transition.value_sample.terminal);
         let generalized_model = if !demonstration_curriculum
             && self.value_treatment == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
         {

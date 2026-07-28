@@ -314,7 +314,9 @@ impl BehaviorArchive {
         reference: &[TacticEndpointDescriptor],
         budget: usize,
     ) -> Vec<TacticFrontierEntry> {
-        self.select_tactic_frontier_matching(reference, budget, |_| true)
+        self.select_tactic_frontier_matching(reference, budget, tactic_descriptor_distance, |_| {
+            true
+        })
     }
 
     /// Select a semantically diverse frontier without admitting routes that
@@ -325,15 +327,41 @@ impl BehaviorArchive {
         budget: usize,
         maximum_route_frames: usize,
     ) -> Vec<TacticFrontierEntry> {
-        self.select_tactic_frontier_matching(reference, budget, |entry| {
-            entry.route_tape.frames.len() <= maximum_route_frames
-        })
+        self.select_tactic_frontier_matching(
+            reference,
+            budget,
+            tactic_descriptor_distance,
+            |entry| entry.route_tape.frames.len() <= maximum_route_frames,
+        )
+    }
+
+    /// Select spatially and semantically diverse states without treating the
+    /// action used to reach a state as another state dimension.
+    ///
+    /// Cold-start exploration uses this view because action-factor diversity
+    /// is handled independently when proposal batches are formed. Letting an
+    /// action digest dominate state distance repeatedly expands different
+    /// controls at the same location instead of extending the reachable
+    /// frontier.
+    pub fn select_tactic_state_frontier_within_route_frames(
+        &self,
+        reference: &[TacticEndpointDescriptor],
+        budget: usize,
+        maximum_route_frames: usize,
+    ) -> Vec<TacticFrontierEntry> {
+        self.select_tactic_frontier_matching(
+            reference,
+            budget,
+            tactic_state_descriptor_distance,
+            |entry| entry.route_tape.frames.len() <= maximum_route_frames,
+        )
     }
 
     fn select_tactic_frontier_matching(
         &self,
         reference: &[TacticEndpointDescriptor],
         budget: usize,
+        distance: fn(&TacticEndpointDescriptor, &TacticEndpointDescriptor) -> u128,
         mut eligible: impl FnMut(&TacticFrontierEntry) -> bool,
     ) -> Vec<TacticFrontierEntry> {
         let mut pool = self
@@ -348,11 +376,12 @@ impl BehaviorArchive {
                 .iter()
                 .enumerate()
                 .max_by(|(_, left), (_, right)| {
-                    tactic_frontier_novelty(&left.descriptor, reference, &selected)
+                    tactic_frontier_novelty(&left.descriptor, reference, &selected, distance)
                         .cmp(&tactic_frontier_novelty(
                             &right.descriptor,
                             reference,
                             &selected,
+                            distance,
                         ))
                         .then_with(|| tactic_quality_cmp(left, right))
                         .then_with(|| right.descriptor.cmp(&left.descriptor))
@@ -949,20 +978,32 @@ fn tactic_frontier_novelty(
     descriptor: &TacticEndpointDescriptor,
     reference: &[TacticEndpointDescriptor],
     selected: &[TacticFrontierEntry],
+    distance: fn(&TacticEndpointDescriptor, &TacticEndpointDescriptor) -> u128,
 ) -> u128 {
     reference
         .iter()
-        .map(|other| tactic_descriptor_distance(descriptor, other))
+        .map(|other| distance(descriptor, other))
         .chain(
             selected
                 .iter()
-                .map(|entry| tactic_descriptor_distance(descriptor, &entry.descriptor)),
+                .map(|entry| distance(descriptor, &entry.descriptor)),
         )
         .min()
         .unwrap_or(u128::MAX)
 }
 
 fn tactic_descriptor_distance(
+    left: &TacticEndpointDescriptor,
+    right: &TacticEndpointDescriptor,
+) -> u128 {
+    let mut distance = tactic_state_descriptor_distance(left, right);
+    if left.action_identity_sha256 != right.action_identity_sha256 {
+        distance += 1_u128 << 64;
+    }
+    distance
+}
+
+fn tactic_state_descriptor_distance(
     left: &TacticEndpointDescriptor,
     right: &TacticEndpointDescriptor,
 ) -> u128 {
@@ -978,9 +1019,6 @@ fn tactic_descriptor_distance(
     }
     if left.event_running != right.event_running || left.event_id != right.event_id {
         distance += 1_u128 << 80;
-    }
-    if left.action_identity_sha256 != right.action_identity_sha256 {
-        distance += 1_u128 << 64;
     }
     if left.terminal != right.terminal {
         distance += 1_u128 << 63;
@@ -1090,6 +1128,39 @@ mod tests {
     use dusklight_learning::fact_snapshot::FactSnapshot;
     use dusklight_learning::option_transition::OptionTransitionSample;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn state_frontier_distance_excludes_action_provenance() {
+        let reference = TacticEndpointDescriptor {
+            stage: "F_TEST".into(),
+            room: 1,
+            layer: Some(0),
+            player_procedure: Some(7),
+            position_bin: [10, 20, 30],
+            event_running: Some(false),
+            event_id: Some(-1),
+            actor_count_bin: 2,
+            terminal: false,
+            action_identity_sha256: Digest([1; 32]),
+        };
+        let mut different_action = reference.clone();
+        different_action.action_identity_sha256 = Digest([2; 32]);
+        let mut spatially_distinct = reference.clone();
+        spatially_distinct.position_bin[0] += 1;
+
+        assert_eq!(
+            tactic_state_descriptor_distance(&reference, &different_action),
+            0
+        );
+        assert_eq!(
+            tactic_state_descriptor_distance(&reference, &spatially_distinct),
+            1
+        );
+        assert!(
+            tactic_descriptor_distance(&reference, &different_action)
+                > tactic_descriptor_distance(&reference, &spatially_distinct)
+        );
+    }
 
     #[test]
     fn frontier_cells_are_finer_than_reward_novelty_cells() {
