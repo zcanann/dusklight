@@ -176,7 +176,7 @@ pub(super) fn run_seed(
             lane.episode_group(0)?,
             current,
             route_prefix.clone(),
-            route_option_value_config(seed),
+            route_option_value_config(execution_plan_sha256),
             TacticExplorationConfig {
                 seed,
                 epsilon_per_million: lane.epsilon_per_million,
@@ -243,6 +243,12 @@ pub(super) fn run_seed(
     let checkpoint_content_root = tactic_content_store_path(&seed_root);
     let decision_content_store =
         TacticQContentStore::initialize(&checkpoint_content_root).map_err(route_error)?;
+    let learner_snapshot_store = TacticQContentStore::initialize(
+        config
+            .output_root
+            .join(NATIVE_TACTIC_CONTENT_STORE_DIRECTORY),
+    )
+    .map_err(route_error)?;
     let mut rolling_checkpoint = None;
     // Process-local handles intentionally do not survive campaign resume.
     let mut cached_frontier: Option<CachedTacticFrontier> = None;
@@ -520,7 +526,11 @@ pub(super) fn run_seed(
         demonstration_intervention_pending = false;
 
         let decision_index = campaign.decision_index;
-        let learner_snapshot_sha256 = tactic_learner_snapshot_sha256(&campaign)?;
+        let learner_snapshot = campaign.learner_snapshot().map_err(route_error)?;
+        let learner_snapshot_sha256 = learner_snapshot_store
+            .store_learner_snapshot(&learner_snapshot)
+            .map_err(route_error)?
+            .sha256;
         let replay_rows_at_decision = campaign.training_replay_len() as u64;
         let acquisition_rank = lane.acquisition.rank(decision_index);
         let refit_model = tactic_model_refit_required(
@@ -971,17 +981,4 @@ pub(super) fn run_seed(
         },
         generated_training,
     })
-}
-
-fn tactic_learner_snapshot_sha256(
-    campaign: &TacticQCampaign,
-) -> Result<Digest, NativeTacticRouteRunError> {
-    let bytes = serde_cbor::to_vec(&(
-        campaign.execution_authority_sha256,
-        campaign.decision_index,
-        campaign.training_replay_len(),
-        campaign.model(),
-    ))
-    .map_err(route_error)?;
-    Ok(Digest(Sha256::digest(bytes).into()))
 }

@@ -4,8 +4,8 @@ use crate::tactic_q_campaign::{
     TACTIC_Q_CHECKPOINT_EXTENSION, TACTIC_Q_CHECKPOINT_SCHEMA_V2, TACTIC_Q_CHECKPOINT_SCHEMA_V3,
     TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1, TacticQCampaignCheckpoint,
     TacticQCampaignError, TacticQCheckpointSerializationBenchmark, TacticQFinalResult,
-    TacticQTrainingCorpus, checkpoint_digest, validate_checkpoint, validate_final_result,
-    validate_training_corpus,
+    TacticQLearnerSnapshot, TacticQTrainingCorpus, checkpoint_digest, validate_checkpoint,
+    validate_final_result, validate_training_corpus,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
@@ -253,6 +253,53 @@ impl TacticQContentStore {
             .validate()
             .map_err(TacticQContentStoreError::domain)?;
         Ok(tactic)
+    }
+
+    pub fn store_learner_snapshot(
+        &self,
+        snapshot: &TacticQLearnerSnapshot,
+    ) -> Result<StoredContentRef, TacticQContentStoreError> {
+        snapshot
+            .validate()
+            .map_err(TacticQContentStoreError::domain)?;
+        let raw = serde_cbor::to_vec(snapshot).map_err(TacticQContentStoreError::domain)?;
+        let reference = StoredContentRef::from(
+            &self
+                .store
+                .put_bytes(&raw, ContentKind::LearnerSnapshot)
+                .map_err(TacticQContentStoreError::Store)?,
+        );
+        if reference.sha256
+            != snapshot
+                .content_sha256()
+                .map_err(TacticQContentStoreError::domain)?
+        {
+            return Err(TacticQContentStoreError::Invalid(
+                "stored learner snapshot identity is detached",
+            ));
+        }
+        Ok(reference)
+    }
+
+    pub fn load_learner_snapshot(
+        &self,
+        reference: StoredContentRef,
+    ) -> Result<TacticQLearnerSnapshot, TacticQContentStoreError> {
+        require_kind(reference, ContentKind::LearnerSnapshot)?;
+        let snapshot: TacticQLearnerSnapshot = self.read_cbor(reference)?;
+        snapshot
+            .validate()
+            .map_err(TacticQContentStoreError::domain)?;
+        if snapshot
+            .content_sha256()
+            .map_err(TacticQContentStoreError::domain)?
+            != reference.sha256
+        {
+            return Err(TacticQContentStoreError::Invalid(
+                "loaded learner snapshot identity is detached",
+            ));
+        }
+        Ok(snapshot)
     }
 
     pub fn store_tape(

@@ -176,7 +176,7 @@ pub(super) fn resume_seed(
         || checkpoint.feature_schema_sha256 != feature_schema_sha256
         || checkpoint.objective_sha256 != config.optimization.terminal_predicate.definition_sha256
         || checkpoint.root_checkpoint_sha256 != root_checkpoint_sha256
-        || checkpoint.model_config != route_option_value_config(seed)
+        || checkpoint.model_config != route_option_value_config(config.execution_plan.identity()?)
         || checkpoint.exploration != expected_exploration
     {
         return Err(route_message(

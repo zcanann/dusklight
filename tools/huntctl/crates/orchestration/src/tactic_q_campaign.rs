@@ -61,6 +61,7 @@ pub const TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1: &str =
     "dusklight-tactic-q-checkpoint-serialization-benchmark/v1";
 pub const TACTIC_Q_FINAL_RESULT_SCHEMA_V1: &str = "dusklight-tactic-q-final-result/v1";
 pub const TACTIC_Q_FINAL_RESULT_SCHEMA_V2: &str = "dusklight-tactic-q-final-result/v2";
+pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1: &str = "dusklight-tactic-q-learner-snapshot/v1";
 /// Episode group reserved for critic evidence that must never become an
 /// executable frontier.
 pub const TACTIC_Q_MODEL_ONLY_EPISODE_GROUP: u64 = u64::MAX;
@@ -390,6 +391,90 @@ pub struct TacticQTrainingCorpus {
     pub episode_groups: Vec<u64>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TacticQLearnerSnapshotKind {
+    Learned,
+    Demonstration,
+}
+
+/// Immutable identity of one fitted policy and the exact replay root that
+/// produced it.
+///
+/// The transition journal remains the source of full training rows. This
+/// compact manifest binds their ordered authenticated identities, episode
+/// groups, learner configuration, and serialized fitted model without
+/// duplicating a growing corpus into every decision record.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticQLearnerSnapshot {
+    pub schema: String,
+    pub kind: TacticQLearnerSnapshotKind,
+    pub execution_authority_sha256: Digest,
+    pub feature_schema_sha256: Digest,
+    pub objective_sha256: Digest,
+    pub root_checkpoint_sha256: Digest,
+    pub training_replay_rows: u64,
+    pub training_replay_sha256: Digest,
+    pub model_revision: u64,
+    pub model_config: OptionValueConfig,
+    pub model_sha256: Option<Digest>,
+}
+
+impl TacticQLearnerSnapshot {
+    pub fn from_demonstration(
+        corpus: &TacticQTrainingCorpus,
+        model_config: OptionValueConfig,
+    ) -> Result<Self, TacticQCampaignError> {
+        validate_training_corpus(corpus)?;
+        let snapshot = Self {
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1.into(),
+            kind: TacticQLearnerSnapshotKind::Demonstration,
+            execution_authority_sha256: corpus.execution_authority_sha256,
+            feature_schema_sha256: corpus.feature_schema_sha256,
+            objective_sha256: corpus.objective_sha256,
+            root_checkpoint_sha256: corpus.root_checkpoint_sha256,
+            training_replay_rows: corpus.transitions.len() as u64,
+            training_replay_sha256: training_replay_sha256(
+                &corpus.transitions,
+                &corpus.episode_groups,
+            )?,
+            model_revision: 0,
+            model_config,
+            model_sha256: None,
+        };
+        snapshot.validate()?;
+        Ok(snapshot)
+    }
+
+    pub fn content_sha256(&self) -> Result<Digest, TacticQCampaignError> {
+        self.validate()?;
+        let raw = serde_cbor::to_vec(self)
+            .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
+        Ok(sha256(&raw))
+    }
+
+    pub fn validate(&self) -> Result<(), TacticQCampaignError> {
+        if self.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1
+            || self.execution_authority_sha256 == Digest::ZERO
+            || self.feature_schema_sha256 == Digest::ZERO
+            || self.objective_sha256 == Digest::ZERO
+            || self.root_checkpoint_sha256 == Digest::ZERO
+            || self.training_replay_sha256 == Digest::ZERO
+            || (self.kind == TacticQLearnerSnapshotKind::Demonstration
+                && (self.model_revision != 0 || self.model_sha256.is_some()))
+            || self.model_sha256 == Some(Digest::ZERO)
+        {
+            return Err(TacticQCampaignError::InvalidState(
+                "tactic learner snapshot is invalid",
+            ));
+        }
+        serde_cbor::to_vec(&self.model_config)
+            .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
+        Ok(())
+    }
+}
+
 impl TacticQTrainingCorpus {
     /// Writes only this corpus's authenticated rows and route references. This
     /// is the durable completed-episode handoff; it intentionally excludes the
@@ -526,6 +611,36 @@ impl TacticQCampaign {
 
     pub fn model(&self) -> Option<&OptionValueModel> {
         self.model.as_ref()
+    }
+
+    pub fn learner_snapshot(&self) -> Result<TacticQLearnerSnapshot, TacticQCampaignError> {
+        let model_sha256 = self
+            .model
+            .as_ref()
+            .map(|model| {
+                serde_cbor::to_vec(model)
+                    .map(|raw| sha256(&raw))
+                    .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))
+            })
+            .transpose()?;
+        let snapshot = TacticQLearnerSnapshot {
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1.into(),
+            kind: TacticQLearnerSnapshotKind::Learned,
+            execution_authority_sha256: self.execution_authority_sha256,
+            feature_schema_sha256: self.feature_schema_sha256,
+            objective_sha256: self.objective_sha256,
+            root_checkpoint_sha256: self.root_checkpoint_sha256,
+            training_replay_rows: self.training_replay.len() as u64,
+            training_replay_sha256: training_replay_sha256(
+                &self.training_replay,
+                &self.training_episode_groups,
+            )?,
+            model_revision: self.model_revision,
+            model_config: self.model_config.clone(),
+            model_sha256,
+        };
+        snapshot.validate()?;
+        Ok(snapshot)
     }
 
     pub fn bind_execution_authority(
@@ -1091,6 +1206,25 @@ fn replay_model(
         episode_groups.to_vec(),
     )?;
     Ok(Some(OptionValueModel::fit_batch(&batch, config)?))
+}
+
+fn training_replay_sha256(
+    transitions: &[OptionTransitionSample],
+    episode_groups: &[u64],
+) -> Result<Digest, TacticQCampaignError> {
+    if transitions.len() != episode_groups.len() {
+        return Err(TacticQCampaignError::InvalidState(
+            "learner snapshot replay shape is invalid",
+        ));
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight.tactic-q-learner-replay/v1\0");
+    hasher.update((transitions.len() as u64).to_le_bytes());
+    for (transition, episode_group) in transitions.iter().zip(episode_groups) {
+        hasher.update(transition.replay_identity_sha256()?.0);
+        hasher.update(episode_group.to_le_bytes());
+    }
+    Ok(Digest(hasher.finalize().into()))
 }
 
 pub(crate) fn checkpoint_digest(

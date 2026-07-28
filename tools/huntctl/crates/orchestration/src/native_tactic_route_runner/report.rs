@@ -23,6 +23,7 @@ pub struct NativeTacticRouteReport {
     pub replay_control_plane_path: String,
     pub replay_revision: u64,
     pub replay_snapshot_sha256: Digest,
+    pub replay_admission: TacticReplayAdmissionMetrics,
     pub objective_sha256: Digest,
     pub feature_schema_sha256: Digest,
     pub action_schema_sha256: Digest,

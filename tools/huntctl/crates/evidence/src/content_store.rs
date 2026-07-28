@@ -45,6 +45,7 @@ pub enum ContentKind {
     NativeGoalTrajectoryDataset,
     Screenshot,
     Model,
+    LearnerSnapshot,
     DatasetManifest,
     CrashArtifact,
 }
@@ -89,6 +90,7 @@ impl ContentKind {
             }
             Self::Screenshot => "image/png",
             Self::Model => "application/vnd.dusklight.model+json",
+            Self::LearnerSnapshot => "application/vnd.dusklight.learner-snapshot+cbor",
             Self::DatasetManifest => "application/vnd.dusklight.dataset-manifest+json",
             Self::CrashArtifact => "application/octet-stream",
         }
@@ -583,6 +585,7 @@ mod tests {
             ContentKind::NativeGoalTrajectoryDataset,
             ContentKind::Screenshot,
             ContentKind::Model,
+            ContentKind::LearnerSnapshot,
             ContentKind::DatasetManifest,
             ContentKind::CrashArtifact,
         ] {

@@ -345,6 +345,10 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     campaign
         .bind_execution_authority(execution_authority_sha256)
         .unwrap();
+    let cold_snapshot = campaign.learner_snapshot().unwrap();
+    assert_eq!(cold_snapshot.training_replay_rows, 0);
+    assert!(cold_snapshot.model_sha256.is_none());
+    let cold_snapshot_sha256 = cold_snapshot.content_sha256().unwrap();
     let encode = |facts: &FactSnapshot| Ok::<_, &'static str>(vec![facts.tape_frame as f32]);
 
     let decision = campaign.decide(&catalog, &[], &encode).unwrap();
@@ -501,6 +505,13 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert_eq!(restored.replay, campaign.replay);
     assert_eq!(restored.replay_routes, campaign.replay_routes);
     assert!(restored.model().is_some());
+    let fitted_snapshot = restored.learner_snapshot().unwrap();
+    assert_eq!(fitted_snapshot.training_replay_rows, 1);
+    assert!(fitted_snapshot.model_sha256.is_some());
+    assert_ne!(
+        fitted_snapshot.content_sha256().unwrap(),
+        cold_snapshot_sha256
+    );
     let corpus = campaign.training_corpus();
     assert_eq!(
         corpus.execution_authority_sha256,

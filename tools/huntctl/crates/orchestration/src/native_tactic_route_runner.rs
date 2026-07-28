@@ -20,12 +20,13 @@ use crate::tactic_q_campaign::{
     TACTIC_Q_CHECKPOINT_EXTENSION, TACTIC_Q_DEMONSTRATION_EPISODE_GROUP, TacticCampaignDiagnostics,
     TacticCampaignGraphProjection, TacticCampaignGraphProjectionEdge,
     TacticCampaignGraphProjectionNode, TacticFrontierAcquisition, TacticQCampaign,
-    TacticQCampaignError, TacticQDecision, TacticQFinalResult, TacticQTrainingCorpus,
-    has_no_progress_loop, route_checkpoint,
+    TacticQCampaignError, TacticQDecision, TacticQFinalResult, TacticQLearnerSnapshot,
+    TacticQTrainingCorpus, has_no_progress_loop, route_checkpoint,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use crate::tactic_replay_control_plane::{
-    TacticReplayAdmissionOutcome, TacticReplayControlPlane, TacticReplayControlPlaneIdentity,
+    TacticReplayAdmissionMetrics, TacticReplayAdmissionOutcome, TacticReplayControlPlane,
+    TacticReplayControlPlaneIdentity,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState};
@@ -100,6 +101,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V18: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19: &str = "dusklight-native-tactic-route-report/v19";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V20: &str = "dusklight-native-tactic-route-report/v20";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V21: &str = "dusklight-native-tactic-route-report/v21";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V22: &str = "dusklight-native-tactic-route-report/v22";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -550,8 +552,9 @@ pub fn run_native_tactic_route(
             },
         );
     let final_replay_snapshot = replay_control_plane.replay_snapshot();
+    let replay_admission = replay_control_plane.invocation_metrics();
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V21.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V22.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
@@ -559,6 +562,7 @@ pub fn run_native_tactic_route(
         replay_control_plane_path: path_text(&replay_control_plane_path),
         replay_revision: final_replay_snapshot.revision,
         replay_snapshot_sha256: final_replay_snapshot.sha256,
+        replay_admission,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
         feature_schema_sha256: encoder.schema_sha256,
         action_schema_sha256,
@@ -835,7 +839,12 @@ fn route_tactic_base_reward_spec() -> TacticRewardSpec {
     }
 }
 
-fn route_option_value_config(seed: u64) -> OptionValueConfig {
+fn route_option_value_config(execution_authority_sha256: Digest) -> OptionValueConfig {
+    let learner_seed = u64::from_le_bytes(
+        execution_authority_sha256.0[..8]
+            .try_into()
+            .expect("fixed slice"),
+    );
     OptionValueConfig {
         fitted_q: FqiConfig {
             iterations: 12,
@@ -845,7 +854,7 @@ fn route_option_value_config(seed: u64) -> OptionValueConfig {
             // value, without erasing a terminal reached late in the declared
             // discovery horizon.
             discount: ROUTE_TACTIC_VALUE_DISCOUNT,
-            seed: 0xd15c_a11d_5eed_f017 ^ seed,
+            seed: 0xd15c_a11d_5eed_f017 ^ learner_seed,
             ..FqiConfig::default()
         },
     }

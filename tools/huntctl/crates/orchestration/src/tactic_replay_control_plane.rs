@@ -4,10 +4,13 @@
 //! this one append-only authority. The journal keeps only small typed content
 //! references; full transitions and routes live in the campaign content store.
 
-use crate::tactic_q_campaign::{TacticQTrainingCorpus, validate_training_corpus};
+use crate::tactic_q_campaign::{
+    TacticQLearnerSnapshot, TacticQTrainingCorpus, validate_training_corpus,
+};
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
+use dusklight_evidence::content_store::ContentKind;
 use dusklight_learning::option_transition::OptionTransitionSample;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -17,13 +20,14 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
-pub const TACTIC_REPLAY_CONTROL_PLANE_SCHEMA_V1: &str = "dusklight-tactic-replay-control-plane/v1";
-pub const TACTIC_REPLAY_ADMISSION_SCHEMA_V1: &str = "dusklight-tactic-replay-admission/v1";
+pub const TACTIC_REPLAY_CONTROL_PLANE_SCHEMA_V2: &str = "dusklight-tactic-replay-control-plane/v2";
+pub const TACTIC_REPLAY_ADMISSION_SCHEMA_V2: &str = "dusklight-tactic-replay-admission/v2";
 pub const TACTIC_REPLAY_SNAPSHOT_SCHEMA_V1: &str = "dusklight-tactic-replay-snapshot/v1";
 
 const JOURNAL_MAGIC: &[u8; 8] = b"DSKTRP01";
-const JOURNAL_VERSION: u16 = 1;
+const JOURNAL_VERSION: u16 = 2;
 const JOURNAL_HEADER_BYTES: usize = 8 + 2 + 2 + 4 + 32;
 const RECORD_HEADER_BYTES: usize = 4 + 4 + 32;
 const MAXIMUM_IDENTITY_BYTES: usize = 64 * 1024;
@@ -49,7 +53,7 @@ impl TacticReplayControlPlaneIdentity {
         root_checkpoint_sha256: Digest,
     ) -> Result<Self, TacticReplayControlPlaneError> {
         let identity = Self {
-            schema: TACTIC_REPLAY_CONTROL_PLANE_SCHEMA_V1.into(),
+            schema: TACTIC_REPLAY_CONTROL_PLANE_SCHEMA_V2.into(),
             execution_authority_sha256,
             feature_schema_sha256,
             objective_sha256,
@@ -61,11 +65,11 @@ impl TacticReplayControlPlaneIdentity {
 
     pub fn content_sha256(&self) -> Result<Digest, TacticReplayControlPlaneError> {
         self.validate()?;
-        digest_cbor(b"dusklight.tactic-replay-control-plane-identity/v1\0", self)
+        digest_cbor(b"dusklight.tactic-replay-control-plane-identity/v2\0", self)
     }
 
     fn validate(&self) -> Result<(), TacticReplayControlPlaneError> {
-        if self.schema != TACTIC_REPLAY_CONTROL_PLANE_SCHEMA_V1
+        if self.schema != TACTIC_REPLAY_CONTROL_PLANE_SCHEMA_V2
             || self.execution_authority_sha256 == Digest::ZERO
             || self.feature_schema_sha256 == Digest::ZERO
             || self.objective_sha256 == Digest::ZERO
@@ -98,7 +102,7 @@ struct StoredTacticReplayAdmission {
 impl StoredTacticReplayAdmission {
     fn admission_sha256(&self) -> Result<Digest, TacticReplayControlPlaneError> {
         digest_cbor(
-            b"dusklight.tactic-replay-admission/v1\0",
+            b"dusklight.tactic-replay-admission/v2\0",
             &(
                 &self.schema,
                 self.sequence,
@@ -116,7 +120,7 @@ impl StoredTacticReplayAdmission {
 
     fn expected_snapshot_sha256(&self) -> Result<Digest, TacticReplayControlPlaneError> {
         digest_cbor(
-            b"dusklight.tactic-replay-snapshot-step/v1\0",
+            b"dusklight.tactic-replay-snapshot-step/v2\0",
             &(self.parent_replay_snapshot_sha256, self.admission_sha256()?),
         )
     }
@@ -160,6 +164,32 @@ pub enum TacticReplayAdmissionOutcome {
     },
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticReplayAdmissionMetrics {
+    /// Successful publish calls during this process invocation.
+    pub attempts: u64,
+    pub admitted: u64,
+    pub duplicates: u64,
+    pub admission_micros: u64,
+    pub maximum_admission_micros: u64,
+    pub mean_admission_micros: u64,
+}
+
+impl TacticReplayAdmissionMetrics {
+    fn record(&mut self, admitted: bool, elapsed_micros: u64) {
+        self.attempts = self.attempts.saturating_add(1);
+        if admitted {
+            self.admitted = self.admitted.saturating_add(1);
+        } else {
+            self.duplicates = self.duplicates.saturating_add(1);
+        }
+        self.admission_micros = self.admission_micros.saturating_add(elapsed_micros);
+        self.maximum_admission_micros = self.maximum_admission_micros.max(elapsed_micros);
+        self.mean_admission_micros = self.admission_micros / self.attempts;
+    }
+}
+
 /// One durable replay/frontier authority for a native route campaign.
 ///
 /// `publish` synchronizes the complete journal record before advancing the
@@ -173,6 +203,7 @@ pub struct TacticReplayControlPlane {
     entries: Vec<StoredTacticReplayAdmission>,
     transition_sequences: BTreeMap<Digest, u64>,
     replay_snapshot: TacticReplaySnapshotVersion,
+    invocation_metrics: TacticReplayAdmissionMetrics,
 }
 
 impl TacticReplayControlPlane {
@@ -230,6 +261,7 @@ impl TacticReplayControlPlane {
             entries: Vec::new(),
             transition_sequences: BTreeMap::new(),
             replay_snapshot,
+            invocation_metrics: TacticReplayAdmissionMetrics::default(),
         })
     }
 
@@ -368,6 +400,7 @@ impl TacticReplayControlPlane {
             entries,
             transition_sequences,
             replay_snapshot,
+            invocation_metrics: TacticReplayAdmissionMetrics::default(),
         })
     }
 
@@ -381,11 +414,13 @@ impl TacticReplayControlPlane {
         route: &InputTape,
         episode_group: u64,
     ) -> Result<TacticReplayAdmissionOutcome, TacticReplayControlPlaneError> {
+        let started = Instant::now();
         if learner_snapshot_sha256 == Digest::ZERO {
             return Err(TacticReplayControlPlaneError::Invalid(
                 "published replay has no learner snapshot authority",
             ));
         }
+        self.validate_learner_snapshot(learner_snapshot_sha256)?;
         let corpus = TacticQTrainingCorpus {
             execution_authority_sha256: self.identity.execution_authority_sha256,
             feature_schema_sha256: self.identity.feature_schema_sha256,
@@ -403,6 +438,10 @@ impl TacticReplayControlPlane {
             .get(&transition_identity_sha256)
             .copied()
         {
+            self.invocation_metrics.record(
+                false,
+                u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+            );
             return Ok(TacticReplayAdmissionOutcome::Duplicate {
                 existing_sequence,
                 transition_identity_sha256,
@@ -421,7 +460,7 @@ impl TacticReplayControlPlane {
         let route_ref = self.content_store.store_tape(route).map_err(store_error)?;
         let sequence = self.entries.len() as u64;
         let mut entry = StoredTacticReplayAdmission {
-            schema: TACTIC_REPLAY_ADMISSION_SCHEMA_V1.into(),
+            schema: TACTIC_REPLAY_ADMISSION_SCHEMA_V2.into(),
             sequence,
             publisher_lane,
             publisher_decision,
@@ -477,11 +516,27 @@ impl TacticReplayControlPlane {
         self.transition_sequences
             .insert(transition_identity_sha256, sequence);
         self.entries.push(entry);
+        self.invocation_metrics.record(
+            true,
+            u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+        );
         Ok(TacticReplayAdmissionOutcome::Admitted {
             sequence,
             transition_identity_sha256,
             replay_snapshot: self.replay_snapshot,
         })
+    }
+
+    pub fn publish_learner_snapshot(
+        &self,
+        snapshot: &TacticQLearnerSnapshot,
+    ) -> Result<Digest, TacticReplayControlPlaneError> {
+        validate_learner_snapshot_identity(&self.identity, snapshot)?;
+        let reference = self
+            .content_store
+            .store_learner_snapshot(snapshot)
+            .map_err(store_error)?;
+        Ok(reference.sha256)
     }
 
     pub fn identity(&self) -> &TacticReplayControlPlaneIdentity {
@@ -494,6 +549,10 @@ impl TacticReplayControlPlane {
 
     pub fn replay_snapshot(&self) -> TacticReplaySnapshotVersion {
         self.replay_snapshot
+    }
+
+    pub fn invocation_metrics(&self) -> TacticReplayAdmissionMetrics {
+        self.invocation_metrics
     }
 
     pub fn admissions(&self) -> Vec<TacticReplayAdmissionMetadata> {
@@ -605,6 +664,21 @@ impl TacticReplayControlPlane {
             corpus,
         })
     }
+
+    fn validate_learner_snapshot(
+        &self,
+        sha256: Digest,
+    ) -> Result<TacticQLearnerSnapshot, TacticReplayControlPlaneError> {
+        let snapshot = self
+            .content_store
+            .load_learner_snapshot(StoredContentRef {
+                kind: ContentKind::LearnerSnapshot,
+                sha256,
+            })
+            .map_err(store_error)?;
+        validate_learner_snapshot_identity(&self.identity, &snapshot)?;
+        Ok(snapshot)
+    }
 }
 
 fn validate_stored_entry(
@@ -614,7 +688,7 @@ fn validate_stored_entry(
     expected_sequence: u64,
     expected_parent_snapshot: Digest,
 ) -> Result<(), TacticReplayControlPlaneError> {
-    if entry.schema != TACTIC_REPLAY_ADMISSION_SCHEMA_V1
+    if entry.schema != TACTIC_REPLAY_ADMISSION_SCHEMA_V2
         || entry.sequence != expected_sequence
         || entry.learner_snapshot_sha256 == Digest::ZERO
         || entry.transition_identity_sha256 == Digest::ZERO
@@ -625,6 +699,13 @@ fn validate_stored_entry(
             "replay control-plane admission authority is invalid",
         ));
     }
+    let learner_snapshot = content_store
+        .load_learner_snapshot(StoredContentRef {
+            kind: ContentKind::LearnerSnapshot,
+            sha256: entry.learner_snapshot_sha256,
+        })
+        .map_err(store_error)?;
+    validate_learner_snapshot_identity(identity, &learner_snapshot)?;
     let transition = content_store
         .load_option_transition(entry.transition)
         .map_err(store_error)?;
@@ -649,13 +730,30 @@ fn validate_stored_entry(
     Ok(())
 }
 
+fn validate_learner_snapshot_identity(
+    identity: &TacticReplayControlPlaneIdentity,
+    snapshot: &TacticQLearnerSnapshot,
+) -> Result<(), TacticReplayControlPlaneError> {
+    snapshot.validate().map_err(domain_error)?;
+    if snapshot.execution_authority_sha256 != identity.execution_authority_sha256
+        || snapshot.feature_schema_sha256 != identity.feature_schema_sha256
+        || snapshot.objective_sha256 != identity.objective_sha256
+        || snapshot.root_checkpoint_sha256 != identity.root_checkpoint_sha256
+    {
+        return Err(TacticReplayControlPlaneError::Invalid(
+            "learner snapshot belongs to another replay control plane",
+        ));
+    }
+    Ok(())
+}
+
 fn initial_snapshot_version(
     identity: &TacticReplayControlPlaneIdentity,
 ) -> Result<TacticReplaySnapshotVersion, TacticReplayControlPlaneError> {
     Ok(TacticReplaySnapshotVersion {
         revision: 0,
         sha256: digest_cbor(
-            b"dusklight.tactic-replay-snapshot-root/v1\0",
+            b"dusklight.tactic-replay-snapshot-root/v2\0",
             &identity.content_sha256()?,
         )?,
     })
@@ -748,6 +846,7 @@ mod tests {
     };
     use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
     use dusklight_learning::fact_snapshot::{FactSnapshot, FactTerminalReason};
+    use dusklight_learning::option_values::OptionValueConfig;
     use std::collections::BTreeMap;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -770,6 +869,24 @@ mod tests {
             "dusklight-replay-control-plane-{label}-{}-{nonce}",
             std::process::id()
         ))
+    }
+
+    fn learner_snapshot(service: &TacticReplayControlPlane) -> Digest {
+        let identity = service.identity();
+        let snapshot = TacticQLearnerSnapshot {
+            schema: crate::tactic_q_campaign::TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1.into(),
+            kind: crate::tactic_q_campaign::TacticQLearnerSnapshotKind::Learned,
+            execution_authority_sha256: identity.execution_authority_sha256,
+            feature_schema_sha256: identity.feature_schema_sha256,
+            objective_sha256: identity.objective_sha256,
+            root_checkpoint_sha256: identity.root_checkpoint_sha256,
+            training_replay_rows: 0,
+            training_replay_sha256: Digest([12; 32]),
+            model_revision: 0,
+            model_config: OptionValueConfig::default(),
+            model_sha256: None,
+        };
+        service.publish_learner_snapshot(&snapshot).unwrap()
     }
 
     fn row(lineage_button: bool) -> (OptionTransitionSample, InputTape) {
@@ -856,9 +973,15 @@ mod tests {
         let mut service =
             TacticReplayControlPlane::create(&journal, &objects, expected.clone()).unwrap();
         let root_snapshot = service.replay_snapshot();
+        let learner_snapshot_sha256 = learner_snapshot(&service);
         let (transition, route) = row(false);
+        assert!(
+            service
+                .publish(2, 7, Digest([99; 32]), &transition, &route, 11)
+                .is_err()
+        );
         let admitted = service
-            .publish(2, 7, Digest([9; 32]), &transition, &route, 11)
+            .publish(2, 7, learner_snapshot_sha256, &transition, &route, 11)
             .unwrap();
         let TacticReplayAdmissionOutcome::Admitted {
             sequence,
@@ -873,17 +996,30 @@ mod tests {
         assert_ne!(replay_snapshot.sha256, root_snapshot.sha256);
         assert!(matches!(
             service
-                .publish(3, 8, Digest([10; 32]), &transition, &route, 12)
+                .publish(3, 8, learner_snapshot_sha256, &transition, &route, 12,)
                 .unwrap(),
             TacticReplayAdmissionOutcome::Duplicate {
                 existing_sequence: 0,
                 ..
             }
         ));
+        let metrics = service.invocation_metrics();
+        assert_eq!(metrics.attempts, 2);
+        assert_eq!(metrics.admitted, 1);
+        assert_eq!(metrics.duplicates, 1);
+        assert_eq!(
+            metrics.mean_admission_micros,
+            metrics.admission_micros / metrics.attempts
+        );
+        assert!(metrics.maximum_admission_micros <= metrics.admission_micros);
         drop(service);
 
         let reopened = TacticReplayControlPlane::open(&journal, &objects, &expected).unwrap();
         assert_eq!(reopened.len(), 1);
+        assert_eq!(
+            reopened.invocation_metrics(),
+            TacticReplayAdmissionMetrics::default()
+        );
         assert_eq!(reopened.replay_snapshot(), replay_snapshot);
         let snapshot = reopened.snapshot().unwrap();
         assert_eq!(snapshot.version, replay_snapshot);
@@ -901,6 +1037,7 @@ mod tests {
         let objects = root.join("objects");
         let expected = identity();
         let mut service = TacticReplayControlPlane::create(&journal, &objects, expected).unwrap();
+        let learner_snapshot_sha256 = learner_snapshot(&service);
         let (first, first_route) = row(false);
         let (second, second_route) = row(true);
         assert_eq!(first.before_state_sha256, second.before_state_sha256);
@@ -910,10 +1047,10 @@ mod tests {
             second.replay_identity_sha256().unwrap()
         );
         service
-            .publish(0, 0, Digest([4; 32]), &first, &first_route, 1)
+            .publish(0, 0, learner_snapshot_sha256, &first, &first_route, 1)
             .unwrap();
         service
-            .publish(1, 0, Digest([4; 32]), &second, &second_route, 2)
+            .publish(1, 0, learner_snapshot_sha256, &second, &second_route, 2)
             .unwrap();
         assert_eq!(service.len(), 2);
         assert_eq!(service.snapshot().unwrap().corpus.transitions.len(), 2);
@@ -936,9 +1073,10 @@ mod tests {
         let expected = identity();
         let mut service =
             TacticReplayControlPlane::create(&journal, &objects, expected.clone()).unwrap();
+        let learner_snapshot_sha256 = learner_snapshot(&service);
         let (transition, route) = row(false);
         service
-            .publish(0, 0, Digest([4; 32]), &transition, &route, 1)
+            .publish(0, 0, learner_snapshot_sha256, &transition, &route, 1)
             .unwrap();
         let complete_len = fs::metadata(&journal).unwrap().len();
         drop(service);

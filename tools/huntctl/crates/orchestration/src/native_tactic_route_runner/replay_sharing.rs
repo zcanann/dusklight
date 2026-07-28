@@ -22,6 +22,14 @@ pub(super) fn publish_demonstration_replay(
     replay: &mut TacticReplayControlPlane,
     demonstration: &NativeTacticDemonstration,
 ) -> Result<(), NativeTacticRouteRunError> {
+    let learner_snapshot = TacticQLearnerSnapshot::from_demonstration(
+        &demonstration.corpus,
+        route_option_value_config(demonstration.corpus.execution_authority_sha256),
+    )
+    .map_err(route_error)?;
+    let learner_snapshot_sha256 = replay
+        .publish_learner_snapshot(&learner_snapshot)
+        .map_err(route_error)?;
     for (decision, ((transition, route), episode_group)) in demonstration
         .corpus
         .transitions
@@ -34,7 +42,7 @@ pub(super) fn publish_demonstration_replay(
             .publish(
                 u32::MAX,
                 decision as u64,
-                demonstration.report.corpus_sha256,
+                learner_snapshot_sha256,
                 transition,
                 route,
                 *episode_group,

@@ -678,7 +678,7 @@ fn journal_projects_graph_and_materializes_routes_from_content_objects() {
 #[test]
 fn route_reward_contains_only_terminal_success_and_native_tick_cost() {
     let reward = route_tactic_base_reward_spec();
-    let values = route_option_value_config(42);
+    let values = route_option_value_config(Digest([42; 32]));
 
     assert_eq!(reward.tick_cost, ROUTE_TACTIC_TICK_COST);
     assert!(reward.terminal_reward > reward.tick_cost * 1_024.0);
