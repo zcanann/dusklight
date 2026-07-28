@@ -46,6 +46,7 @@ pub struct NativeTacticRouteReport {
     pub training_replay_rows: u64,
     pub shared_training_replay_rows: u64,
     pub duplicate_training_transitions: u64,
+    pub replay_sharing: NativeTacticReplaySharingTelemetry,
     pub frontier_availability: NativeTacticFrontierAvailability,
     pub native_restore_accounting: NativeTacticRestoreAccounting,
     pub tactic_macro_discovery: NativeTacticMacroDiscoveryReport,
@@ -134,6 +135,24 @@ pub struct NativeTacticFrontierAvailability {
     pub logical_frontier_records: usize,
     pub directly_restorable_native_frontiers: usize,
     pub replay_only_frontiers: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticReplaySharingTelemetry {
+    pub refreshes: u64,
+    pub imported_rows: u64,
+    pub maximum_observed_stale_revisions: u64,
+}
+
+impl NativeTacticReplaySharingTelemetry {
+    pub(super) fn merge(&mut self, other: Self) {
+        self.refreshes = self.refreshes.saturating_add(other.refreshes);
+        self.imported_rows = self.imported_rows.saturating_add(other.imported_rows);
+        self.maximum_observed_stale_revisions = self
+            .maximum_observed_stale_revisions
+            .max(other.maximum_observed_stale_revisions);
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -288,6 +307,8 @@ pub struct NativeTacticSeedResult {
     pub imported_training_replay_rows: usize,
     #[serde(default)]
     pub duplicate_training_transitions: u64,
+    #[serde(default)]
+    pub replay_sharing: NativeTacticReplaySharingTelemetry,
     pub visited_states: usize,
     #[serde(default)]
     pub useful_decisions: u64,

@@ -17,11 +17,12 @@ use crate::tactic_macro_store::{
     TACTIC_MACRO_REGISTRY_EXTENSION, read_tactic_macro_registry, write_tactic_macro_registry,
 };
 use crate::tactic_q_campaign::{
-    TACTIC_Q_CHECKPOINT_EXTENSION, TACTIC_Q_DEMONSTRATION_EPISODE_GROUP, TacticCampaignDiagnostics,
-    TacticCampaignGraphProjection, TacticCampaignGraphProjectionEdge,
-    TacticCampaignGraphProjectionNode, TacticFrontierAcquisition, TacticQCampaign,
-    TacticQCampaignError, TacticQDecision, TacticQFinalResult, TacticQLearnerSnapshot,
-    TacticQTrainingCorpus, has_no_progress_loop, route_checkpoint,
+    EvaluatedRewardedTacticOutcome, TACTIC_Q_CHECKPOINT_EXTENSION,
+    TACTIC_Q_DEMONSTRATION_EPISODE_GROUP, TacticCampaignDiagnostics, TacticCampaignGraphProjection,
+    TacticCampaignGraphProjectionEdge, TacticCampaignGraphProjectionNode,
+    TacticFrontierAcquisition, TacticQCampaign, TacticQCampaignError, TacticQDecision,
+    TacticQFinalResult, TacticQLearnerSnapshot, TacticQTrainingCorpus, has_no_progress_loop,
+    route_checkpoint,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use crate::tactic_replay_control_plane::{
@@ -80,7 +81,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4: &str = "dusklight-native-tactic-route-report/v4";
@@ -102,6 +103,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V20: &str = "dusklight-native-tactic-route-report/v20";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V21: &str = "dusklight-native-tactic-route-report/v21";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V22: &str = "dusklight-native-tactic-route-report/v22";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V23: &str = "dusklight-native-tactic-route-report/v23";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -153,9 +155,10 @@ use report::{
 pub use report::{
     NativeTacticDecisionTrace, NativeTacticDemonstrationReport, NativeTacticFrontierAvailability,
     NativeTacticMacroDiscoveryReport, NativeTacticMacroReuseReport, NativeTacticMeasurementTrace,
-    NativeTacticProposalTrace, NativeTacticRestoreAccounting, NativeTacticRestoreSource,
-    NativeTacticRouteReport, NativeTacticRouteRunConfig, NativeTacticRouteTiming,
-    NativeTacticSeedResult, NativeTacticStateTrace, NativeTacticValueTrace,
+    NativeTacticProposalTrace, NativeTacticReplaySharingTelemetry, NativeTacticRestoreAccounting,
+    NativeTacticRestoreSource, NativeTacticRouteReport, NativeTacticRouteRunConfig,
+    NativeTacticRouteTiming, NativeTacticSeedResult, NativeTacticStateTrace,
+    NativeTacticValueTrace,
 };
 
 mod execution_plan;
@@ -334,7 +337,7 @@ pub fn run_native_tactic_route(
     let replay_content_root = config
         .output_root
         .join(NATIVE_TACTIC_CONTENT_STORE_DIRECTORY);
-    let mut replay_control_plane = if replay_control_plane_path.exists() {
+    let replay_control_plane = if replay_control_plane_path.exists() {
         TacticReplayControlPlane::open(
             &replay_control_plane_path,
             &replay_content_root,
@@ -349,6 +352,8 @@ pub fn run_native_tactic_route(
         )
         .map_err(route_error)?
     };
+    let replay_control_plane: SharedTacticReplayControlPlane =
+        Arc::new(Mutex::new(replay_control_plane));
 
     let (mut indexed_results, tactic_macro_discovery, shared_training_replay_rows, demonstration) =
         std::thread::scope(|scope| {
@@ -387,17 +392,32 @@ pub fn run_native_tactic_route(
                 )?;
                 let demonstration_report = demonstration.as_ref().map(|value| value.report.clone());
                 if let Some(demonstration) = &demonstration {
-                    publish_demonstration_replay(&mut replay_control_plane, demonstration)?;
+                    let mut replay = lock_replay_control_plane(&replay_control_plane)?;
+                    publish_demonstration_replay(&mut replay, demonstration)?;
                 }
                 for generation in &config.execution_plan.generations {
-                    let barrier_revision = deterministic_generation_barrier_revision(
-                        &replay_control_plane,
-                        generation,
-                    )?;
-                    let inherited_snapshot = replay_control_plane
-                        .snapshot_through(barrier_revision)
-                        .map_err(route_error)?;
+                    let inherited_snapshot = {
+                        let replay = lock_replay_control_plane(&replay_control_plane)?;
+                        match config.execution_plan.replay_sharing {
+                            NativeTacticReplaySharingPlan::GenerationBarrier => {
+                                let barrier_revision =
+                                    deterministic_generation_barrier_revision(&replay, generation)?;
+                                replay
+                                    .snapshot_through(barrier_revision)
+                                    .map_err(route_error)?
+                            }
+                            NativeTacticReplaySharingPlan::BoundedStaleness { .. } => {
+                                replay.snapshot().map_err(route_error)?
+                            }
+                        }
+                    };
+                    let inherited_replay_revision = inherited_snapshot.version.revision;
                     let inherited_training = std::slice::from_ref(&inherited_snapshot.corpus);
+                    let live_replay = matches!(
+                        config.execution_plan.replay_sharing,
+                        NativeTacticReplaySharingPlan::BoundedStaleness { .. }
+                    )
+                    .then(|| Arc::clone(&replay_control_plane));
                     let mut generation_results = std::thread::scope(|generation_scope| {
                         let coordinator_handles = generation
                             .lane_indices
@@ -412,6 +432,7 @@ pub fn run_native_tactic_route(
                                 let reward_spec = &reward_spec;
                                 let initial_facts = &initial_facts;
                                 let route_prefix = &route_prefix;
+                                let live_replay = live_replay.clone();
                                 generation_scope.spawn(move || {
                                     run_seed_coordinator(
                                         config,
@@ -425,6 +446,8 @@ pub fn run_native_tactic_route(
                                         root_checkpoint_sha256,
                                         root_tape_ref,
                                         inherited_training,
+                                        inherited_replay_revision,
+                                        live_replay,
                                         seed_index,
                                         seed,
                                     )
@@ -442,8 +465,13 @@ pub fn run_native_tactic_route(
                             .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()
                     })?;
                     generation_results.sort_by_key(|(seed_index, _)| *seed_index);
+                    // Live lanes already publish on each decision. Replaying
+                    // the completed corpus here is an idempotent resume repair:
+                    // if an older or interrupted campaign lost its shared
+                    // journal, completed lane artifacts reconstruct authority.
+                    let mut replay = lock_replay_control_plane(&replay_control_plane)?;
                     for (_, completion) in &generation_results {
-                        publish_completed_seed_replay(&mut replay_control_plane, completion)?;
+                        publish_completed_seed_replay(&mut replay, completion)?;
                     }
                     results.extend(
                         generation_results
@@ -464,7 +492,8 @@ pub fn run_native_tactic_route(
                         mined,
                     )
                 })()?;
-                let shared_training_replay_rows = replay_control_plane.len() as u64;
+                let shared_training_replay_rows =
+                    lock_replay_control_plane(&replay_control_plane)?.len() as u64;
                 Ok((
                     results,
                     completion,
@@ -551,10 +580,18 @@ pub fn run_native_tactic_route(
                 total
             },
         );
+    let replay_control_plane = lock_replay_control_plane(&replay_control_plane)?;
     let final_replay_snapshot = replay_control_plane.replay_snapshot();
     let replay_admission = replay_control_plane.invocation_metrics();
+    let replay_sharing = seed_results.iter().fold(
+        NativeTacticReplaySharingTelemetry::default(),
+        |mut total, seed| {
+            total.merge(seed.replay_sharing);
+            total
+        },
+    );
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V22.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V23.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
@@ -610,6 +647,7 @@ pub fn run_native_tactic_route(
             .iter()
             .map(|seed| seed.duplicate_training_transitions)
             .sum(),
+        replay_sharing,
         frontier_availability,
         native_restore_accounting,
         tactic_macro_discovery,
@@ -628,8 +666,9 @@ use macro_discovery::{mine_and_store_tactic_macros, validate_and_store_tactic_ma
 
 mod replay_sharing;
 use replay_sharing::{
-    deterministic_generation_barrier_revision, publish_completed_seed_replay,
-    publish_demonstration_replay,
+    BoundedStalenessReplaySession, SharedTacticReplayControlPlane, build_replay_session,
+    deterministic_generation_barrier_revision, lane_generated_training_corpus,
+    lock_replay_control_plane, publish_completed_seed_replay, publish_demonstration_replay,
 };
 
 mod worker_pool;

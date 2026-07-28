@@ -326,7 +326,7 @@ fn print_usage() {
         "  huntctl learn prove-generalized-tactics (--campaign-root DIR | --input CORPUS.dtqc [--input MORE.dtqc]) --output REPORT.json [--goal-distance-feature N]"
     );
     eprintln!(
-        "  huntctl learn tactic-route --request OPTIMIZATION.json --execution EXECUTION.json --output build/DIR [--seed N]... [--proposal-policy learned|random-valid|structured-non-learning] [--execution-strategy native-controller|progressive-audit] [--workers N] [--decisions-per-seed N] [--branch-every N] [--refit-every N] [--epsilon-per-million N] [--demonstration-chunk-ticks N] [--resume] [--repository-root DIR]"
+        "  huntctl learn tactic-route --request OPTIMIZATION.json --execution EXECUTION.json --output build/DIR [--seed N]... [--proposal-policy learned|random-valid|structured-non-learning] [--execution-strategy native-controller|progressive-audit] [--workers N] [--decisions-per-seed N] [--branch-every N] [--refit-every N] [--epsilon-per-million N] [--demonstration-chunk-ticks N] [--maximum-stale-replay-revisions N] [--resume] [--repository-root DIR]"
     );
     eprintln!(
         "\nSemantic oracles:\n  huntctl oracle evaluate --program ORACLES.json --trace RUN.trace [--supplemental OBSERVATIONS.json] [--run-outcome OUTCOME.json] [--output REPORT.json]\n  huntctl oracle compose --manifest COMPOSITION.json [--output EVIDENCE.json]\n  huntctl oracle compare --program ORACLES.json --evidence COMPARISON.json [--output REPORT.json]"

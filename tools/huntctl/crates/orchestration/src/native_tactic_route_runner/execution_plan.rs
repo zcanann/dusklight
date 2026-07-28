@@ -82,6 +82,11 @@ impl NativeTacticLanePlan {
     pub fn root_refresh_due(&self, episode: u64, cadence: u32) -> bool {
         episode.saturating_add(u64::from(self.root_refresh_phase)) % u64::from(cadence) == 0
     }
+
+    pub fn owns_episode_group(&self, episode_group: u64) -> bool {
+        episode_group >= self.episode_group_base
+            && episode_group < self.episode_group_base.saturating_add(EPISODE_GROUP_STRIDE)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -95,9 +100,7 @@ pub struct NativeTacticGenerationPlan {
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum NativeTacticReplaySharingPlan {
     GenerationBarrier,
-    BoundedStaleness {
-        maximum_stale_learner_revisions: u64,
-    },
+    BoundedStaleness { maximum_stale_replay_revisions: u64 },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -148,6 +151,7 @@ pub struct NativeTacticExecutionPlanRequest {
     pub root_refresh_cadence: u32,
     pub epsilon_per_million: u32,
     pub demonstration_chunk_ticks: Option<u32>,
+    pub replay_sharing: NativeTacticReplaySharingPlan,
     pub budgets: NativeTacticPlanBudgets,
 }
 
@@ -187,8 +191,13 @@ impl NativeTacticExecutionPlan {
             || request.branch_every_decisions > request.budgets.decisions_per_lane
             || request.refit_every_decisions > request.budgets.decisions_per_lane
             || request.budgets.decisions_per_lane == 0
+            || request.budgets.decisions_per_lane >= EPISODE_GROUP_STRIDE
             || request.epsilon_per_million > 1_000_000
             || request.demonstration_chunk_ticks == Some(0)
+            || (matches!(
+                request.replay_sharing,
+                NativeTacticReplaySharingPlan::BoundedStaleness { .. }
+            ) && request.proposal_policy != TacticProposalPolicy::Learned)
         {
             return Err(route_message("native tactic execution plan is invalid"));
         }
@@ -266,7 +275,7 @@ impl NativeTacticExecutionPlan {
             refit_every_decisions: request.refit_every_decisions,
             root_refresh_cadence: request.root_refresh_cadence,
             demonstration_chunk_ticks: request.demonstration_chunk_ticks,
-            replay_sharing: NativeTacticReplaySharingPlan::GenerationBarrier,
+            replay_sharing: request.replay_sharing,
             checkpoint: NativeTacticCheckpointPlan {
                 ownership: NativeTacticCheckpointOwnership::WorkerLocal,
                 fallback: NativeTacticCheckpointFallback::AuthenticatedRootReplay,
@@ -375,6 +384,7 @@ mod tests {
             root_refresh_cadence: 4,
             epsilon_per_million: 350_000,
             demonstration_chunk_ticks: Some(8),
+            replay_sharing: NativeTacticReplaySharingPlan::GenerationBarrier,
             budgets: NativeTacticPlanBudgets {
                 decisions_per_lane: 256,
                 native_ticks: NativeTacticResourceLimit::Bounded(100_000),
@@ -412,6 +422,34 @@ mod tests {
     }
 
     #[test]
+    fn bounded_staleness_is_an_explicit_validated_execution_mode() {
+        let mut asynchronous = request();
+        asynchronous.replay_sharing = NativeTacticReplaySharingPlan::BoundedStaleness {
+            maximum_stale_replay_revisions: 4,
+        };
+        let plan = NativeTacticExecutionPlan::build(asynchronous).unwrap();
+        assert_eq!(
+            plan.replay_sharing,
+            NativeTacticReplaySharingPlan::BoundedStaleness {
+                maximum_stale_replay_revisions: 4,
+            }
+        );
+
+        let mut invalid = request();
+        invalid.proposal_policy = TacticProposalPolicy::RandomValid;
+        invalid.replay_sharing = NativeTacticReplaySharingPlan::BoundedStaleness {
+            maximum_stale_replay_revisions: 0,
+        };
+        assert!(NativeTacticExecutionPlan::build(invalid).is_err());
+
+        let mut freshest = request();
+        freshest.replay_sharing = NativeTacticReplaySharingPlan::BoundedStaleness {
+            maximum_stale_replay_revisions: 0,
+        };
+        assert!(NativeTacticExecutionPlan::build(freshest).is_ok());
+    }
+
+    #[test]
     fn every_sealed_behavior_field_changes_plan_identity() {
         let plan = NativeTacticExecutionPlan::build(request()).unwrap();
         let identity = plan.identity().unwrap();
@@ -440,7 +478,7 @@ mod tests {
         variants.push(changed);
         let mut changed = plan.clone();
         changed.replay_sharing = NativeTacticReplaySharingPlan::BoundedStaleness {
-            maximum_stale_learner_revisions: 1,
+            maximum_stale_replay_revisions: 1,
         };
         variants.push(changed);
         let mut changed = plan.clone();

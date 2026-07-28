@@ -57,6 +57,8 @@ pub(super) fn run_seed_coordinator(
     root_checkpoint_sha256: Digest,
     root_tape_ref: StoredContentRef,
     shared_training: &[TacticQTrainingCorpus],
+    inherited_replay_revision: u64,
+    live_replay: Option<SharedTacticReplayControlPlane>,
     seed_index: usize,
     seed: u64,
 ) -> Result<CompletedNativeTacticSeed, NativeTacticRouteRunError> {
@@ -96,6 +98,8 @@ pub(super) fn run_seed_coordinator(
             root_checkpoint_sha256,
             root_tape_ref,
             shared_training,
+            inherited_replay_revision,
+            live_replay,
             seed_index,
             seed,
         )?;

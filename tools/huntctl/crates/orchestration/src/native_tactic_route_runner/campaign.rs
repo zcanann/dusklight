@@ -104,6 +104,8 @@ pub(super) fn run_seed(
     root_checkpoint_sha256: Digest,
     root_tape_ref: StoredContentRef,
     shared_training: &[TacticQTrainingCorpus],
+    inherited_replay_revision: u64,
+    live_replay: Option<SharedTacticReplayControlPlane>,
     seed_index: usize,
     seed: u64,
 ) -> Result<CompletedNativeTacticSeed, NativeTacticRouteRunError> {
@@ -127,7 +129,7 @@ pub(super) fn run_seed(
         mut selection_counts,
         mut native_ticks,
         mut episode,
-        imported_training_replay_rows,
+        _initial_imported_training_replay_rows,
     ) = if resuming_seed {
         if !config.resume {
             return Err(route_message(
@@ -142,13 +144,24 @@ pub(super) fn run_seed(
             seed_index,
             seed,
         )?;
+        let mut resumed_campaign = resumed.0;
         let imported = if config.execution_plan.proposal_policy == TacticProposalPolicy::Learned {
+            if live_replay.is_some() {
+                resumed_campaign
+                    .import_training_corpora(shared_training)
+                    .map_err(route_error)?;
+            }
             shared_training_unique_rows(shared_training)?
         } else {
             0
         };
         (
-            resumed.0, resumed.1, resumed.2, resumed.3, resumed.4, imported,
+            resumed_campaign,
+            resumed.1,
+            resumed.2,
+            resumed.3,
+            resumed.4,
+            imported,
         )
     } else {
         fs::create_dir_all(&seed_root).map_err(route_error)?;
@@ -261,6 +274,12 @@ pub(super) fn run_seed(
         campaign.objective_sha256,
         campaign.root_checkpoint_sha256,
     )?;
+    let mut replay_session = build_replay_session(
+        config.execution_plan,
+        live_replay,
+        lane,
+        inherited_replay_revision,
+    )?;
 
     while campaign.decision_index < config.execution_plan.budgets.decisions_per_lane
         && native_ticks < config.optimization.budgets.simulated_tick_budget
@@ -277,6 +296,9 @@ pub(super) fn run_seed(
             )?;
             pause_tactic_campaign(&seed_root, &campaign)?;
             return Err(route_cancelled("native tactic route paused"));
+        }
+        if let Some(session) = replay_session.as_mut() {
+            session.refresh_if_required(&mut campaign)?;
         }
         let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
         let demonstration_coverage_pending = demonstration_curriculum
@@ -410,6 +432,11 @@ pub(super) fn run_seed(
             timing.tactic_selection_micros = timing
                 .tactic_selection_micros
                 .saturating_add(elapsed_micros(selection_started.elapsed()));
+            if let Some(session) = replay_session.as_mut()
+                && session.refresh_if_required(&mut campaign)? > 0
+            {
+                continue;
+            }
             let primary = preview
                 .proposals
                 .first()
@@ -526,6 +553,7 @@ pub(super) fn run_seed(
         demonstration_intervention_pending = false;
 
         let decision_index = campaign.decision_index;
+        let decision_episode_group = campaign.episode_group;
         let learner_snapshot = campaign.learner_snapshot().map_err(route_error)?;
         let learner_snapshot_sha256 = learner_snapshot_store
             .store_learner_snapshot(&learner_snapshot)
@@ -603,6 +631,14 @@ pub(super) fn run_seed(
                     .map_err(route_error)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        if let Some(session) = replay_session.as_ref() {
+            session.publish_evaluated(
+                decision_index,
+                learner_snapshot_sha256,
+                &evaluated,
+                decision_episode_group,
+            )?;
+        }
         let execution_elapsed = execution_started.elapsed();
         timing.tactic_execution_micros = timing
             .tactic_execution_micros
@@ -900,9 +936,10 @@ pub(super) fn run_seed(
             config.optimization.budgets.promotion_before_tick,
         )
     });
-    let generated_training = campaign
-        .training_corpus_from(imported_training_replay_rows)
-        .map_err(route_error)?;
+    let generated_training = lane_generated_training_corpus(&campaign, lane);
+    let imported_training_replay_rows = campaign
+        .training_replay_len()
+        .saturating_sub(generated_training.transitions.len());
     let generated_training_path = seed_root.join("generated-training.dtqc");
     generated_training
         .write(&generated_training_path, &checkpoint_content_root)
@@ -948,6 +985,10 @@ pub(super) fn run_seed(
         useful_decisions,
         &native_restore_accounting,
     )?;
+    let replay_sharing = replay_session
+        .as_ref()
+        .map(BoundedStalenessReplaySession::telemetry)
+        .unwrap_or_default();
     Ok(CompletedNativeTacticSeed {
         result: NativeTacticSeedResult {
             execution_plan_sha256,
@@ -966,6 +1007,7 @@ pub(super) fn run_seed(
                         .training_replay_len()
                         .saturating_sub(imported_training_replay_rows) as u64,
                 ),
+            replay_sharing,
             visited_states: campaign.visited_state_count(),
             useful_decisions,
             native_restore_accounting,

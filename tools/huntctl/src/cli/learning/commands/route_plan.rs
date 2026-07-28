@@ -1,4 +1,5 @@
 use super::*;
+use dusklight_orchestration::native_tactic_route_runner::NativeTacticReplaySharingPlan;
 
 pub(super) fn native_tactic_execution_plan(
     learn_args: &[String],
@@ -33,6 +34,14 @@ pub(super) fn native_tactic_execution_plan(
         demonstration_chunk_ticks: option(learn_args, "--demonstration-chunk-ticks")
             .map(|value| value.parse())
             .transpose()?,
+        replay_sharing: option(learn_args, "--maximum-stale-replay-revisions")
+            .map(|value| {
+                Ok::<_, Box<dyn Error>>(NativeTacticReplaySharingPlan::BoundedStaleness {
+                    maximum_stale_replay_revisions: value.parse()?,
+                })
+            })
+            .transpose()?
+            .unwrap_or(NativeTacticReplaySharingPlan::GenerationBarrier),
         budgets: NativeTacticPlanBudgets {
             decisions_per_lane,
             native_ticks: NativeTacticResourceLimit::Bounded(request.budgets.simulated_tick_budget),

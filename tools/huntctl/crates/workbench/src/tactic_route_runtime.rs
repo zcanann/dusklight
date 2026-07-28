@@ -12,10 +12,12 @@ use dusklight_orchestration::native_tactic_route_runner::{
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V16,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V17, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V18,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V20,
-    NativeTacticDecisionTrace, NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest,
-    NativeTacticPlanBudgets, NativeTacticResourceLimit, NativeTacticRouteRunConfig,
-    has_tactic_decision_journal, materialize_tactic_decision_route, project_tactic_decision_graph,
-    read_tactic_decision_journal, run_native_tactic_route,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V21, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V22,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V23, NativeTacticDecisionTrace, NativeTacticExecutionPlan,
+    NativeTacticExecutionPlanRequest, NativeTacticPlanBudgets, NativeTacticReplaySharingPlan,
+    NativeTacticResourceLimit, NativeTacticRouteRunConfig, has_tactic_decision_journal,
+    materialize_tactic_decision_route, project_tactic_decision_graph, read_tactic_decision_journal,
+    run_native_tactic_route,
 };
 use dusklight_orchestration::native_tactic_worker::NativeGenericExecutionStrategy;
 use dusklight_orchestration::optimization_request::OptimizationRequest;
@@ -222,6 +224,9 @@ pub(super) fn tactic_route_learning_projection(
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V18
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V20
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V21
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V22
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V23
                 ) && report
                     .get("optimization_request_sha256")
                     .and_then(Value::as_str)
@@ -417,6 +422,7 @@ fn launch_tactic_route_learning(
                     root_refresh_cadence: 4,
                     epsilon_per_million: TACTIC_ROUTE_EPSILON_PER_MILLION,
                     demonstration_chunk_ticks: None,
+                    replay_sharing: NativeTacticReplaySharingPlan::GenerationBarrier,
                     budgets: NativeTacticPlanBudgets {
                         decisions_per_lane: TACTIC_ROUTE_DECISIONS_PER_SEED,
                         native_ticks: NativeTacticResourceLimit::Bounded(

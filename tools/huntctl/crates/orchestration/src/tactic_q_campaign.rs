@@ -791,6 +791,9 @@ impl TacticQCampaign {
             }
         }
 
+        if admitted == 0 {
+            return Ok(0);
+        }
         let model = replay_model(
             self.feature_schema_sha256,
             self.objective_sha256,
