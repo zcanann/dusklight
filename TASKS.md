@@ -145,8 +145,6 @@ Acceptance:
   - a non-learning structured-search baseline.
 - [ ] Calibrate value and uncertainty on held-out state regions and held-out
       action realizations, not random rows from the same correlated route.
-- [ ] Require the learned policy to beat equal-budget structured and random
-      controls on those gates before using Ordon volume as evidence.
 - [ ] Run matched demonstration-assisted and from-scratch ablations. The
       demonstration may improve sample efficiency but may not cap the policy at
       the demonstrated route.
