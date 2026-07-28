@@ -72,6 +72,14 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   and did not improve terminal discovery or best tick. This is a recorded P3
   failure, not acceptance.
   Evidence: `ordon-p3-continuous-matched-controls-v2.report.json`.
+- Four independent scratch seeds produced no terminal. Across disjoint
+  semantic groups, continuous fitted-Q won `8/10` state orderings and `11/16`
+  action-realization orderings; the structured shortest-valid-action control
+  won `10/10` and `15/16` with lower weighted MAE on both axes. Useful native
+  evidence arrived at `0.471` transitions per wall second. The treatment has
+  signal but is not robustly superior, and terminal-value learning remains
+  unmeasured because no scratch seed succeeded. Evidence:
+  `ordon-p3-continuous-independent-calibration-v1.report.json`.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
   camera orientation, exact A-button prompt-status bits, and the native
@@ -116,9 +124,6 @@ tie is diagnostic evidence only.
 
 ## P3 - Prove delayed-credit continuous-control learning
 
-- [ ] Measure held-out value error, uncertainty, action ordering, useful
-      transitions per wall second, terminal discovery rate, and best
-      authenticated tick across independent seeds and semantic state groups.
 - [ ] Demonstrate that ordinary suboptimal human replay improves sample
       efficiency without capping the policy or becoming required for success.
 
