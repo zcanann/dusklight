@@ -21,7 +21,6 @@ tools/huntctl/src/cli/harness.rs	1633
 tools/huntctl/src/cli/learning/commands.rs	3669
 tools/huntctl/src/cli/search.rs	1861
 tools/route-planner/crates/engine/src/evaluation.rs	3380
-tools/route-planner/crates/engine/src/execution.rs	6591
 tools/route-planner/crates/engine/src/graph.rs	3121
 tools/route-planner/crates/engine/src/message_flow.rs	3565
 tools/route-planner/crates/engine/src/message_import.rs	2463
