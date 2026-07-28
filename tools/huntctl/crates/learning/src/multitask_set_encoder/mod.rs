@@ -38,7 +38,7 @@ mod tests;
 
 use actor_nodes::*;
 use feature_schema::*;
-use model::*;
+pub use model::CompleteSetMultiTaskEncoder;
 use observations::*;
 
 pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V12: &str =
