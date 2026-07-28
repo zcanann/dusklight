@@ -1089,4 +1089,6 @@ impl fmt::Display for GeneralizedTacticValueError {
 impl Error for GeneralizedTacticValueError {}
 
 #[cfg(test)]
+mod synthetic_control_tests;
+#[cfg(test)]
 mod tests;
