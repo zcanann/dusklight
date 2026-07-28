@@ -3045,6 +3045,7 @@ fn run_seed(
                     config.proposal_policy,
                     config.epsilon_per_million,
                     seed_index,
+                    config.demonstration_chunk_ticks.is_some(),
                 ),
             },
         )
@@ -3915,6 +3916,7 @@ fn resume_seed(
             config.proposal_policy,
             config.epsilon_per_million,
             seed_index,
+            config.demonstration_chunk_ticks.is_some(),
         ),
     };
     if checkpoint.decision_index != checkpoint_decision
@@ -6578,15 +6580,21 @@ fn tactic_lane_epsilon(
     proposal_policy: TacticProposalPolicy,
     configured_epsilon_per_million: u32,
     seed_index: usize,
+    demonstration_curriculum: bool,
 ) -> u32 {
     if proposal_policy == TacticProposalPolicy::Learned
         && seed_index % LEARNED_EPISODES_PER_GENERATION == 0
     {
-        // Every shared generation reserves one deterministic exploitation
-        // lane. Demonstration/support behavior must be allowed to compose
-        // through a full route; the remaining lanes retain configured epsilon
-        // exploration and feed their counterexamples back into shared replay.
-        0
+        if demonstration_curriculum {
+            // A human-connected checkpoint already supplies the logged action.
+            // Force the curriculum lane to test a seeded untried executable
+            // tactic; Q lanes consume the resulting counterexamples.
+            1_000_000
+        } else {
+            // Without a demonstration, reserve one deterministic exploitation
+            // lane while the remaining lanes retain configured exploration.
+            0
+        }
     } else {
         configured_epsilon_per_million
     }
@@ -6741,22 +6749,22 @@ mod tests {
     }
 
     #[test]
-    fn learned_terminal_support_lane_is_not_interrupted_by_epsilon_exploration() {
+    fn learned_support_and_demonstration_intervention_lanes_are_distinct() {
         let configured = 250_000;
         assert_eq!(
-            tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 0),
+            tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 0, false),
             0
         );
         assert_eq!(
-            tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 4),
-            0
+            tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 0, true),
+            1_000_000
         );
         assert_eq!(
-            tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 1),
+            tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 1, true),
             configured
         );
         assert_eq!(
-            tactic_lane_epsilon(TacticProposalPolicy::RandomValid, configured, 0),
+            tactic_lane_epsilon(TacticProposalPolicy::RandomValid, configured, 0, true),
             configured
         );
     }
