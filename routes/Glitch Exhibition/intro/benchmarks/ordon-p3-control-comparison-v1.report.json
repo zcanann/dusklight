@@ -1,0 +1,203 @@
+{
+  "schema": "dusklight-generalized-tactic-control-comparison/v1",
+  "source_transition_sha256": "3f6769d983c7474bb3789b1f3cc97e55119bff937c6d6738aa41a4a116185cdd",
+  "source_transitions": 18,
+  "goal_distance_feature": 155,
+  "config": {
+    "state_region_width": 64.0,
+    "group_folds": 3,
+    "validation_fold": 0,
+    "test_fold": 1,
+    "interval_coverage_millionths": 900000,
+    "fitted_q_iterations": 32,
+    "per_tick_discount": 0.999
+  },
+  "state_region": {
+    "axis": "state_region",
+    "training_groups": [
+      "F_SP103:1:3:3:10:-37"
+    ],
+    "validation_groups": [
+      "F_SP103:1:3:14:10:-29",
+      "F_SP103:1:3:4:10:-37"
+    ],
+    "test_groups": [
+      "F_SP103:1:3:14:10:-30"
+    ],
+    "group_overlap_count": 0,
+    "training_samples": 9,
+    "target_kind": "training_subgraph_fitted_q_evaluated_against_full_graph_fitted_q",
+    "models": [
+      {
+        "model": "local_generalized_fitted_q_knn",
+        "evaluation_samples": 3,
+        "supported_samples": 3,
+        "unsupported_samples": 0,
+        "mean_error": 0.12611628075440726,
+        "mean_absolute_error": 0.13922125597794852,
+        "root_mean_squared_error": 0.163695199570923,
+        "mean_epistemic_signal": 9.305257161458334,
+        "comparable_states": 1,
+        "ranking_wins": 0,
+        "ranking_win_rate": 0.0,
+        "mean_observed_regret": 0.19619125127792358
+      },
+      {
+        "model": "continuous_fitted_q_forest",
+        "evaluation_samples": 3,
+        "supported_samples": 3,
+        "unsupported_samples": 0,
+        "mean_error": 0.15643884965942967,
+        "mean_absolute_error": 0.16270966418087485,
+        "root_mean_squared_error": 0.19564420527843554,
+        "mean_epistemic_signal": 0.10621442587392053,
+        "comparable_states": 1,
+        "ranking_wins": 0,
+        "ranking_win_rate": 0.0,
+        "mean_observed_regret": 0.19619125127792358
+      },
+      {
+        "model": "continuous_double_q",
+        "evaluation_samples": 3,
+        "supported_samples": 3,
+        "unsupported_samples": 0,
+        "mean_error": -98342.59906290814,
+        "mean_absolute_error": 834125.0875620391,
+        "root_mean_squared_error": 855624.2737097684,
+        "mean_epistemic_signal": 28416697.53783459,
+        "comparable_states": 1,
+        "ranking_wins": 0,
+        "ranking_win_rate": 0.0,
+        "mean_observed_regret": 0.23999997973442078
+      },
+      {
+        "model": "continuous_conservative_offline_q",
+        "evaluation_samples": 3,
+        "supported_samples": 3,
+        "unsupported_samples": 0,
+        "mean_error": -15511621.888635075,
+        "mean_absolute_error": 15511621.888635075,
+        "root_mean_squared_error": 16760446.195761224,
+        "mean_epistemic_signal": 23489812.691428404,
+        "comparable_states": 1,
+        "ranking_wins": 0,
+        "ranking_win_rate": 0.0,
+        "mean_observed_regret": 0.23999997973442078
+      },
+      {
+        "model": "structured_shortest_valid_action",
+        "evaluation_samples": 3,
+        "supported_samples": 3,
+        "unsupported_samples": 0,
+        "mean_error": 0.10539707342783611,
+        "mean_absolute_error": 0.10539709170659384,
+        "root_mean_squared_error": 0.18255310197594887,
+        "mean_epistemic_signal": null,
+        "comparable_states": 1,
+        "ranking_wins": 0,
+        "ranking_win_rate": 0.0,
+        "mean_observed_regret": 0.19619125127792358
+      }
+    ]
+  },
+  "action_realization": {
+    "axis": "action_realization",
+    "training_groups": [
+      "16517f64d9fac9bfa268f2283ee8576d4944087a88a9b56697c8aa7225da54dd",
+      "2de77784b521795500c9592db1ec742b057105dc377d46ff11b69222a0c0c36a",
+      "72422ff23f73d2939bb76da57fdbaca5435c115b68ab38ba0d1f790742dc311d",
+      "7b72522b55fd1e56d8e57dafd9c2d2785f31e667fb76cf818801a1681c067770",
+      "fbe76994675289dd30d5fa05d118c145b875f8c25e2124e7b3e5516da41adf99"
+    ],
+    "validation_groups": [
+      "0c9f673cd78513a6c23c871a42de58893005d92c694c5dc232865f0631d86573",
+      "17273d257a3902f8cdcce624d6d05a015f088e402fca1627295c2f4883ad9b29",
+      "3d7a564a653feb07ae57b90a190177b955e882c962348775b4710ff3b46436f3",
+      "76e956fb821ea9559c0efd44f2a13d13f0c8a362d7f88dc9fdb1241bf4bb529e",
+      "b8698c4d68221daf1b4768537442eb5b6d7b519468500aab094bfd31fe3eb735"
+    ],
+    "test_groups": [
+      "16400eaeb33be283b037ddfe8641c8c5fc88ec4b1dcd95c886fed13be4b8ce08",
+      "20c190d939e9bc028a2248f50682fd0c695e9916a1612289c376f0a371216471",
+      "5be6f9400e88e3a5bd19374a5b656814e3904d8e178ef693c259133458ac24da",
+      "77e011463c739397cc8d85404d7d8983d265a47bf02a2a15718137cc047cee5e",
+      "e23f1dbd194958125895bed512c4b3d7af253675cdbebe2d5ce0d0c037bf7f14"
+    ],
+    "group_overlap_count": 0,
+    "training_samples": 8,
+    "target_kind": "training_subgraph_fitted_q_evaluated_against_full_graph_fitted_q",
+    "models": [
+      {
+        "model": "local_generalized_fitted_q_knn",
+        "evaluation_samples": 5,
+        "supported_samples": 5,
+        "unsupported_samples": 0,
+        "mean_error": 0.1403263881802559,
+        "mean_absolute_error": 0.18817466944456102,
+        "root_mean_squared_error": 0.2174100810892467,
+        "mean_epistemic_signal": 2.386194509267807,
+        "comparable_states": 1,
+        "ranking_wins": 0,
+        "ranking_win_rate": 0.0,
+        "mean_observed_regret": 0.08254081010818481
+      },
+      {
+        "model": "continuous_fitted_q_forest",
+        "evaluation_samples": 5,
+        "supported_samples": 5,
+        "unsupported_samples": 0,
+        "mean_error": 0.0962831242216958,
+        "mean_absolute_error": 0.1371237274010976,
+        "root_mean_squared_error": 0.16322661922254703,
+        "mean_epistemic_signal": 0.1435230249372871,
+        "comparable_states": 1,
+        "ranking_wins": 1,
+        "ranking_win_rate": 1.0,
+        "mean_observed_regret": 0.0
+      },
+      {
+        "model": "continuous_double_q",
+        "evaluation_samples": 5,
+        "supported_samples": 4,
+        "unsupported_samples": 1,
+        "mean_error": 0.254149720599973,
+        "mean_absolute_error": 0.6105504407320901,
+        "root_mean_squared_error": 0.7752594977829053,
+        "mean_epistemic_signal": 1.6137675081073946,
+        "comparable_states": 1,
+        "ranking_wins": 0,
+        "ranking_win_rate": 0.0,
+        "mean_observed_regret": 0.08254081010818481
+      },
+      {
+        "model": "continuous_conservative_offline_q",
+        "evaluation_samples": 5,
+        "supported_samples": 4,
+        "unsupported_samples": 1,
+        "mean_error": -0.4803401755914368,
+        "mean_absolute_error": 0.4803401755914368,
+        "root_mean_squared_error": 0.5282167247378896,
+        "mean_epistemic_signal": 0.8998206472110488,
+        "comparable_states": 1,
+        "ranking_wins": 0,
+        "ranking_win_rate": 0.0,
+        "mean_observed_regret": 0.08254081010818481
+      },
+      {
+        "model": "structured_shortest_valid_action",
+        "evaluation_samples": 5,
+        "supported_samples": 5,
+        "unsupported_samples": 0,
+        "mean_error": 0.031491822779178606,
+        "mean_absolute_error": 0.031491843640804304,
+        "root_mean_squared_error": 0.07041787979362794,
+        "mean_epistemic_signal": null,
+        "comparable_states": 1,
+        "ranking_wins": 1,
+        "ranking_win_rate": 1.0,
+        "mean_observed_regret": 0.0
+      }
+    ]
+  },
+  "report_sha256": "189c1c2532190dc1573287f8dd3f9131f105e6569737b1f69a086c8e44d3cb12"
+}

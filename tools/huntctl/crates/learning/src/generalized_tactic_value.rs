@@ -18,7 +18,7 @@ use std::error::Error;
 use std::fmt;
 
 pub(crate) mod fitted_q;
-mod prediction;
+pub(crate) mod prediction;
 
 pub const GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH: usize = 71;
 const GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH: usize = 11;

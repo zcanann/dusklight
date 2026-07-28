@@ -166,3 +166,45 @@ fn rejects_row_scale_splits_without_enough_semantic_groups() {
     .unwrap_err();
     assert!(error.to_string().contains("fewer groups"));
 }
+
+#[test]
+fn compares_all_controls_on_the_same_whole_group_partitions() {
+    let report = compare_generalized_tactic_controls(
+        &corpus(),
+        0,
+        GeneralizedTacticCalibrationConfig {
+            fitted_q_iterations: 8,
+            ..GeneralizedTacticCalibrationConfig::default()
+        },
+    )
+    .unwrap();
+
+    report.validate().unwrap();
+    for axis in [&report.state_region, &report.action_realization] {
+        assert_eq!(axis.group_overlap_count, 0);
+        assert_eq!(axis.models.len(), 5);
+        assert_eq!(
+            axis.models
+                .iter()
+                .map(|metrics| metrics.model.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "local_generalized_fitted_q_knn",
+                "continuous_fitted_q_forest",
+                "continuous_double_q",
+                "continuous_conservative_offline_q",
+                "structured_shortest_valid_action",
+            ]
+        );
+        assert!(
+            axis.models
+                .iter()
+                .all(|metrics| metrics.evaluation_samples > 0)
+        );
+    }
+
+    let mut mislabeled = report;
+    mislabeled.state_region.models[0].model = "structured_shortest_valid_action".into();
+    mislabeled.report_sha256 = mislabeled.digest().unwrap();
+    assert!(mislabeled.validate().is_err());
+}

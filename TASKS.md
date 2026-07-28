@@ -91,6 +91,22 @@ at tick `125`.
   single comparable unseen-action ranking lost with 0.083 observed regret.
   This is a P3 failure signal, not acceptance. Evidence:
   `ordon-p3-generalized-calibration-v1.report.json`.
+- The same disjoint partitions now compare the live local generalized model
+  with a continuous fitted-Q forest, neural Double-Q, conservative offline Q,
+  and a structured non-learning control. On unseen action realizations the
+  forest reduced MAE from 0.188 to 0.137 and won the only comparable ranking;
+  the live model lost it. Double-Q and conservative Q extrapolated
+  catastrophically across the held-out spatial region and exposed correspondingly
+  large critic disagreement. Evidence:
+  `ordon-p3-control-comparison-v1.report.json`.
+- A matched current-code macOS search diagnostic compared learned
+  from-scratch, structured non-learning, and learned demonstration-assisted
+  cells at the same seed, width, decisions, and native binding. Structured
+  search beat learned scratch on useful decisions (4 versus 3) and useful
+  transitions (9 versus 4). Demonstration replay raised those to 6 and 24 but
+  cost 311 versus 207 seconds; no cell reached the terminal, so neither
+  learned superiority nor improvement beyond demonstration is established.
+  Evidence: `ordon-p3-matched-controls-v1.report.json`.
 
 A terminal hit, a reliable terminal hit, a 125 tie, or a faster search for the
 same tie is diagnostic evidence only.
@@ -150,7 +166,7 @@ Acceptance:
 
 ## P3 - Prove that the learner solves delayed continuous-control credit
 
-- [ ] Compare the current local generalized model against at least:
+- [x] Compare the current local generalized model against at least:
   - fitted Q over a learned continuous representation;
   - a double-Q or ensemble control;
   - a conservative offline control; and

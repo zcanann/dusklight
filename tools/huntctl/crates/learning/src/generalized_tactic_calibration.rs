@@ -591,5 +591,11 @@ fn canonical_digest(
     Ok(Digest(hasher.finalize().into()))
 }
 
+mod comparison;
+pub use comparison::{
+    GENERALIZED_TACTIC_CONTROL_COMPARISON_SCHEMA_V1, GeneralizedTacticControlComparisonReport,
+    compare_generalized_tactic_controls,
+};
+
 #[cfg(test)]
 mod tests;

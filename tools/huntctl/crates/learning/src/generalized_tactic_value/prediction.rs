@@ -1,5 +1,29 @@
 use super::*;
 
+pub(crate) fn regression_features(
+    state_features: &[f32],
+    context: &GeneralizedTacticContext,
+    descriptor: &OptionActionDescriptor,
+) -> Result<Vec<f32>, GeneralizedTacticValueError> {
+    if state_features.is_empty() || state_features.iter().any(|value| !value.is_finite()) {
+        return Err(GeneralizedTacticValueError::FeatureWidth);
+    }
+    let action = encode_action(context, descriptor)?;
+    let mut features = Vec::with_capacity(
+        state_features.len()
+            + GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH
+            + GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH,
+    );
+    features.extend_from_slice(state_features);
+    features.extend_from_slice(&context.values());
+    features.extend_from_slice(&action);
+    Ok(features)
+}
+
+pub(crate) fn action_class(option_type: &OptionType) -> u32 {
+    option_type_index(option_type) as u32
+}
+
 pub(super) fn estimate_actions(
     model: &GeneralizedTacticValueModel,
     state_features: &[f32],
