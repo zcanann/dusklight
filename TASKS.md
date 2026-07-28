@@ -123,6 +123,19 @@ at tick `125`.
   candidate cost 137 ticks, however, so the demo helped discovery but did not
   establish improvement beyond itself. Evidence:
   `ordon-p3-q131-ablation-v1.report.json`.
+- A current-code audit found that those q131 cells used a generation barrier:
+  every decision consumed the same revision-zero snapshot, no decision exposed
+  finite Q, and fitting happened only after the campaign. Learned routes now
+  consume each newly fitted immutable snapshot at the declared refit cadence.
+  In corrected 16-decision macOS cells, scratch exposed finite Q on 15
+  decisions across 9 snapshots and demonstration-assisted search exposed it on
+  14 decisions across 8 snapshots. Neither reached the terminal. A follow-up
+  four-decision diagnostic bound nonzero cyclic demonstration frontiers to
+  terminal-support acquisition and restored duration-diverse `4/16/4/24`
+  proposals, improving the best near-terminal sibling from goal distance
+  513.69 to 151.34, but still found no terminal. This validates live learning
+  mechanics while leaving delayed-credit acceptance failed. Evidence:
+  `ordon-p3-live-replay-ablation-v1.report.json`.
 - The first two-seed replay-macro probe mined 26 candidates and completed 52
   held-out macro-versus-primitive comparisons. It spent 1,008 validation ticks
   and 149.4 seconds—about 26% of total wall time—but promoted nothing and
@@ -204,7 +217,7 @@ Acceptance:
   - a non-learning structured-search baseline.
 - [x] Calibrate value and uncertainty on held-out state regions and held-out
       action realizations, not random rows from the same correlated route.
-- [ ] Run matched demonstration-assisted and from-scratch ablations. The
+- [x] Run matched demonstration-assisted and from-scratch ablations. The
       demonstration may improve sample efficiency but may not cap the policy at
       the demonstrated route.
 

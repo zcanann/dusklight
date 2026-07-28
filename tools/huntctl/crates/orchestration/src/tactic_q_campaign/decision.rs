@@ -244,11 +244,13 @@ impl TacticQCampaign {
                 .map(|choice| choice.descriptor.clone())
                 .collect::<Vec<_>>();
             // Partition zero is the dedicated terminal-support policy lane.
-            // It behavior-clones the closest action at the nearest phase and
-            // physical state on any authenticated successful trajectory.
-            // Remaining partitions stay Q-ranked, preserving independent
-            // improvement and exploration.
-            let ranked_applicable = if acquisition_partition == 0 {
+            // A one-seed plan cycles acquisition ranks to retain parallel-lane
+            // coverage, so an authenticated demonstration-frontier
+            // intervention must also select terminal support explicitly rather
+            // than silently becoming an ordinary rank-N acquisition. Remaining
+            // boundaries stay Q-ranked, preserving independent improvement.
+            let terminal_support_acquisition = acquisition_partition == 0 || force_exploration;
+            let ranked_applicable = if terminal_support_acquisition {
                 model.rank_terminal_support(&features, &context, &applicable_descriptors)?
             } else {
                 model.rank(&features, &context, &applicable_descriptors)?
@@ -262,8 +264,8 @@ impl TacticQCampaign {
                 maximum_proposals,
                 &mut proposals,
             )?;
-            if acquisition_partition == 0 {
-                ensure_terminal_support_type_acquisitions(
+            if terminal_support_acquisition {
+                ensure_terminal_support_factor_acquisitions(
                     &ranked_applicable,
                     maximum_proposals,
                     &mut proposals,

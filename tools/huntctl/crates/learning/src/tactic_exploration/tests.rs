@@ -14,6 +14,19 @@ fn descriptor(id: &str, option_type: OptionType) -> OptionActionDescriptor {
     }
 }
 
+fn descriptor_with_duration(
+    id: &str,
+    option_type: OptionType,
+    duration_ticks: u64,
+) -> OptionActionDescriptor {
+    let mut descriptor = descriptor(id, option_type);
+    descriptor.parameters.insert(
+        "duration_ticks".into(),
+        OptionParameter::Unsigned(duration_ticks),
+    );
+    descriptor
+}
+
 fn choice(descriptor: OptionActionDescriptor) -> LearnerActionMaskEntry {
     LearnerActionMaskEntry {
         choice_id: descriptor.option_id.clone(),
@@ -1475,7 +1488,7 @@ fn generalized_value_interleaves_typed_actions_before_parameter_variants() {
 }
 
 #[test]
-fn terminal_support_batch_transfers_to_distinct_learned_action_types() {
+fn terminal_support_batch_transfers_to_distinct_learned_action_factors() {
     let control = descriptor("move/control", OptionType::Move);
     let ranked = vec![
         descriptor("move/best", OptionType::Move),
@@ -1504,7 +1517,7 @@ fn terminal_support_batch_transfers_to_distinct_learned_action_types() {
         },
     ];
 
-    ensure_terminal_support_type_acquisitions(&ranked, 4, &mut proposals).unwrap();
+    ensure_terminal_support_factor_acquisitions(&ranked, 4, &mut proposals).unwrap();
 
     assert_eq!(proposals[0].descriptor, control);
     assert_eq!(
@@ -1512,7 +1525,7 @@ fn terminal_support_batch_transfers_to_distinct_learned_action_types() {
             .iter()
             .map(|proposal| proposal.descriptor.option_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["move/best", "target/best", "roll/best"]
+        vec!["target/best", "roll/best", "neutral/best"]
     );
     assert!(
         proposals[1..]
@@ -1522,7 +1535,7 @@ fn terminal_support_batch_transfers_to_distinct_learned_action_types() {
 }
 
 #[test]
-fn terminal_support_type_transfer_preserves_epsilon_authority() {
+fn terminal_support_factor_transfer_preserves_epsilon_authority() {
     let exploratory = descriptor("move/epsilon", OptionType::Move);
     let ranked = vec![
         descriptor("target/best", OptionType::Target),
@@ -1537,12 +1550,47 @@ fn terminal_support_type_transfer_preserves_epsilon_authority() {
         exploration_draw: 1,
     }];
 
-    ensure_terminal_support_type_acquisitions(&ranked, 4, &mut proposals).unwrap();
+    ensure_terminal_support_factor_acquisitions(&ranked, 4, &mut proposals).unwrap();
     retain_generalized_value_acquisition(&mut proposals).unwrap();
 
     assert_eq!(proposals[0].descriptor, exploratory);
     assert_eq!(proposals[0].reason, TacticSelectionReason::Epsilon);
     assert_eq!(proposals.len(), 3);
+}
+
+#[test]
+fn terminal_support_factor_transfer_preserves_long_movement_probe() {
+    let exploratory =
+        descriptor_with_duration("move/epsilon-short", OptionType::Move, 4);
+    let ranked = vec![
+        descriptor_with_duration("move/best-short", OptionType::Move, 4),
+        descriptor_with_duration("move/second-short", OptionType::Move, 4),
+        descriptor_with_duration("neutral/short", OptionType::Neutral, 4),
+        descriptor_with_duration("roll/short", OptionType::Roll, 4),
+        descriptor_with_duration("curve/short", OptionType::Bezier, 4),
+        descriptor_with_duration("move/long", OptionType::Move, 40),
+    ];
+    let mut proposals = vec![SelectedTactic {
+        schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+        learner_snapshot_sha256: Digest([31; 32]),
+        decision_index: 7,
+        descriptor: exploratory.clone(),
+        reason: TacticSelectionReason::Epsilon,
+        exploration_draw: 1,
+    }];
+
+    ensure_terminal_support_factor_acquisitions(&ranked, 4, &mut proposals).unwrap();
+    retain_generalized_value_acquisition(&mut proposals).unwrap();
+
+    assert_eq!(proposals[0].descriptor, exploratory);
+    assert_eq!(proposals[0].reason, TacticSelectionReason::Epsilon);
+    assert_eq!(
+        proposals[1..]
+            .iter()
+            .map(|proposal| proposal.descriptor.option_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["move/long", "neutral/short", "roll/short"]
+    );
 }
 
 #[test]

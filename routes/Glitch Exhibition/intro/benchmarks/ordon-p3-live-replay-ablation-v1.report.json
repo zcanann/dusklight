@@ -1,0 +1,136 @@
+{
+  "schema": "dusklight-p3-live-replay-ablation/v1",
+  "date": "2026-07-28",
+  "parent_commit": "8b1e8f892a1e0dcd76fb3825cd1fc45790791504",
+  "platform": "arm64 macOS",
+  "acceptance_passed": false,
+  "conclusion": "The prior q131 cells did not consume a fitted learner snapshot during their decisions, so they were not valid online-learning evidence. Live replay makes fitted Q observable during the same campaign, but neither corrected 16-decision cell reached the terminal. Binding demonstration-frontier intervention to terminal-support acquisition restored long-horizon factor coverage and improved the best four-decision sibling from goal distance 513.6891 to 151.3404, but still did not produce a terminal candidate. P3 delayed-credit acceptance remains open.",
+  "fixed_plan": {
+    "optimization_request_path": "routes/Glitch Exhibition/intro/benchmarks/ordon-degraded-q131-cem-canary.request.json",
+    "seed": 104729,
+    "workers": 4,
+    "decisions": 16,
+    "proposals_per_decision": 4,
+    "branch_every_decisions": 4,
+    "refit_every_decisions": 2,
+    "epsilon_per_million": 500000,
+    "demonstration_chunk_ticks": 16,
+    "corrected_default_replay_sharing": {
+      "kind": "bounded_staleness",
+      "maximum_stale_replay_revisions": 8
+    },
+    "wall_time_comparable": false,
+    "wall_time_note": "The two corrected 16-decision cells ran concurrently on the same host. Their behavioral and learner-refresh evidence is valid, but raw wall time is not a treatment comparison."
+  },
+  "cells": [
+    {
+      "name": "legacy_generation_barrier_scratch",
+      "source_report_sha256": "42c611899e7e2a1633cf771fc4b5eafca462e80a056f70fdc0fc790747e9bb21",
+      "demonstration_transitions": 0,
+      "total_decisions": 16,
+      "native_ticks": 948,
+      "useful_decisions": 10,
+      "useful_training_transitions": 41,
+      "shared_training_replay_rows": 64,
+      "visited_states": 11,
+      "learner_updates": 1,
+      "replay_refreshes": 0,
+      "unique_decision_snapshots": 1,
+      "finite_best_q_decisions": 0,
+      "minimum_proposal_goal_distance": 1666.736,
+      "terminal_proposals": 0,
+      "wall_micros": 426853027
+    },
+    {
+      "name": "live_replay_scratch",
+      "source_report_sha256": "8b8d7120ee95b19185f9d886dbad08f5cf6b7291ca14e1290b456c548cf2197e",
+      "demonstration_transitions": 0,
+      "total_decisions": 16,
+      "native_ticks": 852,
+      "useful_decisions": 10,
+      "useful_training_transitions": 34,
+      "shared_training_replay_rows": 61,
+      "visited_states": 12,
+      "learner_updates": 9,
+      "replay_refreshes": 8,
+      "unique_decision_snapshots": 9,
+      "finite_best_q_decisions": 15,
+      "minimum_proposal_goal_distance": 1514.6119,
+      "terminal_proposals": 0,
+      "wall_micros": 470351052
+    },
+    {
+      "name": "legacy_generation_barrier_demonstration",
+      "source_report_sha256": "88030505f456a99bce0dc8c449c853dad2dc0e2d5219737704ce999b0434d762",
+      "demonstration_transitions": 9,
+      "total_decisions": 16,
+      "native_ticks": 933,
+      "useful_decisions": 16,
+      "useful_training_transitions": 68,
+      "shared_training_replay_rows": 72,
+      "visited_states": 21,
+      "learner_updates": 2,
+      "replay_refreshes": 0,
+      "unique_decision_snapshots": 1,
+      "finite_best_q_decisions": 0,
+      "minimum_proposal_goal_distance": 151.3404,
+      "terminal_proposals": 1,
+      "wall_micros": 570383339
+    },
+    {
+      "name": "live_replay_demonstration",
+      "source_report_sha256": "aa6597dec05e28933e926dd8be82943477867977c25812afa7a6cc97441139c0",
+      "demonstration_transitions": 9,
+      "total_decisions": 16,
+      "native_ticks": 884,
+      "useful_decisions": 14,
+      "useful_training_transitions": 60,
+      "shared_training_replay_rows": 65,
+      "visited_states": 19,
+      "learner_updates": 9,
+      "replay_refreshes": 7,
+      "unique_decision_snapshots": 8,
+      "finite_best_q_decisions": 14,
+      "minimum_proposal_goal_distance": 303.98822,
+      "terminal_proposals": 0,
+      "wall_micros": 621096407
+    }
+  ],
+  "terminal_support_diagnostic": {
+    "decisions": 4,
+    "before": {
+      "source_report_sha256": "b79faef703804121b526548ed81e0c4fe0bc8b9fcaf0a19c3f7d0933b017a035",
+      "critical_decision_index": 3,
+      "critical_acquisition_rank": 3,
+      "critical_proposal_durations": [
+        4,
+        4,
+        4,
+        4
+      ],
+      "minimum_proposal_goal_distance": 513.6891,
+      "terminal_proposals": 0
+    },
+    "after": {
+      "source_report_sha256": "83953f38e64bc0e7147870308c4bcca65cab7b18875582c7db9146fd4de363c0",
+      "critical_decision_index": 3,
+      "critical_acquisition_rank": 3,
+      "critical_proposal_durations": [
+        4,
+        16,
+        4,
+        24
+      ],
+      "minimum_proposal_goal_distance": 151.3404,
+      "terminal_proposals": 0
+    },
+    "remaining_failure": "The four terminal-support slots still omitted the applicable 40-tick Target family that had produced the legacy terminal sibling. Factor diversity improved coverage but did not establish terminal discovery or policy improvement."
+  },
+  "observations": {
+    "legacy_cells_were_online_learning_evidence": false,
+    "live_fitted_snapshots_consumed_during_campaign": true,
+    "demonstration_frontier_uses_terminal_support_at_nonzero_cyclic_rank": true,
+    "learner_reliably_reaches_terminal": false,
+    "learner_improves_beyond_demonstration": false
+  }
+}

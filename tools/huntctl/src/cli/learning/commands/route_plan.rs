@@ -15,11 +15,25 @@ pub(super) fn native_tactic_execution_plan(
     promoted_tactic_registry_sha256: Option<Digest>,
 ) -> Result<NativeTacticExecutionPlan, Box<dyn Error>> {
     let decisions_per_lane = u64_option(learn_args, "--decisions-per-seed", 256)?;
+    let proposal_width_per_decision = usize_option(learn_args, "--proposals-per-decision", 4)?;
+    let refit_every_decisions = u64_option(learn_args, "--refit-every", 4)?;
     let default_lanes_per_generation = if proposal_policy == TacticProposalPolicy::Learned {
         seeds.len().min(4).max(1)
     } else {
         seeds.len().max(1)
     };
+    let replay_sharing = option(learn_args, "--maximum-stale-replay-revisions")
+        .map(|value| {
+            Ok::<_, Box<dyn Error>>(NativeTacticReplaySharingPlan::BoundedStaleness {
+                maximum_stale_replay_revisions: value.parse()?,
+            })
+        })
+        .transpose()?
+        .unwrap_or(default_replay_sharing(
+            proposal_policy,
+            proposal_width_per_decision,
+            refit_every_decisions,
+        )?);
     NativeTacticExecutionPlan::build(NativeTacticExecutionPlanRequest {
         seeds: seeds.to_vec(),
         proposal_policy,
@@ -30,9 +44,9 @@ pub(super) fn native_tactic_execution_plan(
             "--lanes-per-generation",
             default_lanes_per_generation,
         )?,
-        proposal_width_per_decision: usize_option(learn_args, "--proposals-per-decision", 4)?,
+        proposal_width_per_decision,
         branch_every_decisions: u64_option(learn_args, "--branch-every", 8)?,
-        refit_every_decisions: u64_option(learn_args, "--refit-every", 4)?,
+        refit_every_decisions,
         root_refresh_cadence: 4,
         epsilon_per_million: option(learn_args, "--epsilon-per-million")
             .map(|value| value.parse())
@@ -41,14 +55,7 @@ pub(super) fn native_tactic_execution_plan(
         demonstration_chunk_ticks: option(learn_args, "--demonstration-chunk-ticks")
             .map(|value| value.parse())
             .transpose()?,
-        replay_sharing: option(learn_args, "--maximum-stale-replay-revisions")
-            .map(|value| {
-                Ok::<_, Box<dyn Error>>(NativeTacticReplaySharingPlan::BoundedStaleness {
-                    maximum_stale_replay_revisions: value.parse()?,
-                })
-            })
-            .transpose()?
-            .unwrap_or(NativeTacticReplaySharingPlan::GenerationBarrier),
+        replay_sharing,
         budgets: NativeTacticPlanBudgets {
             decisions_per_lane,
             native_ticks: NativeTacticResourceLimit::Bounded(request.budgets.simulated_tick_budget),
@@ -57,4 +64,40 @@ pub(super) fn native_tactic_execution_plan(
         },
     })
     .map_err(Into::into)
+}
+
+fn default_replay_sharing(
+    proposal_policy: TacticProposalPolicy,
+    proposal_width_per_decision: usize,
+    refit_every_decisions: u64,
+) -> Result<NativeTacticReplaySharingPlan, Box<dyn Error>> {
+    if proposal_policy != TacticProposalPolicy::Learned {
+        return Ok(NativeTacticReplaySharingPlan::GenerationBarrier);
+    }
+    let proposal_width = u64::try_from(proposal_width_per_decision)?;
+    let maximum_stale_replay_revisions = proposal_width
+        .checked_mul(refit_every_decisions)
+        .ok_or("default live replay staleness bound overflowed")?;
+    Ok(NativeTacticReplaySharingPlan::BoundedStaleness {
+        maximum_stale_replay_revisions,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NativeTacticReplaySharingPlan, TacticProposalPolicy, default_replay_sharing};
+
+    #[test]
+    fn learned_routes_default_to_live_replay_at_the_refit_cadence() {
+        assert_eq!(
+            default_replay_sharing(TacticProposalPolicy::Learned, 4, 2).unwrap(),
+            NativeTacticReplaySharingPlan::BoundedStaleness {
+                maximum_stale_replay_revisions: 8,
+            }
+        );
+        assert_eq!(
+            default_replay_sharing(TacticProposalPolicy::StructuredNonLearning, 4, 2).unwrap(),
+            NativeTacticReplaySharingPlan::GenerationBarrier
+        );
+    }
 }

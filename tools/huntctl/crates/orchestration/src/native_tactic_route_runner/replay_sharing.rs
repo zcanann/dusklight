@@ -37,11 +37,7 @@ impl BoundedStalenessReplaySession {
                 .telemetry
                 .maximum_observed_stale_revisions
                 .max(observed_staleness);
-            if !replay_refresh_required(
-                self.consumed_revision,
-                current_revision,
-                self.maximum_stale_replay_revisions,
-            ) {
+            if !replay_refresh_required(self.consumed_revision, current_revision) {
                 return Ok(None);
             }
             snapshot
@@ -158,12 +154,8 @@ pub(super) fn lane_generated_training_corpus(
     generated
 }
 
-fn replay_refresh_required(
-    consumed_revision: u64,
-    current_revision: u64,
-    maximum_stale_replay_revisions: u64,
-) -> bool {
-    current_revision.saturating_sub(consumed_revision) > maximum_stale_replay_revisions
+fn replay_refresh_required(consumed_revision: u64, current_revision: u64) -> bool {
+    current_revision > consumed_revision
 }
 
 pub(super) fn deterministic_generation_barrier_revision(
@@ -287,10 +279,9 @@ mod tests {
     use super::replay_refresh_required;
 
     #[test]
-    fn bounded_staleness_refreshes_after_the_declared_revision_distance() {
-        assert!(!replay_refresh_required(10, 10, 0));
-        assert!(replay_refresh_required(10, 11, 0));
-        assert!(!replay_refresh_required(10, 14, 4));
-        assert!(replay_refresh_required(10, 15, 4));
+    fn every_newly_fitted_snapshot_is_consumed_immediately() {
+        assert!(!replay_refresh_required(10, 10));
+        assert!(replay_refresh_required(10, 11));
+        assert!(!replay_refresh_required(11, 10));
     }
 }
