@@ -86,6 +86,16 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   signal but is not robustly superior, and terminal-value learning remains
   unmeasured because no scratch seed succeeded. Evidence:
   `ordon-p3-continuous-independent-calibration-v1.report.json`.
+- The support-aware local treatment now has a sealed ablation against an
+  ordinary `131`-tick human replay. At the full matched budget, replay-assisted
+  learning found authenticated terminals in `3/4` seeds while scratch found
+  `0/4`; useful training evidence per wall second improved by `21%` and useful
+  decisions per wall second by `47%`. Generated primitives refined the best
+  candidate from tick `136` to `135`, so this was not literal tape playback.
+  P3 still fails: the candidate did not beat `131`, scratch still required
+  replay support to succeed at this capacity, and the newer generic
+  executable-factor coverage also found no scratch terminal in its diagnostic
+  cell. Evidence: `ordon-p3-q131-local-replay-ablation-v1.report.json`.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
   camera orientation, exact A-button prompt-status bits, and the native
