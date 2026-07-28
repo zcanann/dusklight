@@ -57,75 +57,6 @@ fn demonstration_chunks_reject_empty_or_detached_sources() {
 }
 
 #[test]
-fn generalized_acquisition_keeps_exploit_and_sweeps_parallel_ranks() {
-    assert_eq!(
-        (0..12)
-            .map(generalized_acquisition_partition)
-            .collect::<Vec<_>>(),
-        vec![0, 1, 2, 3, 0, 4, 5, 6, 0, 7, 8, 9]
-    );
-}
-
-#[test]
-fn single_seed_cycles_support_and_q_ranks_without_losing_direct_restore() {
-    assert_eq!(
-        (0..12)
-            .map(|decision| generalized_policy_acquisition_partition(0, 1, decision))
-            .collect::<Vec<_>>(),
-        vec![0, 1, 2, 3, 0, 4, 5, 6, 0, 7, 8, 9]
-    );
-    assert_eq!(
-        generalized_policy_acquisition_partition(2, 4, 999),
-        generalized_acquisition_partition(2)
-    );
-}
-
-#[test]
-fn single_seed_proposal_width_uses_idle_native_workers_without_queue_explosion() {
-    assert_eq!(tactic_proposals_per_decision(4, 1), 4);
-    assert_eq!(tactic_proposals_per_decision(16, 1), 16);
-    assert_eq!(tactic_proposals_per_decision(32, 1), 16);
-    assert_eq!(tactic_proposals_per_decision(16, 4), 4);
-}
-
-#[test]
-fn learned_support_lane_is_deterministic_between_interventions() {
-    let configured = 250_000;
-    assert_eq!(
-        tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 0),
-        0
-    );
-    assert_eq!(
-        tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 4),
-        0
-    );
-    assert_eq!(
-        tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 1),
-        configured
-    );
-    assert_eq!(
-        tactic_lane_epsilon(TacticProposalPolicy::RandomValid, configured, 0),
-        configured
-    );
-}
-
-#[test]
-fn periodic_root_refreshes_are_staggered_across_parallel_lanes() {
-    for episode in 1..=8 {
-        let refreshed = (0..LEARNED_EPISODES_PER_GENERATION)
-            .filter(|seed_index| periodic_root_refresh_due(*seed_index, episode))
-            .collect::<Vec<_>>();
-        assert_eq!(refreshed.len(), 1);
-    }
-    for seed_index in 0..LEARNED_EPISODES_PER_GENERATION {
-        let refreshes = (1..=8)
-            .filter(|episode| periodic_root_refresh_due(seed_index, *episode))
-            .count();
-        assert_eq!(refreshes, 2);
-    }
-}
-
-#[test]
 fn macro_primitive_baseline_uses_only_terminal_and_tick_utility() {
     let terminal = TacticMacroMeasuredOutcome {
         terminal: true,
@@ -561,6 +492,7 @@ fn journal_projects_graph_and_materializes_routes_from_content_objects() {
     let mut trace = journal_trace(0);
     trace.reward_components.duration_ticks = 1;
     let proposal_trace = NativeTacticProposalTrace {
+        execution_plan_sha256: Digest::ZERO,
         option_id: transition.value_sample.action.option_id.clone(),
         selection_reason: trace.selection_reason,
         reward: transition.value_sample.reward,
@@ -775,6 +707,7 @@ fn horizon_fit_uses_the_selected_tactic_duration() {
 #[test]
 fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
     let seed = NativeTacticSeedResult {
+        execution_plan_sha256: Digest::ZERO,
         seed: 7,
         success: false,
         decisions: 4,
@@ -887,6 +820,7 @@ fn evaluated_tick_accounting_includes_every_proposal() {
         .into_iter()
         .enumerate()
         .map(|(index, realized_ticks)| NativeTacticProposalTrace {
+            execution_plan_sha256: Digest::ZERO,
             option_id: format!("proposal-{index}"),
             selection_reason: TacticSelectionReason::BatchDiversity,
             reward: index as f32,

@@ -77,29 +77,13 @@ same tie is diagnostic evidence only.
 
 ## P0 - Make an experiment mean exactly what it says
 
-- [ ] Replace seed-count and seed-index policy side effects with an explicit,
-      sealed execution plan containing:
-  - generations and lanes per generation;
-  - proposal width per decision;
-  - lane role and acquisition rank;
-  - epsilon and intervention policy;
-  - branch and refit cadence;
-  - replay-sharing barrier or asynchronous staleness bound;
-  - native-checkpoint ownership and fallback behavior; and
-  - decision, native-tick, memory, and wall-time budgets.
-- [ ] Include the execution-plan identity in every job, transition, model
-      snapshot, checkpoint, retained candidate, and report.
-- [ ] Reject configurations whose worker count silently changes the learning
-      algorithm or proposal width.
-- [ ] Report, for every decision, the learner snapshot, replay row count,
-      replay generation, acquisition authority, frontier identity, restore
-      source, and result-admission version.
+- [ ] Carry the execution-plan identity from route jobs, decision journals, and
+      candidate evidence into generic transition rows, Tactic-Q model
+      snapshots, checkpoint manifests, and retained terminal artifacts. Reject
+      every mixed-plan import or resume path.
 - [ ] Eliminate the remaining learning/orchestration production-file
       exceptions in the source-size baseline. Split by owned behavior and lower
       or remove the corresponding ceiling with every cleanup milestone.
-- [ ] Add deterministic plan tests proving that equal plans produce equal jobs
-      and that every behavior-changing field changes the plan identity.
-
 Acceptance:
 
 - A report alone is sufficient to reconstruct which information each lane

@@ -5,17 +5,8 @@ pub struct NativeTacticRouteRunConfig<'a> {
     pub repository_root: &'a Path,
     pub optimization: &'a OptimizationRequest,
     pub execution: &'a NativeResidualExecutionBinding,
+    pub execution_plan: &'a NativeTacticExecutionPlan,
     pub output_root: &'a Path,
-    pub exploration_seeds: &'a [u64],
-    pub proposal_policy: TacticProposalPolicy,
-    pub execution_strategy: NativeGenericExecutionStrategy,
-    pub decisions_per_seed: u64,
-    pub branch_every_decisions: u64,
-    pub refit_every_decisions: u64,
-    pub epsilon_per_million: u32,
-    /// Split the authenticated process-tape suffix into bounded off-policy
-    /// experience chunks. Recorded chunks are never live policy actions.
-    pub demonstration_chunk_ticks: Option<u32>,
     pub workers: usize,
     pub cancellation: Option<&'a AtomicBool>,
     pub resume: bool,
@@ -27,6 +18,8 @@ pub struct NativeTacticRouteReport {
     pub schema: String,
     pub optimization_request_sha256: Digest,
     pub execution_binding_sha256: Digest,
+    pub execution_plan_sha256: Digest,
+    pub execution_plan_path: String,
     pub objective_sha256: Digest,
     pub feature_schema_sha256: Digest,
     pub action_schema_sha256: Digest,
@@ -277,6 +270,8 @@ pub(super) struct NativeTacticSeedPerformance {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticSeedResult {
+    #[serde(default)]
+    pub execution_plan_sha256: Digest,
     pub seed: u64,
     pub success: bool,
     pub decisions: u64,
@@ -315,7 +310,27 @@ pub(super) struct CompletedNativeTacticSeed {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticDecisionTrace {
+    #[serde(default)]
+    pub execution_plan_sha256: Digest,
     pub decision_index: u64,
+    #[serde(default)]
+    pub learner_snapshot_sha256: Digest,
+    #[serde(default)]
+    pub replay_rows_at_decision: u64,
+    #[serde(default)]
+    pub replay_generation: u64,
+    #[serde(default)]
+    pub lane_index: usize,
+    #[serde(default)]
+    pub lane_role: Option<NativeTacticLaneRole>,
+    #[serde(default)]
+    pub acquisition_rank: u64,
+    #[serde(default)]
+    pub frontier_identity: Digest,
+    #[serde(default)]
+    pub restore_source: Option<NativeTacticRestoreSource>,
+    #[serde(default)]
+    pub result_admission_schema: String,
     pub episode: u64,
     pub route_suffix_ticks: u64,
     pub selected_option_id: String,
@@ -351,6 +366,14 @@ pub struct NativeTacticDecisionTrace {
     pub proposal_feedback: Option<ParameterizedTacticFeedback>,
     #[serde(default)]
     pub proposal_batch: Vec<NativeTacticProposalTrace>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeTacticRestoreSource {
+    AuthenticatedRoot,
+    AuthenticatedRootReplay,
+    ProcessLocalCheckpoint,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -395,6 +418,8 @@ pub struct NativeTacticValueTrace {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticProposalTrace {
+    #[serde(default)]
+    pub execution_plan_sha256: Digest,
     pub option_id: String,
     pub selection_reason: TacticSelectionReason,
     pub reward: f32,
@@ -426,7 +451,27 @@ pub(super) struct NativeTacticProposalRecord {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct NativeTacticDecisionRecord {
+    #[serde(default)]
+    pub(super) execution_plan_sha256: Digest,
     pub(super) decision_index: u64,
+    #[serde(default)]
+    pub(super) learner_snapshot_sha256: Digest,
+    #[serde(default)]
+    pub(super) replay_rows_at_decision: u64,
+    #[serde(default)]
+    pub(super) replay_generation: u64,
+    #[serde(default)]
+    pub(super) lane_index: usize,
+    #[serde(default)]
+    pub(super) lane_role: Option<NativeTacticLaneRole>,
+    #[serde(default)]
+    pub(super) acquisition_rank: u64,
+    #[serde(default)]
+    pub(super) frontier_identity: Digest,
+    #[serde(default)]
+    pub(super) restore_source: Option<NativeTacticRestoreSource>,
+    #[serde(default)]
+    pub(super) result_admission_schema: String,
     pub(super) episode: u64,
     pub(super) episode_group: u64,
     pub(super) route_suffix_ticks: u64,

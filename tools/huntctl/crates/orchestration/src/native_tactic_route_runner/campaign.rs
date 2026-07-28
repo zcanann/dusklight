@@ -1,5 +1,8 @@
 use super::*;
 
+pub(super) const NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1: &str =
+    "dusklight-native-tactic-result-admission/v1";
+
 pub(super) fn elapsed_micros(duration: Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
@@ -104,6 +107,13 @@ pub(super) fn run_seed(
     seed_index: usize,
     seed: u64,
 ) -> Result<CompletedNativeTacticSeed, NativeTacticRouteRunError> {
+    let execution_plan_sha256 = config.execution_plan.identity()?;
+    let lane = config
+        .execution_plan
+        .lanes
+        .get(seed_index)
+        .filter(|lane| lane.seed == seed)
+        .ok_or_else(|| route_message("tactic seed is detached from its execution-plan lane"))?;
     let seed_root = config
         .output_root
         .join(format!("seed-{seed_index:03}-{seed}"));
@@ -132,7 +142,7 @@ pub(super) fn run_seed(
             seed_index,
             seed,
         )?;
-        let imported = if config.proposal_policy == TacticProposalPolicy::Learned {
+        let imported = if config.execution_plan.proposal_policy == TacticProposalPolicy::Learned {
             shared_training_unique_rows(shared_training)?
         } else {
             0
@@ -163,21 +173,17 @@ pub(super) fn run_seed(
             encoder.schema_sha256,
             config.optimization.terminal_predicate.definition_sha256,
             root_checkpoint_sha256,
-            seed_group(seed_index, 0)?,
+            lane.episode_group(0)?,
             current,
             route_prefix.clone(),
             route_option_value_config(seed),
             TacticExplorationConfig {
                 seed,
-                epsilon_per_million: tactic_lane_epsilon(
-                    config.proposal_policy,
-                    config.epsilon_per_million,
-                    seed_index,
-                ),
+                epsilon_per_million: lane.epsilon_per_million,
             },
         )
         .map_err(route_error)?;
-        let imported = if config.proposal_policy == TacticProposalPolicy::Learned {
+        let imported = if config.execution_plan.proposal_policy == TacticProposalPolicy::Learned {
             campaign
                 .import_training_corpora(shared_training)
                 .map_err(route_error)?
@@ -213,7 +219,8 @@ pub(super) fn run_seed(
     };
     let maximum_tactic_ticks = u64::from(maximum_tactic_ticks);
     let encode = |facts: &FactSnapshot| encoder.encode(facts);
-    let demonstration_curriculum = generalized_acquisition_partition(seed_index) == 0
+    let demonstration_curriculum = lane.role == NativeTacticLaneRole::TerminalSupport
+        && lane.intervention == NativeTacticInterventionPlan::DemonstrationFrontierOnce
         && shared_training.iter().any(|corpus| {
             corpus
                 .episode_groups
@@ -245,7 +252,7 @@ pub(super) fn run_seed(
         campaign.root_checkpoint_sha256,
     )?;
 
-    while campaign.decision_index < config.decisions_per_seed
+    while campaign.decision_index < config.execution_plan.budgets.decisions_per_lane
         && native_ticks < config.optimization.budgets.simulated_tick_budget
     {
         if cancellation_requested(config) {
@@ -267,7 +274,8 @@ pub(super) fn run_seed(
         let periodic_branch = terminal_restart
             || (campaign.decision_index > 0
                 && (demonstration_coverage_pending
-                    || campaign.decision_index % config.branch_every_decisions == 0));
+                    || campaign.decision_index % config.execution_plan.branch_every_decisions
+                        == 0));
         if !campaign.replay.is_empty() && periodic_branch {
             let branch_started = Instant::now();
             episode = episode
@@ -277,7 +285,7 @@ pub(super) fn run_seed(
                 source_frame.saturating_add(horizon.saturating_sub(maximum_tactic_ticks)),
             )
             .map_err(route_error)?;
-            let [root, frontier] = match config.proposal_policy {
+            let [root, frontier] = match config.execution_plan.proposal_policy {
                 TacticProposalPolicy::Learned => campaign.sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
@@ -309,7 +317,8 @@ pub(super) fn run_seed(
                 }
             }
             .map_err(route_error)?;
-            let prefer_root = terminal_restart || periodic_root_refresh_due(seed_index, episode);
+            let prefer_root = terminal_restart
+                || lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence);
             let selected_branch = if prefer_root { &root } else { &frontier };
             if demonstration_coverage_pending
                 && selected_branch
@@ -335,7 +344,7 @@ pub(super) fn run_seed(
             campaign
                 .restore_branch(
                     selected_branch,
-                    seed_group(seed_index, episode)?,
+                    lane.episode_group(episode)?,
                     registry,
                     &branch_proposals.catalog,
                     &branch_proposals.blueprints,
@@ -381,13 +390,9 @@ pub(super) fn run_seed(
                     &proposal_blueprints,
                     action_schema_sha256,
                     &encode,
-                    tactic_proposals_per_decision(config.workers, config.exploration_seeds.len()),
-                    generalized_policy_acquisition_partition(
-                        seed_index,
-                        config.exploration_seeds.len(),
-                        campaign.decision_index,
-                    ),
-                    config.proposal_policy,
+                    config.execution_plan.proposal_width_per_decision,
+                    lane.acquisition.rank(campaign.decision_index),
+                    config.execution_plan.proposal_policy,
                     Some(encoder.goal_distance_feature()),
                     demonstration_intervention_pending,
                 )
@@ -438,7 +443,7 @@ pub(super) fn run_seed(
                     .saturating_add(horizon.saturating_sub(u64::from(selected_maximum_ticks))),
             )
             .map_err(route_error)?;
-            let [root, frontier] = match config.proposal_policy {
+            let [root, frontier] = match config.execution_plan.proposal_policy {
                 TacticProposalPolicy::Learned => campaign.sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
@@ -470,7 +475,8 @@ pub(super) fn run_seed(
                 }
             }
             .map_err(route_error)?;
-            let prefer_root = periodic_root_refresh_due(seed_index, episode);
+            let prefer_root =
+                lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence);
             let selected_branch = if prefer_root { &root } else { &frontier };
             if demonstration_coverage_pending
                 && selected_branch
@@ -496,7 +502,7 @@ pub(super) fn run_seed(
             campaign
                 .restore_branch(
                     selected_branch,
-                    seed_group(seed_index, episode)?,
+                    lane.episode_group(episode)?,
                     registry,
                     &branch_proposals.catalog,
                     &branch_proposals.blueprints,
@@ -510,12 +516,15 @@ pub(super) fn run_seed(
         demonstration_intervention_pending = false;
 
         let decision_index = campaign.decision_index;
+        let learner_snapshot_sha256 = tactic_learner_snapshot_sha256(&campaign)?;
+        let replay_rows_at_decision = campaign.training_replay_len() as u64;
+        let acquisition_rank = lane.acquisition.rank(decision_index);
         let refit_model = tactic_model_refit_required(
             campaign.model().is_some(),
             decision_index
                 .checked_add(1)
                 .ok_or_else(|| route_message("decision index overflowed"))?,
-            config.refit_every_decisions,
+            config.execution_plan.refit_every_decisions,
         );
         let paths_root = seed_root
             .join("native")
@@ -534,6 +543,13 @@ pub(super) fn run_seed(
                 && frontier.route_frames == source_route_tape.frames.len()
         });
         let directly_restored_frontier = usable_cached_frontier.is_some();
+        let restore_source = if directly_restored_frontier {
+            NativeTacticRestoreSource::ProcessLocalCheckpoint
+        } else if source_route_tape.frames.len() > pool.root_source_frame {
+            NativeTacticRestoreSource::AuthenticatedRootReplay
+        } else {
+            NativeTacticRestoreSource::AuthenticatedRoot
+        };
         let proposal_work = pool.execute_batch(
             &proposal_batch.proposals,
             Arc::clone(&proposal_catalog),
@@ -543,6 +559,14 @@ pub(super) fn run_seed(
             usable_cached_frontier,
             &paths_root,
         )?;
+        if proposal_work
+            .iter()
+            .any(|work| work.execution_plan_sha256 != execution_plan_sha256)
+        {
+            return Err(route_message(
+                "native tactic proposal result is detached from its execution plan",
+            ));
+        }
         let native_elapsed = proposal_work.iter().fold(Duration::ZERO, |total, work| {
             total.saturating_add(work.native_elapsed)
         });
@@ -710,6 +734,7 @@ pub(super) fn run_seed(
                     .encode(&proposal.transition.after)
                     .map_err(route_error)?;
                 Ok(NativeTacticProposalTrace {
+                    execution_plan_sha256,
                     option_id: proposal.outcome.selected.descriptor.option_id.clone(),
                     selection_reason: proposal.outcome.selected.reason,
                     reward: proposal.reward.training_reward,
@@ -736,7 +761,17 @@ pub(super) fn run_seed(
         decision_restore_accounting.refresh_rates();
         native_restore_accounting.merge(&decision_restore_accounting);
         let decision_trace = NativeTacticDecisionTrace {
+            execution_plan_sha256,
             decision_index,
+            learner_snapshot_sha256,
+            replay_rows_at_decision,
+            replay_generation: lane.generation_index as u64,
+            lane_index: lane.lane_index,
+            lane_role: Some(lane.role),
+            acquisition_rank,
+            frontier_identity: source_snapshot_sha256,
+            restore_source: Some(restore_source),
+            result_admission_schema: NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1.into(),
             episode,
             route_suffix_ticks: campaign
                 .route_tape
@@ -822,7 +857,8 @@ pub(super) fn run_seed(
             pause_tactic_campaign(&seed_root, &campaign)?;
             return Err(route_cancelled("native tactic route paused"));
         }
-        let run_finished = campaign.decision_index >= config.decisions_per_seed
+        let run_finished = campaign.decision_index
+            >= config.execution_plan.budgets.decisions_per_lane
             || native_ticks >= config.optimization.budgets.simulated_tick_budget;
         if !run_finished
             && tactic_checkpoint_due(
@@ -900,6 +936,7 @@ pub(super) fn run_seed(
     )?;
     Ok(CompletedNativeTacticSeed {
         result: NativeTacticSeedResult {
+            execution_plan_sha256,
             seed,
             success,
             decisions: campaign.decision_index,
@@ -930,4 +967,16 @@ pub(super) fn run_seed(
         },
         generated_training,
     })
+}
+
+fn tactic_learner_snapshot_sha256(
+    campaign: &TacticQCampaign,
+) -> Result<Digest, NativeTacticRouteRunError> {
+    let bytes = serde_cbor::to_vec(&(
+        campaign.decision_index,
+        campaign.training_replay_len(),
+        campaign.model(),
+    ))
+    .map_err(route_error)?;
+    Ok(Digest(Sha256::digest(bytes).into()))
 }

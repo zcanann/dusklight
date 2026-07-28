@@ -463,7 +463,17 @@ pub(super) fn decision_record(
     proposal_batch: Vec<NativeTacticProposalRecord>,
 ) -> NativeTacticDecisionRecord {
     NativeTacticDecisionRecord {
+        execution_plan_sha256: trace.execution_plan_sha256,
         decision_index: trace.decision_index,
+        learner_snapshot_sha256: trace.learner_snapshot_sha256,
+        replay_rows_at_decision: trace.replay_rows_at_decision,
+        replay_generation: trace.replay_generation,
+        lane_index: trace.lane_index,
+        lane_role: trace.lane_role,
+        acquisition_rank: trace.acquisition_rank,
+        frontier_identity: trace.frontier_identity,
+        restore_source: trace.restore_source,
+        result_admission_schema: trace.result_admission_schema.clone(),
         episode: trace.episode,
         episode_group,
         route_suffix_ticks: trace.route_suffix_ticks,
@@ -599,8 +609,27 @@ pub(super) fn project_tactic_decision_record(
             "tactic proposal journal has no unique retained transition",
         ));
     }
+    if record.execution_plan_sha256 != Digest::ZERO
+        && proposal_batch
+            .iter()
+            .any(|proposal| proposal.execution_plan_sha256 != record.execution_plan_sha256)
+    {
+        return Err(route_message(
+            "tactic proposal journal is detached from its execution plan",
+        ));
+    }
     Ok(NativeTacticDecisionTrace {
+        execution_plan_sha256: record.execution_plan_sha256,
         decision_index: record.decision_index,
+        learner_snapshot_sha256: record.learner_snapshot_sha256,
+        replay_rows_at_decision: record.replay_rows_at_decision,
+        replay_generation: record.replay_generation,
+        lane_index: record.lane_index,
+        lane_role: record.lane_role,
+        acquisition_rank: record.acquisition_rank,
+        frontier_identity: record.frontier_identity,
+        restore_source: record.restore_source,
+        result_admission_schema: record.result_admission_schema,
         episode: record.episode,
         route_suffix_ticks: record.route_suffix_ticks,
         selected_option_id: transition.value_sample.action.option_id.clone(),

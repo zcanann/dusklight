@@ -274,17 +274,17 @@ pub(super) fn validate_and_store_tactic_macros(
         .records()
         .map(|record| record.candidate.clone())
         .collect::<Vec<_>>();
-    let validation_frontiers = if tactic_macro_promotion_has_seed_support(config.exploration_seeds)
-    {
-        collect_tactic_macro_validation_frontiers(
-            config.output_root,
-            config.exploration_seeds,
-            root_checkpoint_sha256,
-            encoder,
-        )?
-    } else {
-        Vec::new()
-    };
+    let validation_frontiers =
+        if tactic_macro_promotion_has_seed_support(&config.execution_plan.seeds) {
+            collect_tactic_macro_validation_frontiers(
+                config.output_root,
+                &config.execution_plan.seeds,
+                root_checkpoint_sha256,
+                encoder,
+            )?
+        } else {
+            Vec::new()
+        };
     let mut accounting = TacticMacroValidationAccounting::default();
     let mut validation_state_count = 0_u64;
     let mut comparison_count = 0_u64;
@@ -480,7 +480,7 @@ pub(super) fn reuse_promoted_tactic_macro(
     let selected = SelectedTactic {
         schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
         learner_snapshot_sha256: frontier.state_sha256,
-        decision_index: config.decisions_per_seed,
+        decision_index: config.execution_plan.budgets.decisions_per_lane,
         descriptor: catalog
             .option_descriptors()
             .next()

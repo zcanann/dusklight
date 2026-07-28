@@ -95,6 +95,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V16: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V17: &str = "dusklight-native-tactic-route-report/v17";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V18: &str = "dusklight-native-tactic-route-report/v18";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19: &str = "dusklight-native-tactic-route-report/v19";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V20: &str = "dusklight-native-tactic-route-report/v20";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -127,9 +128,7 @@ const MAX_ROUTE_WORKERS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
 const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
 const ROUTE_TACTIC_TICK_COST: f32 = 0.01;
-const TACTIC_PROPOSALS_PER_DECISION: usize = 4;
 const MAX_TACTIC_PROPOSALS_PER_DECISION: usize = 16;
-const LEARNED_EPISODES_PER_GENERATION: usize = 4;
 const NAVIGABLE_SURFACE_MINIMUM_UP_NORMAL: f32 = 0.5;
 const NAVIGABLE_SURFACE_MAXIMUM_ATTACHMENT_DISTANCE: f32 = 512.0;
 const NAVIGABLE_SURFACE_ROUTE_TARGETS: usize = 8;
@@ -147,10 +146,21 @@ use report::{
 pub use report::{
     NativeTacticDecisionTrace, NativeTacticDemonstrationReport, NativeTacticFrontierAvailability,
     NativeTacticMacroDiscoveryReport, NativeTacticMacroReuseReport, NativeTacticMeasurementTrace,
-    NativeTacticProposalTrace, NativeTacticRestoreAccounting, NativeTacticRouteReport,
-    NativeTacticRouteRunConfig, NativeTacticRouteTiming, NativeTacticSeedResult,
-    NativeTacticStateTrace, NativeTacticValueTrace,
+    NativeTacticProposalTrace, NativeTacticRestoreAccounting, NativeTacticRestoreSource,
+    NativeTacticRouteReport, NativeTacticRouteRunConfig, NativeTacticRouteTiming,
+    NativeTacticSeedResult, NativeTacticStateTrace, NativeTacticValueTrace,
 };
+
+mod execution_plan;
+pub use execution_plan::{
+    NATIVE_TACTIC_EXECUTION_PLAN_FILE, NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V1,
+    NativeTacticAcquisitionPlan, NativeTacticCheckpointFallback, NativeTacticCheckpointOwnership,
+    NativeTacticCheckpointPlan, NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest,
+    NativeTacticGenerationPlan, NativeTacticInterventionPlan, NativeTacticLanePlan,
+    NativeTacticLaneRole, NativeTacticPlanBudgets, NativeTacticReplaySharingPlan,
+    NativeTacticResourceLimit,
+};
+
 pub fn run_native_tactic_route(
     config: &NativeTacticRouteRunConfig<'_>,
 ) -> Result<NativeTacticRouteReport, NativeTacticRouteRunError> {
@@ -177,6 +187,18 @@ pub fn run_native_tactic_route(
         return Err(route_message("completed tactic route cannot be resumed"));
     }
     fs::create_dir_all(config.output_root).map_err(route_error)?;
+    let execution_plan_path = config.output_root.join(NATIVE_TACTIC_EXECUTION_PLAN_FILE);
+    let execution_plan_sha256 = if config.resume {
+        let persisted = NativeTacticExecutionPlan::read(&execution_plan_path)?;
+        if persisted != *config.execution_plan {
+            return Err(route_message(
+                "resumed tactic route execution plan does not match the sealed plan",
+            ));
+        }
+        persisted.identity()?
+    } else {
+        config.execution_plan.write(&execution_plan_path)?
+    };
 
     let registry = FactRegistry::canonical();
     let process_tape = InputTape::decode(
@@ -308,23 +330,16 @@ pub fn run_native_tactic_route(
             let pool = NativeTacticProposalPool {
                 senders: Arc::new(senders),
                 next_worker: Arc::new(AtomicUsize::new(0)),
-                direct_restore_enabled: config.exploration_seeds.len() == 1,
+                direct_restore_enabled: config
+                    .execution_plan
+                    .checkpoint
+                    .cross_decision_direct_restore,
                 root_source_frame,
-                execution_strategy: config.execution_strategy,
-            };
-            let indexed_seeds = config
-                .exploration_seeds
-                .iter()
-                .copied()
-                .enumerate()
-                .collect::<Vec<_>>();
-            let generation_width = if config.proposal_policy == TacticProposalPolicy::Learned {
-                LEARNED_EPISODES_PER_GENERATION
-            } else {
-                indexed_seeds.len().max(1)
+                execution_strategy: config.execution_plan.execution_strategy,
+                execution_plan_sha256,
             };
             let coordinator_results = (|| {
-                let mut results = Vec::with_capacity(indexed_seeds.len());
+                let mut results = Vec::with_capacity(config.execution_plan.lanes.len());
                 let mut shared_training = Vec::<TacticQTrainingCorpus>::new();
                 let demonstration = load_or_capture_demonstration(
                     config,
@@ -340,13 +355,16 @@ pub fn run_native_tactic_route(
                 if let Some(demonstration) = demonstration {
                     shared_training.push(demonstration.corpus);
                 }
-                for generation in indexed_seeds.chunks(generation_width) {
+                for generation in &config.execution_plan.generations {
                     let inherited_training = shared_training.as_slice();
                     let mut generation_results = std::thread::scope(|generation_scope| {
                         let coordinator_handles = generation
+                            .lane_indices
                             .iter()
-                            .copied()
-                            .map(|(seed_index, seed)| {
+                            .map(|lane_index| {
+                                let lane = &config.execution_plan.lanes[*lane_index];
+                                let seed_index = lane.lane_index;
+                                let seed = lane.seed;
                                 let pool = pool.clone();
                                 let registry = &registry;
                                 let encoder = &encoder;
@@ -393,8 +411,10 @@ pub fn run_native_tactic_route(
                     );
                 }
                 let completion = (|| {
-                    let mined =
-                        mine_and_store_tactic_macros(config.output_root, config.exploration_seeds)?;
+                    let mined = mine_and_store_tactic_macros(
+                        config.output_root,
+                        &config.execution_plan.seeds,
+                    )?;
                     validate_and_store_tactic_macros(
                         config,
                         &pool,
@@ -427,7 +447,7 @@ pub fn run_native_tactic_route(
             }
         })?;
     indexed_results.sort_by_key(|(seed_index, _)| *seed_index);
-    if indexed_results.len() != config.exploration_seeds.len()
+    if indexed_results.len() != config.execution_plan.seeds.len()
         || indexed_results
             .iter()
             .enumerate()
@@ -492,9 +512,11 @@ pub fn run_native_tactic_route(
             },
         );
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V20.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
+        execution_plan_sha256,
+        execution_plan_path: path_text(&execution_plan_path),
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
         feature_schema_sha256: encoder.schema_sha256,
         action_schema_sha256,
@@ -504,12 +526,12 @@ pub fn run_native_tactic_route(
             .as_ref()
             .map_or(0, |report| report.transition_count),
         demonstration: demonstration.clone(),
-        exploration_seeds: config.exploration_seeds.to_vec(),
-        proposal_policy: config.proposal_policy,
-        execution_strategy: config.execution_strategy,
+        exploration_seeds: config.execution_plan.seeds.to_vec(),
+        proposal_policy: config.execution_plan.proposal_policy,
+        execution_strategy: config.execution_plan.execution_strategy,
         workers: worker_count,
-        decisions_per_seed: config.decisions_per_seed,
-        refit_every_decisions: config.refit_every_decisions,
+        decisions_per_seed: config.execution_plan.budgets.decisions_per_lane,
+        refit_every_decisions: config.execution_plan.refit_every_decisions,
         successful_seeds: seed_results.iter().filter(|seed| seed.success).count() as u64,
         total_native_ticks: seed_results
             .iter()
@@ -523,7 +545,13 @@ pub fn run_native_tactic_route(
             .saturating_add(tactic_macro_discovery.validation_native_ticks),
         total_decisions: seed_results.iter().map(|seed| seed.decisions).sum(),
         useful_decisions,
-        learned_episodes_per_generation: LEARNED_EPISODES_PER_GENERATION,
+        learned_episodes_per_generation: config
+            .execution_plan
+            .generations
+            .iter()
+            .map(|generation| generation.lane_indices.len())
+            .max()
+            .unwrap_or(0),
         training_replay_rows: seed_results
             .iter()
             .map(|seed| {
@@ -560,8 +588,8 @@ use worker_pool::{
 };
 mod campaign;
 use campaign::{
-    aggregate_route_timing, decision_evaluated_ticks, elapsed_micros, ratio_per_million,
-    refresh_route_throughput, run_seed,
+    NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1, aggregate_route_timing, decision_evaluated_ticks,
+    elapsed_micros, ratio_per_million, refresh_route_throughput, run_seed,
 };
 mod candidate_retention;
 use candidate_retention::{
@@ -847,118 +875,28 @@ pub(crate) fn initial_facts(
 fn validate_config(
     config: &NativeTacticRouteRunConfig<'_>,
 ) -> Result<(), NativeTacticRouteRunError> {
+    config.execution_plan.validate()?;
     let maximum_demonstration_chunk_ticks =
         goal_tactic_maximum_ticks(config.optimization.budgets.exploration_horizon_ticks)?;
-    if config.exploration_seeds.is_empty()
-        || config.exploration_seeds.len() > MAX_ROUTE_SEEDS
-        || config.workers == 0
+    if config.workers == 0
         || config.workers > MAX_ROUTE_WORKERS
-        || config.decisions_per_seed == 0
-        || config.decisions_per_seed > MAX_ROUTE_DECISIONS
-        || config.branch_every_decisions == 0
-        || config.branch_every_decisions > config.decisions_per_seed
-        || config.refit_every_decisions == 0
-        || config.refit_every_decisions > config.decisions_per_seed
-        || config.epsilon_per_million > 1_000_000
-        || config.demonstration_chunk_ticks.is_some_and(|ticks| {
-            ticks == 0
-                || ticks > maximum_demonstration_chunk_ticks
-                || config.proposal_policy != TacticProposalPolicy::Learned
-        })
+        || config.execution_plan.budgets.decisions_per_lane > MAX_ROUTE_DECISIONS
         || config
-            .exploration_seeds
-            .windows(2)
-            .any(|pair| pair[0] >= pair[1])
-        || config.decisions_per_seed > config.optimization.budgets.candidate_budget
+            .execution_plan
+            .demonstration_chunk_ticks
+            .is_some_and(|ticks| {
+                ticks == 0
+                    || ticks > maximum_demonstration_chunk_ticks
+                    || config.execution_plan.proposal_policy != TacticProposalPolicy::Learned
+            })
+        || config.execution_plan.budgets.decisions_per_lane
+            > config.optimization.budgets.candidate_budget
     {
         return Err(route_message(
             "native tactic route configuration is invalid",
         ));
     }
     Ok(())
-}
-
-fn seed_group(seed_index: usize, episode: u64) -> Result<u64, NativeTacticRouteRunError> {
-    (seed_index as u64)
-        .checked_mul(1_000_000)
-        .and_then(|base| base.checked_add(episode))
-        .ok_or_else(|| route_message("episode group overflowed"))
-}
-
-fn generalized_acquisition_partition(seed_index: usize) -> u64 {
-    let generation = seed_index / LEARNED_EPISODES_PER_GENERATION;
-    let lane = seed_index % LEARNED_EPISODES_PER_GENERATION;
-    if lane == 0 {
-        // Every shared-model generation reserves one terminal-support policy
-        // lane; the other lanes remain independent Q-ranked searches.
-        0
-    } else {
-        // The remaining workers sweep consecutive ranks across generations.
-        // The selector applies its own finite-window modulo after filtering
-        // already-proposed actions.
-        generation
-            .saturating_mul(LEARNED_EPISODES_PER_GENERATION - 1)
-            .saturating_add(lane) as u64
-    }
-}
-
-fn generalized_policy_acquisition_partition(
-    seed_index: usize,
-    seed_count: usize,
-    decision_index: u64,
-) -> u64 {
-    if seed_count != 1 {
-        return generalized_acquisition_partition(seed_index);
-    }
-    // A one-seed campaign enables process-local checkpoint reuse and can spend
-    // every native worker on alternatives from one frontier. It must not,
-    // however, collapse the learned policy to generation lane zero forever:
-    // that lane deliberately behavior-clones terminal-supported experience.
-    // Preserve one support decision per logical four-lane generation and use
-    // the other decisions to sweep consecutive fitted-Q acquisition ranks.
-    let lane = decision_index % LEARNED_EPISODES_PER_GENERATION as u64;
-    if lane == 0 {
-        0
-    } else {
-        (decision_index / LEARNED_EPISODES_PER_GENERATION as u64)
-            .saturating_mul((LEARNED_EPISODES_PER_GENERATION - 1) as u64)
-            .saturating_add(lane)
-    }
-}
-
-fn tactic_proposals_per_decision(worker_count: usize, seed_count: usize) -> usize {
-    if seed_count == 1 {
-        worker_count.min(MAX_TACTIC_PROPOSALS_PER_DECISION)
-    } else {
-        TACTIC_PROPOSALS_PER_DECISION
-    }
-}
-
-fn tactic_lane_epsilon(
-    proposal_policy: TacticProposalPolicy,
-    configured_epsilon_per_million: u32,
-    seed_index: usize,
-) -> u32 {
-    if proposal_policy == TacticProposalPolicy::Learned
-        && seed_index % LEARNED_EPISODES_PER_GENERATION == 0
-    {
-        // The lane itself is deterministic. Demonstration curricula apply a
-        // one-decision epsilon override immediately after restoring a human-
-        // connected checkpoint, then return here for learned continuation.
-        0
-    } else {
-        configured_epsilon_per_million
-    }
-}
-
-fn periodic_root_refresh_due(seed_index: usize, episode: u64) -> bool {
-    // Preserve one root refresh per four branch rounds for every seed without
-    // synchronizing the entire worker pool onto the root in the same
-    // generation. Staggering by lane leaves most workers free to expand newly
-    // discovered frontiers while another lane refreshes root connectivity.
-    episode.saturating_add((seed_index % LEARNED_EPISODES_PER_GENERATION) as u64)
-        % LEARNED_EPISODES_PER_GENERATION as u64
-        == 0
 }
 
 fn selected_tactic_fits_horizon(

@@ -157,19 +157,21 @@ pub(super) fn resume_seed(
     seed_index: usize,
     seed: u64,
 ) -> Result<ResumedSeedState, NativeTacticRouteRunError> {
+    let lane = config
+        .execution_plan
+        .lanes
+        .get(seed_index)
+        .filter(|lane| lane.seed == seed)
+        .ok_or_else(|| route_message("tactic seed is detached from its execution-plan lane"))?;
     let (checkpoint_decision, checkpoint_path) = latest_pause_checkpoint(seed_root)?;
     let checkpoint =
         TacticQCampaign::read_checkpoint_payload(&checkpoint_path).map_err(route_error)?;
     let expected_exploration = TacticExplorationConfig {
         seed,
-        epsilon_per_million: tactic_lane_epsilon(
-            config.proposal_policy,
-            config.epsilon_per_million,
-            seed_index,
-        ),
+        epsilon_per_million: lane.epsilon_per_million,
     };
     if checkpoint.decision_index != checkpoint_decision
-        || checkpoint.decision_index > config.decisions_per_seed
+        || checkpoint.decision_index > config.execution_plan.budgets.decisions_per_lane
         || checkpoint.feature_schema_sha256 != feature_schema_sha256
         || checkpoint.objective_sha256 != config.optimization.terminal_predicate.definition_sha256
         || checkpoint.root_checkpoint_sha256 != root_checkpoint_sha256
@@ -188,7 +190,7 @@ pub(super) fn resume_seed(
     }
     let trace = read_resumed_trace(seed_root, campaign.decision_index)?;
     let episode = trace.last().map_or(0, |decision| decision.episode);
-    if campaign.episode_group != seed_group(seed_index, episode)?
+    if campaign.episode_group != lane.episode_group(episode)?
         || trace
             .iter()
             .zip(&campaign.replay)
@@ -288,9 +290,12 @@ pub(super) fn read_completed_seed_result(
     path: &Path,
     seed: u64,
     decisions_per_seed: u64,
+    execution_plan_sha256: Digest,
+    lane: &NativeTacticLanePlan,
 ) -> Result<NativeTacticSeedResult, NativeTacticRouteRunError> {
     let result: NativeTacticSeedResult = read_bounded_json(path)?;
-    if result.seed != seed
+    if result.execution_plan_sha256 != execution_plan_sha256
+        || result.seed != seed
         || result.decisions > decisions_per_seed
         || result.useful_decisions > result.decisions
         || result.success != result.successful_tape.is_some()
@@ -298,11 +303,22 @@ pub(super) fn read_completed_seed_result(
         || result.generated_training_corpus.is_some() == result.final_checkpoint.is_some()
         || (!result.success && result.timing.retained_candidate_artifact_micros != 0)
         || result.trace.len() as u64 != result.decisions
-        || result
-            .trace
-            .iter()
-            .enumerate()
-            .any(|(index, decision)| decision.decision_index != index as u64)
+        || result.trace.iter().enumerate().any(|(index, decision)| {
+            decision.execution_plan_sha256 != execution_plan_sha256
+                || decision.decision_index != index as u64
+                || decision.learner_snapshot_sha256 == Digest::ZERO
+                || decision.replay_generation != lane.generation_index as u64
+                || decision.lane_index != lane.lane_index
+                || decision.lane_role != Some(lane.role)
+                || decision.acquisition_rank != lane.acquisition.rank(decision.decision_index)
+                || decision.frontier_identity == Digest::ZERO
+                || decision.restore_source.is_none()
+                || decision.result_admission_schema != NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1
+                || decision
+                    .proposal_batch
+                    .iter()
+                    .any(|proposal| proposal.execution_plan_sha256 != execution_plan_sha256)
+        })
         || result.native_ticks
             != result
                 .trace

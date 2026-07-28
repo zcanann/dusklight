@@ -95,7 +95,8 @@ use huntctl::search_evaluator::native_tactic_policy_runner::{
     NativeTacticPolicyRunConfig, run_native_tactic_policy,
 };
 use huntctl::search_evaluator::native_tactic_route_runner::{
-    NativeTacticRouteRunConfig, run_native_tactic_route,
+    NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest, NativeTacticPlanBudgets,
+    NativeTacticResourceLimit, NativeTacticRouteRunConfig, run_native_tactic_route,
 };
 use huntctl::search_evaluator::native_tactic_worker::NativeGenericExecutionStrategy;
 use huntctl::search_evaluator::optimization_request::OptimizationRequest;
@@ -115,6 +116,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+mod route_plan;
+use route_plan::native_tactic_execution_plan;
 
 const NATIVE_REPLAY_SOURCE_SCHEMA_V1: &str = "dusklight-native-replay-source/v1";
 
@@ -910,29 +914,25 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .into());
                 }
             };
+            let workers = usize_option(
+                learn_args,
+                "--workers",
+                usize::from(request.execution.workers),
+            )?;
+            let execution_plan = native_tactic_execution_plan(
+                learn_args,
+                &request,
+                &seeds,
+                proposal_policy,
+                execution_strategy,
+            )?;
             let report = run_native_tactic_route(&NativeTacticRouteRunConfig {
                 repository_root: &repository_root,
                 optimization: &request,
                 execution: &execution,
+                execution_plan: &execution_plan,
                 output_root: &output,
-                exploration_seeds: &seeds,
-                proposal_policy,
-                execution_strategy,
-                decisions_per_seed: u64_option(learn_args, "--decisions-per-seed", 256)?,
-                branch_every_decisions: u64_option(learn_args, "--branch-every", 8)?,
-                refit_every_decisions: u64_option(learn_args, "--refit-every", 4)?,
-                epsilon_per_million: option(learn_args, "--epsilon-per-million")
-                    .map(|value| value.parse())
-                    .transpose()?
-                    .unwrap_or(350_000),
-                demonstration_chunk_ticks: option(learn_args, "--demonstration-chunk-ticks")
-                    .map(|value| value.parse())
-                    .transpose()?,
-                workers: usize_option(
-                    learn_args,
-                    "--workers",
-                    usize::from(request.execution.workers),
-                )?,
+                workers,
                 cancellation: None,
                 resume: flag(learn_args, "--resume"),
             })?;

@@ -11,7 +11,9 @@ use dusklight_orchestration::native_tactic_route_runner::{
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V16,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V17, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V18,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19, NativeTacticDecisionTrace, NativeTacticRouteRunConfig,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V20,
+    NativeTacticDecisionTrace, NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest,
+    NativeTacticPlanBudgets, NativeTacticResourceLimit, NativeTacticRouteRunConfig,
     has_tactic_decision_journal, materialize_tactic_decision_route, project_tactic_decision_graph,
     read_tactic_decision_journal, run_native_tactic_route,
 };
@@ -219,6 +221,7 @@ pub(super) fn tactic_route_learning_projection(
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V17
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V18
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V20
                 ) && report
                     .get("optimization_request_sha256")
                     .and_then(Value::as_str)
@@ -397,22 +400,43 @@ fn launch_tactic_route_learning(
     let spawn = thread::Builder::new()
         .name(format!("tactic-route-{}", optimization.id))
         .spawn(move || {
-            let result = run_native_tactic_route(&NativeTacticRouteRunConfig {
-                repository_root: &root,
-                optimization: &optimization,
-                execution: &execution,
-                output_root: &output,
-                exploration_seeds: &seeds,
-                proposal_policy: TacticProposalPolicy::Learned,
-                execution_strategy: NativeGenericExecutionStrategy::NativeController,
-                decisions_per_seed: TACTIC_ROUTE_DECISIONS_PER_SEED,
-                branch_every_decisions: TACTIC_ROUTE_BRANCH_EVERY_DECISIONS,
-                refit_every_decisions: TACTIC_ROUTE_REFIT_EVERY_DECISIONS,
-                epsilon_per_million: TACTIC_ROUTE_EPSILON_PER_MILLION,
-                demonstration_chunk_ticks: None,
-                workers: usize::from(optimization.execution.workers),
-                cancellation: Some(&thread_cancellation),
-                resume,
+            let execution_plan =
+                NativeTacticExecutionPlan::build(NativeTacticExecutionPlanRequest {
+                    seeds,
+                    proposal_policy: TacticProposalPolicy::Learned,
+                    execution_strategy: NativeGenericExecutionStrategy::NativeController,
+                    lanes_per_generation: optimization
+                        .execution
+                        .deterministic_seeds
+                        .len()
+                        .min(4)
+                        .max(1),
+                    proposal_width_per_decision: 4,
+                    branch_every_decisions: TACTIC_ROUTE_BRANCH_EVERY_DECISIONS,
+                    refit_every_decisions: TACTIC_ROUTE_REFIT_EVERY_DECISIONS,
+                    root_refresh_cadence: 4,
+                    epsilon_per_million: TACTIC_ROUTE_EPSILON_PER_MILLION,
+                    demonstration_chunk_ticks: None,
+                    budgets: NativeTacticPlanBudgets {
+                        decisions_per_lane: TACTIC_ROUTE_DECISIONS_PER_SEED,
+                        native_ticks: NativeTacticResourceLimit::Bounded(
+                            optimization.budgets.simulated_tick_budget,
+                        ),
+                        memory_bytes: NativeTacticResourceLimit::Unbounded,
+                        wall_micros: NativeTacticResourceLimit::Unbounded,
+                    },
+                });
+            let result = execution_plan.and_then(|execution_plan| {
+                run_native_tactic_route(&NativeTacticRouteRunConfig {
+                    repository_root: &root,
+                    optimization: &optimization,
+                    execution: &execution,
+                    execution_plan: &execution_plan,
+                    output_root: &output,
+                    workers: usize::from(optimization.execution.workers),
+                    cancellation: Some(&thread_cancellation),
+                    resume,
+                })
             });
             let status = match result {
                 Ok(report) if report.successful_seeds > 0 => TacticRouteRuntimeStatus {

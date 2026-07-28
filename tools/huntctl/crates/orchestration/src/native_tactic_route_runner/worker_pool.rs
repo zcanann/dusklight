@@ -69,7 +69,15 @@ pub(super) fn run_seed_coordinator(
             return Err(route_message("unexpected pre-existing tactic seed result"));
         }
         let result =
-            read_completed_seed_result(&seed_result_path, seed, config.decisions_per_seed)?;
+            read_completed_seed_result(
+                &seed_result_path,
+                seed,
+                config.execution_plan.budgets.decisions_per_lane,
+                config.execution_plan.identity()?,
+                config.execution_plan.lanes.get(seed_index).ok_or_else(|| {
+                    route_message("tactic seed lane is absent from execution plan")
+                })?,
+            )?;
         let generated_training = load_generated_training_corpus(&result)?;
         Ok(CompletedNativeTacticSeed {
             result,
@@ -376,6 +384,7 @@ impl<W: PersistentTacticBatchWorker> PersistentTacticBatchWorker for TimedTactic
 }
 
 pub(super) struct NativeTacticProposalJob {
+    execution_plan_sha256: Digest,
     proposals: Vec<IndexedNativeTacticProposal>,
     proposal_catalog: Arc<dusklight_learning::tactic_asset::TacticAssetCatalog>,
     proposal_blueprints: Arc<Vec<TacticBlueprint>>,
@@ -394,6 +403,7 @@ pub(super) struct IndexedNativeTacticProposal {
 }
 
 pub(super) struct NativeTacticProposalWork {
+    pub(super) execution_plan_sha256: Digest,
     pub(super) worker_slot: usize,
     pub(super) outcome: NativeTacticWorkerOutcome,
     pub(super) native_elapsed: Duration,
@@ -408,6 +418,7 @@ pub(super) struct NativeTacticProposalPool {
     pub(super) direct_restore_enabled: bool,
     pub(super) root_source_frame: usize,
     pub(super) execution_strategy: NativeGenericExecutionStrategy,
+    pub(super) execution_plan_sha256: Digest,
 }
 
 #[derive(Clone, Debug)]
@@ -451,6 +462,7 @@ impl NativeTacticProposalPool {
             let (response, receiver) = mpsc::sync_channel(1);
             self.senders[worker_slot]
                 .send(NativeTacticProposalJob {
+                    execution_plan_sha256: self.execution_plan_sha256,
                     proposals: proposals
                         .iter()
                         .cloned()
@@ -482,6 +494,7 @@ impl NativeTacticProposalPool {
             let worker_slot = self.next_worker.fetch_add(1, Ordering::Relaxed) % self.senders.len();
             self.senders[worker_slot]
                 .send(NativeTacticProposalJob {
+                    execution_plan_sha256: self.execution_plan_sha256,
                     proposals: vec![IndexedNativeTacticProposal {
                         proposal_index,
                         selected: selected.clone(),
@@ -544,6 +557,7 @@ pub(super) fn load_or_capture_demonstration(
         let corpus_sha256 = Digest(Sha256::digest(&corpus_bytes).into());
         let corpus = TacticQTrainingCorpus::read(&corpus_path).map_err(route_error)?;
         let configured_chunk_matches = config
+            .execution_plan
             .demonstration_chunk_ticks
             .is_none_or(|ticks| ticks == report.chunk_ticks);
         let demonstrated_route = corpus
@@ -561,7 +575,7 @@ pub(super) fn load_or_capture_demonstration(
             || report.objective_sha256 != config.optimization.terminal_predicate.definition_sha256
             || report.feature_schema_sha256 != encoder.schema_sha256
             || report.root_checkpoint_sha256 != root_checkpoint_sha256
-            || config.proposal_policy != TacticProposalPolicy::Learned
+            || config.execution_plan.proposal_policy != TacticProposalPolicy::Learned
             || report.source_boundary_index != config.optimization.route.source_boundary_index
             || !configured_chunk_matches
             || report.transition_count == 0
@@ -601,7 +615,7 @@ pub(super) fn load_or_capture_demonstration(
             "incomplete demonstration evidence cannot be resumed",
         ));
     }
-    let Some(chunk_ticks) = config.demonstration_chunk_ticks else {
+    let Some(chunk_ticks) = config.execution_plan.demonstration_chunk_ticks else {
         return Ok(None);
     };
 
@@ -1031,6 +1045,7 @@ pub(super) fn run_tactic_proposal_worker(
                 Ok(outcome) => {
                     let elapsed = execution_started.elapsed();
                     work.push(NativeTacticProposalWork {
+                        execution_plan_sha256: job.execution_plan_sha256,
                         worker_slot,
                         outcome,
                         native_elapsed: native_elapsed.saturating_add(if batch_index == 0 {

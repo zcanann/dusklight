@@ -38,7 +38,7 @@ use dusklight_search::suffix_batch::{
     NATIVE_CACHED_SUFFIX_BATCH_SCHEMA, NativeCheckpointCacheRequest, NativeCheckpointValidation,
     NativeSuffixBatch, NativeSuffixCandidate,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
@@ -51,7 +51,7 @@ pub const NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V2: &str =
 const TACTIC_CHECKPOINT_CACHE_BYTES: usize = 640 * 1024 * 1024;
 const TACTIC_CHECKPOINT_CACHE_ENTRIES: usize = 2;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NativeGenericExecutionStrategy {
     NativeController,
