@@ -16,6 +16,11 @@
 
 #include "d/d_debug_viewer.h"
 
+#if TARGET_PC
+#include "dusk/collision_wall_color.h"
+#include "dusk/settings.h"
+#endif
+
 #if DEBUG
 static void ASSERT_SOLDHEAP() {
     JKRHeap* currentHeap = JKRGetCurrentHeap();
@@ -1180,12 +1185,24 @@ void dBgW::DebugDraw() const {
         points[2] += normal;
 
         GXColor* pcolor;
+        GXColor highlighted_wall_color = wall_color;
         if (cBgW_CheckBGround(normal.y)) {
             pcolor = &ground_color;
         } else if (cBgW_CheckBRoof(normal.y)) {
             pcolor = &roof_color;
         } else {
             pcolor = &wall_color;
+#if TARGET_PC
+            if (dusk::getTransientSettings().collisionView.colorNearVerticalWalls) {
+                const dusk::CollisionWallTint tint = dusk::collision_wall_tint(normal.y);
+                if (tint.active) {
+                    highlighted_wall_color.r = tint.red;
+                    highlighted_wall_color.g = tint.green;
+                    highlighted_wall_color.b = tint.blue;
+                    pcolor = &highlighted_wall_color;
+                }
+            }
+#endif
         }
 
         dDbVw_drawTriangleXlu(points, *pcolor, TRUE);

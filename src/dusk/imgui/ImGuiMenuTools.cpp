@@ -85,6 +85,14 @@ namespace dusk {
                 ImGui::Indent();
                 ImGui::Checkbox("Ground", &collisionView.showGround);
                 ImGui::Checkbox("Walls", &collisionView.showWalls);
+                ImGui::BeginDisabled(!collisionView.showWalls);
+                ImGui::Indent();
+                ImGui::Checkbox("Highlight near-vertical angles",
+                                &collisionView.colorNearVerticalWalls);
+                ImGui::TextDisabled("90 deg: purple");
+                ImGui::TextDisabled("<90 deg: magenta to pink at 89.5 deg");
+                ImGui::Unindent();
+                ImGui::EndDisabled();
                 ImGui::Checkbox("Ceilings", &collisionView.showCeilings);
                 ImGui::Checkbox("Enable wireframe view", &collisionView.enableWireframe);
                 ImGui::SliderFloat("Opacity##terrain", &collisionView.terrainViewOpacity, 0.0f, 100.0f);

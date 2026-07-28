@@ -386,6 +386,7 @@ static TransientSettings g_transientSettings = {
         .enableTerrainView = false,
         .showGround = true,
         .showWalls = true,
+        .colorNearVerticalWalls = false,
         .showCeilings = true,
         .enableWireframe = false,
         .enableCeilingExtent = false,

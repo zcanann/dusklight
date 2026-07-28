@@ -316,6 +316,7 @@ struct CollisionViewSettings {
     bool enableTerrainView;
     bool showGround;
     bool showWalls;
+    bool colorNearVerticalWalls;
     bool showCeilings;
     bool enableWireframe;
     bool enableCeilingExtent;

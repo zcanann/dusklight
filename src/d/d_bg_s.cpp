@@ -17,6 +17,7 @@
 #if TARGET_PC
 #include <cmath>
 
+#include "dusk/collision_wall_color.h"
 #include "dusk/offset_ptr.h"
 #include "dusk/settings.h"
 #endif
@@ -767,7 +768,17 @@ static int poly_draw(dBgS_CaptPoly* capt, cBgD_Vtx_t* vtxList, int v0, int v1, i
         }
     } else {
         if (!s_InsideHio.ChkWallOff()) {
-            dDbVw_drawTriangleOpa(points, wall_color, TRUE);
+            GXColor draw_color = wall_color;
+            if (collisionViewSettings.colorNearVerticalWalls) {
+                const dusk::CollisionWallTint tint =
+                    dusk::collision_wall_tint(plane->mNormal.y);
+                if (tint.active) {
+                    draw_color.r = tint.red;
+                    draw_color.g = tint.green;
+                    draw_color.b = tint.blue;
+                }
+            }
+            dDbVw_drawTriangleOpa(points, draw_color, TRUE);
         }
     }
     
