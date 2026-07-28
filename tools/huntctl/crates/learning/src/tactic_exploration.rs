@@ -856,7 +856,9 @@ pub fn ensure_generalized_value_acquisition(
         .iter_mut()
         .find(|proposal| proposal.descriptor == *descriptor)
     {
-        existing.reason = TacticSelectionReason::GeneralizedValue;
+        if existing.reason != TacticSelectionReason::Epsilon {
+            existing.reason = TacticSelectionReason::GeneralizedValue;
+        }
         return Ok(());
     }
     let mut acquisition = proposals[0].clone();
@@ -2744,6 +2746,18 @@ mod tests {
         assert_eq!(proposals[0].reason, TacticSelectionReason::Epsilon);
         assert_eq!(proposals[1].descriptor, predicted);
         assert_eq!(proposals[1].reason, TacticSelectionReason::GeneralizedValue);
+
+        let mut confirmed = vec![proposals[0].clone()];
+        ensure_generalized_value_acquisition(
+            std::slice::from_ref(&exploratory),
+            0,
+            2,
+            &mut confirmed,
+        )
+        .unwrap();
+        retain_generalized_value_acquisition(&mut confirmed).unwrap();
+        assert_eq!(confirmed[0].descriptor, exploratory);
+        assert_eq!(confirmed[0].reason, TacticSelectionReason::Epsilon);
     }
 
     #[test]

@@ -1508,6 +1508,7 @@ impl TacticQCampaign {
             0,
             TacticProposalPolicy::Learned,
             None,
+            false,
         )
     }
 
@@ -1521,6 +1522,7 @@ impl TacticQCampaign {
         acquisition_partition: u64,
         policy: TacticProposalPolicy,
         goal_distance_feature: Option<usize>,
+        force_exploration: bool,
     ) -> Result<TacticQProposalBatch, TacticQCampaignError>
     where
         E: fmt::Display,
@@ -1596,14 +1598,41 @@ impl TacticQCampaign {
             .map(|transition| transition.value_sample.action.option_id.as_str())
             .collect::<BTreeSet<_>>();
         let state_untried = applicable_untried_descriptors(&ranking.choices, &tried_here);
+        let exploration = if force_exploration {
+            TacticExplorationConfig {
+                seed: self.exploration.seed,
+                epsilon_per_million: 1_000_000,
+            }
+        } else {
+            self.exploration
+        };
         let mut proposals = choose_tactic_batch_for_policy(
             &ranking,
             self.decision_index,
-            self.exploration,
+            exploration,
             &state_untried,
             maximum_proposals,
             policy,
         )?;
+        let forced_primary = if force_exploration {
+            let proposal = proposals
+                .first()
+                .cloned()
+                .ok_or(TacticQCampaignError::InvalidState(
+                    "forced exploration did not produce a primary proposal",
+                ))?;
+            if !matches!(
+                proposal.reason,
+                TacticSelectionReason::Epsilon | TacticSelectionReason::UnsupportedBootstrap
+            ) {
+                return Err(TacticQCampaignError::InvalidState(
+                    "forced exploration primary is value-selected",
+                ));
+            }
+            Some(proposal)
+        } else {
+            None
+        };
         if policy != TacticProposalPolicy::RandomValid {
             ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
         }
@@ -1644,6 +1673,11 @@ impl TacticQCampaign {
                 &mut proposals,
             )?;
             retain_generalized_value_acquisition(&mut proposals)?;
+        }
+        if let Some(primary) = forced_primary {
+            proposals.retain(|proposal| proposal.descriptor != primary.descriptor);
+            proposals.insert(0, primary);
+            proposals.truncate(maximum_proposals);
         }
         if proposals.iter().any(|proposal| {
             !ranking.choices.iter().any(|choice| {

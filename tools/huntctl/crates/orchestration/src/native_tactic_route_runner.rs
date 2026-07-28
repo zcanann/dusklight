@@ -3045,7 +3045,6 @@ fn run_seed(
                     config.proposal_policy,
                     config.epsilon_per_million,
                     seed_index,
-                    config.demonstration_chunk_ticks.is_some(),
                 ),
             },
         )
@@ -3100,6 +3099,7 @@ fn run_seed(
     // Process-local handles intentionally do not survive campaign resume.
     let mut cached_frontier: Option<CachedTacticFrontier> = None;
     let mut branch_acquisition: Option<TacticFrontierAcquisition> = None;
+    let mut demonstration_intervention_pending = false;
 
     while campaign.decision_index < config.decisions_per_seed
         && native_ticks < config.optimization.budgets.simulated_tick_budget
@@ -3163,6 +3163,8 @@ fn run_seed(
             .map_err(route_error)?;
             let prefer_root = periodic_root_refresh_due(seed_index, episode);
             let selected_branch = if prefer_root { &root } else { &frontier };
+            demonstration_intervention_pending =
+                demonstration_curriculum && !prefer_root && selected_branch.acquisition.is_some();
             branch_acquisition = selected_branch.acquisition.clone();
             let branch_proposals = parameterized_catalog_for_state(
                 seed,
@@ -3226,6 +3228,7 @@ fn run_seed(
                     generalized_acquisition_partition(seed_index),
                     config.proposal_policy,
                     Some(encoder.goal_distance_feature()),
+                    demonstration_intervention_pending,
                 )
                 .map_err(route_error)?;
             timing.tactic_selection_micros = timing
@@ -3308,6 +3311,8 @@ fn run_seed(
             .map_err(route_error)?;
             let prefer_root = periodic_root_refresh_due(seed_index, episode);
             let selected_branch = if prefer_root { &root } else { &frontier };
+            demonstration_intervention_pending =
+                demonstration_curriculum && !prefer_root && selected_branch.acquisition.is_some();
             branch_acquisition = selected_branch.acquisition.clone();
             let branch_proposals = parameterized_catalog_for_state(
                 seed,
@@ -3332,6 +3337,7 @@ fn run_seed(
                 .checkpoint_branching_micros
                 .saturating_add(elapsed_micros(branch_started.elapsed()));
         };
+        demonstration_intervention_pending = false;
 
         let decision_index = campaign.decision_index;
         let refit_model = tactic_model_refit_required(
@@ -3916,7 +3922,6 @@ fn resume_seed(
             config.proposal_policy,
             config.epsilon_per_million,
             seed_index,
-            config.demonstration_chunk_ticks.is_some(),
         ),
     };
     if checkpoint.decision_index != checkpoint_decision
@@ -6580,21 +6585,14 @@ fn tactic_lane_epsilon(
     proposal_policy: TacticProposalPolicy,
     configured_epsilon_per_million: u32,
     seed_index: usize,
-    demonstration_curriculum: bool,
 ) -> u32 {
     if proposal_policy == TacticProposalPolicy::Learned
         && seed_index % LEARNED_EPISODES_PER_GENERATION == 0
     {
-        if demonstration_curriculum {
-            // A human-connected checkpoint already supplies the logged action.
-            // Force the curriculum lane to test a seeded untried executable
-            // tactic; Q lanes consume the resulting counterexamples.
-            1_000_000
-        } else {
-            // Without a demonstration, reserve one deterministic exploitation
-            // lane while the remaining lanes retain configured exploration.
-            0
-        }
+        // The lane itself is deterministic. Demonstration curricula apply a
+        // one-decision epsilon override immediately after restoring a human-
+        // connected checkpoint, then return here for learned continuation.
+        0
     } else {
         configured_epsilon_per_million
     }
@@ -6749,22 +6747,22 @@ mod tests {
     }
 
     #[test]
-    fn learned_support_and_demonstration_intervention_lanes_are_distinct() {
+    fn learned_support_lane_is_deterministic_between_interventions() {
         let configured = 250_000;
         assert_eq!(
-            tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 0, false),
+            tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 0),
             0
         );
         assert_eq!(
-            tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 0, true),
-            1_000_000
+            tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 4),
+            0
         );
         assert_eq!(
-            tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 1, true),
+            tactic_lane_epsilon(TacticProposalPolicy::Learned, configured, 1),
             configured
         );
         assert_eq!(
-            tactic_lane_epsilon(TacticProposalPolicy::RandomValid, configured, 0, true),
+            tactic_lane_epsilon(TacticProposalPolicy::RandomValid, configured, 0),
             configured
         );
     }
