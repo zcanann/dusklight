@@ -20,8 +20,8 @@ use crate::tactic_q_campaign::{
     TACTIC_Q_CHECKPOINT_EXTENSION, TACTIC_Q_DEMONSTRATION_EPISODE_GROUP, TacticCampaignDiagnostics,
     TacticCampaignGraphProjection, TacticCampaignGraphProjectionEdge,
     TacticCampaignGraphProjectionNode, TacticFrontierAcquisition, TacticQCampaign,
-    TacticQCampaignError, TacticQDecision, TacticQTrainingCorpus, has_no_progress_loop,
-    route_checkpoint,
+    TacticQCampaignError, TacticQDecision, TacticQFinalResult, TacticQTrainingCorpus,
+    has_no_progress_loop, route_checkpoint,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use dusklight_automation_contracts::artifact::Digest;
@@ -118,11 +118,10 @@ const MAXIMUM_TACTIC_DECISION_RECORD_BYTES: usize = 16 * 1024 * 1024;
 const MAXIMUM_TACTIC_DECISION_SEGMENT_BYTES: usize = 256 * 1024 * 1024;
 const MAXIMUM_TACTIC_DECISION_SEGMENTS: usize =
     (MAX_ROUTE_DECISIONS as usize).div_ceil(NATIVE_TACTIC_DECISION_COMPACTION_RECORDS as usize) + 1;
-// A terminal-reaching proposal ends its seed immediately, so short benchmark
-// routes may receive only one learned acquisition per seed. Keep enough
-// bounded root restarts for discoveries near the end of a parallel dispatch
-// window to feed back into later proposals instead of silently capping the
-// effective learning horizon at thirty-two decisions.
+// A seed retains terminal routes and resumes from an authenticated root so a
+// tie or slow success cannot silently cap the optimization horizon. Keep
+// enough bounded restarts for discoveries near the end of a parallel dispatch
+// window to feed back into later proposals.
 const MAX_ROUTE_SEEDS: usize = 256;
 const MAX_ROUTE_WORKERS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
@@ -3101,10 +3100,15 @@ fn run_seed(
     let mut cached_frontier: Option<CachedTacticFrontier> = None;
     let mut branch_acquisition: Option<TacticFrontierAcquisition> = None;
     let mut demonstration_intervention_pending = false;
+    let retained_success_root = seed_root.join("retained-successes");
+    let mut best_success = load_best_retained_success(
+        &retained_success_root,
+        campaign.objective_sha256,
+        campaign.root_checkpoint_sha256,
+    )?;
 
     while campaign.decision_index < config.decisions_per_seed
         && native_ticks < config.optimization.budgets.simulated_tick_budget
-        && campaign.current.snapshot.terminal.reached != Some(true)
     {
         if cancellation_requested(config) {
             timing.wall_micros =
@@ -3119,8 +3123,10 @@ fn run_seed(
             pause_tactic_campaign(&seed_root, &campaign)?;
             return Err(route_cancelled("native tactic route paused"));
         }
-        let periodic_branch = campaign.decision_index > 0
-            && campaign.decision_index % config.branch_every_decisions == 0;
+        let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
+        let periodic_branch = terminal_restart
+            || (campaign.decision_index > 0
+                && campaign.decision_index % config.branch_every_decisions == 0);
         if !campaign.replay.is_empty() && periodic_branch {
             let branch_started = Instant::now();
             episode = episode
@@ -3162,7 +3168,7 @@ fn run_seed(
                 }
             }
             .map_err(route_error)?;
-            let prefer_root = periodic_root_refresh_due(seed_index, episode);
+            let prefer_root = terminal_restart || periodic_root_refresh_due(seed_index, episode);
             let selected_branch = if prefer_root { &root } else { &frontier };
             demonstration_intervention_pending =
                 demonstration_curriculum && !prefer_root && selected_branch.acquisition.is_some();
@@ -3623,6 +3629,15 @@ fn run_seed(
             ),
         )?;
         trace.push(decision_trace);
+        if step.step.transition.value_sample.terminal {
+            let candidate = campaign.final_result().map_err(route_error)?;
+            retain_successful_result(
+                &retained_success_root,
+                decision_index,
+                &candidate,
+                &mut best_success,
+            )?;
+        }
         if cancellation_requested(config) {
             timing.evidence_projection_and_persistence_micros = timing
                 .evidence_projection_and_persistence_micros
@@ -3639,8 +3654,7 @@ fn run_seed(
             pause_tactic_campaign(&seed_root, &campaign)?;
             return Err(route_cancelled("native tactic route paused"));
         }
-        let run_finished = step.step.transition.value_sample.terminal
-            || campaign.decision_index >= config.decisions_per_seed
+        let run_finished = campaign.decision_index >= config.decisions_per_seed
             || native_ticks >= config.optimization.budgets.simulated_tick_budget;
         if !run_finished
             && tactic_checkpoint_due(
@@ -3657,14 +3671,11 @@ fn run_seed(
         timing.evidence_projection_and_persistence_micros = timing
             .evidence_projection_and_persistence_micros
             .saturating_add(elapsed_micros(evidence_started.elapsed()));
-        if step.step.transition.value_sample.terminal {
-            break;
-        }
     }
 
     let final_persistence_started = Instant::now();
     compact_tactic_decision_journal(&seed_root)?;
-    let success = campaign.current.snapshot.terminal.reached == Some(true);
+    let success = best_success.is_some();
     let generated_training = campaign
         .training_corpus_from(imported_training_replay_rows)
         .map_err(route_error)?;
@@ -3673,15 +3684,14 @@ fn run_seed(
         .write(&generated_training_path, &checkpoint_content_root)
         .map_err(route_error)?;
     remove_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint)?;
-    let (successful_tape, final_result) = if success {
+    let (successful_tape, final_result) = if let Some(result) = best_success {
         let retained_candidate_started = Instant::now();
         let tape_path = seed_root.join("successful.tape");
         write_new(
             &tape_path,
-            &campaign.route_tape.encode().map_err(route_error)?,
+            &result.route_tape.encode().map_err(route_error)?,
         )?;
         let result_path = seed_root.join("final-result.dtqz");
-        let result = campaign.final_result().map_err(route_error)?;
         result.write(&result_path).map_err(route_error)?;
         timing.retained_candidate_artifact_micros = timing
             .retained_candidate_artifact_micros
@@ -3745,6 +3755,98 @@ fn run_seed(
         },
         generated_training,
     })
+}
+
+fn retain_successful_result(
+    root: &Path,
+    decision_index: u64,
+    candidate: &TacticQFinalResult,
+    best: &mut Option<TacticQFinalResult>,
+) -> Result<(), NativeTacticRouteRunError> {
+    if best
+        .as_ref()
+        .is_some_and(|incumbent| !successful_result_is_better(candidate, incumbent))
+    {
+        return Ok(());
+    }
+    let path = root.join(format!(
+        "success-{:06}-{decision_index:06}-{}.dtqz",
+        candidate.route_tape.frames.len(),
+        candidate.content_sha256
+    ));
+    candidate.write(&path).map_err(route_error)?;
+    *best = Some(candidate.clone());
+    Ok(())
+}
+
+fn load_best_retained_success(
+    root: &Path,
+    objective_sha256: Digest,
+    root_checkpoint_sha256: Digest,
+) -> Result<Option<TacticQFinalResult>, NativeTacticRouteRunError> {
+    let metadata = match fs::symlink_metadata(root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(route_error(error)),
+    };
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        return Err(route_message(
+            "retained-success root is not a physical directory",
+        ));
+    }
+    let mut paths = fs::read_dir(root)
+        .map_err(route_error)?
+        .map(|entry| entry.map(|entry| entry.path()).map_err(route_error))
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.sort();
+    if paths.len() > MAX_ROUTE_DECISIONS as usize {
+        return Err(route_message("retained-success directory is oversized"));
+    }
+    let mut best = None;
+    for path in paths {
+        if path.extension().and_then(|extension| extension.to_str()) != Some("dtqz") {
+            return Err(route_message(
+                "retained-success directory contains an unexpected artifact",
+            ));
+        }
+        let result = TacticQFinalResult::read(&path).map_err(route_error)?;
+        if result.objective_sha256 != objective_sha256
+            || result.root_checkpoint_sha256 != root_checkpoint_sha256
+        {
+            return Err(route_message(
+                "retained-success artifact is detached from the campaign",
+            ));
+        }
+        if best
+            .as_ref()
+            .is_none_or(|incumbent| successful_result_is_better(&result, incumbent))
+        {
+            best = Some(result);
+        }
+    }
+    Ok(best)
+}
+
+fn successful_result_is_better(
+    candidate: &TacticQFinalResult,
+    incumbent: &TacticQFinalResult,
+) -> bool {
+    successful_route_rank_is_better(
+        candidate.route_tape.frames.len(),
+        candidate.content_sha256,
+        incumbent.route_tape.frames.len(),
+        incumbent.content_sha256,
+    )
+}
+
+fn successful_route_rank_is_better(
+    candidate_frames: usize,
+    candidate_sha256: Digest,
+    incumbent_frames: usize,
+    incumbent_sha256: Digest,
+) -> bool {
+    candidate_frames < incumbent_frames
+        || (candidate_frames == incumbent_frames && candidate_sha256.0 < incumbent_sha256.0)
 }
 
 fn shared_training_unique_rows(
@@ -6823,6 +6925,34 @@ mod tests {
         assert!(tactic_macro_outcome_is_better(
             short_regression,
             fast_progress
+        ));
+    }
+
+    #[test]
+    fn retained_success_ranking_minimizes_ticks_and_breaks_ties_deterministically() {
+        assert!(successful_route_rank_is_better(
+            124,
+            Digest([9; 32]),
+            125,
+            Digest([0; 32])
+        ));
+        assert!(!successful_route_rank_is_better(
+            126,
+            Digest([0; 32]),
+            125,
+            Digest([9; 32])
+        ));
+        assert!(successful_route_rank_is_better(
+            125,
+            Digest([1; 32]),
+            125,
+            Digest([2; 32])
+        ));
+        assert!(!successful_route_rank_is_better(
+            125,
+            Digest([2; 32]),
+            125,
+            Digest([1; 32])
         ));
     }
 
