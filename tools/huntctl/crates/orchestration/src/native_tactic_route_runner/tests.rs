@@ -6,6 +6,50 @@ use super::macro_discovery::*;
 use super::worker_pool::*;
 use super::*;
 
+#[test]
+fn unassisted_learning_requires_declared_generous_discovery_capacity() {
+    assert_eq!(
+        unassisted_discovery_horizon_requirement(
+            CampaignClass::FromScratchDiscovery,
+            TacticProposalPolicy::Learned,
+            false,
+            false,
+            131,
+        ),
+        Ok(Some(900))
+    );
+    assert!(
+        unassisted_discovery_horizon_requirement(
+            CampaignClass::LocalTasRefinement,
+            TacticProposalPolicy::Learned,
+            false,
+            false,
+            131,
+        )
+        .is_err()
+    );
+    assert_eq!(
+        unassisted_discovery_horizon_requirement(
+            CampaignClass::LocalTasRefinement,
+            TacticProposalPolicy::Learned,
+            true,
+            false,
+            131,
+        ),
+        Ok(None)
+    );
+    assert_eq!(
+        unassisted_discovery_horizon_requirement(
+            CampaignClass::LocalTasRefinement,
+            TacticProposalPolicy::RandomValid,
+            false,
+            false,
+            131,
+        ),
+        Ok(None)
+    );
+}
+
 fn acquisition_with_expansion_count(expansion_count: u64) -> TacticFrontierAcquisition {
     TacticFrontierAcquisition {
         expansion_count,

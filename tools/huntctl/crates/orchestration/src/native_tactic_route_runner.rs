@@ -1,5 +1,6 @@
 //! Fresh-model tactic-Q route learning on an authenticated native checkpoint.
 
+use crate::discovery_horizon::minimum_discovery_horizon_ticks;
 use crate::native_residual_campaign::NativeResidualExecutionBinding;
 use crate::native_suffix_result::{NativeTerminalBinding, ValidatedNativeSuffixBatch};
 use crate::native_suffix_worker::{
@@ -13,7 +14,7 @@ use crate::native_tactic_worker::{
     execute_selected_tactic_with_checkpoint_retention_and_strategy, materialize_tactic_frontier,
     tactic_root_checkpoint_sha256,
 };
-use crate::optimization_request::OptimizationRequest;
+use crate::optimization_request::{CampaignClass, OptimizationRequest};
 use crate::tactic_macro_store::{
     TACTIC_MACRO_REGISTRY_EXTENSION, read_tactic_macro_registry, write_tactic_macro_registry,
 };
@@ -1055,6 +1056,7 @@ fn validate_config(
     config: &NativeTacticRouteRunConfig<'_>,
 ) -> Result<(), NativeTacticRouteRunError> {
     config.execution_plan.validate()?;
+    validate_unassisted_discovery_horizon(config)?;
     let maximum_demonstration_chunk_ticks =
         goal_tactic_maximum_ticks(config.optimization.budgets.exploration_horizon_ticks)?;
     if config.workers == 0
@@ -1081,6 +1083,51 @@ fn validate_config(
         ));
     }
     Ok(())
+}
+
+fn validate_unassisted_discovery_horizon(
+    config: &NativeTacticRouteRunConfig<'_>,
+) -> Result<(), NativeTacticRouteRunError> {
+    let plan = config.execution_plan;
+    let required = unassisted_discovery_horizon_requirement(
+        config.optimization.campaign_class,
+        plan.proposal_policy,
+        plan.demonstration_chunk_ticks.is_some(),
+        plan.promoted_tactic_registry_sha256.is_some(),
+        config.optimization.budgets.promotion_before_tick,
+    )
+    .map_err(route_message)?;
+    let Some(minimum) = required else {
+        return Ok(());
+    };
+    if config.optimization.budgets.exploration_horizon_ticks < minimum {
+        return Err(route_message(format!(
+            "unassisted learned tactic routing requires at least {minimum} discovery ticks; \
+             promotion and terminal discovery horizons are separate authority"
+        )));
+    }
+    Ok(())
+}
+
+fn unassisted_discovery_horizon_requirement(
+    campaign_class: CampaignClass,
+    proposal_policy: TacticProposalPolicy,
+    has_demonstration: bool,
+    has_promoted_tactics: bool,
+    promotion_before_tick: u64,
+) -> Result<Option<u64>, &'static str> {
+    let unassisted_learning = proposal_policy == TacticProposalPolicy::Learned
+        && !has_demonstration
+        && !has_promoted_tactics;
+    if !unassisted_learning {
+        return Ok(None);
+    }
+    if campaign_class != CampaignClass::FromScratchDiscovery {
+        return Err("unassisted learned tactic routing requires a from_scratch_discovery request");
+    }
+    minimum_discovery_horizon_ticks(promotion_before_tick)
+        .map(Some)
+        .ok_or("minimum discovery horizon overflowed")
 }
 
 fn selected_tactic_fits_horizon(

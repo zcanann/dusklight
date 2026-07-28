@@ -154,6 +154,11 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   generous or adaptive; the `131`/`125` thresholds govern shortening and
   promotion, not whether initial exploration may continue. Evidence:
   `ordon-p3-q131-local-replay-ablation-v1.report.json`.
+- Unassisted learned tactic routing now requires an explicit
+  `from_scratch_discovery` request and a route horizon of at least 30 native
+  seconds (`900` ticks) and at least twice the promotion target. The unattended
+  native goal-learning loop uses the same minimum. A local-refinement request
+  can no longer silently stand in for adequate scratch discovery.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
   camera orientation, exact A-button prompt-status bits, and the native
@@ -198,13 +203,11 @@ tie is diagnostic evidence only.
 
 ## P3 - Prove delayed-credit continuous-control learning
 
-- [ ] Replace the incumbent-adjacent fixed discovery horizon with a generous
-      or adaptive terminal-discovery horizon. Retain intermediate native states
-      and terminal evidence, then shorten learned successful routes under the
-      separate `131`/`125` promotion authority.
-- [ ] Make scratch terminal discovery reliable across independent seeds and
-      use learned terminal return to shorten the authenticated tick-`206`
-      scratch route below the tick-`131` demonstration.
+- [ ] Run the enforced generous scratch-discovery horizon across independent
+      seeds and establish reliable authenticated terminal discovery.
+- [ ] Use learned terminal return and retained intermediate native states to
+      shorten the authenticated tick-`206` scratch route below the tick-`131`
+      demonstration under separate promotion authority.
 
 Exit gate:
 

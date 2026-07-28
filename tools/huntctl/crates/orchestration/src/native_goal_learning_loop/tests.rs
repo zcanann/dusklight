@@ -51,15 +51,6 @@ fn request(root: &Path) -> NativeGoalLearningLoopRequest {
     request
 }
 
-#[test]
-fn discovery_horizon_reserves_a_material_timeout_margin() {
-    assert_eq!(minimum_discovery_horizon_ticks(1).unwrap(), 17);
-    assert_eq!(minimum_discovery_horizon_ticks(125).unwrap(), 141);
-    assert_eq!(minimum_discovery_horizon_ticks(131).unwrap(), 147);
-    assert_eq!(minimum_discovery_horizon_ticks(1_000).unwrap(), 1_100);
-    assert!(minimum_discovery_horizon_ticks(u64::MAX).is_err());
-}
-
 fn reachability_metrics() -> NativeGoalReachabilityMetrics {
     NativeGoalReachabilityMetrics {
         rows: 4,

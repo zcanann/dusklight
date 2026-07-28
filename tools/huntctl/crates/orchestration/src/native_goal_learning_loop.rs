@@ -5,6 +5,7 @@
 //! artifacts; replaying this journal then reproduces the exact generation and
 //! parent-corpus lineage without launching the game.
 
+use crate::discovery_horizon::minimum_discovery_horizon_ticks;
 use crate::native_residual_campaign::{
     NativeResidualCampaignError, NativeResidualExecutionBinding,
 };
@@ -56,8 +57,6 @@ const MIN_GENERATIONS: u16 = 3;
 const MAX_GENERATIONS: u16 = 1_024;
 const MAX_ROLLOUTS_PER_GENERATION: u16 = 256;
 const MAX_SIMULATED_TICKS: u64 = 1_000_000_000_000;
-const MIN_DISCOVERY_HORIZON_MARGIN_TICKS: u64 = 16;
-const MIN_DISCOVERY_HORIZON_MARGIN_TENTHS: u64 = 1;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -433,7 +432,8 @@ impl NativeGoalLearningLoopRequest {
             ));
         }
         let minimum_horizon =
-            minimum_discovery_horizon_ticks(optimization.budgets.promotion_before_tick)?;
+            minimum_discovery_horizon_ticks(optimization.budgets.promotion_before_tick)
+                .ok_or_else(|| loop_message("minimum discovery horizon overflowed"))?;
         if optimization.budgets.exploration_horizon_ticks < minimum_horizon
             || optimization.horizon_tightening.is_some()
         {
@@ -548,18 +548,6 @@ pub struct NativeGoalLearningLoopValidationReport {
     pub exploration_horizon_ticks: u64,
     pub minimum_generous_horizon_ticks: u64,
     pub retains_timeouts: bool,
-}
-
-fn minimum_discovery_horizon_ticks(
-    promotion_before_tick: u64,
-) -> Result<u64, NativeGoalLearningLoopError> {
-    let proportional_margin = promotion_before_tick
-        .checked_add(9)
-        .map(|ticks| ticks / 10 * MIN_DISCOVERY_HORIZON_MARGIN_TENTHS)
-        .ok_or_else(|| loop_message("discovery horizon margin overflowed"))?;
-    promotion_before_tick
-        .checked_add(proportional_margin.max(MIN_DISCOVERY_HORIZON_MARGIN_TICKS))
-        .ok_or_else(|| loop_message("minimum discovery horizon overflowed"))
 }
 
 fn demonstration_assisted_class() -> CampaignClass {
