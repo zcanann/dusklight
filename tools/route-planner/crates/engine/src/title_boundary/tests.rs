@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::evaluation::{
     EvaluatedTruth, EvidencePolicy, FeasibilityMode, PredicateEvaluator, TransitionClassification,

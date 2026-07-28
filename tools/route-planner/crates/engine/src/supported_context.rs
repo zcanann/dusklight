@@ -492,7 +492,7 @@ mod tests {
         let catalog = bundled_supported_context_catalog().unwrap();
         for (content_id, relative_root) in cases {
             let orig = root.join(relative_root);
-            if !orig.is_dir() {
+            if !orig.join("sys/boot.bin").is_file() {
                 continue;
             }
             let context = catalog

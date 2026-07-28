@@ -100,14 +100,28 @@ try {
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(event.data);
     if (!message.id || !pending.has(message.id)) return;
-    const { resolve, reject } = pending.get(message.id);
+    const { resolve, reject, timeout } = pending.get(message.id);
     pending.delete(message.id);
+    clearTimeout(timeout);
     if (message.error) reject(new Error(message.error.message));
     else resolve(message.result);
   });
+  const rejectPending = (reason) => {
+    for (const { reject, timeout } of pending.values()) {
+      clearTimeout(timeout);
+      reject(new Error(reason));
+    }
+    pending.clear();
+  };
+  socket.addEventListener("close", () => rejectPending("browser DevTools socket closed"));
+  socket.addEventListener("error", () => rejectPending("browser DevTools socket failed"));
   const command = (method, params = {}) => new Promise((resolve, reject) => {
     const id = ++commandId;
-    pending.set(id, { resolve, reject });
+    const timeout = setTimeout(() => {
+      if (!pending.delete(id)) return;
+      reject(new Error(`browser DevTools command ${method} timed out`));
+    }, 10_000);
+    pending.set(id, { resolve, reject, timeout });
     socket.send(JSON.stringify({ id, method, params }));
   });
   const evaluate = async (expression) => {
