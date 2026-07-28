@@ -45,6 +45,7 @@ const TRAINING_CORPUS_FORMAT_VERSION_V2: u16 = 2;
 const FINAL_RESULT_FORMAT_VERSION: u16 = 1;
 const CHECKPOINT_HEADER_SIZE: usize = 8 + 2 + 2 + 8 + 32;
 const MAXIMUM_CHECKPOINT_MANIFEST_BYTES: u64 = 256 * 1024 * 1024;
+const MAXIMUM_INLINE_TRAINING_CORPUS_ROWS: usize = 256;
 const CHECKPOINT_COMPRESSION_LEVEL: i32 = 1;
 const CONTENT_DIRECTORY: &str = "objects";
 const LEGACY_CHECKPOINT_SCHEMA_V1: &str = "dusklight-tactic-q-checkpoint/v1";
@@ -462,23 +463,53 @@ pub(crate) fn write_training_corpus(
     // objects for cross-checkpoint deduplication; a generated corpus contains
     // only this episode's newly acquired rows, so an inline envelope is both
     // smaller operationally and independently recoverable after a crash.
-    TacticQContentStore::initialize(content_root).map_err(checkpoint_store_error)?;
-    let manifest = InlineTrainingCorpusManifest {
-        schema: TRAINING_CORPUS_MANIFEST_SCHEMA_V2.into(),
-        feature_schema_sha256: corpus.feature_schema_sha256,
-        objective_sha256: corpus.objective_sha256,
-        root_checkpoint_sha256: corpus.root_checkpoint_sha256,
-        transitions: corpus.transitions.clone(),
-        routes: corpus.routes.clone(),
-        episode_groups: corpus.episode_groups.clone(),
+    let store = TacticQContentStore::initialize(content_root).map_err(checkpoint_store_error)?;
+    let (raw, version) = if corpus.transitions.len() <= MAXIMUM_INLINE_TRAINING_CORPUS_ROWS {
+        let manifest = InlineTrainingCorpusManifest {
+            schema: TRAINING_CORPUS_MANIFEST_SCHEMA_V2.into(),
+            feature_schema_sha256: corpus.feature_schema_sha256,
+            objective_sha256: corpus.objective_sha256,
+            root_checkpoint_sha256: corpus.root_checkpoint_sha256,
+            transitions: corpus.transitions.clone(),
+            routes: corpus.routes.clone(),
+            episode_groups: corpus.episode_groups.clone(),
+        };
+        (
+            serde_cbor::to_vec(&manifest)
+                .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?,
+            TRAINING_CORPUS_FORMAT_VERSION_V2,
+        )
+    } else {
+        // Wide or long campaigns cannot duplicate every full route in one
+        // inline manifest. Reuse the content-addressed transition and tape
+        // objects already produced by decision evidence, leaving the envelope
+        // as a bounded vector of typed digests.
+        let mut transitions = Vec::with_capacity(corpus.transitions.len());
+        let mut routes = Vec::with_capacity(corpus.routes.len());
+        for (transition, route) in corpus.transitions.iter().zip(&corpus.routes) {
+            transitions.push(
+                store
+                    .store_option_transition(transition, route)
+                    .map_err(checkpoint_store_error)?,
+            );
+            routes.push(store.store_tape(route).map_err(checkpoint_store_error)?);
+        }
+        let manifest = StoredTrainingCorpusManifest {
+            schema: TRAINING_CORPUS_MANIFEST_SCHEMA_V1.into(),
+            feature_schema_sha256: corpus.feature_schema_sha256,
+            objective_sha256: corpus.objective_sha256,
+            root_checkpoint_sha256: corpus.root_checkpoint_sha256,
+            transitions,
+            routes,
+            episode_groups: corpus.episode_groups.clone(),
+        };
+        (
+            serde_cbor::to_vec(&manifest)
+                .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?,
+            TRAINING_CORPUS_FORMAT_VERSION_V1,
+        )
     };
-    let raw = serde_cbor::to_vec(&manifest)
-        .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-    let envelope = encode_binary_envelope(
-        &raw,
-        TRAINING_CORPUS_MAGIC,
-        TRAINING_CORPUS_FORMAT_VERSION_V2,
-    )?;
+    let envelope = encode_binary_envelope(&raw, TRAINING_CORPUS_MAGIC, version)?;
     install_binary_artifact(path, &envelope)
 }
 

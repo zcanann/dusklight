@@ -22,6 +22,14 @@ env:
   SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
 
 jobs:
+  source-quality:
+    name: Source quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Enforce shrinking Rust source-size limits
+        run: python3 ci/source_quality/check_rust_file_sizes.py
+
   automation-boundary:
     name: Automation boundary
     runs-on: ubuntu-latest

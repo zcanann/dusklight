@@ -45,6 +45,19 @@ same tie is diagnostic evidence only.
 
 ## Non-negotiable boundaries
 
+- Production modules have one reason to change. Organize related behavior in
+  named module folders; do not use grab-bag `utils`, `common`, or `misc`
+  modules.
+- A production Rust source file must stay below 1,500 physical lines, with a
+  normal target below 1,000. Test modules belong in adjacent test files once
+  they materially obscure production behavior. Existing oversized files are
+  debt to split, not precedent for raising the limit or adding more code.
+- CI must reject new oversized files and any growth in a grandfathered
+  oversized file. Every cleanup milestone lowers the grandfathered ceiling
+  until no exception remains.
+- Prefer typed collaborators with narrow ownership over functions that accept
+  sprawling configuration/state argument lists. A module boundary must reflect
+  responsibility and data ownership, not merely move lines behind `include!`.
 - Reward is authenticated terminal value minus native input cost. Trajectory,
   velocity, collision, straightness, rolling, and prompted-action availability
   are observations or auxiliary prediction targets, not handcrafted utility.
@@ -81,9 +94,9 @@ same tie is diagnostic evidence only.
 - [ ] Report, for every decision, the learner snapshot, replay row count,
       replay generation, acquisition authority, frontier identity, restore
       source, and result-admission version.
-- [ ] Split the monolithic native route runner into auditable components:
-  scheduler, frontier/checkpoint ownership, proposal execution, replay
-  admission, learner updates, evidence storage, and candidate promotion.
+- [ ] Eliminate the remaining learning/orchestration production-file
+      exceptions in the source-size baseline. Split by owned behavior and lower
+      or remove the corresponding ceiling with every cleanup milestone.
 - [ ] Add deterministic plan tests proving that equal plans produce equal jobs
       and that every behavior-changing field changes the plan identity.
 

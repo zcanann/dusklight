@@ -1,0 +1,933 @@
+use super::*;
+
+pub(super) fn elapsed_micros(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
+}
+
+pub(super) fn decision_trace_is_useful(decision: &NativeTacticDecisionTrace) -> bool {
+    decision.terminal
+        || decision.reward > 0.0
+        || decision.goal_distance_after < decision.goal_distance_before
+}
+
+pub(super) fn decision_evaluated_ticks(decision: &NativeTacticDecisionTrace) -> u64 {
+    if decision.proposal_batch.is_empty() {
+        u64::from(decision.reward_components.duration_ticks)
+    } else {
+        decision
+            .proposal_batch
+            .iter()
+            .map(|proposal| u64::from(proposal.realized_ticks))
+            .sum()
+    }
+}
+
+pub(super) fn per_second_millionths(count: u64, wall_micros: u64) -> u64 {
+    if count == 0 || wall_micros == 0 {
+        return 0;
+    }
+    let scaled = u128::from(count)
+        .saturating_mul(1_000_000)
+        .saturating_mul(1_000_000)
+        / u128::from(wall_micros);
+    u64::try_from(scaled).unwrap_or(u64::MAX)
+}
+
+pub(super) fn ratio_per_million(numerator: u64, denominator: u64) -> u64 {
+    if denominator == 0 {
+        return 0;
+    }
+    let scaled = u128::from(numerator).saturating_mul(1_000_000) / u128::from(denominator);
+    u64::try_from(scaled).unwrap_or(u64::MAX)
+}
+
+pub(super) fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> NativeTacticRouteTiming {
+    let mut timing = NativeTacticRouteTiming::default();
+    for seed in seeds {
+        timing.wall_micros = timing.wall_micros.saturating_add(seed.timing.wall_micros);
+        timing.tactic_selection_micros = timing
+            .tactic_selection_micros
+            .saturating_add(seed.timing.tactic_selection_micros);
+        timing.checkpoint_branching_micros = timing
+            .checkpoint_branching_micros
+            .saturating_add(seed.timing.checkpoint_branching_micros);
+        timing.tactic_execution_micros = timing
+            .tactic_execution_micros
+            .saturating_add(seed.timing.tactic_execution_micros);
+        timing.native_simulation_micros = timing
+            .native_simulation_micros
+            .saturating_add(seed.timing.native_simulation_micros);
+        timing.tactic_preparation_and_fact_extraction_micros = timing
+            .tactic_preparation_and_fact_extraction_micros
+            .saturating_add(seed.timing.tactic_preparation_and_fact_extraction_micros);
+        timing.model_update_micros = timing
+            .model_update_micros
+            .saturating_add(seed.timing.model_update_micros);
+        timing.evidence_projection_and_persistence_micros = timing
+            .evidence_projection_and_persistence_micros
+            .saturating_add(seed.timing.evidence_projection_and_persistence_micros);
+        timing.retained_candidate_artifact_micros = timing
+            .retained_candidate_artifact_micros
+            .saturating_add(seed.timing.retained_candidate_artifact_micros);
+    }
+    refresh_route_throughput(&mut timing, seeds);
+    timing
+}
+
+pub(super) fn refresh_route_throughput(
+    timing: &mut NativeTacticRouteTiming,
+    seeds: &[NativeTacticSeedResult],
+) {
+    let useful_decisions = seeds.iter().map(|seed| seed.useful_decisions).sum();
+    let native_ticks = seeds.iter().map(|seed| seed.native_ticks).sum();
+    let episodes = seeds.iter().map(|seed| seed.episodes).sum();
+    timing.useful_decisions_per_second_millionths =
+        per_second_millionths(useful_decisions, timing.wall_micros);
+    timing.native_ticks_per_second_millionths =
+        per_second_millionths(native_ticks, timing.wall_micros);
+    timing.episodes_per_second_millionths = per_second_millionths(episodes, timing.wall_micros);
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn run_seed(
+    config: &NativeTacticRouteRunConfig<'_>,
+    pool: &NativeTacticProposalPool,
+    registry: &FactRegistry,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+    reward_spec: &TacticRewardSpec,
+    initial_facts: &FactSnapshot,
+    route_prefix: &InputTape,
+    action_schema_sha256: Digest,
+    root_checkpoint_sha256: Digest,
+    root_tape_ref: StoredContentRef,
+    shared_training: &[TacticQTrainingCorpus],
+    seed_index: usize,
+    seed: u64,
+) -> Result<CompletedNativeTacticSeed, NativeTacticRouteRunError> {
+    let seed_root = config
+        .output_root
+        .join(format!("seed-{seed_index:03}-{seed}"));
+    let resuming_seed = seed_root.exists();
+    let source_frame = config.optimization.route.source_boundary_index;
+    let horizon = config.optimization.budgets.exploration_horizon_ticks;
+    let maximum_tactic_ticks = goal_tactic_maximum_ticks(horizon)?;
+    let (
+        mut campaign,
+        mut trace,
+        mut selection_counts,
+        mut native_ticks,
+        mut episode,
+        imported_training_replay_rows,
+    ) = if resuming_seed {
+        if !config.resume {
+            return Err(route_message(
+                "unexpected pre-existing tactic seed evidence",
+            ));
+        }
+        let resumed = resume_seed(
+            config,
+            &seed_root,
+            encoder.schema_sha256,
+            root_checkpoint_sha256,
+            seed_index,
+            seed,
+        )?;
+        let imported = if config.proposal_policy == TacticProposalPolicy::Learned {
+            shared_training_unique_rows(shared_training)?
+        } else {
+            0
+        };
+        (
+            resumed.0, resumed.1, resumed.2, resumed.3, resumed.4, imported,
+        )
+    } else {
+        fs::create_dir_all(&seed_root).map_err(route_error)?;
+        let initial_proposals = parameterized_catalog_for_state(
+            seed,
+            0,
+            initial_facts,
+            encoder,
+            maximum_tactic_ticks,
+            None,
+            action_schema_sha256,
+        )?;
+        let current = LearnerState::build(
+            initial_facts.clone(),
+            registry,
+            &initial_proposals.catalog,
+            &initial_proposals.blueprints,
+            |_| true,
+        )
+        .map_err(route_error)?;
+        let mut campaign = TacticQCampaign::new(
+            encoder.schema_sha256,
+            config.optimization.terminal_predicate.definition_sha256,
+            root_checkpoint_sha256,
+            seed_group(seed_index, 0)?,
+            current,
+            route_prefix.clone(),
+            route_option_value_config(seed),
+            TacticExplorationConfig {
+                seed,
+                epsilon_per_million: tactic_lane_epsilon(
+                    config.proposal_policy,
+                    config.epsilon_per_million,
+                    seed_index,
+                ),
+            },
+        )
+        .map_err(route_error)?;
+        let imported = if config.proposal_policy == TacticProposalPolicy::Learned {
+            campaign
+                .import_training_corpora(shared_training)
+                .map_err(route_error)?
+        } else {
+            0
+        };
+        (campaign, Vec::new(), BTreeMap::new(), 0, 0, imported)
+    };
+    let has_performance =
+        resuming_seed && seed_performance_exists(&seed_root, campaign.decision_index)?;
+    let performance = if resuming_seed {
+        load_seed_performance(&seed_root, campaign.decision_index)?
+    } else {
+        NativeTacticSeedPerformance {
+            schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2.into(),
+            decisions: 0,
+            useful_decisions: 0,
+            native_restore_accounting: NativeTacticRestoreAccounting::default(),
+            timing: NativeTacticRouteTiming::default(),
+        }
+    };
+    let mut timing = performance.timing;
+    let mut native_restore_accounting = performance.native_restore_accounting;
+    let prior_wall_micros = timing.wall_micros;
+    let invocation_started = Instant::now();
+    let mut useful_decisions = if has_performance {
+        performance.useful_decisions
+    } else {
+        trace
+            .iter()
+            .filter(|decision| decision_trace_is_useful(decision))
+            .count() as u64
+    };
+    let maximum_tactic_ticks = u64::from(maximum_tactic_ticks);
+    let encode = |facts: &FactSnapshot| encoder.encode(facts);
+    let demonstration_curriculum = generalized_acquisition_partition(seed_index) == 0
+        && shared_training.iter().any(|corpus| {
+            corpus
+                .episode_groups
+                .contains(&TACTIC_Q_DEMONSTRATION_EPISODE_GROUP)
+        });
+    let demonstration_frontier_count = if demonstration_curriculum {
+        campaign.demonstration_frontier_count()
+    } else {
+        0
+    };
+    let mut first_demonstration_expansions = trace
+        .iter()
+        .filter_map(|decision| decision.branch_acquisition.as_ref())
+        .filter(|acquisition| acquisition.expansion_count == 0)
+        .count();
+    let checkpoint_root = seed_root.join("checkpoints");
+    let checkpoint_content_root = tactic_content_store_path(&seed_root);
+    let decision_content_store =
+        TacticQContentStore::initialize(&checkpoint_content_root).map_err(route_error)?;
+    let mut rolling_checkpoint = None;
+    // Process-local handles intentionally do not survive campaign resume.
+    let mut cached_frontier: Option<CachedTacticFrontier> = None;
+    let mut branch_acquisition: Option<TacticFrontierAcquisition> = None;
+    let mut demonstration_intervention_pending = false;
+    let retained_success_root = seed_root.join("retained-successes");
+    let mut best_success = load_best_retained_success(
+        &retained_success_root,
+        campaign.objective_sha256,
+        campaign.root_checkpoint_sha256,
+    )?;
+
+    while campaign.decision_index < config.decisions_per_seed
+        && native_ticks < config.optimization.budgets.simulated_tick_budget
+    {
+        if cancellation_requested(config) {
+            timing.wall_micros =
+                prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
+            persist_seed_performance(
+                &seed_root,
+                campaign.decision_index,
+                &timing,
+                useful_decisions,
+                &native_restore_accounting,
+            )?;
+            pause_tactic_campaign(&seed_root, &campaign)?;
+            return Err(route_cancelled("native tactic route paused"));
+        }
+        let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
+        let demonstration_coverage_pending = demonstration_curriculum
+            && first_demonstration_expansions < demonstration_frontier_count;
+        let periodic_branch = terminal_restart
+            || (campaign.decision_index > 0
+                && (demonstration_coverage_pending
+                    || campaign.decision_index % config.branch_every_decisions == 0));
+        if !campaign.replay.is_empty() && periodic_branch {
+            let branch_started = Instant::now();
+            episode = episode
+                .checked_add(1)
+                .ok_or_else(|| route_message("episode counter overflowed"))?;
+            let maximum_frontier_frames = usize::try_from(
+                source_frame.saturating_add(horizon.saturating_sub(maximum_tactic_ticks)),
+            )
+            .map_err(route_error)?;
+            let [root, frontier] = match config.proposal_policy {
+                TacticProposalPolicy::Learned => campaign.sample_root_and_ranked_frontier(
+                    seed,
+                    frontier_sampling_round(episode),
+                    &[],
+                    maximum_frontier_frames,
+                    demonstration_coverage_pending,
+                    encoder.goal_distance_feature(),
+                    &encode,
+                    &|state| {
+                        applicable_parameterized_descriptors_for_state(
+                            &campaign,
+                            registry,
+                            seed,
+                            campaign.decision_index,
+                            state,
+                            encoder,
+                            u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                            action_schema_sha256,
+                        )
+                    },
+                ),
+                TacticProposalPolicy::RandomValid | TacticProposalPolicy::StructuredNonLearning => {
+                    campaign.sample_root_and_frontier(
+                        seed,
+                        frontier_sampling_round(episode),
+                        &[],
+                        maximum_frontier_frames,
+                    )
+                }
+            }
+            .map_err(route_error)?;
+            let prefer_root = terminal_restart || periodic_root_refresh_due(seed_index, episode);
+            let selected_branch = if prefer_root { &root } else { &frontier };
+            if demonstration_coverage_pending
+                && selected_branch
+                    .acquisition
+                    .as_ref()
+                    .is_some_and(|acquisition| acquisition.expansion_count == 0)
+            {
+                first_demonstration_expansions = first_demonstration_expansions.saturating_add(1);
+            }
+            demonstration_intervention_pending = demonstration_coverage_pending
+                && !prefer_root
+                && selected_branch.acquisition.is_some();
+            branch_acquisition = selected_branch.acquisition.clone();
+            let branch_proposals = parameterized_catalog_for_state(
+                seed,
+                campaign.decision_index,
+                &selected_branch.state,
+                encoder,
+                u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
+                action_schema_sha256,
+            )?;
+            campaign
+                .restore_branch(
+                    selected_branch,
+                    seed_group(seed_index, episode)?,
+                    registry,
+                    &branch_proposals.catalog,
+                    &branch_proposals.blueprints,
+                    |_| true,
+                )
+                .map_err(route_error)?;
+            timing.checkpoint_branching_micros = timing
+                .checkpoint_branching_micros
+                .saturating_add(elapsed_micros(branch_started.elapsed()));
+        }
+
+        // Reserve horizon for the tactic Q actually selected at this state,
+        // not for the longest unrelated entry in the catalog. This lets short
+        // tactics compose beyond `horizon - catalog_maximum` while still
+        // branching before any selected tactic could exceed the bound.
+        //
+        // Restoring a branch can change the selected tactic. Recheck until the
+        // preview fits; the periodic root sample guarantees convergence because
+        // every catalog entry is itself bounded by the exploration horizon.
+        let (proposal_batch, proposal_catalog, proposal_blueprints, proposal_feedback) = loop {
+            let suffix_ticks = campaign
+                .route_tape
+                .frames
+                .len()
+                .saturating_sub(source_frame as usize) as u64;
+            let proposal_feedback =
+                parameterized_feedback_for_state(&campaign, &campaign.current.snapshot, encoder)?;
+            let proposals = parameterized_catalog_for_state(
+                seed,
+                campaign.decision_index,
+                &campaign.current.snapshot,
+                encoder,
+                u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                proposal_feedback,
+                action_schema_sha256,
+            )?;
+            let proposal_catalog = Arc::new(proposals.catalog);
+            let proposal_blueprints = Arc::new(proposals.blueprints);
+            let selection_started = Instant::now();
+            let mut preview = campaign
+                .decide_parameterized_batch_with_policy(
+                    &proposal_catalog,
+                    &proposal_blueprints,
+                    action_schema_sha256,
+                    &encode,
+                    tactic_proposals_per_decision(config.workers, config.exploration_seeds.len()),
+                    generalized_policy_acquisition_partition(
+                        seed_index,
+                        config.exploration_seeds.len(),
+                        campaign.decision_index,
+                    ),
+                    config.proposal_policy,
+                    Some(encoder.goal_distance_feature()),
+                    demonstration_intervention_pending,
+                )
+                .map_err(route_error)?;
+            timing.tactic_selection_micros = timing
+                .tactic_selection_micros
+                .saturating_add(elapsed_micros(selection_started.elapsed()));
+            let primary = preview
+                .proposals
+                .first()
+                .ok_or_else(|| route_message("tactic proposal batch is empty"))?;
+            let selected_maximum_ticks = preview
+                .ranking
+                .choices
+                .iter()
+                .find(|choice| choice.choice_id == primary.descriptor.option_id)
+                .ok_or_else(|| route_message("selected tactic is absent from its catalog"))?
+                .duration
+                .maximum_ticks;
+            if selected_tactic_fits_horizon(suffix_ticks, selected_maximum_ticks, horizon) {
+                preview.proposals.retain(|proposal| {
+                    preview
+                        .ranking
+                        .choices
+                        .iter()
+                        .find(|choice| choice.choice_id == proposal.descriptor.option_id)
+                        .is_some_and(|choice| {
+                            selected_tactic_fits_horizon(
+                                suffix_ticks,
+                                choice.duration.maximum_ticks,
+                                horizon,
+                            )
+                        })
+                });
+                break (
+                    preview,
+                    proposal_catalog,
+                    proposal_blueprints,
+                    proposal_feedback,
+                );
+            }
+            let branch_started = Instant::now();
+            episode = episode
+                .checked_add(1)
+                .ok_or_else(|| route_message("episode counter overflowed"))?;
+            let maximum_frontier_frames = usize::try_from(
+                source_frame
+                    .saturating_add(horizon.saturating_sub(u64::from(selected_maximum_ticks))),
+            )
+            .map_err(route_error)?;
+            let [root, frontier] = match config.proposal_policy {
+                TacticProposalPolicy::Learned => campaign.sample_root_and_ranked_frontier(
+                    seed,
+                    frontier_sampling_round(episode),
+                    &[],
+                    maximum_frontier_frames,
+                    demonstration_coverage_pending,
+                    encoder.goal_distance_feature(),
+                    &encode,
+                    &|state| {
+                        applicable_parameterized_descriptors_for_state(
+                            &campaign,
+                            registry,
+                            seed,
+                            campaign.decision_index,
+                            state,
+                            encoder,
+                            u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                            action_schema_sha256,
+                        )
+                    },
+                ),
+                TacticProposalPolicy::RandomValid | TacticProposalPolicy::StructuredNonLearning => {
+                    campaign.sample_root_and_frontier(
+                        seed,
+                        frontier_sampling_round(episode),
+                        &[],
+                        maximum_frontier_frames,
+                    )
+                }
+            }
+            .map_err(route_error)?;
+            let prefer_root = periodic_root_refresh_due(seed_index, episode);
+            let selected_branch = if prefer_root { &root } else { &frontier };
+            if demonstration_coverage_pending
+                && selected_branch
+                    .acquisition
+                    .as_ref()
+                    .is_some_and(|acquisition| acquisition.expansion_count == 0)
+            {
+                first_demonstration_expansions = first_demonstration_expansions.saturating_add(1);
+            }
+            demonstration_intervention_pending = demonstration_coverage_pending
+                && !prefer_root
+                && selected_branch.acquisition.is_some();
+            branch_acquisition = selected_branch.acquisition.clone();
+            let branch_proposals = parameterized_catalog_for_state(
+                seed,
+                campaign.decision_index,
+                &selected_branch.state,
+                encoder,
+                u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
+                action_schema_sha256,
+            )?;
+            campaign
+                .restore_branch(
+                    selected_branch,
+                    seed_group(seed_index, episode)?,
+                    registry,
+                    &branch_proposals.catalog,
+                    &branch_proposals.blueprints,
+                    |_| true,
+                )
+                .map_err(route_error)?;
+            timing.checkpoint_branching_micros = timing
+                .checkpoint_branching_micros
+                .saturating_add(elapsed_micros(branch_started.elapsed()));
+        };
+        demonstration_intervention_pending = false;
+
+        let decision_index = campaign.decision_index;
+        let refit_model = tactic_model_refit_required(
+            campaign.model().is_some(),
+            decision_index
+                .checked_add(1)
+                .ok_or_else(|| route_message("decision index overflowed"))?,
+            config.refit_every_decisions,
+        );
+        let paths_root = seed_root
+            .join("native")
+            .join(format!("decision-{decision_index:06}"));
+        fs::create_dir_all(&paths_root).map_err(route_error)?;
+        let execution_started = Instant::now();
+        let source_snapshot = campaign.current.snapshot.clone();
+        let source_route_tape = campaign.route_tape.clone();
+        let source_route_tape_ref = decision_content_store
+            .store_tape(&source_route_tape)
+            .map_err(route_error)?;
+        let source_snapshot_sha256 = source_snapshot.content_sha256().map_err(route_error)?;
+        let usable_cached_frontier = cached_frontier.as_ref().filter(|frontier| {
+            pool.direct_restore_enabled
+                && frontier.state_sha256 == source_snapshot_sha256
+                && frontier.route_frames == source_route_tape.frames.len()
+        });
+        let directly_restored_frontier = usable_cached_frontier.is_some();
+        let proposal_work = pool.execute_batch(
+            &proposal_batch.proposals,
+            Arc::clone(&proposal_catalog),
+            Arc::clone(&proposal_blueprints),
+            &source_snapshot,
+            &source_route_tape,
+            usable_cached_frontier,
+            &paths_root,
+        )?;
+        let native_elapsed = proposal_work.iter().fold(Duration::ZERO, |total, work| {
+            total.saturating_add(work.native_elapsed)
+        });
+        let preparation_elapsed = proposal_work.iter().fold(Duration::ZERO, |total, work| {
+            total.saturating_add(work.preparation_elapsed)
+        });
+        let mut decision_restore_accounting = NativeTacticRestoreAccounting::default();
+        for work in &proposal_work {
+            decision_restore_accounting.merge(&work.restore_accounting);
+        }
+        let proposal_worker_slots = proposal_work
+            .iter()
+            .map(|work| work.worker_slot)
+            .collect::<Vec<_>>();
+        let evaluated = proposal_work
+            .into_iter()
+            .map(|work| {
+                campaign
+                    .evaluate_rewarded_outcome(work.outcome, &encode, reward_spec)
+                    .map_err(route_error)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let execution_elapsed = execution_started.elapsed();
+        timing.tactic_execution_micros = timing
+            .tactic_execution_micros
+            .saturating_add(elapsed_micros(execution_elapsed));
+        timing.native_simulation_micros = timing
+            .native_simulation_micros
+            .saturating_add(elapsed_micros(native_elapsed));
+        timing.tactic_preparation_and_fact_extraction_micros = timing
+            .tactic_preparation_and_fact_extraction_micros
+            .saturating_add(elapsed_micros(preparation_elapsed));
+        let terminal_candidates = evaluated
+            .iter()
+            .filter(|proposal| proposal.outcome.terminal)
+            .map(|proposal| {
+                campaign
+                    .final_result_from_evaluated_terminal(proposal)
+                    .map_err(route_error)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // The policy-selected proposal is authoritative. Sibling proposals are
+        // native training and candidate evidence, not an outcome-peeking beam
+        // search that replaces the learner's action after observing results.
+        let winner_index = 0;
+        let winning_outcome = evaluated[winner_index].outcome.clone();
+        let expected_transition = evaluated[winner_index].transition.clone();
+        let decision = TacticQDecision {
+            ranking: proposal_batch.ranking,
+            selected: winning_outcome.selected.clone(),
+        };
+        let evaluated_native_ticks = evaluated.iter().fold(0_u64, |total, proposal| {
+            total.saturating_add(u64::from(
+                proposal.outcome.execution.duration.realized_ticks,
+            ))
+        });
+        let model_started = Instant::now();
+        let newly_admitted_training_rows = campaign.admit_evaluated_replay(&evaluated)? as u64;
+        let duplicate_training_transitions = evaluated
+            .len()
+            .saturating_sub(newly_admitted_training_rows as usize)
+            as u64;
+        let next_proposals = parameterized_catalog_for_state(
+            seed,
+            campaign
+                .decision_index
+                .checked_add(1)
+                .ok_or_else(|| route_message("decision index overflowed"))?,
+            &winning_outcome.next_facts,
+            encoder,
+            u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+            None,
+            action_schema_sha256,
+        )?;
+        let step = campaign
+            .retain_and_refit_rewarded(
+                decision,
+                winning_outcome.clone(),
+                &next_proposals.catalog,
+                &next_proposals.blueprints,
+                registry,
+                &encode,
+                |_| true,
+                reward_spec,
+                refit_model,
+            )
+            .map_err(route_error)?;
+        if step.step.transition != expected_transition
+            || step.reward != evaluated[winner_index].reward
+        {
+            return Err(route_message(
+                "retained tactic proposal differs from its pre-admission evaluation",
+            ));
+        }
+        timing.model_update_micros = timing
+            .model_update_micros
+            .saturating_add(elapsed_micros(model_started.elapsed()));
+        cached_frontier = match (
+            winning_outcome.retained_native_checkpoint.as_ref(),
+            winning_outcome
+                .retained_native_boundary_fingerprint
+                .as_ref(),
+        ) {
+            (Some(checkpoint), Some(boundary_fingerprint))
+                if checkpoint.route_ticks
+                    == winning_outcome
+                        .route_tape
+                        .frames
+                        .len()
+                        .saturating_sub(source_frame as usize) as u64 =>
+            {
+                Some(CachedTacticFrontier {
+                    worker_slot: proposal_worker_slots[winner_index],
+                    source: NativeTacticCheckpointSource {
+                        restore_identity: checkpoint.restore_identity.clone(),
+                        boundary_fingerprint: boundary_fingerprint.clone(),
+                        route_ticks: checkpoint.route_ticks as usize,
+                    },
+                    state_sha256: step.step.transition.after_state_sha256,
+                    route_frames: winning_outcome.route_tape.frames.len(),
+                })
+            }
+            (None, None) => None,
+            _ => {
+                return Err(route_message(
+                    "retained native checkpoint lacks its exact endpoint boundary",
+                ));
+            }
+        };
+        let evidence_started = Instant::now();
+        let selected = &step.step.decision.selected;
+        *selection_counts
+            .entry(selected.descriptor.option_id.clone())
+            .or_default() += 1;
+        let selected_q = step
+            .step
+            .decision
+            .ranking
+            .values
+            .ranked
+            .iter()
+            .find(|ranked| ranked.descriptor == selected.descriptor)
+            .map(|ranked| ranked.mean_q);
+        let best_q = step
+            .step
+            .decision
+            .ranking
+            .values
+            .ranked
+            .first()
+            .map(|ranked| ranked.mean_q);
+        native_ticks = native_ticks.saturating_add(evaluated_native_ticks);
+        let frontier_cells = campaign.frontier_cell_count();
+        let before_features = encoder
+            .encode(&step.step.transition.before)
+            .map_err(route_error)?;
+        let after_features = encoder
+            .encode(&step.step.transition.after)
+            .map_err(route_error)?;
+        let proposal_traces = evaluated
+            .iter()
+            .enumerate()
+            .map(|(index, proposal)| {
+                let after_features = encoder
+                    .encode(&proposal.transition.after)
+                    .map_err(route_error)?;
+                Ok(NativeTacticProposalTrace {
+                    option_id: proposal.outcome.selected.descriptor.option_id.clone(),
+                    selection_reason: proposal.outcome.selected.reason,
+                    reward: proposal.reward.training_reward,
+                    reward_components: proposal.reward.clone(),
+                    realized_ticks: proposal.outcome.execution.duration.realized_ticks,
+                    emitted_tape_sha256: proposal.transition.value_sample.realized_tape_sha256,
+                    terminal: proposal.outcome.terminal,
+                    goal_distance_after: after_features[encoder.goal_distance_feature()],
+                    after_snapshot_sha256: proposal.transition.after_state_sha256,
+                    retained: index == winner_index,
+                })
+            })
+            .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
+        decision_restore_accounting.proposal_transitions = proposal_traces.len() as u64;
+        decision_restore_accounting.useful_transitions = proposal_traces
+            .iter()
+            .filter(|proposal| {
+                proposal.terminal
+                    || proposal.reward > 0.0
+                    || proposal.goal_distance_after
+                        < before_features[encoder.goal_distance_feature()]
+            })
+            .count() as u64;
+        decision_restore_accounting.refresh_rates();
+        native_restore_accounting.merge(&decision_restore_accounting);
+        let decision_trace = NativeTacticDecisionTrace {
+            decision_index,
+            episode,
+            route_suffix_ticks: campaign
+                .route_tape
+                .frames
+                .len()
+                .saturating_sub(source_frame as usize) as u64,
+            selected_option_id: selected.descriptor.option_id.clone(),
+            selection_reason: selected.reason,
+            selected_q,
+            best_q,
+            reward: step.reward.training_reward,
+            reward_components: step.reward.clone(),
+            goal_distance_before: before_features[encoder.goal_distance_feature()],
+            goal_distance_after: after_features[encoder.goal_distance_feature()],
+            terminal: step.step.transition.value_sample.terminal,
+            newly_admitted_training_rows,
+            duplicate_training_transitions,
+            training_replay_rows: campaign.training_replay_len() as u64,
+            branch_acquisition: branch_acquisition.take(),
+            frontier_cells,
+            logical_frontier_records: frontier_cells.saturating_add(1),
+            directly_restorable_native_frontiers: usize::from(directly_restored_frontier),
+            replay_only_frontiers: frontier_cells
+                .saturating_sub(usize::from(directly_restored_frontier)),
+            visited_states: campaign.visited_state_count(),
+            before: tactic_state_trace(&step.step.transition.before)?,
+            after: tactic_state_trace(&step.step.transition.after)?,
+            measurements: Vec::new(),
+            applicable_tactics: Vec::new(),
+            proposal_feedback,
+            proposal_batch: proposal_traces,
+        };
+        if decision_trace_is_useful(&decision_trace) {
+            useful_decisions = useful_decisions.saturating_add(1);
+        }
+        let proposal_records = evaluated
+            .iter()
+            .zip(&decision_trace.proposal_batch)
+            .map(|(proposal, trace)| {
+                Ok(NativeTacticProposalRecord {
+                    trace: trace.clone(),
+                    transition: None,
+                    inline_transition: Some(proposal.transition.clone()),
+                })
+            })
+            .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
+        let transition = evaluated[winner_index].transition.clone();
+        append_tactic_decision_record(
+            &seed_root,
+            &decision_record(
+                &decision_trace,
+                campaign.episode_group,
+                campaign.root_checkpoint_sha256,
+                root_tape_ref,
+                Some(source_route_tape_ref),
+                None,
+                Some(transition),
+                proposal_records,
+            ),
+        )?;
+        trace.push(decision_trace);
+        for candidate in terminal_candidates {
+            retain_successful_result(
+                &retained_success_root,
+                decision_index,
+                &candidate,
+                &mut best_success,
+            )?;
+        }
+        if cancellation_requested(config) {
+            timing.evidence_projection_and_persistence_micros = timing
+                .evidence_projection_and_persistence_micros
+                .saturating_add(elapsed_micros(evidence_started.elapsed()));
+            timing.wall_micros =
+                prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
+            persist_seed_performance(
+                &seed_root,
+                campaign.decision_index,
+                &timing,
+                useful_decisions,
+                &native_restore_accounting,
+            )?;
+            pause_tactic_campaign(&seed_root, &campaign)?;
+            return Err(route_cancelled("native tactic route paused"));
+        }
+        let run_finished = campaign.decision_index >= config.decisions_per_seed
+            || native_ticks >= config.optimization.budgets.simulated_tick_budget;
+        if !run_finished
+            && tactic_checkpoint_due(
+                campaign.decision_index,
+                config.optimization.resume.checkpoint_every_candidates,
+                false,
+            )
+        {
+            let checkpoint = campaign
+                .write_checkpoint_with_store(&checkpoint_root, &checkpoint_content_root)
+                .map_err(route_error)?;
+            advance_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint, checkpoint)?;
+        }
+        timing.evidence_projection_and_persistence_micros = timing
+            .evidence_projection_and_persistence_micros
+            .saturating_add(elapsed_micros(evidence_started.elapsed()));
+    }
+
+    let final_persistence_started = Instant::now();
+    compact_tactic_decision_journal(&seed_root)?;
+    let success = best_success.as_ref().is_some_and(|result| {
+        final_result_promotes(
+            result,
+            source_frame,
+            config.optimization.budgets.promotion_before_tick,
+        )
+    });
+    let generated_training = campaign
+        .training_corpus_from(imported_training_replay_rows)
+        .map_err(route_error)?;
+    let generated_training_path = seed_root.join("generated-training.dtqc");
+    generated_training
+        .write(&generated_training_path, &checkpoint_content_root)
+        .map_err(route_error)?;
+    remove_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint)?;
+    let (successful_tape, final_result) = if success {
+        let result = best_success.expect("promoted success was checked above");
+        let retained_candidate_started = Instant::now();
+        let tape_path = seed_root.join("successful.tape");
+        write_new(
+            &tape_path,
+            &result.route_tape.encode().map_err(route_error)?,
+        )?;
+        let result_path = seed_root.join("final-result.dtqz");
+        result.write(&result_path).map_err(route_error)?;
+        timing.retained_candidate_artifact_micros = timing
+            .retained_candidate_artifact_micros
+            .saturating_add(elapsed_micros(retained_candidate_started.elapsed()));
+        (Some(path_text(&tape_path)), Some(path_text(&result_path)))
+    } else {
+        (None, None)
+    };
+    timing.evidence_projection_and_persistence_micros = timing
+        .evidence_projection_and_persistence_micros
+        .saturating_add(elapsed_micros(final_persistence_started.elapsed()));
+    timing.wall_micros =
+        prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
+    timing.useful_decisions_per_second_millionths =
+        per_second_millionths(useful_decisions, timing.wall_micros);
+    timing.native_ticks_per_second_millionths =
+        per_second_millionths(native_ticks, timing.wall_micros);
+    timing.episodes_per_second_millionths =
+        per_second_millionths(episode.saturating_add(1), timing.wall_micros);
+    if trace.len() as u64 != campaign.decision_index {
+        return Err(route_message(
+            "in-memory tactic trace is detached from the completed campaign",
+        ));
+    }
+    persist_seed_performance(
+        &seed_root,
+        campaign.decision_index,
+        &timing,
+        useful_decisions,
+        &native_restore_accounting,
+    )?;
+    Ok(CompletedNativeTacticSeed {
+        result: NativeTacticSeedResult {
+            seed,
+            success,
+            decisions: campaign.decision_index,
+            episodes: episode + 1,
+            native_ticks,
+            replay_rows: campaign.replay.len(),
+            training_replay_rows: campaign.training_replay_len(),
+            imported_training_replay_rows,
+            duplicate_training_transitions: native_restore_accounting
+                .proposal_transitions
+                .saturating_sub(
+                    campaign
+                        .training_replay_len()
+                        .saturating_sub(imported_training_replay_rows) as u64,
+                ),
+            visited_states: campaign.visited_state_count(),
+            useful_decisions,
+            native_restore_accounting,
+            timing,
+            selection_counts,
+            diagnostics: None,
+            generated_training_corpus: Some(path_text(&generated_training_path)),
+            final_checkpoint: None,
+            graph: None,
+            successful_tape,
+            final_result,
+            trace,
+        },
+        generated_training,
+    })
+}
