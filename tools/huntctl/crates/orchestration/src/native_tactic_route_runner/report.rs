@@ -39,6 +39,7 @@ pub struct NativeTacticRouteReport {
     pub demonstration: Option<NativeTacticDemonstrationReport>,
     pub exploration_seeds: Vec<u64>,
     pub proposal_policy: TacticProposalPolicy,
+    pub value_treatment: TacticValueTreatment,
     pub execution_strategy: NativeGenericExecutionStrategy,
     pub workers: usize,
     pub decisions_per_seed: u64,

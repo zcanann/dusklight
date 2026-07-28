@@ -390,10 +390,19 @@ impl TacticQCampaign {
         }
         let tie_offset = seeded_frontier_index(seed, round, choices.len());
         let choice_count = choices.len();
-        let generalized_model = if demonstration_curriculum {
-            None
-        } else {
+        let generalized_model = if !demonstration_curriculum
+            && self.value_treatment == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+        {
             self.generalized_model(goal_distance_feature)?
+        } else {
+            None
+        };
+        let continuous_model = if !demonstration_curriculum
+            && self.value_treatment == TacticValueTreatment::ContinuousFittedQForestV1
+        {
+            self.continuous_model(goal_distance_feature)?
+        } else {
+            None
         };
         let mut ranked = choices
             .into_iter()
@@ -435,6 +444,19 @@ impl TacticQCampaign {
                                 .iter()
                                 .map(|value| value.nearest_distance)
                                 .max_by(f32::total_cmp),
+                        )
+                    } else if let Some(model) = continuous_model.as_ref() {
+                        let context =
+                            GeneralizedTacticContext::from_facts(&entry.transition.after)?;
+                        let estimates = model.rank(&features, &context, &applicable)?;
+                        (
+                            estimates.first().map(|value| value.mean_q),
+                            None,
+                            estimates
+                                .iter()
+                                .map(|value| value.ensemble_variance)
+                                .max_by(f64::total_cmp),
+                            None,
                         )
                     } else {
                         let estimates = self

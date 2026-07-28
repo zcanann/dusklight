@@ -25,6 +25,7 @@ pub(super) struct CampaignTacticLearnerAuthority {
     replay: TacticReplayControlPlane,
     model_config: OptionValueConfig,
     goal_distance_feature: usize,
+    value_treatment: TacticValueTreatment,
     refit_every_decisions: u64,
     completed_decisions: u64,
     latest: Arc<TacticQImmutableLearnerSnapshot>,
@@ -36,6 +37,7 @@ impl CampaignTacticLearnerAuthority {
         replay: TacticReplayControlPlane,
         model_config: OptionValueConfig,
         goal_distance_feature: usize,
+        value_treatment: TacticValueTreatment,
         refit_every_decisions: u64,
     ) -> Result<Self, NativeTacticRouteRunError> {
         if refit_every_decisions == 0 {
@@ -66,6 +68,7 @@ impl CampaignTacticLearnerAuthority {
             model_revision,
             model_config.clone(),
             goal_distance_feature,
+            value_treatment,
         )
         .map_err(route_error)?;
         let update_micros = has_training
@@ -83,6 +86,7 @@ impl CampaignTacticLearnerAuthority {
             replay,
             model_config,
             goal_distance_feature,
+            value_treatment,
             refit_every_decisions,
             completed_decisions: 0,
             latest: Arc::new(snapshot),
@@ -230,6 +234,7 @@ impl CampaignTacticLearnerAuthority {
             model_revision,
             self.model_config.clone(),
             self.goal_distance_feature,
+            self.value_treatment,
         )
         .map_err(route_error)?;
         let stored_sha256 = self

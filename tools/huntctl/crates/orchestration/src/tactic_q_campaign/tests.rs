@@ -537,8 +537,27 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         7,
         OptionValueConfig::default(),
         0,
+        TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
     )
     .unwrap();
+    let continuous_snapshot = TacticQImmutableLearnerSnapshot::fit(
+        corpus.clone(),
+        corpus.transitions.len() as u64,
+        7,
+        OptionValueConfig::default(),
+        0,
+        TacticValueTreatment::ContinuousFittedQForestV1,
+    )
+    .unwrap();
+    assert_eq!(
+        immutable_snapshot.manifest.value_treatment,
+        TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+    );
+    assert_eq!(
+        continuous_snapshot.manifest.value_treatment,
+        TacticValueTreatment::ContinuousFittedQForestV1
+    );
+    assert_ne!(immutable_snapshot.sha256, continuous_snapshot.sha256);
     let mut snapshot_consumer = TacticQCampaign::resume_without_model(checkpoint.clone()).unwrap();
     assert!(snapshot_consumer.model().is_none());
     assert_eq!(

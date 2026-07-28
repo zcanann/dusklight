@@ -89,6 +89,7 @@ pub mod tactic_exploration;
 pub mod tactic_features;
 pub mod tactic_frozen_policy;
 pub mod tactic_macro_promotion;
+pub mod tactic_value_treatment;
 pub mod trainable_set_encoder;
 pub mod training_guard;
 pub mod transfer_learning;

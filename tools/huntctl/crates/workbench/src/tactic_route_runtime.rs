@@ -14,11 +14,13 @@ use dusklight_orchestration::native_tactic_route_runner::{
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V20,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V21, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V22,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V23, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V24,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V25, NativeTacticDecisionTrace, NativeTacticExecutionPlan,
-    NativeTacticExecutionPlanRequest, NativeTacticPlanBudgets, NativeTacticReplaySharingPlan,
-    NativeTacticResourceLimit, NativeTacticRouteRunConfig, has_tactic_decision_journal,
-    materialize_tactic_decision_route, project_tactic_decision_graph, read_tactic_decision_journal,
-    run_native_tactic_route,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V25, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V26,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V27, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V28,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V29, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V30,
+    NativeTacticDecisionTrace, NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest,
+    NativeTacticPlanBudgets, NativeTacticReplaySharingPlan, NativeTacticResourceLimit,
+    NativeTacticRouteRunConfig, has_tactic_decision_journal, materialize_tactic_decision_route,
+    project_tactic_decision_graph, read_tactic_decision_journal, run_native_tactic_route,
 };
 use dusklight_orchestration::native_tactic_worker::NativeGenericExecutionStrategy;
 use dusklight_orchestration::optimization_request::OptimizationRequest;
@@ -230,6 +232,11 @@ pub(super) fn tactic_route_learning_projection(
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V23
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V24
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V25
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V26
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V27
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V28
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V29
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V30
                 ) && report
                     .get("optimization_request_sha256")
                     .and_then(Value::as_str)
@@ -412,6 +419,8 @@ fn launch_tactic_route_learning(
                 NativeTacticExecutionPlan::build(NativeTacticExecutionPlanRequest {
                     seeds,
                     proposal_policy: TacticProposalPolicy::Learned,
+                    value_treatment:
+                        dusklight_learning::tactic_value_treatment::TacticValueTreatment::ContinuousFittedQForestV1,
                     execution_strategy: NativeGenericExecutionStrategy::NativeController,
                     promoted_tactic_registry_sha256: None,
                     lanes_per_generation: optimization

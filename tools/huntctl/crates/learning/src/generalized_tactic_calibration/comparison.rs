@@ -2,8 +2,9 @@
 
 use super::*;
 use crate::double_q::{ConservativeQ, ConservativeQConfig, DoubleQ, DoubleQConfig};
-use crate::fqi::{FittedQ, FqiConfig, Transition as FqiTransition};
+use crate::fqi::Transition as FqiTransition;
 use crate::generalized_tactic_value::prediction::{action_class, regression_features};
+use crate::tactic_value_treatment::ContinuousTacticValueModel;
 
 pub const GENERALIZED_TACTIC_CONTROL_COMPARISON_SCHEMA_V1: &str =
     "dusklight-generalized-tactic-control-comparison/v1";
@@ -97,7 +98,7 @@ struct ControlPrediction<'a> {
 
 struct ControlModels {
     local: GeneralizedTacticValueModel,
-    fitted_q: FittedQ,
+    fitted_q: ContinuousTacticValueModel,
     double_q: DoubleQ,
     conservative_q: ConservativeQ,
     action_classes: BTreeSet<u32>,
@@ -261,28 +262,12 @@ fn fit_controls(
         .map(|(row, target)| regression_transition(row.transition, target))
         .collect::<Result<Vec<_>, _>>()?;
     let width = regression[0].state.len();
-    let fitted_q = FittedQ::fit(
-        width,
-        &[0],
-        &regression
-            .iter()
-            .cloned()
-            .map(|mut row| {
-                row.action = 0;
-                row
-            })
-            .collect::<Vec<_>>(),
-        &FqiConfig {
-            iterations: 1,
-            trees_per_action: 15,
-            max_tree_depth: 6,
-            min_samples_leaf: 1,
-            bootstrap: true,
-            seed: 0x4754_4351_4649_0001,
-            ..FqiConfig::default()
-        },
-    )
-    .map_err(|error| GeneralizedTacticCalibrationError::new(error.to_string()))?;
+    let fitted_q = ContinuousTacticValueModel::fit(
+        &transitions,
+        goal_distance_feature,
+        usize::from(config.fitted_q_iterations),
+        config.per_tick_discount,
+    )?;
     let action_classes = regression
         .iter()
         .map(|row| row.action)
@@ -369,17 +354,18 @@ fn predict_controls(
             predicted: f64::from(local_estimate.outcome.reward),
             epistemic_signal: Some(f64::from(local_estimate.nearest_distance)),
         });
-        let regression = regression_transition(row.transition, row.target as f32)?;
-        let fitted_estimate = models
-            .fitted_q
-            .estimate(&regression.state, 0)
-            .map_err(|error| GeneralizedTacticCalibrationError::new(error.to_string()))?;
+        let fitted_estimate = models.fitted_q.predict(
+            &row.transition.value_sample.state,
+            &context,
+            &row.transition.value_sample.action,
+        )?;
         fitted_q.push(ControlPrediction {
             transition: row.transition,
             target: row.target,
-            predicted: fitted_estimate.mean,
-            epistemic_signal: Some(fitted_estimate.variance.sqrt()),
+            predicted: fitted_estimate.mean_q,
+            epistemic_signal: Some(fitted_estimate.ensemble_variance.sqrt()),
         });
+        let regression = regression_transition(row.transition, row.target as f32)?;
         if models.action_classes.contains(&regression.action) {
             let estimate = models
                 .double_q

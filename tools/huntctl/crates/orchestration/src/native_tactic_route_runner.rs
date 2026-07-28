@@ -63,6 +63,7 @@ use dusklight_learning::tactic_macro_promotion::{
     TacticMacroEntryCondition, TacticMacroPromotionRegistry, discover_replay_macros,
     replay_macro_candidate,
 };
+use dusklight_learning::tactic_value_treatment::TacticValueTreatment;
 use dusklight_objectives::milestone_dsl::{Comparison, Expression, Field, Value};
 use dusklight_proposals::behavior_archive::BehaviorArchive;
 use dusklight_search::search::{MacroAction, SearchPadState};
@@ -112,6 +113,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V26: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V27: &str = "dusklight-native-tactic-route-report/v27";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V28: &str = "dusklight-native-tactic-route-report/v28";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V29: &str = "dusklight-native-tactic-route-report/v29";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V30: &str = "dusklight-native-tactic-route-report/v30";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -175,11 +177,11 @@ mod execution_plan;
 pub use execution_plan::{
     NATIVE_TACTIC_EXECUTION_PLAN_FILE, NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V1,
     NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V2, NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V3,
-    NativeTacticAcquisitionPlan, NativeTacticCheckpointFallback, NativeTacticCheckpointOwnership,
-    NativeTacticCheckpointPlan, NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest,
-    NativeTacticGenerationPlan, NativeTacticInterventionPlan, NativeTacticLanePlan,
-    NativeTacticLaneRole, NativeTacticPlanBudgets, NativeTacticReplaySharingPlan,
-    NativeTacticResourceLimit,
+    NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V4, NativeTacticAcquisitionPlan,
+    NativeTacticCheckpointFallback, NativeTacticCheckpointOwnership, NativeTacticCheckpointPlan,
+    NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest, NativeTacticGenerationPlan,
+    NativeTacticInterventionPlan, NativeTacticLanePlan, NativeTacticLaneRole,
+    NativeTacticPlanBudgets, NativeTacticReplaySharingPlan, NativeTacticResourceLimit,
 };
 
 mod learner_authority;
@@ -379,6 +381,7 @@ pub fn run_native_tactic_route(
             replay_control_plane,
             route_option_value_config(execution_plan_sha256),
             encoder.goal_distance_feature(),
+            config.execution_plan.value_treatment,
             config.execution_plan.refit_every_decisions,
         )?));
 
@@ -647,7 +650,7 @@ pub fn run_native_tactic_route(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V29.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V30.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
@@ -670,6 +673,7 @@ pub fn run_native_tactic_route(
         demonstration: demonstration.clone(),
         exploration_seeds: config.execution_plan.seeds.to_vec(),
         proposal_policy: config.execution_plan.proposal_policy,
+        value_treatment: config.execution_plan.value_treatment,
         execution_strategy: config.execution_plan.execution_strategy,
         workers: worker_count,
         decisions_per_seed: config.execution_plan.budgets.decisions_per_lane,

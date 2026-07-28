@@ -58,12 +58,12 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   a deliberately degraded `131`-tick demonstration, so delayed-credit route
   improvement remains unproved. Evidence:
   `ordon-p3-greedy-authority-v1.report.json`.
-- The current generalized value model is not the leading held-out control.
-  A continuous fitted-Q forest performed better on unseen action realizations;
-  neural Double-Q and conservative Q extrapolated poorly. This is evidence for
-  the next learner experiment, not permission to promote a model without
-  matched native validation. Evidence:
-  `ordon-p3-control-comparison-v1.report.json`.
+- The continuous fitted-Q forest that led the held-out control comparison is
+  now the default live value treatment. Execution plans, immutable learner
+  snapshots, CLI selection, and reports seal its identity; the former local
+  generalized fitted-Q k-NN path remains an explicit control. It still lacks
+  matched native validation and is not yet evidence of route improvement.
+  Evidence: `ordon-p3-control-comparison-v1.report.json`.
 - Replay mining, entry-conditioned validation, promoted-tactic storage, and
   primitive-versus-macro competition exist. No tactic has yet earned promotion
   because the held-out probe contained no successful exploration observation.
@@ -99,10 +99,6 @@ tie is diagnostic evidence only.
 
 ## P3 - Prove delayed-credit continuous-control learning
 
-- [ ] Put the best held-out candidate learner into the live policy path behind
-      a sealed treatment identity. Start with continuous fitted Q because it
-      currently beats the local generalized model; retain the existing model
-      and structured search as controls.
 - [ ] Feed the learner the complete typed observation and action-availability
       state needed to infer momentum, straight travel, productive versus
       slowing contact, rolling opportunities, prompted actions, and camera

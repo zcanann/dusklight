@@ -1,5 +1,6 @@
 use super::*;
 use crate::fact_snapshot::{FactSnapshot, FactTerminalReason};
+use crate::tactic_value_treatment::ContinuousTacticValueModel;
 use crate::tape::{InputFrame, InputTape};
 use dusklight_control::option_execution::{
     OptionCondition, OptionEndReason, OptionExecution, OptionParameter, OptionType, TapeRange,
@@ -207,6 +208,42 @@ fn compares_all_controls_on_the_same_whole_group_partitions() {
     mislabeled.state_region.models[0].model = "structured_shortest_valid_action".into();
     mislabeled.report_sha256 = mislabeled.digest().unwrap();
     assert!(mislabeled.validate().is_err());
+}
+
+#[test]
+fn extracted_continuous_forest_ranks_continuous_action_features_by_fitted_q() {
+    let transitions = corpus();
+    let model = ContinuousTacticValueModel::fit(&transitions, 0, 8, 0.99).unwrap();
+    let probe = transition(999, 9, 0);
+    let context = GeneralizedTacticContext::from_facts(&probe.before).unwrap();
+    let descriptors = (0..5)
+        .map(|action| transition(1_000 + action, 9, action).value_sample.action)
+        .collect::<Vec<_>>();
+    let ranked = model
+        .rank(&probe.value_sample.state, &context, &descriptors)
+        .unwrap();
+
+    assert_eq!(ranked.len(), descriptors.len());
+    assert!(
+        ranked
+            .windows(2)
+            .all(|pair| pair[0].mean_q >= pair[1].mean_q)
+    );
+    assert!(
+        ranked
+            .iter()
+            .map(|estimate| estimate.mean_q.to_bits())
+            .collect::<BTreeSet<_>>()
+            .len()
+            > 1
+    );
+    assert_ne!(
+        ranked
+            .iter()
+            .map(|estimate| estimate.descriptor.clone())
+            .collect::<Vec<_>>(),
+        descriptors
+    );
 }
 
 #[test]

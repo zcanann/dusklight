@@ -6,9 +6,11 @@ pub const NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V2: &str =
     "dusklight-native-tactic-execution-plan/v2";
 pub const NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V3: &str =
     "dusklight-native-tactic-execution-plan/v3";
+pub const NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V4: &str =
+    "dusklight-native-tactic-execution-plan/v4";
 pub const NATIVE_TACTIC_EXECUTION_PLAN_FILE: &str = "execution-plan.dtp";
 const PLAN_MAGIC: &[u8; 8] = b"DSKTPN01";
-const PLAN_VERSION: u16 = 3;
+const PLAN_VERSION: u16 = 4;
 const PLAN_HEADER_BYTES: usize = 8 + 2 + 8 + 32;
 const MAXIMUM_PLAN_BYTES: usize = 4 * 1024 * 1024;
 pub(super) const EPISODE_GROUP_STRIDE: u64 = 1_000_000;
@@ -182,6 +184,7 @@ pub struct NativeTacticPlanBudgets {
 pub struct NativeTacticExecutionPlanRequest {
     pub seeds: Vec<u64>,
     pub proposal_policy: TacticProposalPolicy,
+    pub value_treatment: TacticValueTreatment,
     pub execution_strategy: NativeGenericExecutionStrategy,
     pub promoted_tactic_registry_sha256: Option<Digest>,
     pub lanes_per_generation: usize,
@@ -201,6 +204,7 @@ pub struct NativeTacticExecutionPlan {
     pub schema: String,
     pub seeds: Vec<u64>,
     pub proposal_policy: TacticProposalPolicy,
+    pub value_treatment: TacticValueTreatment,
     pub execution_strategy: NativeGenericExecutionStrategy,
     pub promoted_tactic_registry_sha256: Option<Digest>,
     pub proposal_width_per_decision: usize,
@@ -311,9 +315,10 @@ impl NativeTacticExecutionPlan {
             });
         }
         let plan = Self {
-            schema: NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V3.into(),
+            schema: NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V4.into(),
             seeds: request.seeds,
             proposal_policy: request.proposal_policy,
+            value_treatment: request.value_treatment,
             execution_strategy: request.execution_strategy,
             promoted_tactic_registry_sha256: request.promoted_tactic_registry_sha256,
             proposal_width_per_decision: request.proposal_width_per_decision,
@@ -386,7 +391,7 @@ impl NativeTacticExecutionPlan {
     }
 
     pub(super) fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
-        if self.schema != NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V3
+        if self.schema != NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V4
             || self.promoted_tactic_registry_sha256 == Some(Digest::ZERO)
             || self.seeds.len() != self.lanes.len()
             || self.generations.is_empty()
@@ -428,6 +433,7 @@ mod tests {
         NativeTacticExecutionPlanRequest {
             seeds: vec![11, 22, 33, 44],
             proposal_policy: TacticProposalPolicy::Learned,
+            value_treatment: TacticValueTreatment::ContinuousFittedQForestV1,
             execution_strategy: NativeGenericExecutionStrategy::NativeController,
             promoted_tactic_registry_sha256: None,
             lanes_per_generation: 4,
@@ -556,6 +562,9 @@ mod tests {
 
         let mut changed = plan.clone();
         changed.proposal_policy = TacticProposalPolicy::RandomValid;
+        variants.push(changed);
+        let mut changed = plan.clone();
+        changed.value_treatment = TacticValueTreatment::LocalGeneralizedFittedQKnnV1;
         variants.push(changed);
         let mut changed = plan.clone();
         changed.execution_strategy = NativeGenericExecutionStrategy::ProgressiveAudit;

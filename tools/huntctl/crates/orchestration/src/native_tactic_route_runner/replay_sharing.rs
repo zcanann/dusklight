@@ -183,6 +183,7 @@ pub(super) fn publish_demonstration_replay(
     let learner_snapshot = TacticQLearnerSnapshot::from_demonstration(
         &demonstration.corpus,
         route_option_value_config(demonstration.corpus.execution_authority_sha256),
+        learner.snapshot().manifest.value_treatment,
     )
     .map_err(route_error)?;
     let learner_snapshot_sha256 = learner

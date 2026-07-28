@@ -23,7 +23,7 @@ pub(crate) mod prediction;
 pub const GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH: usize = 71;
 const GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH: usize = 11;
 const MAX_GENERALIZED_TACTIC_SAMPLES: usize = 100_000;
-const MAX_FITTED_Q_BACKUP_ITERATIONS: usize = 512;
+pub(crate) const MAX_FITTED_Q_BACKUP_ITERATIONS: usize = 512;
 const NEIGHBORS: usize = 8;
 const STATE_NEIGHBORS: usize = 16;
 const MAX_RANGE_CALIBRATION_SAMPLES: usize = 2_048;

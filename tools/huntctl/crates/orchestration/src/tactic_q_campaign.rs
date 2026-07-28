@@ -40,6 +40,9 @@ use dusklight_learning::tactic_exploration::{
     retain_generalized_value_acquisition,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
+use dusklight_learning::tactic_value_treatment::{
+    ContinuousTacticValueModel, TacticValueTreatment,
+};
 use dusklight_proposals::behavior_archive::{
     BehaviorArchive, MAX_BEHAVIOR_ARCHIVE_ENTRIES, TacticEndpointDescriptor, TacticStateDescriptor,
     tactic_state_descriptor,
@@ -63,6 +66,7 @@ pub const TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1: &str =
 pub const TACTIC_Q_FINAL_RESULT_SCHEMA_V1: &str = "dusklight-tactic-q-final-result/v1";
 pub const TACTIC_Q_FINAL_RESULT_SCHEMA_V2: &str = "dusklight-tactic-q-final-result/v2";
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1: &str = "dusklight-tactic-q-learner-snapshot/v1";
+pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V2: &str = "dusklight-tactic-q-learner-snapshot/v2";
 /// Episode group reserved for critic evidence that must never become an
 /// executable frontier.
 pub const TACTIC_Q_MODEL_ONLY_EPISODE_GROUP: u64 = u64::MAX;
@@ -370,16 +374,11 @@ pub struct TacticQCampaign {
     model: Option<Arc<OptionValueModel>>,
     model_revision: u64,
     campaign_learner_authority_managed: bool,
+    value_treatment: TacticValueTreatment,
     generalized_model: RefCell<Option<CachedGeneralizedTacticValueModel>>,
+    continuous_model: RefCell<Option<CachedContinuousTacticValueModel>>,
     visited_states: BTreeSet<TacticStateDescriptor>,
     hindsight: HindsightOptionReplay,
-}
-
-#[derive(Debug)]
-struct CachedGeneralizedTacticValueModel {
-    goal_distance_feature: usize,
-    model_revision: u64,
-    model: Arc<GeneralizedTacticValueModel>,
 }
 
 /// In-memory training evidence shared across independent tactic episodes.
@@ -528,7 +527,9 @@ impl TacticQCampaign {
             model: None,
             model_revision: 0,
             campaign_learner_authority_managed: false,
+            value_treatment: TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
             generalized_model: RefCell::new(None),
+            continuous_model: RefCell::new(None),
             visited_states,
             hindsight,
         })
@@ -553,8 +554,9 @@ impl TacticQCampaign {
             })
             .transpose()?;
         let snapshot = TacticQLearnerSnapshot {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V2.into(),
             kind: TacticQLearnerSnapshotKind::Learned,
+            value_treatment: self.value_treatment,
             execution_authority_sha256: self.execution_authority_sha256,
             feature_schema_sha256: self.feature_schema_sha256,
             objective_sha256: self.objective_sha256,
@@ -585,6 +587,8 @@ impl TacticQCampaign {
             || snapshot.manifest.objective_sha256 != self.objective_sha256
             || snapshot.manifest.root_checkpoint_sha256 != self.root_checkpoint_sha256
             || snapshot.manifest.model_config != self.model_config
+            || (self.campaign_learner_authority_managed
+                && snapshot.manifest.value_treatment != self.value_treatment)
             || snapshot.manifest.training_replay_rows
                 != snapshot.training_corpus.transitions.len() as u64
             || snapshot.replay_revision != snapshot.manifest.training_replay_rows
@@ -599,11 +603,21 @@ impl TacticQCampaign {
         self.model = snapshot.model.clone();
         self.model_revision = snapshot.manifest.model_revision;
         self.campaign_learner_authority_managed = true;
+        self.value_treatment = snapshot.manifest.value_treatment;
         *self.generalized_model.borrow_mut() =
             snapshot
                 .generalized_model
                 .as_ref()
                 .map(|model| CachedGeneralizedTacticValueModel {
+                    goal_distance_feature: snapshot.goal_distance_feature,
+                    model_revision: snapshot.manifest.model_revision,
+                    model: Arc::clone(model),
+                });
+        *self.continuous_model.borrow_mut() =
+            snapshot
+                .continuous_model
+                .as_ref()
+                .map(|model| CachedContinuousTacticValueModel {
                     goal_distance_feature: snapshot.goal_distance_feature,
                     model_revision: snapshot.manifest.model_revision,
                     model: Arc::clone(model),
@@ -627,49 +641,6 @@ impl TacticQCampaign {
         }
         self.execution_authority_sha256 = execution_authority_sha256;
         Ok(())
-    }
-
-    fn generalized_model(
-        &self,
-        goal_distance_feature: usize,
-    ) -> Result<Option<Arc<GeneralizedTacticValueModel>>, TacticQCampaignError> {
-        if self.campaign_learner_authority_managed {
-            return Ok(self
-                .generalized_model
-                .borrow()
-                .as_ref()
-                .filter(|cached| cached.goal_distance_feature == goal_distance_feature)
-                .map(|cached| Arc::clone(&cached.model)));
-        }
-        if self.training_replay.len() < 2 {
-            return Ok(None);
-        }
-        let stale = self
-            .generalized_model
-            .borrow()
-            .as_ref()
-            .is_none_or(|cached| {
-                cached.goal_distance_feature != goal_distance_feature
-                    || cached.model_revision != self.model_revision
-            });
-        if stale {
-            let model = Arc::new(GeneralizedTacticValueModel::fit_fitted_q_transitions(
-                &self.training_replay,
-                goal_distance_feature,
-                self.model_config.fitted_q.iterations,
-                self.model_config.fitted_q.discount,
-            )?);
-            *self.generalized_model.borrow_mut() = Some(CachedGeneralizedTacticValueModel {
-                goal_distance_feature,
-                model_revision: self.model_revision,
-                model,
-            });
-        }
-        Ok(self
-            .generalized_model
-            .borrow()
-            .as_ref()
-            .map(|cached| Arc::clone(&cached.model)))
     }
 
     pub fn training_replay_len(&self) -> usize {
@@ -819,6 +790,8 @@ pub use learner_snapshot::{
 mod decision;
 mod frontier;
 mod persistence;
+mod value_treatment;
+use value_treatment::{CachedContinuousTacticValueModel, CachedGeneralizedTacticValueModel};
 
 fn applicable_untried_descriptors(
     choices: &[LearnerActionMaskEntry],

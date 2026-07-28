@@ -881,8 +881,10 @@ mod tests {
     fn learner_snapshot(service: &TacticReplayControlPlane) -> Digest {
         let identity = service.identity();
         let snapshot = TacticQLearnerSnapshot {
-            schema: crate::tactic_q_campaign::TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1.into(),
+            schema: crate::tactic_q_campaign::TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V2.into(),
             kind: crate::tactic_q_campaign::TacticQLearnerSnapshotKind::Learned,
+            value_treatment:
+                dusklight_learning::tactic_value_treatment::TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
             execution_authority_sha256: identity.execution_authority_sha256,
             feature_schema_sha256: identity.feature_schema_sha256,
             objective_sha256: identity.objective_sha256,

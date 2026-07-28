@@ -1,5 +1,9 @@
 use super::*;
 
+fn is_default_value_treatment(value: &TacticValueTreatment) -> bool {
+    *value == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TacticQLearnerSnapshotKind {
@@ -19,6 +23,8 @@ pub enum TacticQLearnerSnapshotKind {
 pub struct TacticQLearnerSnapshot {
     pub schema: String,
     pub kind: TacticQLearnerSnapshotKind,
+    #[serde(default, skip_serializing_if = "is_default_value_treatment")]
+    pub value_treatment: TacticValueTreatment,
     pub execution_authority_sha256: Digest,
     pub feature_schema_sha256: Digest,
     pub objective_sha256: Digest,
@@ -34,11 +40,13 @@ impl TacticQLearnerSnapshot {
     pub fn from_demonstration(
         corpus: &TacticQTrainingCorpus,
         model_config: OptionValueConfig,
+        value_treatment: TacticValueTreatment,
     ) -> Result<Self, TacticQCampaignError> {
         validate_training_corpus(corpus)?;
         let snapshot = Self {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V2.into(),
             kind: TacticQLearnerSnapshotKind::Demonstration,
+            value_treatment,
             execution_authority_sha256: corpus.execution_authority_sha256,
             feature_schema_sha256: corpus.feature_schema_sha256,
             objective_sha256: corpus.objective_sha256,
@@ -64,7 +72,10 @@ impl TacticQLearnerSnapshot {
     }
 
     pub fn validate(&self) -> Result<(), TacticQCampaignError> {
-        if self.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1
+        let legacy = self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1
+            && self.value_treatment == TacticValueTreatment::LocalGeneralizedFittedQKnnV1;
+        let current = self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V2;
+        if (!legacy && !current)
             || self.execution_authority_sha256 == Digest::ZERO
             || self.feature_schema_sha256 == Digest::ZERO
             || self.objective_sha256 == Digest::ZERO
@@ -97,6 +108,7 @@ pub struct TacticQImmutableLearnerSnapshot {
     pub(super) training_corpus: Arc<TacticQTrainingCorpus>,
     pub(super) model: Option<Arc<OptionValueModel>>,
     pub(super) generalized_model: Option<Arc<GeneralizedTacticValueModel>>,
+    pub(super) continuous_model: Option<Arc<ContinuousTacticValueModel>>,
     pub(super) goal_distance_feature: usize,
 }
 
@@ -107,6 +119,7 @@ impl TacticQImmutableLearnerSnapshot {
         model_revision: u64,
         model_config: OptionValueConfig,
         goal_distance_feature: usize,
+        value_treatment: TacticValueTreatment,
     ) -> Result<Self, TacticQCampaignError> {
         validate_training_corpus(&corpus)?;
         if replay_revision != corpus.transitions.len() as u64 {
@@ -122,9 +135,9 @@ impl TacticQImmutableLearnerSnapshot {
             &model_config,
         )?
         .map(Arc::new);
-        let generalized_model = if corpus.transitions.len() < 2 {
-            None
-        } else {
+        let generalized_model = if corpus.transitions.len() >= 2
+            && value_treatment == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+        {
             Some(Arc::new(
                 GeneralizedTacticValueModel::fit_fitted_q_transitions(
                     &corpus.transitions,
@@ -133,6 +146,20 @@ impl TacticQImmutableLearnerSnapshot {
                     model_config.fitted_q.discount,
                 )?,
             ))
+        } else {
+            None
+        };
+        let continuous_model = if corpus.transitions.len() >= 2
+            && value_treatment == TacticValueTreatment::ContinuousFittedQForestV1
+        {
+            Some(Arc::new(ContinuousTacticValueModel::fit(
+                &corpus.transitions,
+                goal_distance_feature,
+                model_config.fitted_q.iterations,
+                model_config.fitted_q.discount,
+            )?))
+        } else {
+            None
         };
         let model_sha256 = model
             .as_ref()
@@ -143,8 +170,9 @@ impl TacticQImmutableLearnerSnapshot {
             })
             .transpose()?;
         let manifest = TacticQLearnerSnapshot {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V2.into(),
             kind: TacticQLearnerSnapshotKind::Learned,
+            value_treatment,
             execution_authority_sha256: corpus.execution_authority_sha256,
             feature_schema_sha256: corpus.feature_schema_sha256,
             objective_sha256: corpus.objective_sha256,
@@ -166,11 +194,43 @@ impl TacticQImmutableLearnerSnapshot {
             training_corpus: Arc::new(corpus),
             model,
             generalized_model,
+            continuous_model,
             goal_distance_feature,
         })
     }
 
     pub fn training_corpus(&self) -> &TacticQTrainingCorpus {
         &self.training_corpus
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_snapshot_defaults_to_the_original_value_treatment() {
+        let legacy = TacticQLearnerSnapshot {
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1.into(),
+            kind: TacticQLearnerSnapshotKind::Learned,
+            value_treatment: TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
+            execution_authority_sha256: Digest([1; 32]),
+            feature_schema_sha256: Digest([2; 32]),
+            objective_sha256: Digest([3; 32]),
+            root_checkpoint_sha256: Digest([4; 32]),
+            training_replay_rows: 0,
+            training_replay_sha256: Digest([5; 32]),
+            model_revision: 0,
+            model_config: OptionValueConfig::default(),
+            model_sha256: None,
+        };
+        let raw = serde_cbor::to_vec(&legacy).unwrap();
+        let decoded: TacticQLearnerSnapshot = serde_cbor::from_slice(&raw).unwrap();
+        assert_eq!(
+            decoded.value_treatment,
+            TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+        );
+        decoded.validate().unwrap();
+        assert_eq!(decoded.content_sha256().unwrap(), sha256(&raw));
     }
 }
