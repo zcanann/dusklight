@@ -67,6 +67,7 @@ pub const TACTIC_Q_MODEL_ONLY_EPISODE_GROUP: u64 = u64::MAX;
 /// replay the exact prefix, restore that state, and evaluate different
 /// executable tactics from it.
 pub const TACTIC_Q_DEMONSTRATION_EPISODE_GROUP: u64 = u64::MAX - 1;
+const MAX_RANKED_FRONTIER_CANDIDATES: usize = 16;
 const ROUTE_CHECKPOINT_SCHEMA_V1: &[u8] = b"dusklight-route-checkpoint/v1";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -927,9 +928,14 @@ impl TacticQCampaign {
                 "frontier archive has no eligible learned acquisition",
             ));
         }
+        if !demonstration_curriculum && choices.len() > MAX_RANKED_FRONTIER_CANDIDATES {
+            let offset = seeded_frontier_index(seed, round, choices.len());
+            choices.rotate_left(offset);
+            choices.truncate(MAX_RANKED_FRONTIER_CANDIDATES);
+        }
         let tie_offset = seeded_frontier_index(seed, round, choices.len());
         let choice_count = choices.len();
-        let generalized_model = (self.training_replay.len() >= 2)
+        let generalized_model = (!demonstration_curriculum && self.training_replay.len() >= 2)
             .then(|| {
                 GeneralizedTacticValueModel::fit_fitted_q_transitions(
                     &self.training_replay,
@@ -943,66 +949,72 @@ impl TacticQCampaign {
             .into_iter()
             .enumerate()
             .map(|(novelty_rank, entry)| {
-                let features = encode(&entry.transition.after)
-                    .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
-                if features.is_empty() || features.iter().any(|value| !value.is_finite()) {
-                    return Err(TacticQCampaignError::Features(
-                        "frontier encoding is empty or non-finite".into(),
-                    ));
-                }
-                let applicable = applicable_actions(&entry.transition.after)
-                    .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
-                if applicable.is_empty() {
-                    return Err(TacticQCampaignError::InvalidState(
-                        "frontier has no applicable executable actions".into(),
-                    ));
-                }
+                let acquisition_estimates = if demonstration_curriculum {
+                    (None, None, None, None)
+                } else {
+                    let features = encode(&entry.transition.after)
+                        .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+                    if features.is_empty() || features.iter().any(|value| !value.is_finite()) {
+                        return Err(TacticQCampaignError::Features(
+                            "frontier encoding is empty or non-finite".into(),
+                        ));
+                    }
+                    let applicable = applicable_actions(&entry.transition.after)
+                        .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+                    if applicable.is_empty() {
+                        return Err(TacticQCampaignError::InvalidState(
+                            "frontier has no applicable executable actions".into(),
+                        ));
+                    }
+                    if let Some(model) = generalized_model.as_ref() {
+                        let context =
+                            GeneralizedTacticContext::from_facts(&entry.transition.after)?;
+                        let estimates = model.rank(&features, &context, &applicable)?;
+                        (
+                            estimates
+                                .first()
+                                .map(|value| f64::from(value.outcome.reward)),
+                            estimates.first().and_then(|value| {
+                                (value.outcome.terminal > 0.0
+                                    && value.outcome.duration_ticks.is_finite()
+                                    && value.outcome.duration_ticks > 0.0)
+                                    .then_some(f64::from(value.outcome.duration_ticks))
+                            }),
+                            None,
+                            estimates
+                                .iter()
+                                .map(|value| value.nearest_distance)
+                                .max_by(f32::total_cmp),
+                        )
+                    } else {
+                        let estimates = self
+                            .model
+                            .as_ref()
+                            .map(|model| model.rank_available_options(&features, &applicable))
+                            .transpose()?;
+                        (
+                            estimates
+                                .as_ref()
+                                .and_then(|values| values.ranked.first())
+                                .map(|value| value.mean_q),
+                            None,
+                            estimates.as_ref().and_then(|values| {
+                                values
+                                    .ranked
+                                    .iter()
+                                    .map(|value| value.ensemble_variance)
+                                    .max_by(f64::total_cmp)
+                            }),
+                            None,
+                        )
+                    }
+                };
                 let (
                     best_mean_q,
                     predicted_terminal_ticks_to_go,
                     maximum_ensemble_variance,
                     generalized_nearest_distance,
-                ) = if let Some(model) = generalized_model.as_ref() {
-                    let context = GeneralizedTacticContext::from_facts(&entry.transition.after)?;
-                    let estimates = model.rank(&features, &context, &applicable)?;
-                    (
-                        estimates
-                            .first()
-                            .map(|value| f64::from(value.outcome.reward)),
-                        estimates.first().and_then(|value| {
-                            (value.outcome.terminal > 0.0
-                                && value.outcome.duration_ticks.is_finite()
-                                && value.outcome.duration_ticks > 0.0)
-                                .then_some(f64::from(value.outcome.duration_ticks))
-                        }),
-                        None,
-                        estimates
-                            .iter()
-                            .map(|value| value.nearest_distance)
-                            .max_by(f32::total_cmp),
-                    )
-                } else {
-                    let estimates = self
-                        .model
-                        .as_ref()
-                        .map(|model| model.rank_available_options(&features, &applicable))
-                        .transpose()?;
-                    (
-                        estimates
-                            .as_ref()
-                            .and_then(|values| values.ranked.first())
-                            .map(|value| value.mean_q),
-                        None,
-                        estimates.as_ref().and_then(|values| {
-                            values
-                                .ranked
-                                .iter()
-                                .map(|value| value.ensemble_variance)
-                                .max_by(f64::total_cmp)
-                        }),
-                        None,
-                    )
-                };
+                ) = acquisition_estimates;
                 let expansion_count = self
                     .replay
                     .iter()
