@@ -717,6 +717,7 @@ fn insert_recorded_controller_summary(
     let mut magnitude_total = 0.0_f32;
     let mut heading_vector = [0.0_f32; 2];
     let mut previous_heading = None::<f32>;
+    let mut initial_heading = None::<f32>;
     let mut internal_turn_radians = 0.0_f32;
     let mut button_mask = 0_u16;
     let mut button_active_ticks = 0_usize;
@@ -732,6 +733,7 @@ fn insert_recorded_controller_summary(
             // Native camera-relative movement uses x=-sin(heading),
             // y=cos(heading), matching GenericTactic::MaintainRelativeHeading.
             let heading = (-x).atan2(y);
+            initial_heading.get_or_insert(heading);
             heading_vector[0] += heading.sin() * magnitude;
             heading_vector[1] += heading.cos() * magnitude;
             if let Some(previous) = previous_heading {
@@ -770,6 +772,12 @@ fn insert_recorded_controller_summary(
         parameters.insert(
             "movement_heading".into(),
             OptionParameter::F32Bits(heading_vector[0].atan2(heading_vector[1]).to_bits()),
+        );
+    }
+    if let Some(initial_heading) = initial_heading {
+        parameters.insert(
+            "command_initial_heading".into(),
+            OptionParameter::F32Bits(initial_heading.to_bits()),
         );
     }
 
@@ -1089,6 +1097,13 @@ fn insert_controller_command_summary(
     parameters: &mut BTreeMap<String, OptionParameter>,
     program: &ControllerProgram,
 ) {
+    // Observation-free controller programs have an exact PAD realization.
+    // Summarize that realization with the same temporal command factors used
+    // for recorded demonstrations so setup headings and turns remain visible
+    // to cross-action learning instead of collapsing into an opaque digest.
+    if let Ok(tape) = compile_static_controller(program) {
+        insert_recorded_controller_summary(parameters, &tape);
+    }
     let button_layers = program
         .layers
         .iter()
@@ -1499,6 +1514,33 @@ mod tests {
     }
 
     #[test]
+    fn static_controller_summary_preserves_setup_heading_and_button_phase() {
+        let controller = ControllerProgram::parse(
+            "duskcontrol 1\nframes 4\n\
+             bezier replace from 0 for 2 p0 -127 0 p1 -127 0 p2 -127 0 p3 -127 0\n\
+             buttons from 1 for 1 L\n\
+             bezier replace from 2 for 2 p0 0 127 p1 0 127 p2 0 127 p3 0 127\n",
+        )
+        .unwrap();
+
+        let description = controller.describe("camera-lock-forward").unwrap();
+
+        assert!(
+            (parameter_f32(&description, "command_initial_heading") - std::f32::consts::FRAC_PI_2)
+                .abs()
+                < 1.0e-6
+        );
+        assert_eq!(
+            description.option.parameters.get("button_pulse_phase_tick"),
+            Some(&OptionParameter::Unsigned(1))
+        );
+        assert_eq!(
+            description.option.parameters.get("command_button_mask"),
+            Some(&OptionParameter::Unsigned(0x0040))
+        );
+    }
+
+    #[test]
     fn existing_plan_types_share_one_adapter_without_changing_realization() {
         let game = GameTacticPlan::new(GameTactic::Interact {
             press_frames: 1,
@@ -1878,6 +1920,12 @@ mod tests {
                 .abs()
                 < 1.0e-6
         );
+        assert!(
+            (parameter_f32(entry.description(), "command_initial_heading")
+                + std::f32::consts::FRAC_PI_2)
+                .abs()
+                < 1.0e-6
+        );
         let catalog = TacticAssetCatalog::new(vec![entry]).unwrap();
         let PreparedTacticExecution::Static(realized) =
             catalog.prepare_execution("promoted/example").unwrap()
@@ -1937,6 +1985,7 @@ mod tests {
                 .abs()
                 < 1.0e-6
         );
+        assert_eq!(parameter_f32(&description, "command_initial_heading"), 0.0);
     }
 
     #[test]

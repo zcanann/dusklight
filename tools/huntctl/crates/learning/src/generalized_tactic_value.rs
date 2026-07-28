@@ -930,7 +930,8 @@ fn encode_action(
     // first emitted PAD heading is player - authored - camera.
     let current_yaw = context.yaw_sin.atan2(context.yaw_cos);
     let camera_yaw = context.camera_yaw_sin.atan2(context.camera_yaw_cos);
-    let emitted_heading = float(descriptor, "movement_heading")
+    let emitted_heading = float(descriptor, "command_initial_heading")
+        .or_else(|| float(descriptor, "movement_heading"))
         .or_else(|| {
             float(descriptor, "heading_radians")
                 .map(|authored| angle_delta(current_yaw - authored, camera_yaw))
@@ -1517,6 +1518,31 @@ mod tests {
     }
 
     #[test]
+    fn initial_command_heading_distinguishes_setup_from_long_run_mean() {
+        let mut right = action("right-setup", 100.0, 100.0, 0.0, None, 10.0);
+        let mut left = action("left-setup", 100.0, 100.0, 0.0, None, 10.0);
+        for descriptor in [&mut right, &mut left] {
+            descriptor.parameters.insert(
+                "movement_heading".into(),
+                OptionParameter::F32Bits(0.0_f32.to_bits()),
+            );
+        }
+        right.parameters.insert(
+            "command_initial_heading".into(),
+            OptionParameter::F32Bits(std::f32::consts::FRAC_PI_2.to_bits()),
+        );
+        left.parameters.insert(
+            "command_initial_heading".into(),
+            OptionParameter::F32Bits((-std::f32::consts::FRAC_PI_2).to_bits()),
+        );
+
+        assert_ne!(
+            encode_action(&GeneralizedTacticContext::default(), &right).unwrap(),
+            encode_action(&GeneralizedTacticContext::default(), &left).unwrap()
+        );
+    }
+
+    #[test]
     fn typed_native_targets_magnitude_and_heading_are_state_relative() {
         let context = GeneralizedTacticContext {
             player_x: 10.0,
@@ -1580,6 +1606,25 @@ mod tests {
         assert_eq!(encoded_roll[45], 1.0);
         assert!((encoded_roll[51] - 0.25).abs() < 1.0e-6);
         assert_eq!(encoded_roll[55 + 8], 1.0);
+
+        let temporal_controller = OptionActionDescriptor {
+            option_id: "camera-lock-forward".into(),
+            option_type: OptionType::Custom("reactive_controller".into()),
+            parameters: BTreeMap::from([
+                (
+                    "command_initial_heading".into(),
+                    OptionParameter::F32Bits(std::f32::consts::FRAC_PI_2.to_bits()),
+                ),
+                (
+                    "movement_heading".into(),
+                    OptionParameter::F32Bits(0.0_f32.to_bits()),
+                ),
+            ]),
+        };
+        let encoded_temporal = encode_action(&context, &temporal_controller).unwrap();
+        assert_eq!(encoded_temporal[47], 1.0);
+        assert!((encoded_temporal[48] - 1.0).abs() < 1.0e-6);
+        assert!(encoded_temporal[49].abs() < 1.0e-6);
     }
 
     #[test]

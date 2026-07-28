@@ -17,15 +17,17 @@ use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::f32::consts::{PI, TAU};
 
-pub const PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V3: &str =
-    "dusklight-parameterized-tactic-families/v3";
-pub const MAX_PARAMETERIZED_PROPOSALS: usize = 48;
+pub const PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V4: &str =
+    "dusklight-parameterized-tactic-families/v4";
+pub const MAX_PARAMETERIZED_PROPOSALS: usize = 128;
 const MAX_PARAMETERIZED_TACTIC_TICKS: u32 = 4_096;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ParameterizedTacticFamily {
     SeekTarget,
     RelativeHeading,
+    CameraLockForward,
+    CameraLockRollForward,
     ShortCurve,
     Roll,
     Neutral,
@@ -36,6 +38,8 @@ impl ParameterizedTacticFamily {
         match self {
             Self::SeekTarget => "seek-target",
             Self::RelativeHeading => "relative-heading",
+            Self::CameraLockForward => "camera-lock-forward",
+            Self::CameraLockRollForward => "camera-lock-roll-forward",
             Self::ShortCurve => "short-curve",
             Self::Roll => "roll",
             Self::Neutral => "neutral",
@@ -104,12 +108,14 @@ pub struct ParameterizedTacticProposalCatalog {
 
 pub fn parameterized_tactic_family_schema_sha256() -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V3.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V4.as_bytes());
     hasher.update((MAX_PARAMETERIZED_PROPOSALS as u64).to_le_bytes());
     hasher.update(MAX_PARAMETERIZED_TACTIC_TICKS.to_le_bytes());
     for family in [
         ParameterizedTacticFamily::SeekTarget,
         ParameterizedTacticFamily::RelativeHeading,
+        ParameterizedTacticFamily::CameraLockForward,
+        ParameterizedTacticFamily::CameraLockRollForward,
         ParameterizedTacticFamily::ShortCurve,
         ParameterizedTacticFamily::Roll,
         ParameterizedTacticFamily::Neutral,
@@ -203,6 +209,58 @@ pub fn propose_parameterized_tactics(
         }
     }
 
+    // Targeting can collapse a difficult camera-relative steering problem into
+    // a semi-Markov option: select a world direction once, tap L while turning
+    // toward it, then hold raw up against the resulting camera lock. This is a
+    // generic action family, not an Ordon route or reward rule. The ordinary
+    // learner decides from outcomes where its one-frame setup cost is useful
+    // and where continuous observation-driven steering remains necessary.
+    for (index, offset) in heading_offsets.iter().copied().enumerate() {
+        let heading = if index == 0 {
+            goal_heading
+        } else {
+            normalize_angle(central_heading + offset)
+        };
+        for lock_frame in 0..=u32::from(context.maximum_ticks > 1) {
+            insert(
+                &mut entries,
+                ParameterizedTacticFamily::CameraLockForward,
+                TacticAssetSource::ReactiveController(camera_lock_forward_program(
+                    stick(heading, 127),
+                    context.maximum_ticks.min(40),
+                    lock_frame,
+                )?),
+                context.maximum_ticks,
+            )?;
+        }
+    }
+
+    // The same setup is especially valuable for a prompted roll because its
+    // direction is largely committed on the A frame. Cover the two likely
+    // L+A schedules and a conservative fully staggered schedule, then expose a
+    // short forward recovery window so the learner can make another decision
+    // instead of embedding a long, benchmark-specific roll cadence.
+    for (index, offset) in heading_offsets.iter().copied().enumerate() {
+        let heading = if index == 0 {
+            goal_heading
+        } else {
+            normalize_angle(central_heading + offset)
+        };
+        let duration = context.maximum_ticks.min(16);
+        for timing in 0..=2_u32.min(duration.saturating_sub(1)) {
+            insert(
+                &mut entries,
+                ParameterizedTacticFamily::CameraLockRollForward,
+                TacticAssetSource::ReactiveController(camera_lock_roll_forward_program(
+                    stick(heading, 127),
+                    duration,
+                    timing,
+                )?),
+                context.maximum_ticks,
+            )?;
+        }
+    }
+
     for clockwise in [false, true] {
         let start = stick(central_heading, 127);
         let bend_angle = PI / 4.0;
@@ -286,7 +344,7 @@ fn insert(
 ) -> Result<(), TacticAssetError> {
     let canonical = source.canonical_bytes()?;
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V3.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V4.as_bytes());
     hasher.update(family.slug().as_bytes());
     hasher.update((canonical.len() as u64).to_le_bytes());
     hasher.update(canonical);
@@ -305,7 +363,7 @@ fn insert(
 
 fn proposal_draw(context: ParameterizedTacticProposalContext) -> u64 {
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V3.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V4.as_bytes());
     hasher.update(context.seed.to_le_bytes());
     hasher.update(context.decision_index.to_le_bytes());
     hasher.update(context.state_sha256.0);
@@ -335,6 +393,67 @@ fn stick(angle: f32, magnitude: i8) -> [i8; 2] {
         (-angle.sin() * f32::from(magnitude)).round() as i8,
         (angle.cos() * f32::from(magnitude)).round() as i8,
     ]
+}
+
+fn camera_lock_forward_program(
+    initial_stick: [i8; 2],
+    duration: u32,
+    lock_frame: u32,
+) -> Result<ControllerProgram, TacticAssetError> {
+    if lock_frame > 1 || lock_frame >= duration {
+        return Err(TacticAssetError::InvalidAsset(
+            "camera lock frame must be zero or one and inside the option".into(),
+        ));
+    }
+    let setup_frames = lock_frame + 1;
+    let mut source = format!(
+        "duskcontrol 1\nframes {duration}\n\
+         bezier replace from 0 for 1 p0 {x} {y} p1 {x} {y} p2 {x} {y} p3 {x} {y}\n\
+         buttons from {lock_frame} for 1 L\n",
+        x = initial_stick[0],
+        y = initial_stick[1],
+    );
+    if duration > setup_frames {
+        source.push_str(&format!(
+            "bezier replace from {setup_frames} for {} p0 0 127 p1 0 127 p2 0 127 p3 0 127\n",
+            duration - setup_frames
+        ));
+    }
+    ControllerProgram::parse(&source)
+        .map_err(|error| TacticAssetError::InvalidAsset(error.to_string()))
+}
+
+fn camera_lock_roll_forward_program(
+    initial_stick: [i8; 2],
+    duration: u32,
+    timing: u32,
+) -> Result<ControllerProgram, TacticAssetError> {
+    if timing > 2 || timing >= duration {
+        return Err(TacticAssetError::InvalidAsset(
+            "camera-lock roll timing must be zero, one, or two and inside the option".into(),
+        ));
+    }
+    let mut source = format!(
+        "duskcontrol 1\nframes {duration}\n\
+         bezier replace from 0 for 1 p0 {x} {y} p1 {x} {y} p2 {x} {y} p3 {x} {y}\n",
+        x = initial_stick[0],
+        y = initial_stick[1],
+    );
+    match timing {
+        0 => source.push_str("buttons from 0 for 1 L A\n"),
+        1 => source.push_str("buttons from 1 for 1 L A\n"),
+        2 => source.push_str("buttons from 1 for 1 L\nbuttons from 2 for 1 A\n"),
+        _ => unreachable!("timing was range checked"),
+    }
+    let forward_start = timing + 1;
+    if duration > forward_start {
+        source.push_str(&format!(
+            "bezier replace from {forward_start} for {} p0 0 127 p1 0 127 p2 0 127 p3 0 127\n",
+            duration - forward_start
+        ));
+    }
+    ControllerProgram::parse(&source)
+        .map_err(|error| TacticAssetError::InvalidAsset(error.to_string()))
 }
 
 #[cfg(test)]
@@ -540,6 +659,144 @@ mod tests {
             roll_directions
                 .iter()
                 .any(|direction| matches!(direction, Some(OptionParameter::Signed(-90))))
+        );
+    }
+
+    #[test]
+    fn camera_lock_forward_turns_and_targets_once_then_holds_raw_up() {
+        let proposals = propose_parameterized_tactics(context(37, 2)).unwrap();
+        let camera_lock_entries = proposals
+            .catalog
+            .entries()
+            .iter()
+            .filter(|entry| entry.option_id().starts_with("family/camera-lock-forward/"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(camera_lock_entries.len(), 32);
+        let mut initial_sticks_and_lock_frames = BTreeSet::new();
+        let mut described_lock_frames = BTreeSet::new();
+        for entry in camera_lock_entries {
+            assert_eq!(
+                entry
+                    .description()
+                    .option
+                    .parameters
+                    .get("command_button_mask"),
+                Some(&OptionParameter::Unsigned(0x0040))
+            );
+            let exact = entry.exact_static_realization().unwrap().unwrap();
+            assert_eq!(exact.tape.frames.len(), 40);
+            let lock_frame = exact
+                .tape
+                .frames
+                .iter()
+                .position(|frame| frame.pads[0].buttons == 0x0040)
+                .unwrap();
+            assert_eq!(
+                entry
+                    .description()
+                    .option
+                    .parameters
+                    .get("button_pulse_phase_tick"),
+                Some(&OptionParameter::Unsigned(lock_frame as u64))
+            );
+            described_lock_frames.insert(lock_frame);
+            assert!(lock_frame <= 1);
+            let first = exact.tape.frames[0].pads[0];
+            assert_eq!(first.buttons, if lock_frame == 0 { 0x0040 } else { 0 });
+            assert_eq!(
+                entry
+                    .description()
+                    .option
+                    .parameters
+                    .get("command_initial_heading"),
+                Some(&OptionParameter::F32Bits(
+                    (-f32::from(first.stick_x))
+                        .atan2(f32::from(first.stick_y))
+                        .to_bits()
+                ))
+            );
+            assert_eq!(exact.tape.frames[lock_frame].pads[0].buttons, 0x0040);
+            if lock_frame == 1 {
+                let lock_pad = exact.tape.frames[1].pads[0];
+                assert_eq!((lock_pad.stick_x, lock_pad.stick_y), (0, 0));
+            }
+            initial_sticks_and_lock_frames.insert((first.stick_x, first.stick_y, lock_frame));
+            assert!(exact.tape.frames[lock_frame + 1..].iter().all(|frame| {
+                let pad = frame.pads[0];
+                pad.buttons == 0 && pad.stick_x == 0 && pad.stick_y == 127
+            }));
+        }
+        assert_eq!(initial_sticks_and_lock_frames.len(), 32);
+        assert_eq!(described_lock_frames, BTreeSet::from([0, 1]));
+    }
+
+    #[test]
+    fn camera_lock_forward_remains_valid_for_one_tick_decisions() {
+        let program = camera_lock_forward_program([-127, 0], 1, 0).unwrap();
+        let entry = TacticCatalogEntry::new(
+            "family/camera-lock-forward/test",
+            TacticAssetSource::ReactiveController(program),
+        )
+        .unwrap();
+        let exact = entry.exact_static_realization().unwrap().unwrap();
+
+        assert_eq!(exact.tape.frames.len(), 1);
+        assert_eq!(exact.tape.frames[0].pads[0].buttons, 0x0040);
+        assert_eq!(
+            (
+                exact.tape.frames[0].pads[0].stick_x,
+                exact.tape.frames[0].pads[0].stick_y
+            ),
+            (-127, 0)
+        );
+        assert!(camera_lock_forward_program([-127, 0], 1, 1).is_err());
+    }
+
+    #[test]
+    fn camera_lock_roll_covers_combined_staggered_and_triple_staggered_inputs() {
+        let proposals = propose_parameterized_tactics(context(41, 3)).unwrap();
+        let entries = proposals
+            .catalog
+            .entries()
+            .iter()
+            .filter(|entry| {
+                entry
+                    .option_id()
+                    .starts_with("family/camera-lock-roll-forward/")
+            })
+            .collect::<Vec<_>>();
+        let mut schedules = BTreeSet::new();
+
+        assert_eq!(entries.len(), 48);
+        for entry in entries {
+            assert_eq!(
+                entry
+                    .description()
+                    .option
+                    .parameters
+                    .get("command_button_mask"),
+                Some(&OptionParameter::Unsigned(0x0140))
+            );
+            let exact = entry.exact_static_realization().unwrap().unwrap();
+            assert_eq!(exact.tape.frames.len(), 16);
+            schedules.insert(
+                exact
+                    .tape
+                    .frames
+                    .iter()
+                    .take(3)
+                    .map(|frame| frame.pads[0].buttons)
+                    .collect::<Vec<_>>(),
+            );
+        }
+        assert_eq!(
+            schedules,
+            BTreeSet::from([
+                vec![0x0140, 0, 0],
+                vec![0, 0x0140, 0],
+                vec![0, 0x0040, 0x0100],
+            ])
         );
     }
 }
