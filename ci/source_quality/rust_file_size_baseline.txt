@@ -17,7 +17,6 @@ tools/huntctl/crates/world/src/world_geometry.rs	1673
 tools/huntctl/crates/world/src/world_inventory.rs	1719
 tools/huntctl/crates/world/src/world_spatial.rs	1880
 tools/huntctl/src/cli/harness.rs	1633
-tools/huntctl/src/cli/learning/commands.rs	3669
 tools/huntctl/src/cli/search.rs	1861
 tools/route-planner/crates/engine/src/evaluation.rs	3380
 tools/route-planner/crates/engine/src/graph.rs	3121
