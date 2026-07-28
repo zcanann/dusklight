@@ -27,6 +27,8 @@ static OutputSubframe OutBuffer;
 static std::array<f32, DSP_SUBFRAME_SIZE * OutputSubframe::NUM_CHANNELS> OutInterleaveBuffer;
 
 static SDL_AudioStream* PlaybackStream;
+static bool HostOutputEnabled = true;
+static bool EmulationInitialized;
 static bool OutputMuted;
 static std::uint64_t DeterministicSampleCredit;
 
@@ -67,17 +69,31 @@ static void InitSDL3Output() {
 }
 
 void dusk::audio::Initialize() {
-    InitSDL3Output();
-    SDL_SetAudioStreamGain(PlaybackStream, OutputMuted ? 0.0f : 1.0f);
+    if (HostOutputEnabled) {
+        InitSDL3Output();
+        if (PlaybackStream != nullptr) {
+            SDL_SetAudioStreamGain(PlaybackStream, OutputMuted ? 0.0f : 1.0f);
+        }
+    }
     DspInit();
 
     JASDsp::initBuffer();
     JASDSPChannel::initAll();
 
     JASPoolAllocObject_MultiThreaded<JASChannel>::newMemPool(0x48);
+    EmulationInitialized = true;
     if (!dusk::automation::synchronous_io_enabled() && PlaybackStream != nullptr) {
         SDL_ResumeAudioStreamDevice(PlaybackStream);
     }
+}
+
+void dusk::audio::SetHostOutputEnabled(const bool enabled) {
+    assert(!EmulationInitialized);
+    HostOutputEnabled = enabled;
+}
+
+bool dusk::audio::HostOutputActive() {
+    return PlaybackStream != nullptr;
 }
 
 void dusk::audio::SetMasterVolume(const f32 value) {
@@ -105,7 +121,7 @@ void dusk::audio::SetPaused(const bool paused) {
 }
 
 void dusk::audio::AdvanceDeterministicAutomationTick() {
-    if (!dusk::automation::synchronous_io_enabled() || PlaybackStream == nullptr) {
+    if (!dusk::automation::synchronous_io_enabled() || !EmulationInitialized) {
         return;
     }
 

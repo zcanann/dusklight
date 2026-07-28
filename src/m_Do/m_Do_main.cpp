@@ -258,6 +258,8 @@ static bool prepare_automation_pre_input_boundary();
 static bool automation_oracle_rejected_before_loop();
 static bool unpacedMainLoop;
 static bool fixedStepMainLoop;
+static bool headlessMainLoop;
+static bool headlessRetainImGuiFrameLifecycle;
 static std::uint16_t fixedStepSpeedPercent = 100;
 static bool pipelineWarmupGateEnabled;
 static std::uint8_t recordInputHandoffCountdownSeconds;
@@ -363,6 +365,10 @@ void main01(void) {
 
     eventsDone:;
 
+        const bool suppressHeadlessImGui =
+            headlessMainLoop && !headlessRetainImGuiFrameLifecycle &&
+            dusk::automation::suffix_batch_runner().candidateFramePending();
+        aurora_set_imgui_frame_enabled(!suppressHeadlessImGui);
         const bool recordingCountdownFrame = recordInputHandoffCountdownActive;
         if (!(recordingCountdownFrame ? aurora_begin_retained_frame() : aurora_begin_frame())) {
             if (recordingCountdownFrame) {
@@ -452,8 +458,12 @@ void main01(void) {
                         dusk::gyro::read(pacing.sim_pace);
                     }
                     fapGm_Execute();
+                    dusk::automation::suffix_batch_runner().beginAudioEmulationProfile();
                     dusk::audio::AdvanceDeterministicAutomationTick();
+                    dusk::automation::suffix_batch_runner().endAudioEmulationProfile();
+                    dusk::automation::suffix_batch_runner().beginGameAudioProfile();
                     mDoAud_Execute();
+                    dusk::automation::suffix_batch_runner().endGameAudioProfile();
                     dusk::game_clock::commit_sim_tick();
                     if (!finish_simulation_tick()) {
                         break;
@@ -501,8 +511,12 @@ void main01(void) {
                 // This calls mDoGph_Painter -> JFWDisplay -> GX Functions
                 fapGm_Execute();
 
+                dusk::automation::suffix_batch_runner().beginAudioEmulationProfile();
                 dusk::audio::AdvanceDeterministicAutomationTick();
+                dusk::automation::suffix_batch_runner().endAudioEmulationProfile();
+                dusk::automation::suffix_batch_runner().beginGameAudioProfile();
                 mDoAud_Execute();
+                dusk::automation::suffix_batch_runner().endGameAudioProfile();
                 if (finish_simulation_tick()) {
                     if (dusk::automation::suffix_batch_runner().ownsPostSimulation()) {
                         finish_suffix_batch_tick();
@@ -721,8 +735,8 @@ static std::uint32_t inputControllerNextFrame;
 static std::size_t inputControllerPrefixFrames;
 static dusk::automation::InputControllerProgram inputControllerProgram;
 static bool automationInputHandedOff;
-static bool headlessMainLoop;
 static bool headlessRetainRendererSubmission;
+static bool headlessRetainHostAudioDevice;
 static bool deterministicTimeAdvanceFailed;
 static bool checkpointProbeFailed;
 static bool checkpointProbeWriteFailed;
@@ -778,6 +792,18 @@ static std::uint64_t automationPreparedInputFrame = dusk::automation::NameEntryN
 
 bool mDoAutomationSkipRendererSubmission() {
     return headlessMainLoop && !headlessRetainRendererSubmission;
+}
+
+bool mDoAutomationHeadlessActive() {
+    return headlessMainLoop;
+}
+
+bool mDoAutomationUnpaced() {
+    return unpacedMainLoop;
+}
+
+bool mDoAutomationRetainsImGuiFrameLifecycle() {
+    return headlessRetainImGuiFrameLifecycle;
 }
 
 namespace {
@@ -2232,6 +2258,14 @@ int game_main(int argc, char* argv[]) {
             "Audit comparator: retain CPU GX renderer submission during automation-owned headless "
             "ticks",
             cxxopts::value<bool>()->default_value("false")->implicit_value("true"))(
+            "headless-retain-imgui-frame-lifecycle",
+            "Audit comparator: retain ImGui initialization and per-frame lifecycle while "
+            "discarding headless frames",
+            cxxopts::value<bool>()->default_value("false")->implicit_value("true"))(
+            "headless-retain-host-audio-device",
+            "Audit comparator: open the muted host playback device while deterministic headless "
+            "audio emulation remains synchronous",
+            cxxopts::value<bool>()->default_value("false")->implicit_value("true"))(
             "deterministic-time-start",
             "Initial signed OS timer tick for fixed-step modes (default 0)",
             cxxopts::value<std::int64_t>())("input-tape",
@@ -2418,6 +2452,10 @@ int game_main(int argc, char* argv[]) {
         parsed_arg_options["headless-submit-gpu-frames"].as<bool>();
     headlessRetainRendererSubmission =
         parsed_arg_options["headless-retain-cpu-renderer-submission"].as<bool>();
+    headlessRetainImGuiFrameLifecycle =
+        parsed_arg_options["headless-retain-imgui-frame-lifecycle"].as<bool>();
+    headlessRetainHostAudioDevice =
+        parsed_arg_options["headless-retain-host-audio-device"].as<bool>();
     if (headlessSubmitGpuFrames && !headlessMainLoop) {
         fprintf(stderr, "Headless Error: --headless-submit-gpu-frames requires --headless\n");
         return 1;
@@ -2425,6 +2463,12 @@ int game_main(int argc, char* argv[]) {
     if (headlessRetainRendererSubmission && !headlessMainLoop) {
         fprintf(stderr,
             "Headless Error: --headless-retain-cpu-renderer-submission requires --headless\n");
+        return 1;
+    }
+    if ((headlessRetainImGuiFrameLifecycle || headlessRetainHostAudioDevice) &&
+        !headlessMainLoop)
+    {
+        fprintf(stderr, "Headless Error: headless audit comparators require --headless\n");
         return 1;
     }
     frameCaptureEnabled = parsed_arg_options.count("frame-capture-png") != 0;
@@ -3812,7 +3856,9 @@ int game_main(int argc, char* argv[]) {
             "remains fixed at the declared initial tick until the first completed simulation tick");
     }
     if (headlessMainLoop) {
-        DuskLog.info("Headless audio: host output muted; audio emulation remains active");
+        DuskLog.info("Headless audio: host output device {}; deterministic audio emulation "
+                     "remains active",
+            headlessRetainHostAudioDevice ? "retained and muted (audit comparator)" : "suppressed");
     }
     if (hasNameEntryTrace) {
         DuskLog.info("Name-entry trace: {} (fidelity={})",
@@ -3980,11 +4026,13 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
         DuskLog.info("Headless renderer: CPU GX submission {}; gameplay draw callbacks retained; "
-                     "GPU frames {}",
+                     "GPU frames {}; ImGui frame lifecycle {}",
             headlessRetainRendererSubmission ? "retained (audit comparator)" :
                                                "suppressed on automation-owned ticks",
             headlessSubmitGpuFrames ? "submitted to the null backend (audit comparator)" :
-                                      "discarded before encoding and submission");
+                                      "discarded before encoding and submission",
+            headlessRetainImGuiFrameLifecycle ? "retained (audit comparator)" :
+                                                "suppressed on automation-owned ticks");
     }
     if (inputTapeFastForwardActive && !inputTapeFastForwardVisible &&
         (SDL_GetWindowFlags(auroraInfo.window) & SDL_WINDOW_HIDDEN) == 0u)
@@ -4045,6 +4093,7 @@ int game_main(int argc, char* argv[]) {
         break;
     }
 
+    dusk::audio::SetHostOutputEnabled(!headlessMainLoop || headlessRetainHostAudioDevice);
     dusk::audio::SetOutputMuted(
         headlessMainLoop || inputTapeFastForwardActive || frameCaptureEnabled);
     dusk::audio::SetMasterVolume(

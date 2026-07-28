@@ -19,6 +19,9 @@ void mDoAutomationInputTick(bool tapeWasPlaying);
 // True when headless automation selected the simulation-only renderer path.
 // Callers must still limit suppression to automation-owned ticks.
 bool mDoAutomationSkipRendererSubmission();
+bool mDoAutomationHeadlessActive();
+bool mDoAutomationUnpaced();
+bool mDoAutomationRetainsImGuiFrameLifecycle();
 #endif
 
 extern OSThread mainThread;

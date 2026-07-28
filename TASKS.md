@@ -69,6 +69,19 @@ at tick `125`.
   representative frontiers with no divergent entries; raw checkpoint capture
   and restore remain byte-exact. Evidence:
   `ordon-p2-checkpoint-path-v2.report.json`.
+- The macOS headless audit now proves the execution boundary instead of
+  inferring it from launch flags. Host pacing and the host audio device are
+  disabled, while ImGui frame lifecycle and CPU GX submission are suppressed
+  on candidate ticks; GPU frames were already discarded before encoding.
+  Gameplay draw traversal, deterministic DSP/JAS emulation, and game sound
+  updates remain authoritative. The v3 early/middle/late benchmark measured
+  zero CPU renderer-submission time and exact 21-entry semantic, transition,
+  terminal-evidence, and boundary parity at route ticks 15, 62, and 109.
+  Representative root replays spent 4.9-29.7 ms in draw traversal, 2.9-25.7 ms
+  in audio emulation, and 0.1-1.1 ms in game audio updates. Total proof-mode
+  wall time remained effectively unchanged from v2 (1,143.3 versus 1,142.3
+  seconds), confirming that state proof and checkpoint work dominate rather
+  than presentation. Evidence: `ordon-p2-headless-path-v1.report.json`.
 
 A terminal hit, a reliable terminal hit, a 125 tie, or a faster search for the
 same tie is diagnostic evidence only.
@@ -107,7 +120,7 @@ same tie is diagnostic evidence only.
 
 ## P2 - Make native checkpointing buy throughput
 
-- [ ] Audit headless execution to prove which renderer, audio, pacing, and
+- [x] Audit headless execution to prove which renderer, audio, pacing, and
       presentation systems still run. Disable only work whose removal preserves
       native state and terminal parity, then measure the result.
 - [x] Narrow the checkpoint-wide semantic digest to parity-relevant native

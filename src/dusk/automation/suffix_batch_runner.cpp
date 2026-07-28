@@ -6,6 +6,7 @@
 #include "dusk/automation/io_mode.hpp"
 #include "dusk/automation/gameplay_trace_observer.hpp"
 #include "dusk/audio/DuskAudioSystem.h"
+#include "m_Do/m_Do_main.h"
 
 #include <algorithm>
 #include <chrono>
@@ -1156,6 +1157,36 @@ void SuffixBatchRunner::endCpuRendererSubmissionProfile() {
     mProfile.cpuRendererActive = false;
 }
 
+void SuffixBatchRunner::beginAudioEmulationProfile() {
+    if (!mProfile.active || mProfile.complete || mProfile.audioEmulationActive ||
+        mPhase != Phase::Candidate)
+        return;
+    mProfile.audioEmulationStart = ProfileClock::now();
+    mProfile.audioEmulationActive = true;
+}
+
+void SuffixBatchRunner::endAudioEmulationProfile() {
+    if (!mProfile.audioEmulationActive) return;
+    mProfile.audioEmulationMicros += elapsed_micros(mProfile.audioEmulationStart);
+    ++mProfile.audioEmulationSamples;
+    mProfile.audioEmulationActive = false;
+}
+
+void SuffixBatchRunner::beginGameAudioProfile() {
+    if (!mProfile.active || mProfile.complete || mProfile.gameAudioActive ||
+        mPhase != Phase::Candidate)
+        return;
+    mProfile.gameAudioStart = ProfileClock::now();
+    mProfile.gameAudioActive = true;
+}
+
+void SuffixBatchRunner::endGameAudioProfile() {
+    if (!mProfile.gameAudioActive) return;
+    mProfile.gameAudioMicros += elapsed_micros(mProfile.gameAudioStart);
+    ++mProfile.gameAudioSamples;
+    mProfile.gameAudioActive = false;
+}
+
 void SuffixBatchRunner::resetBatchProfile(const bool sourceCheckpointReused) {
     mProfile = {};
     const AuroraStats* renderer = aurora_get_stats();
@@ -1170,6 +1201,8 @@ void SuffixBatchRunner::finishBatchProfile() {
     finishSimulationProfile();
     endCpuDrawTraversalProfile();
     endCpuRendererSubmissionProfile();
+    endAudioEmulationProfile();
+    endGameAudioProfile();
     if (!mProfile.active || mProfile.complete) return;
     mProfile.batchWallMicros = elapsed_micros(mProfile.batchStart);
     mProfile.complete = true;
@@ -1614,6 +1647,8 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
         mProfile.observationCaptureSamples == candidateTicks * 2 &&
         mProfile.cpuDrawTraversalSamples == candidateTicks &&
         mProfile.cpuRendererSubmissionSamples == candidateTicks &&
+        mProfile.audioEmulationSamples == candidateTicks &&
+        mProfile.gameAudioSamples == candidateTicks &&
         mRestoreMicros.size() == expectedRestores &&
         mEpisodeShard.episodeCount() == mResults.size() && mValidationVerified &&
         (mDefinition.checkpointValidation != SuffixCheckpointValidation::RecordedReplayWindow ||
@@ -1720,6 +1755,10 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                                               mProfile.cpuDrawTraversalSamples)},
             {"cpu_renderer_submission", measured(mProfile.cpuRendererSubmissionMicros,
                                                    mProfile.cpuRendererSubmissionSamples)},
+            {"audio_emulation", measured(mProfile.audioEmulationMicros,
+                                           mProfile.audioEmulationSamples)},
+            {"game_audio_update", measured(mProfile.gameAudioMicros,
+                                             mProfile.gameAudioSamples)},
             {"gpu_work", {
                 {"status", gpuFramesDiscarded ? "discarded" : "timestamp_unavailable"},
                 {"micros", nullptr},
@@ -1738,6 +1777,18 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                           : "simulation-only render sink discarded every candidate frame before GPU encoding but GPU setup or queue operations were observed")
                     : "Aurora exposes submission counts but no authenticated GPU timestamps"},
             }},
+        }},
+        {"headless_audit", {
+            {"active", mDoAutomationHeadlessActive()},
+            {"host_pacing", mDoAutomationUnpaced() ? "disabled" : "enabled"},
+            {"imgui_frame_lifecycle", mDoAutomationRetainsImGuiFrameLifecycle()
+                    ? "retained_audit_comparator" : "suppressed_on_candidate_ticks"},
+            {"host_audio_device", dusk::audio::HostOutputActive() ? "active" : "suppressed"},
+            {"deterministic_audio_emulation", "retained"},
+            {"game_audio_update", "retained"},
+            {"gameplay_draw_traversal", "retained"},
+            {"cpu_renderer_submission", mDoAutomationSkipRendererSubmission()
+                    ? "suppressed_on_candidate_ticks" : "retained_audit_comparator"},
         }},
     };
     const NativeCheckpointCacheStats cacheStats = mCheckpointCache == nullptr

@@ -1,6 +1,6 @@
 {
   "schema": "dusklight-skybook-pilot/v1",
-  "content_sha256": "d3c56399e6decc07c03d87598f9e18c1e400ed438b5fa5c8bc5edeb51f1473fb",
+  "content_sha256": "de1d00183ed4751325cc6e000cca3220455cbbbb191f268048b717b93b6579d4",
   "source_manifest_content_sha256": "bec0be7ef25f970c0ee59ff2105ec734b17a689ed41d3dc924c2037a311aedf6",
   "source_repository_url": "https://github.com/qwertyquerty/skybook",
   "source_git_revision": "e9104852ff6b87862b67100f58aaa729096b42dc",
@@ -63,7 +63,7 @@
     {
       "role": "aurora_renderer_diagnostic",
       "path": "extern/aurora/lib/aurora.cpp",
-      "sha256": "59c6b8669b41acf09714a4c0b78f62265d563e413b4ec2e67c0603fb03addf37"
+      "sha256": "ac1394f5fed921f52ad2fc20e2d9e27d7ed1e6f4450f65fb1dfff3768155f0d6"
     },
     {
       "role": "name_entry_observer_implementation",
@@ -88,7 +88,7 @@
     {
       "role": "native_automation_integration",
       "path": "src/m_Do/m_Do_main.cpp",
-      "sha256": "906cfa25fd021e6bcb3417c387b50e864b907571b7477bbdbfcda6dc73347529"
+      "sha256": "e03d9e83915b6bab556709f7cb597c6bb6078fef69bf08de9ecbd48729a1dac9"
     },
     {
       "role": "original_layout_shadow_implementation",

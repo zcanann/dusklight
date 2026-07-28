@@ -51,6 +51,12 @@ public:
     /** CPU-side GX painter/submission work inside fpcM_Management. */
     void beginCpuRendererSubmissionProfile();
     void endCpuRendererSubmissionProfile();
+    /** Deterministic DSP rendering retained without host audio submission. */
+    void beginAudioEmulationProfile();
+    void endAudioEmulationProfile();
+    /** Game-side sound manager update retained as authoritative simulation. */
+    void beginGameAudioProfile();
+    void endGameAudioProfile();
     /** Exact PADRead output before JUTGamePad clamps it. */
     void recordConsumedPads(std::span<const PADStatus, kInputPortCount> statuses);
     /** After game simulation and deterministic clock advancement. */
@@ -60,6 +66,10 @@ public:
     [[nodiscard]] bool enabled() const { return mEnabled; }
     /** True only for a simulation tick belonging to a checkpoint-restored candidate. */
     [[nodiscard]] bool executingCandidate() const { return mPhase == Phase::Candidate; }
+    /** True before frame begin when pre-input will restore and/or run a candidate tick. */
+    [[nodiscard]] bool candidateFramePending() const {
+        return mPhase == Phase::RestoreNext || mPhase == Phase::Candidate;
+    }
     /** True when this runner exclusively owns the current post-simulation boundary. */
     [[nodiscard]] bool ownsPostSimulation() const {
         return mPhase == Phase::ValidateFresh || mPhase == Phase::ValidateRestored ||
@@ -192,6 +202,8 @@ private:
         ProfileClock::time_point simulationStart{};
         ProfileClock::time_point cpuDrawStart{};
         ProfileClock::time_point cpuRendererStart{};
+        ProfileClock::time_point audioEmulationStart{};
+        ProfileClock::time_point gameAudioStart{};
         std::uint64_t batchWallMicros = 0;
         std::uint64_t policyHeadDecodeNanos = 0;
         std::uint64_t policyInferenceNanos = 0;
@@ -202,6 +214,8 @@ private:
         std::uint64_t corpusEncodingMicros = 0;
         std::uint64_t cpuDrawTraversalMicros = 0;
         std::uint64_t cpuRendererSubmissionMicros = 0;
+        std::uint64_t audioEmulationMicros = 0;
+        std::uint64_t gameAudioMicros = 0;
         std::uint64_t policyHeadDecodeSamples = 0;
         std::uint64_t policyInferenceSamples = 0;
         std::uint64_t policyApplicationSamples = 0;
@@ -210,6 +224,8 @@ private:
         std::uint64_t stateValidationSamples = 0;
         std::uint64_t cpuDrawTraversalSamples = 0;
         std::uint64_t cpuRendererSubmissionSamples = 0;
+        std::uint64_t audioEmulationSamples = 0;
+        std::uint64_t gameAudioSamples = 0;
         std::uint64_t submittedCommandBuffersAtStart = 0;
         std::uint64_t discardedGpuFramesAtStart = 0;
         bool active = false;
@@ -218,6 +234,8 @@ private:
         bool simulationActive = false;
         bool cpuDrawActive = false;
         bool cpuRendererActive = false;
+        bool audioEmulationActive = false;
+        bool gameAudioActive = false;
     };
 
     bool mEnabled = false;

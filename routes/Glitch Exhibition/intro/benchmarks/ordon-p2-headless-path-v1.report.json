@@ -1,0 +1,317 @@
+{
+  "schema": "dusklight-native-checkpoint-benchmark/v3",
+  "optimization_request_sha256": "0c71fb96d17e6371f0badbd3514361b7683b5935ec5f24e08767764cbac2863f",
+  "execution_sha256": "177d5bf3d206ed2537ae6b96ccb232387cd07277ae69ee619228431db5b0f69a",
+  "executable_sha256": "8f92535082026d1af9297826ba3b0f8a747b9942b902b7b489250ee161357e62",
+  "game_data_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814",
+  "platform_os": "macos",
+  "platform_arch": "aarch64",
+  "source_frame": 506,
+  "cache_capacity_bytes": 671088640,
+  "cache_capacity_entries": 2,
+  "launch": {
+    "phases": {
+      "spawn_call_micros": 910,
+      "handshake_micros": 85466,
+      "initial_batch_wait_micros": 57615268,
+      "artifact_validation_micros": 614,
+      "total_micros": 57703446
+    },
+    "initial_batch_native_wall_micros": 55210432,
+    "initial_batch_native_simulation_micros": 1206
+  },
+  "frontiers": [
+    {
+      "label": "early",
+      "route_ticks": 15,
+      "authenticated_root_replay": {
+        "host_wall_micros": 47189370,
+        "native_batch_wall_micros": 47186030,
+        "native_simulation_micros": 16658,
+        "native_restore_micros": 4811,
+        "simulated_ticks": 15,
+        "source_kind": "authenticated_root_restore",
+        "cpu_draw_traversal_micros": 4937,
+        "cpu_renderer_submission_micros": 0,
+        "audio_emulation_micros": 2871,
+        "game_audio_update_micros": 143,
+        "headless_audit": {
+          "active": true,
+          "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+          "deterministic_audio_emulation": "retained",
+          "game_audio_update": "retained",
+          "gameplay_draw_traversal": "retained",
+          "host_audio_device": "suppressed",
+          "host_pacing": "disabled",
+          "imgui_frame_lifecycle": "suppressed_on_candidate_ticks"
+        }
+      },
+      "process_local_restore": {
+        "host_wall_micros": 5735342,
+        "native_batch_wall_micros": 5730949,
+        "native_simulation_micros": 1386,
+        "native_restore_micros": 6061,
+        "simulated_ticks": 1,
+        "source_kind": "direct_process_local_restore",
+        "cpu_draw_traversal_micros": 385,
+        "cpu_renderer_submission_micros": 0,
+        "audio_emulation_micros": 225,
+        "game_audio_update_micros": 17,
+        "headless_audit": {
+          "active": true,
+          "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+          "deterministic_audio_emulation": "retained",
+          "game_audio_update": "retained",
+          "gameplay_draw_traversal": "retained",
+          "host_audio_device": "suppressed",
+          "host_pacing": "disabled",
+          "imgui_frame_lifecycle": "suppressed_on_candidate_ticks"
+        }
+      },
+      "portable_reconstruction": {
+        "host_wall_micros": 44492106,
+        "native_batch_wall_micros": 44489598,
+        "native_simulation_micros": 16763,
+        "native_restore_micros": 4684,
+        "simulated_ticks": 16,
+        "source_kind": "authenticated_root_restore",
+        "cpu_draw_traversal_micros": 4969,
+        "cpu_renderer_submission_micros": 0,
+        "audio_emulation_micros": 2996,
+        "game_audio_update_micros": 145,
+        "headless_audit": {
+          "active": true,
+          "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+          "deterministic_audio_emulation": "retained",
+          "game_audio_update": "retained",
+          "gameplay_draw_traversal": "retained",
+          "host_audio_device": "suppressed",
+          "host_pacing": "disabled",
+          "imgui_frame_lifecycle": "suppressed_on_candidate_ticks"
+        }
+      },
+      "checkpoint_capture": {
+        "checkpoint_bytes": 294694756,
+        "host_snapshot_bytes": 224,
+        "machine_capture_micros": 1765994,
+        "host_snapshot_transfer_kind": "in_process_capture_and_move_into_resident_cache",
+        "host_snapshot_capture_nanos": 97041,
+        "total_capture_micros": 4496669
+      },
+      "evidence_projection": {
+        "episode_decode_micros": 16912,
+        "fact_extraction_micros": 114
+      },
+      "parity": {
+        "source_state_exact": true,
+        "transition_exact": true,
+        "checkpoint_wide_semantic_digest_scope": "registered parity-relevant checkpoint state; canonicalizes explicit host-ABI padding, JUT/VI presentation clocks, JUTProcBar, and the dPa particle heap while raw checkpoint restore remains byte-exact",
+        "semantic_state_digest_exact": true,
+        "checkpoint_entry_count": 21,
+        "divergent_checkpoint_entries": [],
+        "terminal_evidence_bytes_exact": true,
+        "terminal_boundary_exact": true,
+        "passed": true
+      }
+    },
+    {
+      "label": "middle",
+      "route_ticks": 62,
+      "authenticated_root_replay": {
+        "host_wall_micros": 166794486,
+        "native_batch_wall_micros": 166787497,
+        "native_simulation_micros": 64391,
+        "native_restore_micros": 4895,
+        "simulated_ticks": 62,
+        "source_kind": "authenticated_root_restore",
+        "cpu_draw_traversal_micros": 17260,
+        "cpu_renderer_submission_micros": 0,
+        "audio_emulation_micros": 13473,
+        "game_audio_update_micros": 608,
+        "headless_audit": {
+          "active": true,
+          "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+          "deterministic_audio_emulation": "retained",
+          "game_audio_update": "retained",
+          "gameplay_draw_traversal": "retained",
+          "host_audio_device": "suppressed",
+          "host_pacing": "disabled",
+          "imgui_frame_lifecycle": "suppressed_on_candidate_ticks"
+        }
+      },
+      "process_local_restore": {
+        "host_wall_micros": 5556251,
+        "native_batch_wall_micros": 5544780,
+        "native_simulation_micros": 947,
+        "native_restore_micros": 4669,
+        "simulated_ticks": 1,
+        "source_kind": "direct_process_local_restore",
+        "cpu_draw_traversal_micros": 261,
+        "cpu_renderer_submission_micros": 0,
+        "audio_emulation_micros": 149,
+        "game_audio_update_micros": 11,
+        "headless_audit": {
+          "active": true,
+          "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+          "deterministic_audio_emulation": "retained",
+          "game_audio_update": "retained",
+          "gameplay_draw_traversal": "retained",
+          "host_audio_device": "suppressed",
+          "host_pacing": "disabled",
+          "imgui_frame_lifecycle": "suppressed_on_candidate_ticks"
+        }
+      },
+      "portable_reconstruction": {
+        "host_wall_micros": 163372971,
+        "native_batch_wall_micros": 163368860,
+        "native_simulation_micros": 64376,
+        "native_restore_micros": 4887,
+        "simulated_ticks": 63,
+        "source_kind": "authenticated_root_restore",
+        "cpu_draw_traversal_micros": 17309,
+        "cpu_renderer_submission_micros": 0,
+        "audio_emulation_micros": 13442,
+        "game_audio_update_micros": 611,
+        "headless_audit": {
+          "active": true,
+          "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+          "deterministic_audio_emulation": "retained",
+          "game_audio_update": "retained",
+          "gameplay_draw_traversal": "retained",
+          "host_audio_device": "suppressed",
+          "host_pacing": "disabled",
+          "imgui_frame_lifecycle": "suppressed_on_candidate_ticks"
+        }
+      },
+      "checkpoint_capture": {
+        "checkpoint_bytes": 294694756,
+        "host_snapshot_bytes": 224,
+        "machine_capture_micros": 1678825,
+        "host_snapshot_transfer_kind": "in_process_capture_and_move_into_resident_cache",
+        "host_snapshot_capture_nanos": 93250,
+        "total_capture_micros": 4256062
+      },
+      "evidence_projection": {
+        "episode_decode_micros": 58688,
+        "fact_extraction_micros": 43
+      },
+      "parity": {
+        "source_state_exact": true,
+        "transition_exact": true,
+        "checkpoint_wide_semantic_digest_scope": "registered parity-relevant checkpoint state; canonicalizes explicit host-ABI padding, JUT/VI presentation clocks, JUTProcBar, and the dPa particle heap while raw checkpoint restore remains byte-exact",
+        "semantic_state_digest_exact": true,
+        "checkpoint_entry_count": 21,
+        "divergent_checkpoint_entries": [],
+        "terminal_evidence_bytes_exact": true,
+        "terminal_boundary_exact": true,
+        "passed": true
+      }
+    },
+    {
+      "label": "late",
+      "route_ticks": 109,
+      "authenticated_root_replay": {
+        "host_wall_micros": 293820470,
+        "native_batch_wall_micros": 293805044,
+        "native_simulation_micros": 116355,
+        "native_restore_micros": 4929,
+        "simulated_ticks": 109,
+        "source_kind": "authenticated_root_restore",
+        "cpu_draw_traversal_micros": 29692,
+        "cpu_renderer_submission_micros": 0,
+        "audio_emulation_micros": 25746,
+        "game_audio_update_micros": 1136,
+        "headless_audit": {
+          "active": true,
+          "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+          "deterministic_audio_emulation": "retained",
+          "game_audio_update": "retained",
+          "gameplay_draw_traversal": "retained",
+          "host_audio_device": "suppressed",
+          "host_pacing": "disabled",
+          "imgui_frame_lifecycle": "suppressed_on_candidate_ticks"
+        }
+      },
+      "process_local_restore": {
+        "host_wall_micros": 5843232,
+        "native_batch_wall_micros": 5823087,
+        "native_simulation_micros": 1127,
+        "native_restore_micros": 4942,
+        "simulated_ticks": 1,
+        "source_kind": "direct_process_local_restore",
+        "cpu_draw_traversal_micros": 254,
+        "cpu_renderer_submission_micros": 0,
+        "audio_emulation_micros": 316,
+        "game_audio_update_micros": 11,
+        "headless_audit": {
+          "active": true,
+          "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+          "deterministic_audio_emulation": "retained",
+          "game_audio_update": "retained",
+          "gameplay_draw_traversal": "retained",
+          "host_audio_device": "suppressed",
+          "host_pacing": "disabled",
+          "imgui_frame_lifecycle": "suppressed_on_candidate_ticks"
+        }
+      },
+      "portable_reconstruction": {
+        "host_wall_micros": 294317704,
+        "native_batch_wall_micros": 294311388,
+        "native_simulation_micros": 119770,
+        "native_restore_micros": 4781,
+        "simulated_ticks": 110,
+        "source_kind": "authenticated_root_restore",
+        "cpu_draw_traversal_micros": 30550,
+        "cpu_renderer_submission_micros": 0,
+        "audio_emulation_micros": 26455,
+        "game_audio_update_micros": 1151,
+        "headless_audit": {
+          "active": true,
+          "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+          "deterministic_audio_emulation": "retained",
+          "game_audio_update": "retained",
+          "gameplay_draw_traversal": "retained",
+          "host_audio_device": "suppressed",
+          "host_pacing": "disabled",
+          "imgui_frame_lifecycle": "suppressed_on_candidate_ticks"
+        }
+      },
+      "checkpoint_capture": {
+        "checkpoint_bytes": 294694756,
+        "host_snapshot_bytes": 224,
+        "machine_capture_micros": 1761017,
+        "host_snapshot_transfer_kind": "in_process_capture_and_move_into_resident_cache",
+        "host_snapshot_capture_nanos": 97416,
+        "total_capture_micros": 5549545
+      },
+      "evidence_projection": {
+        "episode_decode_micros": 107514,
+        "fact_extraction_micros": 46
+      },
+      "parity": {
+        "source_state_exact": true,
+        "transition_exact": true,
+        "checkpoint_wide_semantic_digest_scope": "registered parity-relevant checkpoint state; canonicalizes explicit host-ABI padding, JUT/VI presentation clocks, JUTProcBar, and the dPa particle heap while raw checkpoint restore remains byte-exact",
+        "semantic_state_digest_exact": true,
+        "checkpoint_entry_count": 21,
+        "divergent_checkpoint_entries": [],
+        "terminal_evidence_bytes_exact": true,
+        "terminal_boundary_exact": true,
+        "passed": true
+      }
+    }
+  ],
+  "throughput": {
+    "useful_transition_definition": "one parity-verified continuation transition per representative frontier",
+    "useful_transitions": 3,
+    "non_root_expansion_requests": 3,
+    "direct_restore_requests": 3,
+    "direct_restore_rate_millionths": 1000000,
+    "useful_transitions_per_direct_restore_millionths": 1000000,
+    "useful_transitions_per_native_sim_second_millionths": 867052023,
+    "useful_transitions_per_wall_second_millionths": 2623,
+    "measured_wall_micros": 1143318550,
+    "measured_native_simulation_micros": 3460
+  },
+  "passed": true
+}

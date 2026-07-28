@@ -120,6 +120,8 @@ pub struct NativeSuffixTimingResult {
     pub verified: bool,
     pub accounting: Value,
     pub phases: Value,
+    #[serde(default)]
+    pub headless_audit: Value,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -965,6 +967,7 @@ mod tests {
                 verified: true,
                 accounting: Value::Object(Default::default()),
                 phases: Value::Object(Default::default()),
+                headless_audit: Value::Object(Default::default()),
             },
             audio_callback_quiesced: true,
             episode_shard: NativeEpisodeShardResult {

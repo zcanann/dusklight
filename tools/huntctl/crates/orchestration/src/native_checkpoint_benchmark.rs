@@ -31,6 +31,7 @@ use std::time::Instant;
 
 pub const NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V1: &str = "dusklight-native-checkpoint-benchmark/v1";
 pub const NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V2: &str = "dusklight-native-checkpoint-benchmark/v2";
+pub const NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V3: &str = "dusklight-native-checkpoint-benchmark/v3";
 
 pub struct NativeCheckpointBenchmarkConfig<'a> {
     pub repository_root: &'a Path,
@@ -89,6 +90,16 @@ pub struct NativeCheckpointBatchMeasurement {
     pub native_restore_micros: u64,
     pub simulated_ticks: u64,
     pub source_kind: String,
+    #[serde(default)]
+    pub cpu_draw_traversal_micros: u64,
+    #[serde(default)]
+    pub cpu_renderer_submission_micros: u64,
+    #[serde(default)]
+    pub audio_emulation_micros: u64,
+    #[serde(default)]
+    pub game_audio_update_micros: u64,
+    #[serde(default)]
+    pub headless_audit: Value,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -151,7 +162,9 @@ impl NativeCheckpointBenchmarkReport {
         let labels = ["early", "middle", "late"];
         if !matches!(
             self.schema.as_str(),
-            NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V1 | NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V2
+            NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V1
+                | NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V2
+                | NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V3
         ) || self.optimization_request_sha256 == Digest::ZERO
             || self.execution_sha256 == Digest::ZERO
             || self.executable_sha256 == Digest::ZERO
@@ -173,37 +186,87 @@ impl NativeCheckpointBenchmarkReport {
                 && frontier.parity.terminal_boundary_exact
                 && (self.schema == NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V1
                     || frontier.parity.semantic_state_digest_exact);
-            if frontier.label != labels[index]
-                || frontier.route_ticks == 0
-                || frontier.authenticated_root_replay.source_kind != "authenticated_root_restore"
-                || frontier.process_local_restore.source_kind != "direct_process_local_restore"
-                || frontier.portable_reconstruction.source_kind != "authenticated_root_restore"
-                || frontier.process_local_restore.simulated_ticks != 1
-                || frontier.checkpoint_capture.checkpoint_bytes == 0
-                || frontier.checkpoint_capture.host_snapshot_bytes == 0
-                || frontier.checkpoint_capture.machine_capture_micros == 0
-                || frontier
-                    .checkpoint_capture
-                    .host_snapshot_transfer_kind
-                    .is_empty()
-                || frontier.checkpoint_capture.host_snapshot_capture_nanos == 0
-                || frontier.checkpoint_capture.total_capture_micros == 0
-                || frontier
-                    .parity
-                    .checkpoint_wide_semantic_digest_scope
-                    .is_empty()
-                || self.schema == NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V2
-                    && frontier.parity.checkpoint_entry_count == 0
-                || self.schema == NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V2
-                    && (frontier.parity.semantic_state_digest_exact
-                        != frontier.parity.divergent_checkpoint_entries.is_empty()
-                        || frontier.parity.divergent_checkpoint_entries.len() as u64
-                            > frontier.parity.checkpoint_entry_count)
-                || frontier.parity.passed != parity_passed
-            {
+            let v2_or_later = self.schema != NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V1;
+            let headless_audit_valid = self.schema != NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V3
+                || [
+                    &frontier.authenticated_root_replay,
+                    &frontier.process_local_restore,
+                    &frontier.portable_reconstruction,
+                ]
+                .into_iter()
+                .all(validate_headless_measurement);
+            let checks = [
+                ("label", frontier.label == labels[index]),
+                ("route_ticks", frontier.route_ticks != 0),
+                (
+                    "authenticated_root_source",
+                    frontier.authenticated_root_replay.source_kind == "authenticated_root_restore",
+                ),
+                (
+                    "process_local_source",
+                    frontier.process_local_restore.source_kind == "direct_process_local_restore",
+                ),
+                (
+                    "portable_source",
+                    frontier.portable_reconstruction.source_kind == "authenticated_root_restore",
+                ),
+                (
+                    "process_local_tick_count",
+                    frontier.process_local_restore.simulated_ticks == 1,
+                ),
+                (
+                    "checkpoint_bytes",
+                    frontier.checkpoint_capture.checkpoint_bytes != 0,
+                ),
+                (
+                    "host_snapshot_bytes",
+                    frontier.checkpoint_capture.host_snapshot_bytes != 0,
+                ),
+                (
+                    "machine_capture_time",
+                    frontier.checkpoint_capture.machine_capture_micros != 0,
+                ),
+                (
+                    "host_snapshot_transfer",
+                    !frontier
+                        .checkpoint_capture
+                        .host_snapshot_transfer_kind
+                        .is_empty(),
+                ),
+                (
+                    "host_snapshot_capture_time",
+                    frontier.checkpoint_capture.host_snapshot_capture_nanos != 0,
+                ),
+                (
+                    "total_capture_time",
+                    frontier.checkpoint_capture.total_capture_micros != 0,
+                ),
+                (
+                    "semantic_scope",
+                    !frontier
+                        .parity
+                        .checkpoint_wide_semantic_digest_scope
+                        .is_empty(),
+                ),
+                (
+                    "checkpoint_entry_count",
+                    !v2_or_later || frontier.parity.checkpoint_entry_count != 0,
+                ),
+                (
+                    "checkpoint_entry_consistency",
+                    !v2_or_later
+                        || frontier.parity.semantic_state_digest_exact
+                            == frontier.parity.divergent_checkpoint_entries.is_empty()
+                            && frontier.parity.divergent_checkpoint_entries.len() as u64
+                                <= frontier.parity.checkpoint_entry_count,
+                ),
+                ("headless_audit", headless_audit_valid),
+                ("parity_pass_bit", frontier.parity.passed == parity_passed),
+            ];
+            if let Some((failed, _)) = checks.into_iter().find(|(_, passed)| !passed) {
                 return Err(format!(
-                    "native checkpoint benchmark frontier {:?} is incomplete",
-                    frontier.label
+                    "native checkpoint benchmark frontier {:?} failed {failed}",
+                    frontier.label,
                 )
                 .into());
             }
@@ -358,7 +421,7 @@ pub fn run_native_checkpoint_benchmark(
     let passed = frontiers.iter().all(|frontier| frontier.parity.passed)
         && throughput.direct_restore_rate_millionths == 1_000_000;
     let report = NativeCheckpointBenchmarkReport {
-        schema: NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V2.into(),
+        schema: NATIVE_CHECKPOINT_BENCHMARK_SCHEMA_V3.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_sha256: config.execution.content_sha256,
         executable_sha256: config.execution.executable.sha256,
@@ -675,7 +738,30 @@ fn measurement(
             .as_ref()
             .map(|cache| cache.source_kind.clone())
             .unwrap_or_else(|| "uncached".into()),
+        cpu_draw_traversal_micros: phase_micros(raw, "cpu_draw_traversal")?,
+        cpu_renderer_submission_micros: phase_micros(raw, "cpu_renderer_submission")?,
+        audio_emulation_micros: phase_micros(raw, "audio_emulation")?,
+        game_audio_update_micros: phase_micros(raw, "game_audio_update")?,
+        headless_audit: raw.timing.headless_audit.clone(),
     })
+}
+
+fn validate_headless_measurement(measurement: &NativeCheckpointBatchMeasurement) -> bool {
+    let audit = &measurement.headless_audit;
+    measurement.cpu_renderer_submission_micros == 0
+        && audit.get("active").and_then(Value::as_bool) == Some(true)
+        && audit.get("host_pacing").and_then(Value::as_str) == Some("disabled")
+        && audit.get("imgui_frame_lifecycle").and_then(Value::as_str)
+            == Some("suppressed_on_candidate_ticks")
+        && audit.get("host_audio_device").and_then(Value::as_str) == Some("suppressed")
+        && audit
+            .get("deterministic_audio_emulation")
+            .and_then(Value::as_str)
+            == Some("retained")
+        && audit.get("game_audio_update").and_then(Value::as_str) == Some("retained")
+        && audit.get("gameplay_draw_traversal").and_then(Value::as_str) == Some("retained")
+        && audit.get("cpu_renderer_submission").and_then(Value::as_str)
+            == Some("suppressed_on_candidate_ticks")
 }
 
 fn capture_measurement(

@@ -23,6 +23,12 @@ namespace dusk::audio {
 
     void SetMasterVolume(f32 value);
 
+    /** Select whether initialization opens a host playback device. */
+    void SetHostOutputEnabled(bool enabled);
+
+    /** True only when a host playback device was opened successfully. */
+    bool HostOutputActive();
+
     /**
      * Silence or restore host audio output without stopping audio emulation.
      */
