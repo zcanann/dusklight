@@ -10,8 +10,10 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
+mod action_factor_coverage;
 mod terminal_support;
 
+pub use action_factor_coverage::ensure_action_factor_coverage;
 #[cfg(test)]
 use terminal_support::action_button_mask;
 pub use terminal_support::ensure_terminal_support_factor_acquisitions;

@@ -688,7 +688,7 @@ pub fn generalized_tactic_action_factors(
     })
 }
 
-fn encode_action(
+pub(crate) fn encode_action(
     context: &GeneralizedTacticContext,
     descriptor: &OptionActionDescriptor,
 ) -> Result<[f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH], GeneralizedTacticValueError> {

@@ -36,8 +36,8 @@ use dusklight_learning::tactic_blueprint::{
 use dusklight_learning::tactic_exploration::{
     SelectedTactic, TacticExplorationConfig, TacticExplorationError, TacticProposalPolicy,
     TacticSelectionReason, choose_tactic_batch_for_policy, choose_tactic_batch_with_state_untried,
-    ensure_generalized_value_acquisition, ensure_terminal_support_factor_acquisitions,
-    retain_generalized_value_acquisition,
+    ensure_action_factor_coverage, ensure_generalized_value_acquisition,
+    ensure_terminal_support_factor_acquisitions, retain_generalized_value_acquisition,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_learning::tactic_value_treatment::{

@@ -232,9 +232,7 @@ impl TacticQCampaign {
         if policy != TacticProposalPolicy::RandomValid {
             ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
         }
-        if policy == TacticProposalPolicy::Learned
-            && let Some(goal_distance_feature) = goal_distance_feature
-        {
+        if policy == TacticProposalPolicy::Learned {
             let context = GeneralizedTacticContext::from_facts(&self.current.snapshot)?;
             let applicable_descriptors = ranking
                 .choices
@@ -249,56 +247,65 @@ impl TacticQCampaign {
             // than silently becoming an ordinary rank-N acquisition. Remaining
             // boundaries stay Q-ranked, preserving independent improvement.
             let terminal_support_acquisition = acquisition_partition == 0 || force_exploration;
-            let ranked_applicable = match self.value_treatment {
-                TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => self
-                    .generalized_model(goal_distance_feature)?
-                    .map(|model| {
-                        if terminal_support_acquisition {
-                            model.rank_terminal_support(
-                                &features,
-                                &context,
-                                &applicable_descriptors,
-                            )
-                        } else {
-                            model.rank(&features, &context, &applicable_descriptors)
-                        }
-                    })
-                    .transpose()?
-                    .map(|estimates| {
-                        estimates
-                            .into_iter()
-                            .map(|estimate| estimate.descriptor)
-                            .collect::<Vec<_>>()
-                    }),
-                TacticValueTreatment::ContinuousFittedQForestV1 => self
-                    .continuous_model(goal_distance_feature)?
-                    .map(|model| model.rank(&features, &context, &applicable_descriptors))
-                    .transpose()?
-                    .map(|estimates| {
-                        estimates
-                            .into_iter()
-                            .map(|estimate| estimate.descriptor)
-                            .collect::<Vec<_>>()
-                    }),
-            };
-            if let Some(ranked_applicable) = ranked_applicable {
-                ensure_generalized_value_acquisition(
-                    &ranked_applicable,
-                    acquisition_partition,
-                    maximum_proposals,
-                    &mut proposals,
-                )?;
-                if self.value_treatment == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
-                    && terminal_support_acquisition
-                {
-                    ensure_terminal_support_factor_acquisitions(
+            if let Some(goal_distance_feature) = goal_distance_feature {
+                let ranked_applicable = match self.value_treatment {
+                    TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => self
+                        .generalized_model(goal_distance_feature)?
+                        .map(|model| {
+                            if terminal_support_acquisition {
+                                model.rank_terminal_support(
+                                    &features,
+                                    &context,
+                                    &applicable_descriptors,
+                                )
+                            } else {
+                                model.rank(&features, &context, &applicable_descriptors)
+                            }
+                        })
+                        .transpose()?
+                        .map(|estimates| {
+                            estimates
+                                .into_iter()
+                                .map(|estimate| estimate.descriptor)
+                                .collect::<Vec<_>>()
+                        }),
+                    TacticValueTreatment::ContinuousFittedQForestV1 => self
+                        .continuous_model(goal_distance_feature)?
+                        .map(|model| model.rank(&features, &context, &applicable_descriptors))
+                        .transpose()?
+                        .map(|estimates| {
+                            estimates
+                                .into_iter()
+                                .map(|estimate| estimate.descriptor)
+                                .collect::<Vec<_>>()
+                        }),
+                };
+                if let Some(ranked_applicable) = ranked_applicable {
+                    ensure_generalized_value_acquisition(
                         &ranked_applicable,
+                        acquisition_partition,
                         maximum_proposals,
                         &mut proposals,
                     )?;
+                    if self.value_treatment == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+                        && terminal_support_acquisition
+                    {
+                        ensure_terminal_support_factor_acquisitions(
+                            &ranked_applicable,
+                            maximum_proposals,
+                            &mut proposals,
+                        )?;
+                    }
                 }
-                retain_generalized_value_acquisition(&mut proposals)?;
             }
+            ensure_action_factor_coverage(
+                &context,
+                &applicable_descriptors,
+                &state_untried,
+                maximum_proposals,
+                &mut proposals,
+            )?;
+            retain_generalized_value_acquisition(&mut proposals)?;
         }
         if let Some(primary) = forced_primary {
             proposals.retain(|proposal| proposal.descriptor != primary.descriptor);
