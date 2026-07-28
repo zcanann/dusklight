@@ -5,10 +5,11 @@ use crate::generalized_tactic_value::{
 use crate::option_values::OptionActionDescriptor;
 
 // The first 29 action features are the option-type one-hot encoding. Existing
-// batch acquisition already spreads proposals across option types. This lane
-// covers the executable factors within those types: duration, emitted heading,
-// target/path geometry, stick magnitude, and prompted-button timing.
-const EXECUTABLE_FACTOR_START: usize = 29;
+// batch acquisition already spreads proposals across option types. These four
+// blocks cover independent executable factors without making a controller
+// that combines every extreme (for example, heading plus multiple buttons)
+// automatically farther than a useful single-factor probe.
+const ACTION_FACTOR_BLOCKS: usize = 4;
 const MINIMUM_FACTOR_RANGE: f32 = 1.0e-6;
 
 struct EncodedAction<'a> {
@@ -26,6 +27,7 @@ pub fn ensure_action_factor_coverage(
     context: &GeneralizedTacticContext,
     applicable: &[OptionActionDescriptor],
     state_untried: &[OptionActionDescriptor],
+    acquisition_partition: u64,
     maximum_proposals: usize,
     proposals: &mut Vec<SelectedTactic>,
 ) -> Result<(), TacticExplorationError> {
@@ -87,15 +89,29 @@ pub fn ensure_action_factor_coverage(
     {
         candidates.retain(|candidate| state_untried.contains(candidate.descriptor));
     }
-    candidates.sort_by(|left, right| {
-        let left_distance =
-            nearest_factor_distance(&left.factors, &proposed_factors, &minimum, &range);
-        let right_distance =
-            nearest_factor_distance(&right.factors, &proposed_factors, &minimum, &range);
-        right_distance
-            .total_cmp(&left_distance)
-            .then_with(|| left.descriptor.option_id.cmp(&right.descriptor.option_id))
-    });
+    let first_block = (acquisition_partition % ACTION_FACTOR_BLOCKS as u64) as usize;
+    for offset in 0..ACTION_FACTOR_BLOCKS {
+        let block = (first_block + offset) % ACTION_FACTOR_BLOCKS;
+        candidates.sort_by(|left, right| {
+            let left_distance =
+                nearest_factor_distance(&left.factors, &proposed_factors, &minimum, &range, block);
+            let right_distance =
+                nearest_factor_distance(&right.factors, &proposed_factors, &minimum, &range, block);
+            right_distance
+                .total_cmp(&left_distance)
+                .then_with(|| left.descriptor.option_id.cmp(&right.descriptor.option_id))
+        });
+        if nearest_factor_distance(
+            &candidates[0].factors,
+            &proposed_factors,
+            &minimum,
+            &range,
+            block,
+        ) > 0.0
+        {
+            break;
+        }
+    }
 
     let mut coverage = proposals[0].clone();
     coverage.descriptor = candidates[0].descriptor.clone();
@@ -133,13 +149,13 @@ fn factor_ranges(
     let mut minimum = [f32::INFINITY; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH];
     let mut maximum = [f32::NEG_INFINITY; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH];
     for action in actions {
-        for index in EXECUTABLE_FACTOR_START..GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH {
+        for index in 29..GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH {
             minimum[index] = minimum[index].min(action.factors[index]);
             maximum[index] = maximum[index].max(action.factors[index]);
         }
     }
     let mut range = [0.0; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH];
-    for index in EXECUTABLE_FACTOR_START..GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH {
+    for index in 29..GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH {
         range[index] = maximum[index] - minimum[index];
     }
     (minimum, range)
@@ -150,10 +166,11 @@ fn nearest_factor_distance(
     proposed: &[&[f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH]],
     minimum: &[f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
     range: &[f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
+    block: usize,
 ) -> f32 {
     proposed
         .iter()
-        .map(|other| normalized_factor_distance(candidate, other, minimum, range))
+        .map(|other| normalized_factor_distance(candidate, other, minimum, range, block))
         .min_by(f32::total_cmp)
         .unwrap_or(0.0)
 }
@@ -163,11 +180,12 @@ fn normalized_factor_distance(
     right: &[f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
     minimum: &[f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
     range: &[f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
+    block: usize,
 ) -> f32 {
     let mut squared_distance = 0.0;
     let mut dimensions = 0;
-    for index in EXECUTABLE_FACTOR_START..GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH {
-        if range[index] > MINIMUM_FACTOR_RANGE {
+    for index in 29..GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH {
+        if action_factor_block(index) == block && range[index] > MINIMUM_FACTOR_RANGE {
             let left = (left[index] - minimum[index]) / range[index];
             let right = (right[index] - minimum[index]) / range[index];
             squared_distance += (left - right).powi(2);
@@ -178,6 +196,21 @@ fn normalized_factor_distance(
         0.0
     } else {
         squared_distance / dimensions as f32
+    }
+}
+
+fn action_factor_block(index: usize) -> usize {
+    match index {
+        // Emitted heading presence, sine, cosine, and magnitude.
+        47..=50 => 0,
+        // Controller duration. A separate lane prevents long actions from
+        // winning merely because they also carry other factor extremes.
+        29 => 1,
+        // Target/path geometry, turn, point count, magnitude, and radius.
+        30..=46 => 2,
+        // Button activity, cadence, phase, and exact prompted-button bits.
+        51..=70 => 3,
+        _ => usize::MAX,
     }
 }
 
@@ -222,14 +255,21 @@ mod tests {
     fn executable_coverage_selects_the_farthest_untried_heading() {
         let direct = heading("direct", 0.0, 4);
         let nearby = heading("nearby", 0.25, 4);
-        let opposite = heading("opposite", std::f32::consts::PI, 40);
-        let applicable = vec![direct.clone(), nearby.clone(), opposite.clone()];
+        let opposite = heading("opposite", std::f32::consts::PI, 4);
+        let long = heading("long", 0.0, 40);
+        let applicable = vec![
+            direct.clone(),
+            nearby.clone(),
+            opposite.clone(),
+            long.clone(),
+        ];
         let mut proposals = vec![proposal(direct, TacticSelectionReason::Greedy)];
 
         ensure_action_factor_coverage(
             &GeneralizedTacticContext::default(),
             &applicable,
-            &[nearby, opposite.clone()],
+            &[nearby, opposite.clone(), long],
+            0,
             2,
             &mut proposals,
         )
@@ -237,6 +277,45 @@ mod tests {
 
         assert_eq!(proposals[1].descriptor, opposite);
         assert_eq!(proposals[1].reason, TacticSelectionReason::BatchCoverage);
+    }
+
+    #[test]
+    fn executable_coverage_partitions_heading_and_duration_axes() {
+        let direct_short = heading("direct-short", 0.0, 4);
+        let opposite_short = heading("opposite-short", std::f32::consts::PI, 4);
+        let direct_long = heading("direct-long", 0.0, 40);
+        let applicable = vec![
+            direct_short.clone(),
+            opposite_short.clone(),
+            direct_long.clone(),
+        ];
+        let mut heading_proposals = vec![proposal(
+            direct_short.clone(),
+            TacticSelectionReason::Greedy,
+        )];
+        let mut duration_proposals = vec![proposal(direct_short, TacticSelectionReason::Greedy)];
+
+        ensure_action_factor_coverage(
+            &GeneralizedTacticContext::default(),
+            &applicable,
+            &[opposite_short.clone(), direct_long.clone()],
+            0,
+            2,
+            &mut heading_proposals,
+        )
+        .unwrap();
+        ensure_action_factor_coverage(
+            &GeneralizedTacticContext::default(),
+            &applicable,
+            &[opposite_short, direct_long.clone()],
+            1,
+            2,
+            &mut duration_proposals,
+        )
+        .unwrap();
+
+        assert_eq!(heading_proposals[1].descriptor.option_id, "opposite-short");
+        assert_eq!(duration_proposals[1].descriptor, direct_long);
     }
 
     #[test]
@@ -263,6 +342,7 @@ mod tests {
             &GeneralizedTacticContext::default(),
             &applicable,
             std::slice::from_ref(&untried),
+            0,
             3,
             &mut proposals,
         )
@@ -300,6 +380,7 @@ mod tests {
             &GeneralizedTacticContext::default(),
             &applicable,
             &[],
+            0,
             3,
             &mut proposals,
         )

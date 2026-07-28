@@ -302,6 +302,7 @@ impl TacticQCampaign {
                 &context,
                 &applicable_descriptors,
                 &state_untried,
+                acquisition_partition,
                 maximum_proposals,
                 &mut proposals,
             )?;
