@@ -81,10 +81,15 @@ def main() -> int:
     for path in files:
         lines = physical_line_count(REPOSITORY_ROOT / path)
         limit = baseline.get(path, NEW_FILE_LIMIT)
-        if lines > limit:
-            kind = "grandfathered file grew" if path in baseline else "oversized file"
-            failures.append(f"{path}: {lines} lines; limit {limit} ({kind})")
-        elif path in baseline and lines <= NEW_FILE_LIMIT:
+        if path not in baseline and lines >= NEW_FILE_LIMIT:
+            failures.append(
+                f"{path}: {lines} lines; hard limit is below {NEW_FILE_LIMIT}"
+            )
+        elif path in baseline and lines > limit:
+            failures.append(
+                f"{path}: {lines} lines; limit {limit} (grandfathered file grew)"
+            )
+        elif path in baseline and lines < NEW_FILE_LIMIT:
             failures.append(
                 f"{path}: now {lines} lines; remove its obsolete baseline exception"
             )

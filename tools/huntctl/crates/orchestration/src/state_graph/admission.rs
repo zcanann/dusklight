@@ -77,10 +77,9 @@ impl StateGraph {
                 evidence,
             } = &mut existing.status
         {
-            let (canonical_evidence_sha256, canonical) =
-                evidence.iter().next().ok_or(StateGraphError::Invariant(
-                    "completed expansion has no evidence",
-                ))?;
+            let (canonical_evidence_sha256, canonical) = evidence.iter().next().ok_or(
+                StateGraphError::Invariant("completed expansion has no evidence"),
+            )?;
             let differing_fields =
                 native_realization_differences(&canonical.transition, &transition);
             if !differing_fields.is_empty() {

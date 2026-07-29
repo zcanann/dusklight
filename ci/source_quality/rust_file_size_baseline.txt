@@ -1,35 +1,3 @@
 # Existing production Rust source debt. Limits may only decrease.
-# Remove an entry as soon as its file reaches the 1,500-line hard limit.
-tools/huntctl/crates/evidence/src/native_corpus_inspection.rs	2128
-tools/huntctl/crates/harness-contracts/src/run_contract.rs	1556
-tools/huntctl/crates/oracles/src/semantic_oracle.rs	2122
-tools/huntctl/crates/proposals/src/q_search.rs	2278
-tools/huntctl/crates/routes/src/timeline.rs	2590
-tools/huntctl/crates/search/src/residual_optimizer.rs	1506
-tools/huntctl/crates/search/src/residual_retention.rs	1675
-tools/huntctl/crates/search/src/search.rs	2233
-tools/huntctl/crates/trace/src/trace/columnar.rs	1728
-tools/huntctl/crates/workbench/src/draft_store.rs	2349
-tools/huntctl/crates/workbench/src/optimization_promotion.rs	1534
-tools/huntctl/crates/workbench/src/playback.rs	2297
-tools/huntctl/crates/world/src/world_geometry.rs	1673
-tools/huntctl/crates/world/src/world_inventory.rs	1719
-tools/huntctl/crates/world/src/world_spatial.rs	1880
-tools/huntctl/src/cli/harness.rs	1633
-tools/huntctl/src/cli/search.rs	1861
-tools/route-planner/crates/engine/src/evaluation.rs	3380
-tools/route-planner/crates/engine/src/graph.rs	3121
-tools/route-planner/crates/engine/src/message_flow.rs	3565
-tools/route-planner/crates/engine/src/message_import.rs	2463
-tools/route-planner/crates/engine/src/native_snapshot.rs	1774
-tools/route-planner/crates/engine/src/orig_extraction.rs	2797
-tools/route-planner/crates/engine/src/orig_world.rs	2094
-tools/route-planner/crates/engine/src/refinement.rs	2544
-tools/route-planner/crates/engine/src/relevance.rs	1776
-tools/route-planner/crates/engine/src/route_book.rs	1595
-tools/route-planner/crates/engine/src/state.rs	1655
-tools/route-planner/crates/engine/src/transition.rs	2612
-tools/route-planner/src/main.rs	3016
-tools/route-planner/src/project.rs	1803
-tools/route-planner/src/service.rs	3241
-tools/route-planner/src/web.rs	1568
+# Add an exception only for pre-existing debt above the 1,500-line hard limit,
+# and remove it as soon as the file falls below that limit.

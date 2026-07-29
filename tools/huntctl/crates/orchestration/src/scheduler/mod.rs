@@ -537,11 +537,7 @@ fn compare_scheduled_node(
         // wall-adjacent trajectory. Extend the graph's explored spatial
         // envelope before using raw route depth as a horizon tie-break.
         SearchRegime::Discovery => coverage()
-            .then_with(|| {
-                right
-                    .reachability_novelty
-                    .cmp(&left.reachability_novelty)
-            })
+            .then_with(|| right.reachability_novelty.cmp(&left.reachability_novelty))
             .then_with(|| right.root_ticks.cmp(&left.root_ticks)),
         SearchRegime::Optimization => left
             .exact_terminal_ticks_to_go
@@ -577,8 +573,7 @@ struct ReachabilityCell {
 impl ReachabilityCell {
     fn from_state(state: &dusklight_learning::fact_snapshot::FactSnapshot) -> Self {
         let position_bin = state.player.position_f32_bits.map(|bits| {
-            (f64::from(f32::from_bits(bits)) / REACHABILITY_POSITION_BIN_WORLD_UNITS).floor()
-                as i64
+            (f64::from(f32::from_bits(bits)) / REACHABILITY_POSITION_BIN_WORLD_UNITS).floor() as i64
         });
         Self {
             stage: state.world.stage.clone(),

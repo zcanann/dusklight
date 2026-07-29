@@ -334,8 +334,7 @@ pub fn run_native_subsystem_parity(
                 .evidence
                 .process_local_state_proof_sha256
                 .is_none();
-    proof_disabled.passed =
-        proof_disabled.configuration_verified && proof_disabled.evidence_parity;
+    proof_disabled.passed = proof_disabled.configuration_verified && proof_disabled.evidence_parity;
     conditions.push(proof_disabled);
 
     let mut report = NativeSubsystemParityReport {

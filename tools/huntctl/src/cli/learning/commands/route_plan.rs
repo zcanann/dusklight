@@ -5,8 +5,7 @@ use super::{
 };
 use dusklight_learning::tactic_value_treatment::TacticValueTreatment;
 use dusklight_orchestration::{
-    native_tactic_route_runner::NativeTacticReplaySharingPlan,
-    optimization_request::CampaignClass,
+    native_tactic_route_runner::NativeTacticReplaySharingPlan, optimization_request::CampaignClass,
 };
 use std::error::Error;
 
@@ -172,18 +171,24 @@ mod tests {
             TacticValueTreatment::GoalRelabeledFittedQKnnV2
         );
         assert_eq!(
-            value_treatment(&[
-                "--value-treatment".into(),
-                "goal_relabeled_fitted_q_knn".into(),
-            ], TacticValueTreatment::LocalGeneralizedFittedQKnnV1)
+            value_treatment(
+                &[
+                    "--value-treatment".into(),
+                    "goal_relabeled_fitted_q_knn".into(),
+                ],
+                TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+            )
             .unwrap(),
             TacticValueTreatment::GoalRelabeledFittedQKnnV2
         );
         assert_eq!(
-            value_treatment(&[
-                "--value-treatment".into(),
-                "continuous_fitted_q_forest".into(),
-            ], TacticValueTreatment::LocalGeneralizedFittedQKnnV1)
+            value_treatment(
+                &[
+                    "--value-treatment".into(),
+                    "continuous_fitted_q_forest".into(),
+                ],
+                TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+            )
             .unwrap(),
             TacticValueTreatment::ContinuousFittedQForestV1
         );

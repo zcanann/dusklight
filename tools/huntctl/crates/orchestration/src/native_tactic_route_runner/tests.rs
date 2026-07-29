@@ -3,6 +3,7 @@ use super::candidate_retention::*;
 use super::goal_target::*;
 use super::journal::*;
 use super::macro_discovery::*;
+use super::worker_pool::recorded_demonstration_chunks;
 use super::worker_pool::*;
 use super::*;
 

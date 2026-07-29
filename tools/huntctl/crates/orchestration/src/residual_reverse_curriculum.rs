@@ -319,6 +319,7 @@ mod tests {
     use dusklight_search::residual_retention::{
         ExactTerminalVerdict, ResidualEvaluationEvidence, ResidualOutcomeArchive,
     };
+    use std::path::PathBuf;
 
     fn repository() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -347,6 +348,55 @@ mod tests {
     impl Drop for TestArtifacts {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    struct HermeticCardFixture {
+        manifest: PathBuf,
+        file: PathBuf,
+    }
+
+    impl HermeticCardFixture {
+        fn new(root: &Path, artifact_root: &Path, optimization: &OptimizationRequest) -> Self {
+            let fixture_root = root.join("orig/automation-card-fixtures/process-boot");
+            let fixture_name = format!(
+                "tests/{}.gci",
+                artifact_root.file_name().unwrap().to_string_lossy()
+            );
+            let file = fixture_root.join(&fixture_name);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            let bytes = b"hermetic residual reverse curriculum card fixture";
+            fs::write(&file, bytes).unwrap();
+            let manifest = artifact_root.join("card.fixture.json");
+            fs::write(
+                &manifest,
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "schema": "dusklight-automation-card-fixture/v2",
+                    "name": "Hermetic residual reverse curriculum fixture",
+                    "root": "orig/automation-card-fixtures/process-boot",
+                    "files": [{
+                        "path": fixture_name.replace(std::path::MAIN_SEPARATOR, "/"),
+                        "sha256": Digest(Sha256::digest(bytes).into())
+                    }],
+                    "source_boundaries": [{
+                        "source_frame": optimization.route.source_boundary_index,
+                        "fingerprint": optimization.route.native_source_boundary_fingerprint
+                    }]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            Self { manifest, file }
+        }
+    }
+
+    impl Drop for HermeticCardFixture {
+        fn drop(&mut self) {
+            let parent = self.file.parent().map(Path::to_path_buf);
+            let _ = fs::remove_file(&self.file);
+            if let Some(parent) = parent {
+                let _ = fs::remove_dir(parent);
+            }
         }
     }
 
@@ -637,6 +687,7 @@ mod tests {
         let program = dusklight_objectives::milestone_dsl::parse(&source_text).unwrap();
         let compiled = dusklight_objectives::milestone_dsl::compile(&program).unwrap();
         fs::write(&program_path, compiled.bytes).unwrap();
+        let card_fixture = HermeticCardFixture::new(&root, &artifacts.0, &seed);
         let execution = NativeResidualExecutionBinding::seal(
             &root,
             &seed,
@@ -645,7 +696,7 @@ mod tests {
             &process_tape,
             &program_path,
             &world_path,
-            &root.join("routes/Glitch Exhibition/intro/benchmarks/process_boot.fixture.json"),
+            &card_fixture.manifest,
             8,
             false,
         )

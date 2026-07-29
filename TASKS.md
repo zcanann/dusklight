@@ -45,6 +45,11 @@ The incoming 2026-07-29 work made substantial, useful progress:
   suppression parity, phase timing, and checkpoint-owner locality are
   implemented. A short macOS fixed-work treatment reports a 15.54x steady-state
   speedup over relaunching the same topology.
+- The Rust source-quality gate has zero debt exemptions and all 531 production
+  files are below 1,500 physical lines. The four final oversized orchestration
+  files are split by result tests, launch preparation, proposal-pool execution,
+  frontier policy, and checkpoint validation responsibilities. The complete
+  orchestration suite is hermetic and passes all 252 tests.
 - A bounded macOS scratch campaign reached the actual Ordon load-zone
   predicate in all four configured seeds without human replay. Its best route
   was `231` ticks, median time to first terminal was about `691.6` seconds, and
@@ -136,19 +141,6 @@ journals, or learned tactics.
 
 ## P0 - Restore a truthful, auditable baseline
 
-- [ ] Make `python ci/source_quality/check_rust_file_sizes.py` pass. Remove
-      every obsolete debt exemption and split the four current production
-      violations:
-      `native_tactic_route_runner/worker_pool.rs`,
-      `native_suffix_worker.rs`, `tactic_q_campaign.rs`, and
-      `native_suffix_result.rs`.
-- [ ] Enforce the stated hard rule at 1,500 physical lines and the normal
-      target below 1,000. Split by ownership rather than moving code into
-      1,499-line files or hiding production code behind test-module counting.
-- [ ] Make the default orchestration test suite hermetic. The two residual-card
-      validation tests must either retain their authenticated fixtures or
-      generate them; a fresh checkout may not fail because local fixture files
-      are absent.
 - [ ] Retain a self-contained, content-addressed native campaign evidence
       bundle. It must include or resolve the request, execution plan, route
       report, every per-seed result, graph/report identities, best tape and
