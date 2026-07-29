@@ -42,6 +42,10 @@ pub(super) fn launch_tactic_route_worker(
         },
     )
     .map_err(route_error)?;
+    write_new(
+        &attempt_root.join(NATIVE_TACTIC_WORKER_HELLO_FILE),
+        &serde_json::to_vec_pretty(worker.hello()).map_err(route_error)?,
+    )?;
     let facts = initial_facts(&initial)?;
     let root_checkpoint_sha256 =
         tactic_root_checkpoint_sha256(worker.identity()).map_err(route_error)?;

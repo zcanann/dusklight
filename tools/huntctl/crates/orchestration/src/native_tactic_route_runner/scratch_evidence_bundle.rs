@@ -305,7 +305,8 @@ impl NativeTacticScratchEvidenceBundle {
         let execution: NativeResidualExecutionBinding =
             read_json_blob(bundle_root, &self.execution_binding)?;
         execution.validate_seal(&request).map_err(route_error)?;
-        let plan: NativeTacticExecutionPlan = read_json_blob(bundle_root, &self.execution_plan)?;
+        let plan =
+            NativeTacticExecutionPlan::read(&blob_path(bundle_root, &self.execution_plan.blob))?;
         let route: NativeTacticRouteReport = read_json_blob(bundle_root, &self.route_report)?;
         let campaign_audit: NativeTacticScratchCampaignAudit =
             read_json_blob(bundle_root, &self.campaign_audit)?;

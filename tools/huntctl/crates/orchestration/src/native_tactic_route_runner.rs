@@ -102,6 +102,7 @@ pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
 const NATIVE_TACTIC_LEASE_JOURNAL_FILE: &str = "leases.dtql";
 pub const NATIVE_TACTIC_REPLAY_CONTROL_PLANE_FILE: &str = "campaign-replay.dtrp";
 pub const NATIVE_TACTIC_CONTENT_STORE_DIRECTORY: &str = "objects";
+pub const NATIVE_TACTIC_WORKER_HELLO_FILE: &str = "worker-hello.json";
 const NATIVE_TACTIC_DEMONSTRATION_CORPUS_FILE: &str = "demonstration-training.dtqc";
 const NATIVE_TACTIC_DEMONSTRATION_REPORT_FILE: &str = "demonstration-report.json";
 const NATIVE_TACTIC_DEMONSTRATION_REPORT_SCHEMA_V1: &str =
@@ -174,6 +175,11 @@ mod fault_recovery_audit;
 pub use fault_recovery_audit::{
     NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V1, NativeTacticFaultRecoveryAudit,
     NativeTacticFaultRecoverySeedAudit, audit_native_tactic_fault_recovery,
+};
+mod launch_smoke;
+pub use launch_smoke::{
+    NATIVE_TACTIC_LAUNCH_SMOKE_BUNDLE_SCHEMA_V1, NATIVE_TACTIC_LAUNCH_SMOKE_MANIFEST,
+    NativeTacticLaunchSmokeBundle, NativeTacticLaunchSmokeSummary,
 };
 
 mod execution_plan;

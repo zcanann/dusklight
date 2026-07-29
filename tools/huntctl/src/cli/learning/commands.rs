@@ -96,8 +96,8 @@ use huntctl::search_evaluator::native_tactic_policy_runner::{
 };
 use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticDemonstrationReport, NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest,
-    NativeTacticFaultInjector, NativeTacticObservationAudit, NativeTacticPlanBudgets,
-    NativeTacticPostTerminalControlReport, NativeTacticResourceLimit,
+    NativeTacticFaultInjector, NativeTacticLaunchSmokeBundle, NativeTacticObservationAudit,
+    NativeTacticPlanBudgets, NativeTacticPostTerminalControlReport, NativeTacticResourceLimit,
     NativeTacticRestoreLocalityConfig, NativeTacticRestoreLocalityReport,
     NativeTacticRouteDiagnosisReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
     NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
@@ -418,6 +418,9 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "execute-tactic-policy"
             | "prove-generalized-tactics"
             | "tactic-route"
+            | "run-tactic-launch-smoke"
+            | "seal-tactic-launch-smoke"
+            | "validate-tactic-launch-smoke"
             | "tactic-throughput-curve"
             | "tactic-restore-locality"
             | "audit-tactic-fault-recovery"
@@ -490,6 +493,9 @@ mod tests {
             "compare-tactic-scratch-campaigns",
             "diagnose-tactic-terminal-routes",
             "validate-tactic-scratch-bundle",
+            "run-tactic-launch-smoke",
+            "seal-tactic-launch-smoke",
+            "validate-tactic-launch-smoke",
         ] {
             assert!(is_frozen_and_tactic_command(command), "{command}");
         }

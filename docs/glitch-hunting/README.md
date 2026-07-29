@@ -107,6 +107,8 @@ unavoidable mutation audit; they never count as TAS playback or proof.
 - [Native tactic campaign resource bounds](native-tactic-resource-bounds.md)
   defines aggregate checkpoint memory, fitted-model replay lag, fallback, and
   checkpoint-owner accounting.
+- [Native tactic launch smoke](native-tactic-launch-smoke.md) defines the
+  retained current-build Windows/macOS compact-worker compatibility gate.
 - [Native tactic crash recovery](native-tactic-crash-recovery.md) defines the
   recovery, decision-journal, and lease-journal transaction ordering.
 - [Engine-session reuse boundary](engine-sessions.md) defines the typed reuse

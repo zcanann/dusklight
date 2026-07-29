@@ -5,15 +5,15 @@ use super::{
     MAX_LEARN_INPUT_CORPORA, NativeEpisodeShard, NativeFactorizedPolicyBatchConfig,
     NativeFactorizedPolicySuffixBatch, NativeFrozenPolicyReinferenceReport,
     NativeFrozenPolicySuffixBatch, NativeGenericExecutionStrategy, NativeResidualExecutionBinding,
-    NativeTacticDemonstrationReport, NativeTacticFaultInjector, NativeTacticObservationAudit,
-    NativeTacticPolicyRunConfig, NativeTacticPostTerminalControlReport,
-    NativeTacticRestoreLocalityConfig, NativeTacticRestoreLocalityReport,
-    NativeTacticRouteDiagnosisReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
-    NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
-    NativeTacticScratchDiscoveryReport, NativeTacticScratchEvidenceBundle,
-    NativeTacticThroughputCurveConfig, OptimizationRequest, Sha256, TacticFrozenPolicy,
-    TacticProposalPolicy, TacticQCampaign, TacticQFinalResult, TacticQTrainingCorpus,
-    audit_native_tactic_fault_recovery, cli, command_conservative_q, flag,
+    NativeTacticDemonstrationReport, NativeTacticFaultInjector, NativeTacticLaunchSmokeBundle,
+    NativeTacticObservationAudit, NativeTacticPolicyRunConfig,
+    NativeTacticPostTerminalControlReport, NativeTacticRestoreLocalityConfig,
+    NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport, NativeTacticRouteReport,
+    NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
+    NativeTacticScratchComparisonReport, NativeTacticScratchDiscoveryReport,
+    NativeTacticScratchEvidenceBundle, NativeTacticThroughputCurveConfig, OptimizationRequest,
+    Sha256, TacticFrozenPolicy, TacticProposalPolicy, TacticQCampaign, TacticQFinalResult,
+    TacticQTrainingCorpus, audit_native_tactic_fault_recovery, cli, command_conservative_q, flag,
     native_frozen_policy_probe_model, native_tactic_execution_plan, option,
     prove_generalized_tactic_held_out_value, realize_native_frozen_policy_tape, repeated_option,
     required_path, run_native_tactic_policy, run_native_tactic_restore_locality,
@@ -627,6 +627,116 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "demonstration_transitions": report.demonstration_transitions,
                 }))?
             );
+            Ok(())
+        }
+        Some("run-tactic-launch-smoke") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let request_path = required_path(learn_args, "--request")?;
+            let execution_path = required_path(learn_args, "--execution")?;
+            let request: OptimizationRequest = serde_json::from_slice(&fs::read(&request_path)?)?;
+            let execution: NativeResidualExecutionBinding =
+                serde_json::from_slice(&fs::read(&execution_path)?)?;
+            let seed = option(learn_args, "--seed")
+                .ok_or("run-tactic-launch-smoke requires --seed")?
+                .parse::<u64>()?;
+            let memory_bytes = u64_option(learn_args, "--memory-bytes", 671_088_640)?;
+            let wall_micros = u64_option(learn_args, "--wall-micros", 300_000_000)?;
+            let plan_args = vec![
+                "--decisions-per-seed".into(),
+                "1".into(),
+                "--proposals-per-decision".into(),
+                "1".into(),
+                "--branch-every".into(),
+                "1".into(),
+                "--refit-every".into(),
+                "1".into(),
+                "--memory-bytes".into(),
+                memory_bytes.to_string(),
+                "--wall-micros".into(),
+                wall_micros.to_string(),
+            ];
+            let execution_plan = native_tactic_execution_plan(
+                &plan_args,
+                &request,
+                &[seed],
+                TacticProposalPolicy::Learned,
+                NativeGenericExecutionStrategy::NativeController,
+                None,
+            )?;
+            let output_argument = required_path(learn_args, "--output")?;
+            let output = if output_argument.is_absolute() {
+                output_argument
+            } else {
+                repository_root.join(output_argument)
+            };
+            let bundle_argument = required_path(learn_args, "--bundle")?;
+            let bundle_root = if bundle_argument.is_absolute() {
+                bundle_argument
+            } else {
+                repository_root.join(bundle_argument)
+            };
+            let report = run_native_tactic_route(&NativeTacticRouteRunConfig {
+                repository_root: &repository_root,
+                optimization: &request,
+                execution: &execution,
+                execution_plan: &execution_plan,
+                promoted_tactic_registry: None,
+                output_root: &output,
+                workers: 1,
+                cancellation: None,
+                fault_injection: None,
+                resume: false,
+            })?;
+            let bundle = NativeTacticLaunchSmokeBundle::build(
+                &bundle_root,
+                &repository_root,
+                &request_path,
+                &execution_path,
+                &output.join("report.json"),
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": bundle.schema,
+                    "report": output.join("report.json"),
+                    "report_schema": report.schema,
+                    "bundle": bundle_root,
+                    "bundle_sha256": bundle.content_sha256,
+                    "summary": bundle.summary,
+                    "passed": bundle.passed,
+                }))?
+            );
+            Ok(())
+        }
+        Some("seal-tactic-launch-smoke") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let bundle_root = required_path(learn_args, "--bundle")?;
+            let bundle = NativeTacticLaunchSmokeBundle::build(
+                &bundle_root,
+                &repository_root,
+                &required_path(learn_args, "--request")?,
+                &required_path(learn_args, "--execution")?,
+                &required_path(learn_args, "--report")?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
+            Ok(())
+        }
+        Some("validate-tactic-launch-smoke") => {
+            let bundle = NativeTacticLaunchSmokeBundle::read_and_validate(&required_path(
+                &args[1..],
+                "--bundle",
+            )?)?;
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
             Ok(())
         }
         Some("tactic-throughput-curve") => {

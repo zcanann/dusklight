@@ -14,7 +14,25 @@ The command checks:
 - the complete `huntctl` workspace build;
 - every `dusklight-orchestration` unit and documentation test; and
 - every tracked native scratch evidence bundle whose manifest uses
-  `dusklight-native-tactic-scratch-evidence-bundle/v2`.
+  `dusklight-native-tactic-scratch-evidence-bundle/v2`; and
+- every tracked supported-platform launch smoke whose manifest uses
+  `dusklight-native-tactic-launch-smoke-bundle/v1`.
+
+The launch smoke bundles are produced and validated with:
+
+```text
+huntctl learn run-tactic-launch-smoke \
+  --request OPTIMIZATION.json \
+  --execution EXECUTION.json \
+  --output build/SMOKE \
+  --bundle EVIDENCE-DIR \
+  --seed N
+
+huntctl learn validate-tactic-launch-smoke --bundle EVIDENCE-DIR
+```
+
+See [native-tactic-launch-smoke.md](native-tactic-launch-smoke.md) for the
+current-build materialization and cross-platform evidence contract.
 
 Scratch discovery validation publishes a movable bundle with:
 

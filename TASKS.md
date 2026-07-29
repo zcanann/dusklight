@@ -45,11 +45,11 @@ The incoming 2026-07-29 work made substantial, useful progress:
   suppression parity, phase timing, and checkpoint-owner locality are
   implemented. A short macOS fixed-work treatment reports a 15.54x steady-state
   speedup over relaunching the same topology.
-- The Rust source-quality gate has zero debt exemptions and all 541 production
+- The Rust source-quality gate has zero debt exemptions and all 542 production
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 280 tests.
+  orchestration suite is hermetic and passes all 281 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
   tape/result, source-authority evidence, and a content-bound campaign audit.
@@ -115,6 +115,13 @@ The incoming 2026-07-29 work made substantial, useful progress:
   and batch-schema contracts that the complete Rust suite had missed. Those
   defects are fixed, but supported-platform native launch compatibility is not
   yet a retained gate.
+- A dedicated native launch-smoke command now fixes a one-worker,
+  one-decision, one-proposal topology and publishes a movable content-addressed
+  bundle. It retains the native build/capability hello, initial cached-root
+  request/result, compact proposal envelope/result, binary plan and lease
+  journal, graph checkpoint, resource audit, and source authorities. The
+  clean-checkout gate discovers every committed smoke manifest. No clean-build
+  Windows or macOS bundle is committed yet.
 - Native option summaries now retain same-tick wall-contact/commanded-motion
   overlap and the momentum loss measured on those ticks. The v5 tactic feature
   schema exposes the measured consequence with explicit legacy missingness;

@@ -2,7 +2,7 @@ use crate::transport::Transport;
 pub use dusklight_automation_contracts::engine_session::{
     ENGINE_SESSION_REUSE_AUDIT_SCHEMA_V1, SessionReuseAudit, SessionReuseBlocker,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::error::Error;
 use std::fmt;
@@ -11,7 +11,7 @@ pub const CONTROL_PROTOCOL_NAME: &str = "dusklight-automation";
 pub const CONTROL_PROTOCOL_VERSION: u64 = 2;
 pub const MAX_CONTROL_LINE_BYTES: usize = 1024 * 1024;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WorkerBuildIdentity {
     pub version: String,
     pub describe: String,
@@ -33,7 +33,7 @@ pub struct WorkerBuildIdentity {
 }
 
 impl WorkerBuildIdentity {
-    fn validate(&self) -> Result<(), ClientError> {
+    pub fn validate(&self) -> Result<(), ClientError> {
         for (field, value) in [
             ("build.version", self.version.as_str()),
             ("build.describe", self.describe.as_str()),
@@ -94,7 +94,7 @@ fn validate_lower_hex(
     Ok(())
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WorkerCapabilities {
     pub persistent_control: bool,
     pub engine_session: bool,
@@ -109,7 +109,8 @@ pub struct WorkerCapabilities {
     pub commands: Vec<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct HelloResponse {
     pub build: WorkerBuildIdentity,
     pub capabilities: WorkerCapabilities,
@@ -132,6 +133,14 @@ impl IdentityDifference {
 }
 
 impl HelloResponse {
+    pub fn validate(&self) -> Result<(), ClientError> {
+        self.build.validate()?;
+        if self.capabilities.commands.is_empty() {
+            return Err(ClientError::MissingField("capabilities.commands"));
+        }
+        Ok(())
+    }
+
     /// Returns every build or protocol-capability mismatch. Keeping this as a
     /// typed field list makes CLI rejection useful without weakening the exact
     /// comparison used to form deterministic worker pools.
@@ -561,6 +570,31 @@ mod tests {
     #[test]
     fn complete_build_identity_is_accepted() {
         valid_build_identity().validate().unwrap();
+    }
+
+    #[test]
+    fn retained_hello_round_trips_and_validates() {
+        let hello = HelloResponse {
+            build: valid_build_identity(),
+            capabilities: WorkerCapabilities {
+                persistent_control: true,
+                engine_session: false,
+                headless: true,
+                scenario_load: false,
+                input_tape: true,
+                batch_run: true,
+                compact_batch_run: true,
+                commands: vec!["hello".into(), "run_batch".into(), "shutdown".into()],
+            },
+        };
+        hello.validate().unwrap();
+        let retained: HelloResponse =
+            serde_json::from_slice(&serde_json::to_vec(&hello).unwrap()).unwrap();
+        assert_eq!(retained, hello);
+
+        let mut incomplete = retained;
+        incomplete.capabilities.commands.clear();
+        assert!(incomplete.validate().is_err());
     }
 
     #[test]

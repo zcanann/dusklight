@@ -13,6 +13,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 HUNTCTL_ROOT = REPOSITORY_ROOT / "tools" / "huntctl"
 SCRATCH_BUNDLE_SCHEMA = "dusklight-native-tactic-scratch-evidence-bundle/v2"
 SCRATCH_BUNDLE_SCHEMA_PREFIX = "dusklight-native-tactic-scratch-evidence-bundle/"
+LAUNCH_SMOKE_SCHEMA = "dusklight-native-tactic-launch-smoke-bundle/v1"
+LAUNCH_SMOKE_SCHEMA_PREFIX = "dusklight-native-tactic-launch-smoke-bundle/"
 
 
 def run(command: list[str], cwd: Path) -> None:
@@ -20,13 +22,14 @@ def run(command: list[str], cwd: Path) -> None:
     subprocess.run(command, cwd=cwd, check=True)
 
 
-def tracked_scratch_bundles() -> list[Path]:
+def tracked_evidence_bundles() -> tuple[list[Path], list[Path]]:
     output = subprocess.check_output(
         ["git", "ls-files", "--", "*.json"],
         cwd=REPOSITORY_ROOT,
         text=True,
     )
     bundles: list[Path] = []
+    launch_smokes: list[Path] = []
     for relative in output.splitlines():
         path = REPOSITORY_ROOT / relative
         try:
@@ -42,7 +45,13 @@ def tracked_scratch_bundles() -> list[Path]:
             raise RuntimeError(
                 f"unsupported committed scratch evidence bundle schema in {relative}: {schema}"
             )
-    return sorted(set(bundles))
+        elif schema == LAUNCH_SMOKE_SCHEMA:
+            launch_smokes.append(path.parent)
+        elif isinstance(schema, str) and schema.startswith(LAUNCH_SMOKE_SCHEMA_PREFIX):
+            raise RuntimeError(
+                f"unsupported committed launch smoke bundle schema in {relative}: {schema}"
+            )
+    return sorted(set(bundles)), sorted(set(launch_smokes))
 
 
 def main() -> int:
@@ -51,7 +60,7 @@ def main() -> int:
     run(["cargo", "check", "--workspace"], HUNTCTL_ROOT)
     run(["cargo", "test", "-p", "dusklight-orchestration"], HUNTCTL_ROOT)
 
-    bundles = tracked_scratch_bundles()
+    bundles, launch_smokes = tracked_evidence_bundles()
     for bundle in bundles:
         run(
             [
@@ -66,9 +75,24 @@ def main() -> int:
             ],
             HUNTCTL_ROOT,
         )
+    for bundle in launch_smokes:
+        run(
+            [
+                "cargo",
+                "run",
+                "--quiet",
+                "--",
+                "learn",
+                "validate-tactic-launch-smoke",
+                "--bundle",
+                str(bundle),
+            ],
+            HUNTCTL_ROOT,
+        )
     print(
         "Learning-framework audit passed "
-        f"({len(bundles)} committed scratch evidence bundles validated)."
+        f"({len(bundles)} committed scratch evidence bundles and "
+        f"{len(launch_smokes)} native launch smoke bundles validated)."
     )
     return 0
 
