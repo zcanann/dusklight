@@ -302,13 +302,13 @@ impl TacticQCampaign {
             kind: TacticBranchKind::RetainedFrontier,
             logical_frontier: LogicalTacticFrontierRecord {
                 identity_sha256: selected.route_checkpoint_sha256,
-                state_sha256: selected.transition.after_state_sha256,
+                state_sha256: selected.frontier_state_sha256,
                 route_frames: selected.route_tape.frames.len() as u64,
                 replayed_prefix_ticks,
             },
             restorable_native_checkpoint: None,
             acquisition: None,
-            state: selected.transition.after.clone(),
+            state: selected.frontier_state.clone(),
             route_tape: selected.route_tape.clone(),
             descriptor: Some(selected.descriptor.clone()),
         };
@@ -391,10 +391,8 @@ impl TacticQCampaign {
             let demonstration_choices = choices
                 .iter()
                 .filter(|entry| {
-                    demonstration_endpoints.contains(&(
-                        entry.route_checkpoint_sha256,
-                        entry.transition.after_state_sha256,
-                    ))
+                    demonstration_endpoints
+                        .contains(&(entry.route_checkpoint_sha256, entry.frontier_state_sha256))
                 })
                 .cloned()
                 .collect::<Vec<_>>();
@@ -445,14 +443,14 @@ impl TacticQCampaign {
                 let acquisition_estimates = if demonstration_curriculum {
                     (None, None, None, None)
                 } else {
-                    let features = encode(&entry.transition.after)
+                    let features = encode(&entry.frontier_state)
                         .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
                     if features.is_empty() || features.iter().any(|value| !value.is_finite()) {
                         return Err(TacticQCampaignError::Features(
                             "frontier encoding is empty or non-finite".into(),
                         ));
                     }
-                    let applicable = applicable_actions(&entry.transition.after)
+                    let applicable = applicable_actions(&entry.frontier_state)
                         .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
                     if applicable.is_empty() {
                         return Err(TacticQCampaignError::InvalidState(
@@ -460,8 +458,7 @@ impl TacticQCampaign {
                         ));
                     }
                     if let Some(model) = generalized_model.as_ref() {
-                        let context =
-                            GeneralizedTacticContext::from_facts(&entry.transition.after)?;
+                        let context = GeneralizedTacticContext::from_facts(&entry.frontier_state)?;
                         let estimates = model.rank(&features, &context, &applicable)?;
                         (
                             estimates
@@ -480,8 +477,7 @@ impl TacticQCampaign {
                                 .max_by(f32::total_cmp),
                         )
                     } else if let Some(model) = continuous_model.as_ref() {
-                        let context =
-                            GeneralizedTacticContext::from_facts(&entry.transition.after)?;
+                        let context = GeneralizedTacticContext::from_facts(&entry.frontier_state)?;
                         let estimates = model.rank(&features, &context, &applicable)?;
                         (
                             estimates.first().map(|value| value.mean_q),
@@ -525,7 +521,7 @@ impl TacticQCampaign {
                     .replay
                     .iter()
                     .filter(|transition| {
-                        transition.before_state_sha256 == entry.transition.after_state_sha256
+                        transition.before_state_sha256 == entry.frontier_state_sha256
                             && transition.source_checkpoint_sha256 == entry.route_checkpoint_sha256
                     })
                     .count() as u64;
@@ -538,7 +534,7 @@ impl TacticQCampaign {
                     "learned frontier route precedes its native root",
                 ))? as u64;
                 let exact_terminal_ticks_to_go = exact_terminal_ticks
-                    .get(&entry.transition.after_state_sha256)
+                    .get(&entry.frontier_state_sha256)
                     .copied();
                 let acquisition = TacticFrontierAcquisition {
                     expansion_count,
@@ -587,13 +583,13 @@ impl TacticQCampaign {
             kind: TacticBranchKind::RetainedFrontier,
             logical_frontier: LogicalTacticFrontierRecord {
                 identity_sha256: selected.route_checkpoint_sha256,
-                state_sha256: selected.transition.after_state_sha256,
+                state_sha256: selected.frontier_state_sha256,
                 route_frames: selected.route_tape.frames.len() as u64,
                 replayed_prefix_ticks: acquisition.replayed_prefix_ticks,
             },
             restorable_native_checkpoint: None,
             acquisition: Some(acquisition),
-            state: selected.transition.after.clone(),
+            state: selected.frontier_state.clone(),
             route_tape: selected.route_tape,
             descriptor: Some(selected.descriptor),
         };
@@ -642,10 +638,50 @@ impl TacticQCampaign {
                 first.before_state_sha256 == branch.logical_frontier.state_sha256
                     && first.source_checkpoint_sha256 == branch.logical_frontier.identity_sha256
             }),
-            TacticBranchKind::RetainedFrontier => frontier.contains_tactic_frontier(
-                branch.logical_frontier.identity_sha256,
-                branch.logical_frontier.state_sha256,
-            ),
+            TacticBranchKind::RetainedFrontier => {
+                frontier.contains_tactic_frontier(
+                    branch.logical_frontier.identity_sha256,
+                    branch.logical_frontier.state_sha256,
+                ) || self
+                    .training_replay
+                    .iter()
+                    .zip(&self.training_replay_routes)
+                    .zip(&self.training_episode_groups)
+                    .any(|((transition, route), episode_group)| {
+                        if *episode_group == TACTIC_Q_MODEL_ONLY_EPISODE_GROUP {
+                            return false;
+                        }
+                        let exact_endpoint = transition.after_state_sha256
+                            == branch.logical_frontier.state_sha256
+                            && transition.next_checkpoint_sha256
+                                == branch.logical_frontier.identity_sha256
+                            && route == &branch.route_tape;
+                        exact_endpoint
+                            || transition.intermediate_boundaries.iter().any(|boundary| {
+                                let Ok(offset) = usize::try_from(boundary.offset_ticks) else {
+                                    return false;
+                                };
+                                let Ok(start) = usize::try_from(
+                                    transition.execution.realized_tape_range.start_frame,
+                                ) else {
+                                    return false;
+                                };
+                                let Some(end) = start.checked_add(offset) else {
+                                    return false;
+                                };
+                                boundary.state_sha256 == branch.logical_frontier.state_sha256
+                                    && route.frames.get(..end)
+                                        == Some(branch.route_tape.frames.as_slice())
+                                    && branch.logical_frontier.identity_sha256
+                                        == route_checkpoint(
+                                            self.root_checkpoint_sha256,
+                                            &branch.route_tape,
+                                        )
+                                        .ok()
+                                        .unwrap_or(Digest::ZERO)
+                            })
+                    })
+            }
         };
         if !admitted
             || self.episode_groups.contains(&episode_group)
@@ -687,11 +723,11 @@ fn limit_ranked_frontier_candidates(
 ) -> Vec<TacticFrontierEntry> {
     let (mut exact, mut exploratory): (Vec<_>, Vec<_>) = choices
         .into_iter()
-        .partition(|entry| exact_terminal_ticks.contains_key(&entry.transition.after_state_sha256));
+        .partition(|entry| exact_terminal_ticks.contains_key(&entry.frontier_state_sha256));
     exact.sort_by(|left, right| {
         let total = |entry: &TacticFrontierEntry| {
             (entry.route_tape.frames.len().saturating_sub(root_frames) as u64)
-                .saturating_add(exact_terminal_ticks[&entry.transition.after_state_sha256])
+                .saturating_add(exact_terminal_ticks[&entry.frontier_state_sha256])
         };
         total(left)
             .cmp(&total(right))
@@ -727,12 +763,7 @@ pub(super) fn append_exact_terminal_frontiers(
     }
     let mut identities = choices
         .iter()
-        .map(|entry| {
-            (
-                entry.route_checkpoint_sha256,
-                entry.transition.after_state_sha256,
-            )
-        })
+        .map(|entry| (entry.route_checkpoint_sha256, entry.frontier_state_sha256))
         .collect::<BTreeSet<_>>();
     for (generation, ((transition, route), episode_group)) in transitions
         .iter()
@@ -740,27 +771,68 @@ pub(super) fn append_exact_terminal_frontiers(
         .zip(episode_groups)
         .enumerate()
     {
-        let identity = (
-            transition.next_checkpoint_sha256,
-            transition.after_state_sha256,
-        );
-        if *episode_group == TACTIC_Q_MODEL_ONLY_EPISODE_GROUP
-            || transition.value_sample.terminal
-            || route.frames.len() > maximum_route_frames
-            || !exact_terminal_ticks.contains_key(&transition.after_state_sha256)
-            || !identities.insert(identity)
-        {
+        if *episode_group == TACTIC_Q_MODEL_ONLY_EPISODE_GROUP {
             continue;
         }
-        choices.push(TacticFrontierEntry {
-            descriptor: tactic_endpoint_descriptor(transition)
+        if !transition.value_sample.terminal
+            && route.frames.len() <= maximum_route_frames
+            && exact_terminal_ticks.contains_key(&transition.after_state_sha256)
+        {
+            let identity = (
+                transition.next_checkpoint_sha256,
+                transition.after_state_sha256,
+            );
+            if identities.insert(identity) {
+                choices.push(TacticFrontierEntry {
+                    descriptor: tactic_endpoint_descriptor(transition)
+                        .map_err(|error| TacticQCampaignError::Frontier(error.to_string()))?,
+                    root_checkpoint_sha256,
+                    route_checkpoint_sha256: transition.next_checkpoint_sha256,
+                    frontier_state_sha256: transition.after_state_sha256,
+                    frontier_state: transition.after.clone(),
+                    transition: transition.clone(),
+                    route_tape: route.clone(),
+                    first_seen_generation: generation as u64,
+                });
+            }
+        }
+        let start = usize::try_from(transition.execution.realized_tape_range.start_frame)
+            .map_err(|_| TacticQCampaignError::InvalidState("dense frontier tape overflows"))?;
+        for boundary in &transition.intermediate_boundaries {
+            if !exact_terminal_ticks.contains_key(&boundary.state_sha256) {
+                continue;
+            }
+            let end = start
+                .checked_add(usize::try_from(boundary.offset_ticks).map_err(|_| {
+                    TacticQCampaignError::InvalidState("dense frontier offset overflows")
+                })?)
+                .ok_or(TacticQCampaignError::InvalidState(
+                    "dense frontier route overflows",
+                ))?;
+            if end > route.frames.len() || end > maximum_route_frames {
+                continue;
+            }
+            let route_tape = tape_prefix(route, end);
+            let route_checkpoint_sha256 = route_checkpoint(root_checkpoint_sha256, &route_tape)?;
+            if !identities.insert((route_checkpoint_sha256, boundary.state_sha256)) {
+                continue;
+            }
+            choices.push(TacticFrontierEntry {
+                descriptor: tactic_endpoint_descriptor_for_state(
+                    &boundary.state,
+                    false,
+                    &transition.value_sample.action,
+                )
                 .map_err(|error| TacticQCampaignError::Frontier(error.to_string()))?,
-            root_checkpoint_sha256,
-            route_checkpoint_sha256: transition.next_checkpoint_sha256,
-            transition: transition.clone(),
-            route_tape: route.clone(),
-            first_seen_generation: generation as u64,
-        });
+                root_checkpoint_sha256,
+                route_checkpoint_sha256,
+                frontier_state_sha256: boundary.state_sha256,
+                frontier_state: boundary.state.clone(),
+                transition: transition.clone(),
+                route_tape,
+                first_seen_generation: generation as u64,
+            });
+        }
     }
     Ok(())
 }
@@ -779,8 +851,19 @@ fn exact_terminal_ticks_to_go_by_state(
             let Some(after_ticks) = ticks.get(&transition.after_state_sha256).copied() else {
                 continue;
             };
-            let candidate =
-                after_ticks.saturating_add(u64::from(transition.value_sample.duration_ticks));
+            let duration = u64::from(transition.value_sample.duration_ticks);
+            for boundary in &transition.intermediate_boundaries {
+                let candidate = after_ticks
+                    .saturating_add(duration.saturating_sub(u64::from(boundary.offset_ticks)));
+                if ticks
+                    .get(&boundary.state_sha256)
+                    .is_none_or(|current| candidate < *current)
+                {
+                    ticks.insert(boundary.state_sha256, candidate);
+                    changed = true;
+                }
+            }
+            let candidate = after_ticks.saturating_add(duration);
             if ticks
                 .get(&transition.before_state_sha256)
                 .is_none_or(|before_ticks| candidate < *before_ticks)

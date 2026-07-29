@@ -14,6 +14,7 @@ use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::option_transition::OptionTransitionSample;
+use dusklight_learning::option_values::OptionActionDescriptor;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashSet};
@@ -172,6 +173,8 @@ pub struct TacticFrontierEntry {
     pub descriptor: TacticEndpointDescriptor,
     pub root_checkpoint_sha256: Digest,
     pub route_checkpoint_sha256: Digest,
+    pub frontier_state_sha256: Digest,
+    pub frontier_state: FactSnapshot,
     pub transition: OptionTransitionSample,
     pub route_tape: InputTape,
     pub first_seen_generation: u64,
@@ -236,7 +239,7 @@ impl BehaviorArchive {
     ) -> bool {
         self.tactic_entries.values().any(|entry| {
             entry.route_checkpoint_sha256 == route_checkpoint_sha256
-                && entry.transition.after_state_sha256 == state_sha256
+                && entry.frontier_state_sha256 == state_sha256
         })
     }
 
@@ -283,6 +286,8 @@ impl BehaviorArchive {
             descriptor: descriptor.clone(),
             root_checkpoint_sha256,
             route_checkpoint_sha256: transition.next_checkpoint_sha256,
+            frontier_state_sha256: transition.after_state_sha256,
+            frontier_state: transition.after.clone(),
             transition,
             route_tape,
             first_seen_generation: generation,
@@ -870,9 +875,21 @@ fn novelty(
 pub fn tactic_endpoint_descriptor(
     transition: &OptionTransitionSample,
 ) -> Result<TacticEndpointDescriptor, BehaviorArchiveError> {
-    let state = tactic_state_descriptor(&transition.after, transition.value_sample.terminal);
-    let action_bytes = serde_json::to_vec(&transition.value_sample.action)
-        .map_err(|error| BehaviorArchiveError::new(error.to_string()))?;
+    tactic_endpoint_descriptor_for_state(
+        &transition.after,
+        transition.value_sample.terminal,
+        &transition.value_sample.action,
+    )
+}
+
+pub fn tactic_endpoint_descriptor_for_state(
+    facts: &FactSnapshot,
+    terminal: bool,
+    action: &OptionActionDescriptor,
+) -> Result<TacticEndpointDescriptor, BehaviorArchiveError> {
+    let state = tactic_state_descriptor(facts, terminal);
+    let action_bytes =
+        serde_json::to_vec(action).map_err(|error| BehaviorArchiveError::new(error.to_string()))?;
     Ok(TacticEndpointDescriptor {
         stage: state.stage,
         room: state.room,
@@ -951,12 +968,7 @@ fn tactic_quality_cmp(
                 .len()
                 .cmp(&left.route_tape.frames.len())
         })
-        .then_with(|| {
-            right
-                .transition
-                .after_state_sha256
-                .cmp(&left.transition.after_state_sha256)
-        })
+        .then_with(|| right.frontier_state_sha256.cmp(&left.frontier_state_sha256))
 }
 
 /// Compare two restorable endpoints that occupy the same semantic state cell.
@@ -987,12 +999,7 @@ fn tactic_cell_elite_cmp(
                 .reward
                 .total_cmp(&right.transition.value_sample.reward)
         })
-        .then_with(|| {
-            right
-                .transition
-                .after_state_sha256
-                .cmp(&left.transition.after_state_sha256)
-        })
+        .then_with(|| right.frontier_state_sha256.cmp(&left.frontier_state_sha256))
 }
 
 fn tactic_frontier_novelty(

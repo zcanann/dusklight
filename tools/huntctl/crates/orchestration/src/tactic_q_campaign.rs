@@ -45,7 +45,8 @@ use dusklight_learning::tactic_value_treatment::{
 };
 use dusklight_proposals::behavior_archive::{
     BehaviorArchive, MAX_BEHAVIOR_ARCHIVE_ENTRIES, TacticEndpointDescriptor, TacticFrontierEntry,
-    TacticStateDescriptor, tactic_endpoint_descriptor, tactic_state_descriptor,
+    TacticStateDescriptor, tactic_endpoint_descriptor, tactic_endpoint_descriptor_for_state,
+    tactic_state_descriptor,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};

@@ -17,7 +17,7 @@ use dusklight_evidence::content_store::{
 };
 use dusklight_learning::fact_snapshot::{ActorFactSnapshot, FactSnapshot};
 use dusklight_learning::learner_state::{LearnerActionMaskEntry, LearnerState};
-use dusklight_learning::option_transition::OptionTransitionSample;
+use dusklight_learning::option_transition::{OptionIntermediateBoundary, OptionTransitionSample};
 use dusklight_learning::option_values::{
     OptionActionDescriptor, OptionValueConfig, OptionValueSample,
 };
@@ -401,6 +401,15 @@ struct StoredOptionValueSample {
     realized_tape_sha256: Digest,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct StoredOptionIntermediateBoundary {
+    episode_shard_sha256: Digest,
+    offset_ticks: u32,
+    state_sha256: Digest,
+    state: StoredContentRef,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct StoredOptionTransition {
@@ -416,6 +425,8 @@ struct StoredOptionTransition {
     after: StoredContentRef,
     execution: StoredOptionExecution,
     value_sample: StoredOptionValueSample,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    intermediate_boundaries: Vec<StoredOptionIntermediateBoundary>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -934,6 +945,20 @@ fn encode_transition(
             &emitted_tape,
         )
         .map_err(checkpoint_store_error)?;
+    let intermediate_boundaries = transition
+        .intermediate_boundaries
+        .iter()
+        .map(|boundary| {
+            Ok(StoredOptionIntermediateBoundary {
+                episode_shard_sha256: boundary.episode_shard_sha256,
+                offset_ticks: boundary.offset_ticks,
+                state_sha256: boundary.state_sha256,
+                state: store
+                    .store_fact(&boundary.state)
+                    .map_err(checkpoint_store_error)?,
+            })
+        })
+        .collect::<Result<Vec<_>, TacticQCampaignError>>()?;
     Ok(StoredOptionTransition {
         schema: transition.schema.clone(),
         execution_authority_sha256: transition.execution_authority_sha256,
@@ -969,6 +994,7 @@ fn encode_transition(
             realized_tape_range: transition.value_sample.realized_tape_range,
             realized_tape_sha256: transition.value_sample.realized_tape_sha256,
         },
+        intermediate_boundaries,
     })
 }
 
@@ -1095,6 +1121,20 @@ fn load_transition(
     let emitted_tape = store
         .load_tape(stored.execution.emitted_tape)
         .map_err(checkpoint_store_error)?;
+    let intermediate_boundaries = stored
+        .intermediate_boundaries
+        .iter()
+        .map(|boundary| {
+            Ok(OptionIntermediateBoundary {
+                episode_shard_sha256: boundary.episode_shard_sha256,
+                offset_ticks: boundary.offset_ticks,
+                state_sha256: boundary.state_sha256,
+                state: store
+                    .load_fact(boundary.state)
+                    .map_err(checkpoint_store_error)?,
+            })
+        })
+        .collect::<Result<Vec<_>, TacticQCampaignError>>()?;
     let transition = OptionTransitionSample {
         schema: stored.schema.clone(),
         execution_authority_sha256: stored.execution_authority_sha256,
@@ -1132,6 +1172,7 @@ fn load_transition(
             realized_tape_range: stored.value_sample.realized_tape_range,
             realized_tape_sha256: stored.value_sample.realized_tape_sha256,
         },
+        intermediate_boundaries,
     };
     transition.validate()?;
     Ok(transition)

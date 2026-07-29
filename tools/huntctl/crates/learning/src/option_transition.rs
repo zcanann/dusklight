@@ -12,6 +12,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const OPTION_TRANSITION_SAMPLE_SCHEMA_V1: &str = "dusklight-option-transition-sample/v1";
+pub const MAX_OPTION_INTERMEDIATE_BOUNDARIES: usize = 256;
 
 fn digest_is_zero(value: &Digest) -> bool {
     *value == Digest::ZERO
@@ -21,6 +22,15 @@ fn digest_is_zero(value: &Digest) -> bool {
 /// the compact `OptionValueSample`. The Q implementation continues to consume
 /// only `value_sample`; checkpoint and PAD provenance remain inspectable and
 /// cannot drift away from it.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OptionIntermediateBoundary {
+    pub episode_shard_sha256: Digest,
+    pub offset_ticks: u32,
+    pub state_sha256: Digest,
+    pub state: FactSnapshot,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OptionTransitionSample {
@@ -36,6 +46,8 @@ pub struct OptionTransitionSample {
     pub after: FactSnapshot,
     pub execution: OptionExecution,
     pub value_sample: OptionValueSample,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub intermediate_boundaries: Vec<OptionIntermediateBoundary>,
 }
 
 impl OptionTransitionSample {
@@ -122,6 +134,7 @@ impl OptionTransitionSample {
             after,
             execution,
             value_sample,
+            intermediate_boundaries: Vec::new(),
         };
         row.validate()?;
         Ok(row)
@@ -232,6 +245,53 @@ impl OptionTransitionSample {
             return Err(OptionTransitionError::Invalid(
                 "value sample is detached from its realized transition",
             ));
+        }
+        if self.intermediate_boundaries.len() > MAX_OPTION_INTERMEDIATE_BOUNDARIES {
+            return Err(OptionTransitionError::Invalid(
+                "transition has too many intermediate boundaries",
+            ));
+        }
+        let mut previous_offset = 0_u32;
+        for boundary in &self.intermediate_boundaries {
+            boundary
+                .state
+                .validate()
+                .map_err(|error| OptionTransitionError::Facts(error.to_string()))?;
+            let expected_tape_frame = self
+                .execution
+                .realized_tape_range
+                .start_frame
+                .checked_add(u64::from(boundary.offset_ticks))
+                .ok_or(OptionTransitionError::Invalid(
+                    "intermediate tape frame overflows",
+                ))?;
+            let expected_simulation_tick = self
+                .before
+                .simulation_tick
+                .checked_add(u64::from(boundary.offset_ticks))
+                .ok_or(OptionTransitionError::Invalid(
+                    "intermediate simulation tick overflows",
+                ))?;
+            if boundary.episode_shard_sha256 == Digest::ZERO
+                || boundary.state_sha256 == Digest::ZERO
+                || boundary.offset_ticks <= previous_offset
+                || boundary.offset_ticks >= self.execution.duration.realized_ticks
+                || boundary.state.phase != FactPhase::PreInput
+                || boundary.state.tape_frame != expected_tape_frame
+                || boundary.state.simulation_tick != expected_simulation_tick
+                || boundary.state.terminal.configured != Some(true)
+                || boundary.state.terminal.reached != Some(false)
+                || boundary.state_sha256
+                    != boundary
+                        .state
+                        .content_sha256()
+                        .map_err(|error| OptionTransitionError::Facts(error.to_string()))?
+            {
+                return Err(OptionTransitionError::Invalid(
+                    "intermediate boundary is detached from its native option",
+                ));
+            }
+            previous_offset = boundary.offset_ticks;
         }
         Ok(())
     }
@@ -368,6 +428,63 @@ mod tests {
         .unwrap()
     }
 
+    fn row_with_intermediate_boundary() -> OptionTransitionSample {
+        let base = row();
+        let before = base.before;
+        let mut after = base.after;
+        after.phase = FactPhase::PreInput;
+        after.boundary_index = before.boundary_index + 8;
+        after.simulation_tick = before.simulation_tick + 8;
+        after.tape_frame = before.tape_frame + 8;
+        after.state_identity = [8; 16];
+        let tape = InputTape {
+            frames: vec![InputFrame::default(); after.tape_frame as usize],
+            ..InputTape::default()
+        };
+        let execution = OptionExecution::capture(
+            "wait-eight".into(),
+            OptionType::Neutral,
+            BTreeMap::<String, OptionParameter>::new(),
+            8,
+            8,
+            OptionCondition::DurationElapsed,
+            Vec::new(),
+            OptionEndReason::Completed,
+            &tape,
+            TapeRange {
+                start_frame: before.tape_frame,
+                end_frame_exclusive: after.tape_frame,
+            },
+        )
+        .unwrap();
+        let mut row = OptionTransitionSample::capture(
+            Digest([1; 32]),
+            Digest([2; 32]),
+            Digest([3; 32]),
+            before.clone(),
+            after,
+            execution,
+            &tape,
+            -0.08,
+            false,
+            |facts| Ok::<_, &'static str>(vec![facts.player.position_f32_bits[0] as f32]),
+        )
+        .unwrap();
+        let mut state = before;
+        state.boundary_index += 4;
+        state.simulation_tick += 4;
+        state.tape_frame += 4;
+        state.state_identity = [4; 16];
+        let state_sha256 = state.content_sha256().unwrap();
+        row.intermediate_boundaries = vec![OptionIntermediateBoundary {
+            episode_shard_sha256: Digest([9; 32]),
+            offset_ticks: 4,
+            state_sha256,
+            state,
+        }];
+        row
+    }
+
     #[test]
     fn converts_exact_option_boundary_into_existing_value_sample() {
         let row = row();
@@ -428,6 +545,21 @@ mod tests {
 
         tampered = original;
         tampered.value_sample.realized_tape_sha256 = Digest([9; 32]);
+        assert!(tampered.validate().is_err());
+    }
+
+    #[test]
+    fn validates_exact_intermediate_native_boundaries() {
+        let original = row_with_intermediate_boundary();
+        original.validate().unwrap();
+        assert_eq!(original.intermediate_boundaries[0].offset_ticks, 4);
+
+        let mut tampered = original.clone();
+        tampered.intermediate_boundaries[0].offset_ticks = 8;
+        assert!(tampered.validate().is_err());
+
+        tampered = original;
+        tampered.intermediate_boundaries[0].state.tape_frame += 1;
         assert!(tampered.validate().is_err());
     }
 }

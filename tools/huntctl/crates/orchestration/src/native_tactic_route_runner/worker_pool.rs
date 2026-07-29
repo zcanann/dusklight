@@ -708,6 +708,219 @@ impl NativeTacticProposalPool {
     }
 }
 
+pub(super) struct CapturedTerminalRouteReplay {
+    pub(super) corpus: TacticQTrainingCorpus,
+    pub(super) route: InputTape,
+    pub(super) first_hit_tick: u64,
+    pub(super) native_ticks: u64,
+    pub(super) wall_micros: u64,
+    pub(super) native_simulation_micros: u64,
+    pub(super) preparation_micros: u64,
+    pub(super) restore_accounting: NativeTacticRestoreAccounting,
+}
+
+/// Replay an authenticated terminal route in short recorded chunks solely to
+/// materialize exact intermediate states. The recorded chunk descriptors are
+/// training evidence; callers never add them to the executable tactic catalog.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn capture_terminal_route_replay(
+    config: &NativeTacticRouteRunConfig<'_>,
+    pool: &NativeTacticProposalPool,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+    reward_spec: &TacticRewardSpec,
+    recorded_route: &InputTape,
+    initial_facts: &FactSnapshot,
+    route_prefix: &InputTape,
+    root_checkpoint_sha256: Digest,
+    chunk_ticks: u32,
+    episode_group: u64,
+    option_namespace: &str,
+    artifact_root: &Path,
+) -> Result<CapturedTerminalRouteReplay, NativeTacticRouteRunError> {
+    let started = Instant::now();
+    let chunks = recorded_demonstration_chunks(
+        recorded_route,
+        pool.root_source_frame,
+        chunk_ticks,
+        config.optimization.budgets.exploration_horizon_ticks,
+    )?;
+    let mut before = initial_facts.clone();
+    let mut route = route_prefix.clone();
+    let mut transitions = Vec::new();
+    let mut routes = Vec::new();
+    let mut episode_groups = Vec::new();
+    let mut native_ticks = 0_u64;
+    let mut native_simulation_micros = 0_u64;
+    let mut preparation_micros = 0_u64;
+    let mut restore_accounting = NativeTacticRestoreAccounting::default();
+    let mut first_hit_tick = None;
+
+    for (chunk_index, chunk) in chunks.into_iter().enumerate() {
+        if cancellation_requested(config) {
+            return Err(route_cancelled("native terminal-route replay cancelled"));
+        }
+        let option_id = format!("{option_namespace}/chunk-{chunk_index:04}");
+        let entry = TacticCatalogEntry::new(option_id, TacticAssetSource::RecordedTape(chunk))
+            .map_err(route_error)?;
+        let catalog = Arc::new(TacticAssetCatalog::new(vec![entry]).map_err(route_error)?);
+        let descriptor = catalog
+            .option_descriptors()
+            .next()
+            .cloned()
+            .ok_or_else(|| route_message("terminal-route replay catalog is empty"))?;
+        let selected = SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: before.content_sha256().map_err(route_error)?,
+            decision_index: chunk_index as u64,
+            descriptor,
+            reason: TacticSelectionReason::StructuredBaseline,
+            exploration_draw: 0,
+        };
+        let paths_root = artifact_root
+            .join("native")
+            .join(format!("chunk-{chunk_index:04}"));
+        fs::create_dir_all(&paths_root).map_err(route_error)?;
+        let mut work = pool.execute_batch(
+            std::slice::from_ref(&selected),
+            catalog,
+            Arc::new(Vec::new()),
+            &before,
+            &route,
+            None,
+            false,
+            &paths_root,
+        )?;
+        if work.len() != 1 {
+            return Err(route_message(
+                "terminal-route replay chunk did not produce one native outcome",
+            ));
+        }
+        let work = work.remove(0);
+        native_simulation_micros =
+            native_simulation_micros.saturating_add(elapsed_micros(work.native_elapsed));
+        preparation_micros =
+            preparation_micros.saturating_add(elapsed_micros(work.preparation_elapsed));
+        restore_accounting.merge(&work.restore_accounting);
+        restore_accounting.proposal_transitions =
+            restore_accounting.proposal_transitions.saturating_add(1);
+
+        let outcome = work.outcome;
+        let state = encoder.encode(&before).map_err(route_error)?;
+        let next_state = encoder.encode(&outcome.next_facts).map_err(route_error)?;
+        let reward = reward_spec
+            .evaluate_with_motion(
+                encoder.schema_sha256,
+                &state,
+                &next_state,
+                outcome.execution.duration.realized_ticks,
+                outcome.terminal,
+                false,
+                outcome
+                    .next_facts
+                    .recent_option
+                    .as_ref()
+                    .and_then(|option| option.trajectory),
+            )
+            .map_err(route_error)?;
+        let source_checkpoint_sha256 =
+            route_checkpoint(root_checkpoint_sha256, &route).map_err(route_error)?;
+        let next_checkpoint_sha256 =
+            route_checkpoint(root_checkpoint_sha256, &outcome.route_tape).map_err(route_error)?;
+        let mut transition = OptionTransitionSample::capture(
+            encoder.schema_sha256,
+            source_checkpoint_sha256,
+            next_checkpoint_sha256,
+            before,
+            outcome.next_facts.clone(),
+            outcome.execution.clone(),
+            &outcome.route_tape,
+            reward.training_reward,
+            outcome.terminal,
+            |facts| encoder.encode(facts),
+        )
+        .map_err(route_error)?;
+        transition.intermediate_boundaries = outcome.intermediate_boundaries;
+        transition.execution_authority_sha256 = config.execution_plan.identity()?;
+        transition.validate().map_err(route_error)?;
+        native_ticks =
+            native_ticks.saturating_add(u64::from(outcome.execution.duration.realized_ticks));
+        let outcome_first_hit_tick = outcome
+            .terminal
+            .then(|| {
+                outcome
+                    .next_facts
+                    .terminal
+                    .first_hit_tick
+                    .and_then(|tick| tick.checked_sub(initial_facts.simulation_tick))
+            })
+            .flatten();
+        before = outcome.next_facts;
+        route = outcome.route_tape;
+        transitions.push(transition);
+        routes.push(route.clone());
+        episode_groups.push(episode_group);
+        if outcome.terminal {
+            first_hit_tick = outcome_first_hit_tick;
+            restore_accounting.useful_transitions =
+                restore_accounting.useful_transitions.saturating_add(1);
+            restore_accounting.refresh_rates();
+            break;
+        }
+    }
+
+    if transitions
+        .last()
+        .is_none_or(|transition| !transition.value_sample.terminal)
+    {
+        return Err(route_message(
+            "authenticated recorded route did not reach the terminal",
+        ));
+    }
+    let route_native_ticks = route
+        .frames
+        .len()
+        .checked_sub(pool.root_source_frame)
+        .ok_or_else(|| route_message("terminal route precedes its source"))?
+        as u64;
+    let first_hit_tick = first_hit_tick.ok_or_else(|| {
+        route_message("terminal-route replay has no source-relative first-hit tick")
+    })?;
+    if route_native_ticks != native_ticks || native_ticks != first_hit_tick.saturating_add(1) {
+        return Err(route_message(
+            "terminal-route replay ticks are detached from its first hit",
+        ));
+    }
+    let expected_end = pool
+        .root_source_frame
+        .checked_add(usize::try_from(native_ticks).map_err(route_error)?)
+        .ok_or_else(|| route_message("terminal-route replay first hit overflows"))?;
+    if recorded_route.frames.get(..expected_end) != Some(route.frames.as_slice()) {
+        return Err(route_message(
+            "native terminal-route replay differs from the authenticated tape",
+        ));
+    }
+    let corpus = TacticQTrainingCorpus {
+        execution_authority_sha256: config.execution_plan.identity()?,
+        feature_schema_sha256: encoder.schema_sha256,
+        objective_sha256: config.optimization.terminal_predicate.definition_sha256,
+        root_checkpoint_sha256,
+        transitions,
+        routes,
+        episode_groups,
+    };
+    validate_training_corpus(&corpus).map_err(route_error)?;
+    Ok(CapturedTerminalRouteReplay {
+        corpus,
+        route,
+        first_hit_tick,
+        native_ticks,
+        wall_micros: elapsed_micros(started.elapsed()),
+        native_simulation_micros,
+        preparation_micros,
+        restore_accounting,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn load_or_capture_demonstration(
     config: &NativeTacticRouteRunConfig<'_>,
@@ -802,181 +1015,24 @@ pub(super) fn load_or_capture_demonstration(
         return Ok(None);
     };
 
-    let started = Instant::now();
-    let chunks = recorded_demonstration_chunks(
+    let captured = capture_terminal_route_replay(
+        config,
+        pool,
+        encoder,
+        reward_spec,
         process_tape,
-        pool.root_source_frame,
-        chunk_ticks,
-        config.optimization.budgets.exploration_horizon_ticks,
-    )?;
-    let mut before = initial_facts.clone();
-    let mut route = route_prefix.clone();
-    let mut transitions = Vec::new();
-    let mut routes = Vec::new();
-    let mut episode_groups = Vec::new();
-    let mut native_ticks = 0_u64;
-    let mut native_simulation_micros = 0_u64;
-    let mut preparation_micros = 0_u64;
-    let mut restore_accounting = NativeTacticRestoreAccounting::default();
-    let mut first_hit_tick = None;
-
-    for (chunk_index, chunk) in chunks.into_iter().enumerate() {
-        if cancellation_requested(config) {
-            return Err(route_cancelled(
-                "native tactic demonstration capture cancelled",
-            ));
-        }
-        let option_id = format!("demonstration/chunk-{chunk_index:04}");
-        let entry = TacticCatalogEntry::new(option_id, TacticAssetSource::RecordedTape(chunk))
-            .map_err(route_error)?;
-        let catalog = Arc::new(TacticAssetCatalog::new(vec![entry]).map_err(route_error)?);
-        let descriptor = catalog
-            .option_descriptors()
-            .next()
-            .cloned()
-            .ok_or_else(|| route_message("demonstration catalog is empty"))?;
-        let selected = SelectedTactic {
-            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
-            learner_snapshot_sha256: before.content_sha256().map_err(route_error)?,
-            decision_index: chunk_index as u64,
-            descriptor,
-            reason: TacticSelectionReason::StructuredBaseline,
-            exploration_draw: 0,
-        };
-        let paths_root = config
-            .output_root
-            .join("demonstration")
-            .join("native")
-            .join(format!("chunk-{chunk_index:04}"));
-        fs::create_dir_all(&paths_root).map_err(route_error)?;
-        let mut work = pool.execute_batch(
-            std::slice::from_ref(&selected),
-            catalog,
-            Arc::new(Vec::new()),
-            &before,
-            &route,
-            None,
-            false,
-            &paths_root,
-        )?;
-        if work.len() != 1 {
-            return Err(route_message(
-                "demonstration chunk did not produce one native outcome",
-            ));
-        }
-        let work = work.remove(0);
-        native_simulation_micros =
-            native_simulation_micros.saturating_add(elapsed_micros(work.native_elapsed));
-        preparation_micros =
-            preparation_micros.saturating_add(elapsed_micros(work.preparation_elapsed));
-        restore_accounting.merge(&work.restore_accounting);
-        restore_accounting.proposal_transitions =
-            restore_accounting.proposal_transitions.saturating_add(1);
-
-        let outcome = work.outcome;
-        let state = encoder.encode(&before).map_err(route_error)?;
-        let next_state = encoder.encode(&outcome.next_facts).map_err(route_error)?;
-        let reward = reward_spec
-            .evaluate_with_motion(
-                encoder.schema_sha256,
-                &state,
-                &next_state,
-                outcome.execution.duration.realized_ticks,
-                outcome.terminal,
-                false,
-                outcome
-                    .next_facts
-                    .recent_option
-                    .as_ref()
-                    .and_then(|option| option.trajectory),
-            )
-            .map_err(route_error)?;
-        let source_checkpoint_sha256 =
-            route_checkpoint(root_checkpoint_sha256, &route).map_err(route_error)?;
-        let next_checkpoint_sha256 =
-            route_checkpoint(root_checkpoint_sha256, &outcome.route_tape).map_err(route_error)?;
-        let mut transition = OptionTransitionSample::capture(
-            encoder.schema_sha256,
-            source_checkpoint_sha256,
-            next_checkpoint_sha256,
-            before,
-            outcome.next_facts.clone(),
-            outcome.execution.clone(),
-            &outcome.route_tape,
-            reward.training_reward,
-            outcome.terminal,
-            |facts| encoder.encode(facts),
-        )
-        .map_err(route_error)?;
-        transition.execution_authority_sha256 = config.execution_plan.identity()?;
-        transition.validate().map_err(route_error)?;
-        native_ticks =
-            native_ticks.saturating_add(u64::from(outcome.execution.duration.realized_ticks));
-        let outcome_first_hit_tick = outcome
-            .terminal
-            .then(|| {
-                outcome
-                    .next_facts
-                    .terminal
-                    .first_hit_tick
-                    .and_then(|tick| tick.checked_sub(initial_facts.simulation_tick))
-            })
-            .flatten();
-        before = outcome.next_facts;
-        route = outcome.route_tape;
-        transitions.push(transition);
-        routes.push(route.clone());
-        episode_groups.push(TACTIC_Q_DEMONSTRATION_EPISODE_GROUP);
-        if outcome.terminal {
-            first_hit_tick = outcome_first_hit_tick;
-            restore_accounting.useful_transitions =
-                restore_accounting.useful_transitions.saturating_add(1);
-            restore_accounting.refresh_rates();
-            break;
-        }
-    }
-
-    if transitions
-        .last()
-        .is_none_or(|transition| !transition.value_sample.terminal)
-    {
-        return Err(route_message(
-            "authenticated process-tape demonstration did not reach the terminal",
-        ));
-    }
-    let route_native_ticks = route
-        .frames
-        .len()
-        .checked_sub(pool.root_source_frame)
-        .ok_or_else(|| route_message("demonstration route precedes its source"))?
-        as u64;
-    let first_hit_tick = first_hit_tick.ok_or_else(|| {
-        route_message("demonstration terminal has no source-relative first-hit tick")
-    })?;
-    if route_native_ticks != native_ticks || native_ticks != first_hit_tick.saturating_add(1) {
-        return Err(route_message(
-            "demonstration native ticks are detached from its first hit",
-        ));
-    }
-    let expected_end = pool
-        .root_source_frame
-        .checked_add(usize::try_from(native_ticks).map_err(route_error)?)
-        .ok_or_else(|| route_message("demonstration first hit overflows"))?;
-    if process_tape.frames.get(..expected_end) != Some(route.frames.as_slice()) {
-        return Err(route_message(
-            "native demonstration differs from the authenticated process tape",
-        ));
-    }
-
-    let corpus = TacticQTrainingCorpus {
-        execution_authority_sha256: config.execution_plan.identity()?,
-        feature_schema_sha256: encoder.schema_sha256,
-        objective_sha256: config.optimization.terminal_predicate.definition_sha256,
+        initial_facts,
+        route_prefix,
         root_checkpoint_sha256,
-        transitions,
-        routes,
-        episode_groups,
-    };
+        chunk_ticks,
+        TACTIC_Q_DEMONSTRATION_EPISODE_GROUP,
+        "demonstration",
+        &config.output_root.join("demonstration"),
+    )?;
+    let corpus = captured.corpus;
+    let route = captured.route;
+    let first_hit_tick = captured.first_hit_tick;
+    let native_ticks = captured.native_ticks;
     corpus
         .write(&corpus_path, &objects_root)
         .map_err(route_error)?;
@@ -996,10 +1052,10 @@ pub(super) fn load_or_capture_demonstration(
         transition_count: corpus.transitions.len() as u64,
         first_hit_tick,
         native_ticks,
-        wall_micros: elapsed_micros(started.elapsed()),
-        native_simulation_micros,
-        preparation_micros,
-        restore_accounting,
+        wall_micros: captured.wall_micros,
+        native_simulation_micros: captured.native_simulation_micros,
+        preparation_micros: captured.preparation_micros,
+        restore_accounting: captured.restore_accounting,
         corpus_path: path_text(&corpus_path),
         corpus_sha256,
         demonstrated_route_tape_sha256,

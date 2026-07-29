@@ -418,6 +418,7 @@ impl TacticQCampaign {
             outcome.terminal,
             encode,
         )?;
+        transition.intermediate_boundaries = outcome.intermediate_boundaries.clone();
         transition.execution_authority_sha256 = self.execution_authority_sha256;
         transition.validate()?;
         Ok(EvaluatedRewardedTacticOutcome {
@@ -714,6 +715,7 @@ impl TacticQCampaign {
             outcome.terminal,
             encode,
         )?;
+        transition.intermediate_boundaries = outcome.intermediate_boundaries;
         transition.execution_authority_sha256 = self.execution_authority_sha256;
         transition.validate()?;
 

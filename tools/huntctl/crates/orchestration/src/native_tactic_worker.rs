@@ -21,11 +21,15 @@ use dusklight_evidence::native_episode_shard::{
     NativeEpisode, NativeEpisodeShard, NativeLearningObservation, NativeObservationPhase,
     NativeRawPad,
 };
-use dusklight_learning::fact_snapshot::{FactPhase, FactSnapshot, OptionTrajectoryFactSnapshot};
+use dusklight_learning::fact_snapshot::{
+    FactPhase, FactSnapshot, MAX_FACT_HISTORY, OptionTrajectoryFactSnapshot,
+    RecentOptionFactSnapshot,
+};
 use dusklight_learning::learner_state::tactic_intrinsically_applicable;
 use dusklight_learning::native_generic_tactic::{
     GenericTactic, NativeGenericTacticStepper, NativeTacticObservation, NativeTacticQueryRecord,
 };
+use dusklight_learning::option_transition::OptionIntermediateBoundary;
 use dusklight_learning::tactic_asset::{
     PreparedTacticExecution, TacticAssetCatalog, TacticDurationBounds,
 };
@@ -62,6 +66,7 @@ pub const NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V2: &str =
     "dusklight-native-tactic-worker-outcome/v2";
 pub(crate) const TACTIC_CHECKPOINT_CACHE_BYTES: usize = 640 * 1024 * 1024;
 pub(crate) const TACTIC_CHECKPOINT_CACHE_ENTRIES: usize = 2;
+const TACTIC_INTERMEDIATE_BOUNDARY_STRIDE: usize = 4;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -119,6 +124,8 @@ pub struct NativeTacticWorkerOutcome {
     pub native_queries: Vec<TacticRuntimeQuery>,
     pub route_tape: InputTape,
     pub next_facts: FactSnapshot,
+    #[serde(skip_serializing)]
+    pub intermediate_boundaries: Vec<OptionIntermediateBoundary>,
     pub terminal: bool,
 }
 
@@ -1014,6 +1021,13 @@ fn observe_outcome(
     {
         return Err(NativeTacticWorkerError::DetachedResult("next boundary"));
     }
+    let intermediate_boundaries = capture_intermediate_boundaries(
+        selected,
+        &execution,
+        loaded.shard_content_sha256,
+        episode,
+        candidate_prefix_ticks,
+    )?;
     let retained_native_checkpoint = validated.candidates[0].retained_checkpoint.clone();
     let retained_route_ticks = request
         .checkpoint_cache
@@ -1046,8 +1060,91 @@ fn observe_outcome(
         native_queries,
         route_tape,
         next_facts,
+        intermediate_boundaries,
         terminal,
     })
+}
+
+fn capture_intermediate_boundaries(
+    selected: &SelectedTactic,
+    execution: &OptionExecution,
+    episode_shard_sha256: Digest,
+    episode: &NativeEpisode,
+    candidate_prefix_ticks: usize,
+) -> Result<Vec<OptionIntermediateBoundary>, NativeTacticWorkerError> {
+    let realized_ticks = usize::try_from(execution.duration.realized_ticks)
+        .map_err(|_| NativeTacticWorkerError::InvalidDuration)?;
+    if realized_ticks <= TACTIC_INTERMEDIATE_BOUNDARY_STRIDE {
+        return Ok(Vec::new());
+    }
+    let option_steps = episode
+        .steps
+        .get(candidate_prefix_ticks..candidate_prefix_ticks.saturating_add(realized_ticks))
+        .ok_or(NativeTacticWorkerError::DetachedResult(
+            "intermediate option steps",
+        ))?;
+    let mut boundaries = Vec::with_capacity(
+        realized_ticks
+            .saturating_sub(1)
+            .div_ceil(TACTIC_INTERMEDIATE_BOUNDARY_STRIDE),
+    );
+    for offset in (TACTIC_INTERMEDIATE_BOUNDARY_STRIDE..realized_ticks)
+        .step_by(TACTIC_INTERMEDIATE_BOUNDARY_STRIDE)
+    {
+        let episode_end = candidate_prefix_ticks
+            .checked_add(offset)
+            .ok_or(NativeTacticWorkerError::InvalidDuration)?;
+        let last = episode.steps.get(episode_end.saturating_sub(1)).ok_or(
+            NativeTacticWorkerError::DetachedResult("intermediate native boundary"),
+        )?;
+        let mut next_boundary = last.post_simulation.clone();
+        next_boundary.phase = NativeObservationPhase::PreInput;
+        next_boundary.simulation_tick = next_boundary.simulation_tick.checked_add(1).ok_or(
+            NativeTacticWorkerError::DetachedResult("intermediate simulation boundary"),
+        )?;
+        next_boundary.tape_frame = next_boundary.tape_frame.checked_add(1).ok_or(
+            NativeTacticWorkerError::DetachedResult("intermediate tape boundary"),
+        )?;
+        let prior = episode.steps[..episode_end]
+            .iter()
+            .rev()
+            .take(MAX_FACT_HISTORY)
+            .map(|step| step.pre_input.clone())
+            .collect::<Vec<_>>();
+        let mut prior = prior.into_iter().rev().collect::<Vec<_>>();
+        prior.retain(|observation| observation.boundary_index < next_boundary.boundary_index);
+        let trajectory = OptionTrajectoryFactSnapshot::from_native_steps(&option_steps[..offset])
+            .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
+        let mut state =
+            FactSnapshot::from_native_learning(&next_boundary, &prior, None, Vec::new())
+                .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
+        let offset_ticks =
+            u32::try_from(offset).map_err(|_| NativeTacticWorkerError::InvalidDuration)?;
+        state.recent_option = Some(RecentOptionFactSnapshot {
+            option_id: selected.descriptor.option_id.clone(),
+            end_reason: OptionEndReason::MaximumDuration,
+            realized_ticks: offset_ticks,
+            tape_start: execution.realized_tape_range.start_frame,
+            tape_end_exclusive: execution
+                .realized_tape_range
+                .start_frame
+                .checked_add(u64::from(offset_ticks))
+                .ok_or(NativeTacticWorkerError::InvalidDuration)?,
+            trajectory: Some(trajectory),
+        });
+        state
+            .validate()
+            .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
+        boundaries.push(OptionIntermediateBoundary {
+            episode_shard_sha256,
+            offset_ticks,
+            state_sha256: state
+                .content_sha256()
+                .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?,
+            state,
+        });
+    }
+    Ok(boundaries)
 }
 
 fn realized_option_end(
