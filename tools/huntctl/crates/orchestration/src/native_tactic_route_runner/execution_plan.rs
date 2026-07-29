@@ -279,11 +279,13 @@ impl NativeTacticExecutionPlan {
             let mut lane_indices = Vec::with_capacity(seeds.len());
             for (generation_lane_index, seed) in seeds.iter().copied().enumerate() {
                 let lane_index = lanes.len();
-                let support = request.proposal_policy == TacticProposalPolicy::Learned
-                    && generation_lane_index == 0;
-                let acquisition = if request.proposal_policy == TacticProposalPolicy::Learned
-                    && request.seeds.len() == 1
-                {
+                // Graph-node acquisition is an experimental control, not part
+                // of the action-ranking treatment. Learned, structured
+                // scheduler-only, and random-valid cells must traverse the
+                // same sealed lane schedule so policy is the only search
+                // intervention.
+                let support = generation_lane_index == 0;
+                let acquisition = if request.seeds.len() == 1 {
                     NativeTacticAcquisitionPlan::CyclicSupportAndRanks {
                         cycle_width: request.lanes_per_generation.max(4) as u32,
                         ranked_lanes_per_cycle: request.lanes_per_generation.max(4) as u32 - 1,
@@ -494,6 +496,46 @@ mod tests {
                 (NativeTacticLaneRole::RankedExploration, 3, 350_000, 3,),
             ]
         );
+    }
+
+    #[test]
+    fn ranking_treatments_share_one_graph_acquisition_schedule() {
+        let plans = [
+            TacticProposalPolicy::Learned,
+            TacticProposalPolicy::StructuredNonLearning,
+            TacticProposalPolicy::RandomValid,
+        ]
+        .map(|proposal_policy| {
+            let mut request = request();
+            request.proposal_policy = proposal_policy;
+            NativeTacticExecutionPlan::build(request).unwrap()
+        });
+        for plan in &plans[1..] {
+            assert_eq!(plan.generations, plans[0].generations);
+            assert_eq!(plan.lanes, plans[0].lanes);
+            assert_eq!(plan.checkpoint, plans[0].checkpoint);
+            assert_eq!(plan.budgets, plans[0].budgets);
+        }
+
+        let single_seed = [
+            TacticProposalPolicy::Learned,
+            TacticProposalPolicy::StructuredNonLearning,
+            TacticProposalPolicy::RandomValid,
+        ]
+        .map(|proposal_policy| {
+            let mut request = request();
+            request.seeds = vec![11];
+            request.lanes_per_generation = 1;
+            request.proposal_policy = proposal_policy;
+            NativeTacticExecutionPlan::build(request).unwrap()
+        });
+        assert!(single_seed.iter().all(|plan| {
+            plan.lanes[0].acquisition
+                == NativeTacticAcquisitionPlan::CyclicSupportAndRanks {
+                    cycle_width: 4,
+                    ranked_lanes_per_cycle: 3,
+                }
+        }));
     }
 
     #[test]

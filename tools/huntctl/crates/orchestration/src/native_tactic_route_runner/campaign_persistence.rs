@@ -307,6 +307,10 @@ pub(super) fn read_completed_seed_result(
         .any(|decision| decision.cumulative_wall_micros != 0)
         || result.first_terminal_decision_index.is_some()
         || result.time_to_first_terminal_micros.is_some();
+    let has_graph_expansion_timeline = result
+        .trace
+        .iter()
+        .any(|decision| decision.completed_executable_graph_expansions != 0);
     if result.execution_plan_sha256 != execution_plan_sha256
         || result.seed != seed
         || result.decisions > decisions_per_seed
@@ -323,6 +327,20 @@ pub(super) fn read_completed_seed_result(
         || result.state_graph_sha256 == Digest::ZERO
         || (!result.terminal_discovered && result.timing.retained_candidate_artifact_micros != 0)
         || result.trace.len() as u64 != result.decisions
+        || (has_graph_expansion_timeline
+            && (result
+                .trace
+                .iter()
+                .any(|decision| decision.completed_executable_graph_expansions == 0)
+                || result.trace.windows(2).any(|pair| {
+                    pair[0].completed_executable_graph_expansions
+                        > pair[1].completed_executable_graph_expansions
+                })
+                || result
+                    .trace
+                    .last()
+                    .map(|decision| decision.completed_executable_graph_expansions)
+                    != Some(result.unique_useful_graph_expansions)))
         || (has_durable_wall_timing
             && (result.first_terminal_decision_index
                 != first_terminal.map(|decision| decision.decision_index)

@@ -945,6 +945,10 @@ pub(super) fn run_seed(
             replay_only_frontiers: frontier_cells
                 .saturating_sub(usize::from(directly_restored_frontier)),
             visited_states: campaign.visited_state_count(),
+            completed_executable_graph_expansions: u64::try_from(
+                campaign.completed_executable_graph_expansion_count(),
+            )
+            .map_err(route_error)?,
             before: tactic_state_trace(&step.step.transition.before)?,
             after: tactic_state_trace(&step.step.transition.after)?,
             measurements: Vec::new(),

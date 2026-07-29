@@ -92,6 +92,7 @@ use std::time::{Duration, Instant};
 
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V32: &str = "dusklight-native-tactic-route-report/v32";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V33: &str = "dusklight-native-tactic-route-report/v33";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V34: &str = "dusklight-native-tactic-route-report/v34";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -181,6 +182,12 @@ pub use scratch_campaign_audit::{
     NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V1, NativeTacticScratchCampaignAudit,
     NativeTacticScratchDecisionAudit, NativeTacticScratchSeedAudit, NativeTacticScratchStopReason,
     NativeTacticScratchTerminalImprovementAudit,
+};
+mod scratch_comparison;
+pub use scratch_comparison::{
+    NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V1, NativeTacticScratchComparisonCell,
+    NativeTacticScratchComparisonReport, NativeTacticScratchEfficiencyMetrics,
+    NativeTacticScratchTreatment,
 };
 
 mod throughput_curve;
@@ -660,7 +667,7 @@ fn run_native_tactic_route_with_optional_fleet(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let mut report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V33.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V34.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,

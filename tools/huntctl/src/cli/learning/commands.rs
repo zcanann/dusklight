@@ -98,9 +98,9 @@ use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest, NativeTacticPlanBudgets,
     NativeTacticResourceLimit, NativeTacticRestoreLocalityConfig,
     NativeTacticRestoreLocalityReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
-    NativeTacticScratchCampaignAudit, NativeTacticScratchDiscoveryReport,
-    NativeTacticScratchEvidenceBundle, NativeTacticThroughputCurveConfig,
-    run_native_tactic_restore_locality, run_native_tactic_route,
+    NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
+    NativeTacticScratchDiscoveryReport, NativeTacticScratchEvidenceBundle,
+    NativeTacticThroughputCurveConfig, run_native_tactic_restore_locality, run_native_tactic_route,
     run_native_tactic_throughput_curve, tactic_macro_registry_identity,
 };
 use huntctl::search_evaluator::native_tactic_worker::NativeGenericExecutionStrategy;

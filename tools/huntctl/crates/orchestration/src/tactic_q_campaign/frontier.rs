@@ -5,6 +5,12 @@ impl TacticQCampaign {
         self.state_graph.as_ref().map_or(0, StateGraph::node_count)
     }
 
+    pub fn completed_executable_graph_expansion_count(&self) -> usize {
+        self.state_graph
+            .as_ref()
+            .map_or(0, StateGraph::completed_executable_expansion_count)
+    }
+
     pub fn hindsight_replay(&self) -> &HindsightOptionReplay {
         &self.hindsight
     }

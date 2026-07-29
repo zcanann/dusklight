@@ -45,11 +45,11 @@ The incoming 2026-07-29 work made substantial, useful progress:
   suppression parity, phase timing, and checkpoint-owner locality are
   implemented. A short macOS fixed-work treatment reports a 15.54x steady-state
   speedup over relaunching the same topology.
-- The Rust source-quality gate has zero debt exemptions and all 532 production
+- The Rust source-quality gate has zero debt exemptions and all 534 production
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 258 tests.
+  orchestration suite is hermetic and passes all 262 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
   tape/result, source-authority evidence, and a content-bound campaign audit.
@@ -58,6 +58,11 @@ The incoming 2026-07-29 work made substantial, useful progress:
   first evaluation of the eventual best route. The clean-checkout audit command
   validates source quality, formatting, the workspace, all orchestration tests,
   and every committed bundle.
+- Matched scratch comparison now keeps graph-node acquisition schedules fixed
+  across learned, scheduler-only, and random-valid action ranking. Its
+  fail-closed comparator rejects source, horizon, topology, schema, budget, or
+  cadence drift and reports both graph sample efficiency and end-to-end phase
+  occupancy. No matched native result has been retained yet.
 - A bounded macOS scratch campaign reached the actual Ordon load-zone
   predicate in all four configured seeds without human replay. Its best route
   was `231` ticks, median time to first terminal was about `691.6` seconds, and

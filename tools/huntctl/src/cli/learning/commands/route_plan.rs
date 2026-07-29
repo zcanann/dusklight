@@ -20,11 +20,7 @@ pub(super) fn native_tactic_execution_plan(
     let decisions_per_lane = u64_option(learn_args, "--decisions-per-seed", 256)?;
     let proposal_width_per_decision = usize_option(learn_args, "--proposals-per-decision", 4)?;
     let refit_every_decisions = u64_option(learn_args, "--refit-every", 4)?;
-    let default_lanes_per_generation = if proposal_policy == TacticProposalPolicy::Learned {
-        seeds.len().min(4).max(1)
-    } else {
-        seeds.len().max(1)
-    };
+    let default_lanes_per_generation = seeds.len().min(4).max(1);
     let replay_sharing = option(learn_args, "--maximum-stale-replay-revisions")
         .map(|value| {
             Ok::<_, Box<dyn Error>>(NativeTacticReplaySharingPlan::BoundedStaleness {

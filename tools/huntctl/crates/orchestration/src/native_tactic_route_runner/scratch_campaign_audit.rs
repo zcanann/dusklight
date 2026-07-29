@@ -37,6 +37,7 @@ pub struct NativeTacticScratchTerminalImprovementAudit {
     pub decision_index: u64,
     pub cumulative_wall_micros: u64,
     pub cumulative_proposal_expansions: u64,
+    pub cumulative_useful_graph_expansions: u64,
     pub authenticated_tick: u64,
 }
 
@@ -60,6 +61,7 @@ pub struct NativeTacticScratchDecisionAudit {
     pub proposal_count: u64,
     pub terminal_proposal_count: u64,
     pub retained_proposal_count: u64,
+    pub completed_executable_graph_expansions: u64,
     pub terminal: bool,
 }
 
@@ -73,15 +75,19 @@ pub struct NativeTacticScratchSeedAudit {
     pub first_terminal_decision_index: Option<u64>,
     pub time_to_first_terminal_micros: Option<u64>,
     pub proposal_expansions_to_first_terminal: Option<u64>,
+    pub useful_graph_expansions_to_first_terminal: Option<u64>,
     /// False for legacy reports written before terminal proposals carried
-    /// their exact root-derived route length.
+    /// their exact root-derived route length and cumulative graph work.
     pub terminal_improvement_timing_complete: bool,
     pub terminal_improvements: Vec<NativeTacticScratchTerminalImprovementAudit>,
     pub best_terminal_decision_index: Option<u64>,
     pub time_to_best_terminal_micros: Option<u64>,
     pub proposal_expansions_to_best_terminal: Option<u64>,
+    pub useful_graph_expansions_to_best_terminal: Option<u64>,
     pub total_proposal_expansions: u64,
+    pub native_ticks: u64,
     pub unique_useful_graph_expansions: u64,
+    pub graph_expansion_timeline_complete: bool,
     pub completed_graph_leases: u64,
     pub terminal_path_ticks: Vec<u64>,
     pub selection_counts: BTreeMap<String, u64>,
@@ -193,6 +199,7 @@ fn seed_audit(
 ) -> Result<NativeTacticScratchSeedAudit, NativeTacticRouteRunError> {
     let mut proposal_expansions = 0_u64;
     let mut proposal_expansions_to_first_terminal = None;
+    let mut useful_graph_expansions_to_first_terminal = None;
     let mut proposal_selection_counts = BTreeMap::<String, u64>::new();
     let mut learner_snapshots = BTreeSet::new();
     let mut terminal_improvements = Vec::new();
@@ -204,6 +211,9 @@ fn seed_audit(
         proposal_expansions = proposal_expansions.saturating_add(proposal_count);
         if Some(trace.decision_index) == seed.first_terminal_decision_index {
             proposal_expansions_to_first_terminal = Some(proposal_expansions);
+            useful_graph_expansions_to_first_terminal =
+                (trace.completed_executable_graph_expansions != 0)
+                    .then_some(trace.completed_executable_graph_expansions);
         }
         if trace.learner_snapshot_sha256 != Digest::ZERO {
             learner_snapshots.insert(trace.learner_snapshot_sha256);
@@ -217,6 +227,10 @@ fn seed_audit(
                     terminal_improvement_timing_complete = false;
                     continue;
                 };
+                if trace.completed_executable_graph_expansions == 0 {
+                    terminal_improvement_timing_complete = false;
+                    continue;
+                }
                 if best_observed_terminal_tick
                     .is_none_or(|incumbent| authenticated_tick < incumbent)
                 {
@@ -225,6 +239,8 @@ fn seed_audit(
                         decision_index: trace.decision_index,
                         cumulative_wall_micros: trace.cumulative_wall_micros,
                         cumulative_proposal_expansions: proposal_expansions,
+                        cumulative_useful_graph_expansions: trace
+                            .completed_executable_graph_expansions,
                         authenticated_tick,
                     });
                 }
@@ -256,6 +272,7 @@ fn seed_audit(
                 .iter()
                 .filter(|proposal| proposal.retained)
                 .count() as u64,
+            completed_executable_graph_expansions: trace.completed_executable_graph_expansions,
             terminal: trace.terminal,
         });
     }
@@ -277,6 +294,17 @@ fn seed_audit(
             "scratch campaign audit terminal paths differ from seed report",
         ));
     }
+    let graph_expansion_timeline_complete = decisions
+        .iter()
+        .all(|decision| decision.completed_executable_graph_expansions != 0)
+        && decisions.windows(2).all(|pair| {
+            pair[0].completed_executable_graph_expansions
+                <= pair[1].completed_executable_graph_expansions
+        })
+        && decisions
+            .last()
+            .map(|decision| decision.completed_executable_graph_expansions)
+            == Some(seed.unique_useful_graph_expansions);
     if terminal_improvement_timing_complete
         && best_observed_terminal_tick != seed.best_authenticated_tick
     {
@@ -293,14 +321,19 @@ fn seed_audit(
         first_terminal_decision_index: seed.first_terminal_decision_index,
         time_to_first_terminal_micros: seed.time_to_first_terminal_micros,
         proposal_expansions_to_first_terminal,
+        useful_graph_expansions_to_first_terminal,
         terminal_improvement_timing_complete,
         terminal_improvements: terminal_improvements.clone(),
         best_terminal_decision_index: best_terminal.map(|row| row.decision_index),
         time_to_best_terminal_micros: best_terminal.map(|row| row.cumulative_wall_micros),
         proposal_expansions_to_best_terminal: best_terminal
             .map(|row| row.cumulative_proposal_expansions),
+        useful_graph_expansions_to_best_terminal: best_terminal
+            .map(|row| row.cumulative_useful_graph_expansions),
         total_proposal_expansions: proposal_expansions,
+        native_ticks: seed.native_ticks,
         unique_useful_graph_expansions: seed.unique_useful_graph_expansions,
+        graph_expansion_timeline_complete,
         completed_graph_leases: graph_metrics.completed_leases,
         terminal_path_ticks,
         selection_counts: seed.selection_counts.clone(),
@@ -374,6 +407,8 @@ fn seed_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
             || (seed.best_terminal_decision_index.is_some() == seed.terminal_discovered
                 && seed.time_to_best_terminal_micros.is_some() == seed.terminal_discovered
                 && seed.proposal_expansions_to_best_terminal.is_some() == seed.terminal_discovered
+                && seed.useful_graph_expansions_to_best_terminal.is_some()
+                    == seed.terminal_discovered
                 && seed
                     .terminal_improvements
                     .last()

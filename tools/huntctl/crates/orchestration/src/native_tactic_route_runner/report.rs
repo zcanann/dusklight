@@ -625,6 +625,10 @@ pub struct NativeTacticDecisionTrace {
     #[serde(default)]
     pub replay_only_frontiers: usize,
     pub visited_states: usize,
+    /// Cumulative graph-authoritative executable expansions after admitting
+    /// this complete proposal batch.
+    #[serde(default)]
+    pub completed_executable_graph_expansions: u64,
     pub before: NativeTacticStateTrace,
     pub after: NativeTacticStateTrace,
     pub measurements: Vec<NativeTacticMeasurementTrace>,
@@ -785,6 +789,8 @@ pub(super) struct NativeTacticDecisionRecord {
     #[serde(default)]
     pub(super) replay_only_frontiers: usize,
     pub(super) visited_states: usize,
+    #[serde(default)]
+    pub(super) completed_executable_graph_expansions: u64,
     pub(super) root_checkpoint_sha256: Digest,
     pub(super) root_tape: StoredContentRef,
     /// Exact route at this decision's source boundary. Cross-seed replay can

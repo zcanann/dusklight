@@ -545,6 +545,7 @@ fn validate_seed(
                 .iter()
                 .map(|decision| decision.proposal_batch.len() as u64)
                 .sum::<u64>()
+        || audited.native_ticks != stored.native_ticks
         || audited.unique_useful_graph_expansions != stored.unique_useful_graph_expansions
         || audited.native_restore_accounting != stored.native_restore_accounting
         || audited.timing != stored.timing
