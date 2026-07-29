@@ -49,7 +49,7 @@ The incoming 2026-07-29 work made substantial, useful progress:
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 281 tests.
+  orchestration suite is hermetic and passes all 282 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
   tape/result, source-authority evidence, and a content-bound campaign audit.
@@ -142,6 +142,12 @@ The incoming 2026-07-29 work made substantial, useful progress:
   predicate in all four configured seeds without human replay. Its best route
   was `231` ticks, median time to first terminal was about `691.6` seconds, and
   worst time was about `728.3` seconds.
+- The historical fixed-work curve was only a one-decision warm-fleet
+  microbenchmark. Throughput report v4 now refuses that shortcut: every cell
+  must execute at least 16 decisions and prove learner updates, durable replay,
+  graph admission, repeated non-root restores, persistence, and bounded-cache
+  eviction. It retains the phase and occupancy counters needed to identify
+  saturation. No v4 native curve has been retained yet.
 
 That campaign proves bounded terminal discovery under its exact conditions. It
 does not prove practical discovery, useful native learning, route
@@ -307,8 +313,10 @@ Exit gate:
 
 - [ ] Run fixed-work curves at 1, 2, 4, 8, and 16 workers over enough decisions
       to exercise graph growth, repeated restores, learner updates,
-      persistence, and bounded checkpoint eviction. A one-decision warm-fleet
-      microbenchmark is necessary but not sufficient.
+      persistence, and bounded checkpoint eviction. Retain the complete
+      content-bound sample reports and v4 aggregate, including phase occupancy
+      and saturation counters. A one-decision warm-fleet microbenchmark is
+      necessary but not sufficient.
 - [ ] Retain a sealed long-campaign v2 resource audit proving the declared
       memory and fitted-model staleness bounds while reporting replay fallback
       and checkpoint-owner skew. Use the hard-loss injector before dispatch,

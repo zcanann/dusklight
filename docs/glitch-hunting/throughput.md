@@ -391,12 +391,24 @@ increased useful throughput at every worker count. The v2 report rejects any
 sample with nonzero process-launch time, so a regression to per-cell boot
 cannot pass as persistent reuse.
 
-Current throughput report v3 no longer treats the number of fitted snapshots a
-lane skipped before refreshing as learner staleness. It records refresh
-pressure separately and gates on the fitted model's actual lag behind durable
-replay. Native worker cache capacity is now derived from the sealed aggregate
-memory budget instead of always requesting 640 MiB per worker; scratch
-campaign audit v2 recomputes both bounds from the route and execution plan.
+This remains a warm-fleet microbenchmark, not a long-campaign scaling result.
+Throughput report v4 closes the old pass-condition hole: a curve now requires
+at least 16 decisions per cell, at least two learner updates and published
+models, durable replay, repeated non-root restores, graph admission,
+content projection, persistence, and observed bounded-cache eviction in every
+sample. Each sample retains those counters plus selection, branching, worker
+wait, native occupancy, IPC, preparation, learner, admission, persistence, and
+orchestration phase times. Native worker occupancy is derived against
+`wall * active_workers`, so additional processes cannot be credited for raw
+native work that did not occupy them. The historical one-decision measurements
+above cannot validate as v4 evidence.
+
+Throughput report v4 carries forward v3's corrected staleness accounting: the
+number of fitted snapshots a lane skipped before refreshing is pressure, not
+model lag. The gate uses the fitted model's actual lag behind durable replay.
+Native worker cache capacity is derived from the sealed aggregate memory budget
+instead of always requesting 640 MiB per worker; scratch campaign audit v2
+recomputes both bounds from the route and execution plan.
 
 The ignored evidence root is
 `build/benchmarks/ordon-native-tactic-fixed-work-persistent-v2`; its sealed

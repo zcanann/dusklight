@@ -7,7 +7,10 @@ pub const NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V2: &str =
     "dusklight-native-tactic-throughput-curve/v2";
 pub const NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V3: &str =
     "dusklight-native-tactic-throughput-curve/v3";
+pub const NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V4: &str =
+    "dusklight-native-tactic-throughput-curve/v4";
 pub const NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS: [usize; 5] = [1, 2, 4, 8, 16];
+const MINIMUM_LONG_WORK_DECISIONS: u64 = 16;
 const MINIMUM_REPETITIONS: u32 = 2;
 const MAXIMUM_REPETITIONS: u32 = 6;
 const REPORT_FILE: &str = "throughput-curve.json";
@@ -40,6 +43,26 @@ pub struct NativeTacticThroughputCurveSample {
     pub peak_worker_checkpoint_resident_bytes: u64,
     pub checkpoint_pool_resident_bytes_upper_bound: u64,
     pub maximum_model_replay_lag_revisions: u64,
+    pub learner_updates: u64,
+    pub model_snapshots_published: u64,
+    pub training_replay_rows: u64,
+    pub restore_samples: u64,
+    pub non_root_restore_requests: u64,
+    pub direct_restore_fallback_replays: u64,
+    pub cache_evictions: u64,
+    pub tactic_selection_micros: u64,
+    pub checkpoint_branching_micros: u64,
+    pub tactic_execution_micros: u64,
+    pub native_simulation_micros: u64,
+    pub ipc_and_result_transport_micros: u64,
+    pub tactic_preparation_and_fact_extraction_micros: u64,
+    pub model_update_micros: u64,
+    pub evidence_projection_micros: u64,
+    pub persistence_micros: u64,
+    pub orchestration_micros: u64,
+    pub result_validation_and_fact_extraction_micros: u64,
+    pub graph_admission_micros: u64,
+    pub native_worker_occupancy_per_million: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -82,13 +105,14 @@ pub struct NativeTacticThroughputCurveReport {
     pub identical_useful_expansion_evidence_satisfied: bool,
     pub memory_bound_satisfied: bool,
     pub learner_staleness_bound_satisfied: bool,
+    pub long_work_exercised: bool,
     pub strictly_increasing_throughput: bool,
     pub passed: bool,
 }
 
 impl NativeTacticThroughputCurveReport {
     pub fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
-        if self.schema != NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V3
+        if self.schema != NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V4
             || self.recorded_unix_millis == 0
             || self.operating_system.is_empty()
             || self.architecture.is_empty()
@@ -104,7 +128,7 @@ impl NativeTacticThroughputCurveReport {
             || self.fleet_launch_micros == 0
             || !(MINIMUM_REPETITIONS..=MAXIMUM_REPETITIONS).contains(&self.repetitions)
             || self.worker_counts != NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS
-            || self.fixed_completed_decisions == 0
+            || self.fixed_completed_decisions < MINIMUM_LONG_WORK_DECISIONS
             || self.fixed_unique_useful_graph_expansions == 0
             || self.checkpoint_pool_memory_bound_bytes == 0
         {
@@ -158,6 +182,11 @@ impl NativeTacticThroughputCurveReport {
                         .ok_or_else(|| {
                             route_message("throughput curve checkpoint memory overflows")
                         })?
+                || sample.native_worker_occupancy_per_million
+                    != ratio_per_million(
+                        sample.native_simulation_micros,
+                        sample.wall_micros.saturating_mul(sample.workers as u64),
+                    )
             {
                 return Err(route_message(
                     "native tactic throughput curve sample is invalid",
@@ -177,6 +206,7 @@ impl NativeTacticThroughputCurveReport {
                 != derived.identical_useful_expansion_evidence_satisfied
             || self.memory_bound_satisfied != derived.memory_bound_satisfied
             || self.learner_staleness_bound_satisfied != derived.learner_staleness_bound_satisfied
+            || self.long_work_exercised != derived.long_work_exercised
             || self.strictly_increasing_throughput != derived.strictly_increasing_throughput
             || self.passed != derived.passed()
         {
@@ -209,7 +239,7 @@ impl NativeTacticThroughputCurveReport {
         identity.content_sha256 = Digest::ZERO;
         let bytes = serde_json::to_vec(&identity).map_err(route_error)?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-tactic-throughput-curve/v3\0");
+        hasher.update(b"dusklight.native-tactic-throughput-curve/v4\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -222,6 +252,7 @@ struct DerivedCurve {
     identical_useful_expansion_evidence_satisfied: bool,
     memory_bound_satisfied: bool,
     learner_staleness_bound_satisfied: bool,
+    long_work_exercised: bool,
     strictly_increasing_throughput: bool,
 }
 
@@ -250,6 +281,19 @@ impl DerivedCurve {
         let learner_staleness_bound_satisfied = samples
             .iter()
             .all(|sample| sample.maximum_model_replay_lag_revisions <= maximum_staleness);
+        let long_work_exercised = fixed_decisions >= MINIMUM_LONG_WORK_DECISIONS
+            && samples.iter().all(|sample| {
+                sample.learner_updates >= 2
+                    && sample.model_snapshots_published >= 2
+                    && sample.training_replay_rows > 0
+                    && sample.restore_samples > sample.completed_decisions
+                    && sample.non_root_restore_requests > 0
+                    && sample.cache_evictions > 0
+                    && sample.model_update_micros > 0
+                    && sample.evidence_projection_micros > 0
+                    && sample.persistence_micros > 0
+                    && sample.graph_admission_micros > 0
+            });
         let mut curve = Vec::with_capacity(NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS.len());
         for workers in NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS {
             let selected = samples
@@ -311,6 +355,7 @@ impl DerivedCurve {
             identical_useful_expansion_evidence_satisfied,
             memory_bound_satisfied,
             learner_staleness_bound_satisfied,
+            long_work_exercised,
             strictly_increasing_throughput,
         })
     }
@@ -320,6 +365,7 @@ impl DerivedCurve {
             && self.identical_useful_expansion_evidence_satisfied
             && self.memory_bound_satisfied
             && self.learner_staleness_bound_satisfied
+            && self.long_work_exercised
             && self.strictly_increasing_throughput
     }
 }
@@ -444,6 +490,47 @@ pub fn run_native_tactic_throughput_curve(
                 maximum_model_replay_lag_revisions: route_report
                     .replay_sharing
                     .maximum_model_replay_lag_revisions,
+                learner_updates: route_report.learner_updates,
+                model_snapshots_published: route_report.learner_authority.model_snapshots_published,
+                training_replay_rows: route_report.training_replay_rows,
+                restore_samples: route_report.native_restore_accounting.restore_samples,
+                non_root_restore_requests: route_report
+                    .native_restore_accounting
+                    .direct_process_local_restore_requests
+                    .saturating_add(
+                        route_report
+                            .native_restore_accounting
+                            .direct_process_local_continuation_requests,
+                    ),
+                direct_restore_fallback_replays: route_report
+                    .native_restore_accounting
+                    .direct_restore_fallback_replays,
+                cache_evictions: route_report.native_restore_accounting.cache_evictions,
+                tactic_selection_micros: route_report.timing.tactic_selection_micros,
+                checkpoint_branching_micros: route_report.timing.checkpoint_branching_micros,
+                tactic_execution_micros: route_report.timing.tactic_execution_micros,
+                native_simulation_micros: route_report.timing.native_simulation_micros,
+                ipc_and_result_transport_micros: route_report
+                    .timing
+                    .ipc_and_result_transport_micros,
+                tactic_preparation_and_fact_extraction_micros: route_report
+                    .timing
+                    .tactic_preparation_and_fact_extraction_micros,
+                model_update_micros: route_report.timing.model_update_micros,
+                evidence_projection_micros: route_report.timing.evidence_projection_micros,
+                persistence_micros: route_report.timing.persistence_micros,
+                orchestration_micros: route_report.timing.orchestration_micros,
+                result_validation_and_fact_extraction_micros: route_report
+                    .timing
+                    .result_validation_and_fact_extraction_micros,
+                graph_admission_micros: route_report.timing.graph_admission_micros,
+                native_worker_occupancy_per_million: ratio_per_million(
+                    route_report.timing.native_simulation_micros,
+                    route_report
+                        .timing
+                        .wall_micros
+                        .saturating_mul(workers as u64),
+                ),
             });
         }
     }
@@ -457,7 +544,7 @@ pub fn run_native_tactic_throughput_curve(
     )?;
     let passed = derived.passed();
     let mut report = NativeTacticThroughputCurveReport {
-        schema: NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V3.into(),
+        schema: NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V4.into(),
         content_sha256: Digest::ZERO,
         recorded_unix_millis: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -486,6 +573,7 @@ pub fn run_native_tactic_throughput_curve(
             .identical_useful_expansion_evidence_satisfied,
         memory_bound_satisfied: derived.memory_bound_satisfied,
         learner_staleness_bound_satisfied: derived.learner_staleness_bound_satisfied,
+        long_work_exercised: derived.long_work_exercised,
         strictly_increasing_throughput: derived.strictly_increasing_throughput,
         passed,
     };
@@ -512,6 +600,17 @@ fn validate_curve_config(
                 .copied()
                 .unwrap_or(0)
         || config.execution_plan.demonstration_chunk_ticks.is_some()
+        || config.execution_plan.budgets.decisions_per_lane < MINIMUM_LONG_WORK_DECISIONS
+        || config.execution_plan.budgets.decisions_per_lane
+            < config
+                .execution_plan
+                .branch_every_decisions
+                .saturating_mul(2)
+        || config.execution_plan.budgets.decisions_per_lane
+            < config
+                .execution_plan
+                .refit_every_decisions
+                .saturating_mul(2)
         || config
             .execution_plan
             .promoted_tactic_registry_sha256
@@ -559,17 +658,37 @@ mod tests {
             route_report_sha256: Digest([ordinal as u8; 32]),
             state_graph_sha256s: vec![Digest([9; 32])],
             useful_graph_expansion_set_sha256s: vec![Digest([8; 32])],
-            completed_decisions: 4,
-            unique_useful_graph_expansions: 64,
+            completed_decisions: 16,
+            unique_useful_graph_expansions: 256,
             wall_micros,
             process_launch_micros: 0,
             unique_useful_graph_expansions_per_second_millionths: per_second_millionths(
-                64,
+                256,
                 wall_micros,
             ),
             peak_worker_checkpoint_resident_bytes: 100,
             checkpoint_pool_resident_bytes_upper_bound: 100 * workers as u64,
             maximum_model_replay_lag_revisions: 2,
+            learner_updates: 4,
+            model_snapshots_published: 4,
+            training_replay_rows: 256,
+            restore_samples: 272,
+            non_root_restore_requests: 128,
+            direct_restore_fallback_replays: 8,
+            cache_evictions: 12,
+            tactic_selection_micros: 100,
+            checkpoint_branching_micros: 100,
+            tactic_execution_micros: wall_micros / 2,
+            native_simulation_micros: wall_micros.saturating_mul(workers as u64) / 2,
+            ipc_and_result_transport_micros: 100,
+            tactic_preparation_and_fact_extraction_micros: 100,
+            model_update_micros: 100,
+            evidence_projection_micros: 100,
+            persistence_micros: 100,
+            orchestration_micros: 100,
+            result_validation_and_fact_extraction_micros: 100,
+            graph_admission_micros: 100,
+            native_worker_occupancy_per_million: 500_000,
         }
     }
 
@@ -589,11 +708,12 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>();
-        let derived = DerivedCurve::from_samples(&samples, 4, 64, 2_000, 2).unwrap();
+        let derived = DerivedCurve::from_samples(&samples, 16, 256, 2_000, 2).unwrap();
         assert!(derived.fixed_work_satisfied);
         assert!(derived.identical_useful_expansion_evidence_satisfied);
         assert!(derived.memory_bound_satisfied);
         assert!(derived.learner_staleness_bound_satisfied);
+        assert!(derived.long_work_exercised);
         assert!(derived.strictly_increasing_throughput);
         assert!(derived.passed());
         assert_eq!(
@@ -614,12 +734,33 @@ mod tests {
                 sample(index as u32 + 1, repetition, workers, 1_000_000)
             })
             .collect::<Vec<_>>();
-        samples[4].unique_useful_graph_expansions = 63;
+        samples[4].unique_useful_graph_expansions = 255;
         samples[4].unique_useful_graph_expansions_per_second_millionths =
-            per_second_millionths(63, samples[4].wall_micros);
-        let derived = DerivedCurve::from_samples(&samples, 4, 64, 2_000, 2).unwrap();
+            per_second_millionths(255, samples[4].wall_micros);
+        let derived = DerivedCurve::from_samples(&samples, 16, 256, 2_000, 2).unwrap();
         assert!(!derived.fixed_work_satisfied);
         assert!(!derived.strictly_increasing_throughput);
+        assert!(!derived.passed());
+    }
+
+    #[test]
+    fn warm_microbenchmark_cannot_claim_long_campaign_scaling() {
+        let order = [1, 2, 4, 8, 16, 16, 8, 4, 2, 1];
+        let mut samples = order
+            .into_iter()
+            .enumerate()
+            .map(|(index, workers)| {
+                sample(
+                    index as u32 + 1,
+                    if index < 5 { 1 } else { 2 },
+                    workers,
+                    16_000_000 / workers as u64,
+                )
+            })
+            .collect::<Vec<_>>();
+        samples[3].cache_evictions = 0;
+        let derived = DerivedCurve::from_samples(&samples, 16, 256, 2_000, 2).unwrap();
+        assert!(!derived.long_work_exercised);
         assert!(!derived.passed());
     }
 
@@ -638,10 +779,10 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>();
-        let derived = DerivedCurve::from_samples(&samples, 4, 64, 2_000, 2).unwrap();
+        let derived = DerivedCurve::from_samples(&samples, 16, 256, 2_000, 2).unwrap();
         let passed = derived.passed();
         let mut report = NativeTacticThroughputCurveReport {
-            schema: NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V3.into(),
+            schema: NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V4.into(),
             content_sha256: Digest::ZERO,
             recorded_unix_millis: 1,
             operating_system: "test".into(),
@@ -654,8 +795,8 @@ mod tests {
             fleet_launch_micros: 10,
             repetitions: 2,
             worker_counts: NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS.to_vec(),
-            fixed_completed_decisions: 4,
-            fixed_unique_useful_graph_expansions: 64,
+            fixed_completed_decisions: 16,
+            fixed_unique_useful_graph_expansions: 256,
             checkpoint_pool_memory_bound_bytes: 2_000,
             maximum_allowed_stale_revisions: 2,
             execution_order: samples,
@@ -665,6 +806,7 @@ mod tests {
                 .identical_useful_expansion_evidence_satisfied,
             memory_bound_satisfied: derived.memory_bound_satisfied,
             learner_staleness_bound_satisfied: derived.learner_staleness_bound_satisfied,
+            long_work_exercised: derived.long_work_exercised,
             strictly_increasing_throughput: derived.strictly_increasing_throughput,
             passed,
         };

@@ -800,6 +800,7 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "report": output.join("throughput-curve.json"),
                     "fixed_unique_useful_graph_expansions":
                         report.fixed_unique_useful_graph_expansions,
+                    "long_work_exercised": report.long_work_exercised,
                     "curve": report.curve,
                     "passed": report.passed,
                 }))?
