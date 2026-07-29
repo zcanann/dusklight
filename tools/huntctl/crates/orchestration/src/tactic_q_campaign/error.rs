@@ -21,6 +21,7 @@ pub enum TacticQCampaignError {
     GeneralizedValue(GeneralizedTacticValueError),
     StateGraph(StateGraphError),
     Scheduler(crate::scheduler::SchedulerError),
+    GraphLearner(crate::learner::GraphLearnerError),
 }
 
 impl fmt::Display for TacticQCampaignError {
@@ -50,6 +51,9 @@ impl fmt::Display for TacticQCampaignError {
             }
             Self::StateGraph(error) => write!(formatter, "tactic-Q state graph failed: {error}"),
             Self::Scheduler(error) => write!(formatter, "tactic-Q scheduling failed: {error}"),
+            Self::GraphLearner(error) => {
+                write!(formatter, "tactic-Q learner contract failed: {error}")
+            }
         }
     }
 }
@@ -69,6 +73,7 @@ impl Error for TacticQCampaignError {
             Self::GeneralizedValue(error) => Some(error),
             Self::StateGraph(error) => Some(error),
             Self::Scheduler(error) => Some(error),
+            Self::GraphLearner(error) => Some(error),
             _ => None,
         }
     }
@@ -83,6 +88,12 @@ impl From<StateGraphError> for TacticQCampaignError {
 impl From<crate::scheduler::SchedulerError> for TacticQCampaignError {
     fn from(value: crate::scheduler::SchedulerError) -> Self {
         Self::Scheduler(value)
+    }
+}
+
+impl From<crate::learner::GraphLearnerError> for TacticQCampaignError {
+    fn from(value: crate::learner::GraphLearnerError) -> Self {
+        Self::GraphLearner(value)
     }
 }
 

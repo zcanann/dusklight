@@ -39,6 +39,10 @@ The current implementation is not yet an accepted learning architecture.
   discovery and exact successful-path membership in optimization. Action
   ranking still falls back to the existing policy order until terminal-support
   and conditional-tick learner heads exist.
+- Exact terminal returns now come from route-specific graph identities, and
+  the learner contract distinguishes authenticated terminal reconnection from
+  an open censored continuation. Existing fitted models still need to consume
+  that contract instead of deriving closure from scalar replay rewards.
 - Long options historically exposed only their endpoints. Four-tick native
   interior boundaries now exist, but they do not by themselves turn the
   system into coherent graph search.
@@ -187,12 +191,6 @@ Exit gate:
 
 ## P2 - Make learning a serious expansion policy
 
-- [ ] Write and test the algorithm contract: state/action inputs, terminal
-      support target, censored target, conditional tick-return target,
-      bootstrap rule, uncertainty estimate, target-network/update cadence, and
-      deterministic ranking tuple.
-- [ ] Define one action-conditioned learner interface over typed node features,
-      applicable action factors, graph visits, and exact/n-step returns.
 - [ ] Fit terminal ticks-to-go from complete successful graph paths and keep
       exact targets separate from generalized predictions.
 - [ ] Treat horizon exhaustion and cancellation as censored evidence. Only an

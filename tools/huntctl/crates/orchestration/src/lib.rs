@@ -7,6 +7,7 @@ mod campaign_replay;
 mod discovery_horizon;
 pub mod generalized_tactic_evidence;
 pub mod harness;
+pub mod learner;
 pub mod learning_value_comparison;
 pub mod learning_value_evidence;
 pub mod learning_value_matrix;

@@ -155,6 +155,18 @@ pub(super) fn graph_frontier_entries(
 }
 
 impl TacticQCampaign {
+    pub fn graph_learning_batch(
+        &self,
+    ) -> Result<crate::learner::GraphLearningBatch, TacticQCampaignError> {
+        let graph = self
+            .state_graph
+            .as_ref()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "learner target projection requires a bound state graph",
+            ))?;
+        Ok(crate::learner::GraphLearningBatch::from_graph(graph)?)
+    }
+
     pub fn best_graph_terminal_path(
         &self,
     ) -> Result<Option<&crate::state_graph::TerminalPath>, TacticQCampaignError> {

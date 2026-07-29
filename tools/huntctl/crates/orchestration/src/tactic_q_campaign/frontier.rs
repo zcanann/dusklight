@@ -307,11 +307,8 @@ impl TacticQCampaign {
             .ok_or(TacticQCampaignError::InvalidState(
                 "frontier ranking requires a bound state graph",
             ))?;
-        let terminal_value_supported = self
-            .training_replay
-            .iter()
-            .any(|transition| transition.value_sample.terminal);
-        let exact_terminal_ticks = exact_terminal_ticks_to_go_by_state(&self.training_replay);
+        let exact_terminal_ticks = graph.exact_terminal_returns()?;
+        let terminal_value_supported = !exact_terminal_ticks.is_empty();
         let preferred = if !demonstration_curriculum && !terminal_value_supported {
             archive.select_tactic_reachability_frontier_within_route_frames(
                 reference,
@@ -345,7 +342,10 @@ impl TacticQCampaign {
             choices.sort_by_key(|entry| {
                 (
                     exact_terminal_ticks
-                        .get(&entry.frontier_state_sha256)
+                        .get(&crate::state_graph::ExactStateId {
+                            route_checkpoint_sha256: entry.route_checkpoint_sha256,
+                            state_sha256: entry.frontier_state_sha256,
+                        })
                         .is_none(),
                     entry.first_seen_generation,
                     entry.route_checkpoint_sha256,
@@ -512,7 +512,10 @@ impl TacticQCampaign {
                     "learned frontier route precedes its native root",
                 ))? as u64;
                 let exact_terminal_ticks_to_go = exact_terminal_ticks
-                    .get(&entry.frontier_state_sha256)
+                    .get(&crate::state_graph::ExactStateId {
+                        route_checkpoint_sha256: entry.route_checkpoint_sha256,
+                        state_sha256: entry.frontier_state_sha256,
+                    })
                     .copied();
                 let acquisition = TacticFrontierAcquisition {
                     expansion_count,
@@ -665,15 +668,22 @@ fn limit_ranked_frontier_candidates(
     round: u64,
     root_frames: usize,
     choices: Vec<TacticFrontierEntry>,
-    exact_terminal_ticks: &BTreeMap<Digest, u64>,
+    exact_terminal_ticks: &BTreeMap<crate::state_graph::ExactStateId, u64>,
 ) -> Vec<TacticFrontierEntry> {
-    let (mut exact, mut exploratory): (Vec<_>, Vec<_>) = choices
-        .into_iter()
-        .partition(|entry| exact_terminal_ticks.contains_key(&entry.frontier_state_sha256));
+    let (mut exact, mut exploratory): (Vec<_>, Vec<_>) = choices.into_iter().partition(|entry| {
+        exact_terminal_ticks.contains_key(&crate::state_graph::ExactStateId {
+            route_checkpoint_sha256: entry.route_checkpoint_sha256,
+            state_sha256: entry.frontier_state_sha256,
+        })
+    });
     exact.sort_by(|left, right| {
         let total = |entry: &TacticFrontierEntry| {
-            (entry.route_tape.frames.len().saturating_sub(root_frames) as u64)
-                .saturating_add(exact_terminal_ticks[&entry.frontier_state_sha256])
+            (entry.route_tape.frames.len().saturating_sub(root_frames) as u64).saturating_add(
+                exact_terminal_ticks[&crate::state_graph::ExactStateId {
+                    route_checkpoint_sha256: entry.route_checkpoint_sha256,
+                    state_sha256: entry.frontier_state_sha256,
+                }],
+            )
         };
         total(left)
             .cmp(&total(right))
@@ -690,45 +700,4 @@ fn limit_ranked_frontier_candidates(
     exploratory.truncate(remaining);
     exact.extend(exploratory);
     exact
-}
-
-fn exact_terminal_ticks_to_go_by_state(
-    transitions: &[OptionTransitionSample],
-) -> BTreeMap<Digest, u64> {
-    let mut ticks = transitions
-        .iter()
-        .filter(|transition| transition.value_sample.terminal)
-        .map(|transition| (transition.after_state_sha256, 0_u64))
-        .collect::<BTreeMap<_, _>>();
-    loop {
-        let mut changed = false;
-        for transition in transitions {
-            let Some(after_ticks) = ticks.get(&transition.after_state_sha256).copied() else {
-                continue;
-            };
-            let duration = u64::from(transition.value_sample.duration_ticks);
-            for boundary in &transition.intermediate_boundaries {
-                let candidate = after_ticks
-                    .saturating_add(duration.saturating_sub(u64::from(boundary.offset_ticks)));
-                if ticks
-                    .get(&boundary.state_sha256)
-                    .is_none_or(|current| candidate < *current)
-                {
-                    ticks.insert(boundary.state_sha256, candidate);
-                    changed = true;
-                }
-            }
-            let candidate = after_ticks.saturating_add(duration);
-            if ticks
-                .get(&transition.before_state_sha256)
-                .is_none_or(|before_ticks| candidate < *before_ticks)
-            {
-                ticks.insert(transition.before_state_sha256, candidate);
-                changed = true;
-            }
-        }
-        if !changed {
-            return ticks;
-        }
-    }
 }

@@ -94,6 +94,18 @@ fn graph_and_transition() -> (StateGraph, OptionTransitionSample, InputTape) {
     (graph, transition, route)
 }
 
+fn terminalize(transition: &mut OptionTransitionSample) {
+    transition.after.terminal.reached = Some(true);
+    transition.after.terminal.reason =
+        dusklight_learning::fact_snapshot::FactTerminalReason::GoalReached;
+    transition.after.terminal.first_hit_tick = Some(transition.after.simulation_tick);
+    let terminal_sha256 = transition.after.content_sha256().unwrap();
+    transition.after_state_sha256 = terminal_sha256;
+    transition.value_sample.after_state_sha256 = terminal_sha256;
+    transition.value_sample.terminal = true;
+    transition.validate().unwrap();
+}
+
 #[test]
 fn one_selected_action_owns_all_observed_interior_segments() {
     let (mut graph, transition, route) = graph_and_transition();
@@ -121,6 +133,70 @@ fn one_selected_action_owns_all_observed_interior_segments() {
         let segment = graph.segment(*segment_sha256).unwrap();
         assert_eq!(segment.parent_expansion_sha256, admission.expansion_sha256);
     }
+}
+
+#[test]
+fn exact_terminal_returns_cover_route_specific_interior_nodes() {
+    let (mut graph, mut transition, route) = graph_and_transition();
+    terminalize(&mut transition);
+    graph
+        .admit_completed_expansion(
+            transition,
+            route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+
+    let returns = graph.exact_terminal_returns().unwrap();
+    assert_eq!(returns.len(), 3);
+    for node in graph.nodes() {
+        assert_eq!(returns.get(&node.id), Some(&(8 - node.root_ticks)));
+    }
+}
+
+#[test]
+fn learner_targets_keep_exact_success_separate_from_censored_continuation() {
+    let (mut censored_graph, censored, censored_route) = graph_and_transition();
+    censored_graph
+        .admit_completed_expansion(
+            censored,
+            censored_route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+    let censored_batch = crate::learner::GraphLearningBatch::from_graph(&censored_graph).unwrap();
+    assert_eq!(censored_batch.rows.len(), 1);
+    assert_eq!(
+        censored_batch.rows[0].support,
+        crate::learner::GraphTargetSupport::OpenContinuationCensored
+    );
+    assert_eq!(
+        censored_batch.rows[0].exact_conditional_ticks_to_terminal,
+        None
+    );
+
+    let (mut terminal_graph, mut terminal, terminal_route) = graph_and_transition();
+    terminalize(&mut terminal);
+    terminal_graph
+        .admit_completed_expansion(
+            terminal,
+            terminal_route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+    let terminal_batch = crate::learner::GraphLearningBatch::from_graph(&terminal_graph).unwrap();
+    assert_eq!(terminal_batch.rows.len(), 1);
+    assert_eq!(
+        terminal_batch.rows[0].support,
+        crate::learner::GraphTargetSupport::ExactTerminalPath
+    );
+    assert_eq!(
+        terminal_batch.rows[0].exact_conditional_ticks_to_terminal,
+        Some(8)
+    );
 }
 
 #[test]
