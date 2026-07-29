@@ -102,6 +102,10 @@ pub struct WorkerCapabilities {
     pub scenario_load: bool,
     pub input_tape: bool,
     pub batch_run: bool,
+    /// Whether persistent `run_batch` accepts the authenticated compact suffix
+    /// envelope. Older workers omit this field and therefore resolve to false.
+    #[serde(default)]
+    pub compact_batch_run: bool,
     pub commands: Vec<String>,
 }
 
@@ -231,6 +235,11 @@ impl HelloResponse {
             "capabilities.batch_run",
             self.capabilities.batch_run,
             actual.capabilities.batch_run
+        );
+        compare!(
+            "capabilities.compact_batch_run",
+            self.capabilities.compact_batch_run,
+            actual.capabilities.compact_batch_run
         );
         compare!(
             "capabilities.commands",
@@ -597,7 +606,8 @@ mod tests {
             "\"architecture\":\"x86_64\",\"pointer_bits\":64,\"dirty\":false},",
             "\"capabilities\":{\"persistent_control\":true,\"engine_session\":false,",
             "\"headless\":true,\"scenario_load\":false,\"input_tape\":true,",
-            "\"batch_run\":true,\"commands\":[\"hello\",\"run_batch\",\"shutdown\"]}}\n",
+            "\"batch_run\":true,\"compact_batch_run\":true,",
+            "\"commands\":[\"hello\",\"run_batch\",\"shutdown\"]}}\n",
             "{\"protocol\":{\"name\":\"dusklight-automation\",\"version\":2},",
             "\"type\":\"batch_complete\",\"ok\":true,\"id\":0,",
             "\"result\":\"first.json\",\"episode_shard\":\"first.json.episodes.dseps\"}\n",
@@ -610,6 +620,7 @@ mod tests {
         let transport = LineTransport::new(std::io::BufReader::new(reader), writer);
         let mut client = WorkerClient::new(transport);
         client.handshake().unwrap();
+        assert!(client.hello().unwrap().capabilities.compact_batch_run);
         assert_eq!(client.await_initial_batch().unwrap().result, "first.json");
         assert_eq!(
             client

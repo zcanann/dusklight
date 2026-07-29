@@ -117,6 +117,7 @@ json hello_response(const std::string_view fidelityProfile, const bool engineWor
         {"scenario_load", false},
         {"input_tape", true},
         {"batch_run", engineWorker},
+        {"compact_batch_run", engineWorker},
         {"commands", engineWorker
                 ? json{"hello", "run_batch", "shutdown"}
                 : json{"hello", "ping", "session_audit", "shutdown"}},

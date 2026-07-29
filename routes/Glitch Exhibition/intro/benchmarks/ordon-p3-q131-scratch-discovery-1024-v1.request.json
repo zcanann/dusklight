@@ -1,6 +1,6 @@
 {
   "schema": "dusklight-optimization-request/v2",
-  "content_sha256": "8b6a9ba9bd5e307fb8443fe39f2ea6233bc798b3e5a81abf3824c264d8ac2d9b",
+  "content_sha256": "3f9a71eea2ef8ea6d5b6f0c72f6b092ce63d3aa1f270b91d5859edc430e034ba",
   "id": "ordon-p3-q131-scratch-discovery-1024-v1",
   "campaign_class": "from_scratch_discovery",
   "route": {
@@ -12,7 +12,7 @@
     "segment": "to_ordon_spring_degraded_q131",
     "source_boundary_index": 506,
     "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
-    "native_source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc"
+    "native_source_boundary_fingerprint": "e7ac8251329f22a5df682bbe5eb2a2ba"
   },
   "terminal_predicate": {
     "goal": "ordon_spring_load_committed",

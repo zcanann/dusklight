@@ -164,7 +164,7 @@ pub fn run_native_tactic_policy(
         initial_result: initial_root.join("result.json"),
         initial_winner_tape: None,
     };
-    let (mut worker, initial) = NativeSuffixWorkerSession::launch_with_prevalidated_files(
+    let (mut worker, initial) = NativeSuffixWorkerSession::launch_compact_with_prevalidated_files(
         &launch,
         NativeSuffixPrevalidatedFileIdentities {
             executable_sha256: config.execution.executable.sha256,

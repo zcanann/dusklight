@@ -147,14 +147,23 @@ impl NativeSuffixWorkerSession {
     pub fn launch(
         config: &NativeSuffixWorkerLaunch,
     ) -> Result<(Self, ValidatedNativeSuffixBatch), NativeSuffixWorkerError> {
-        Self::launch_prevalidated(config, None).map(|(session, validated, _)| (session, validated))
+        Self::launch_prevalidated(config, None, false)
+            .map(|(session, validated, _)| (session, validated))
     }
 
     pub fn launch_with_prevalidated_files(
         config: &NativeSuffixWorkerLaunch,
         identities: NativeSuffixPrevalidatedFileIdentities,
     ) -> Result<(Self, ValidatedNativeSuffixBatch), NativeSuffixWorkerError> {
-        Self::launch_prevalidated(config, Some(identities))
+        Self::launch_prevalidated(config, Some(identities), false)
+            .map(|(session, validated, _)| (session, validated))
+    }
+
+    pub fn launch_compact_with_prevalidated_files(
+        config: &NativeSuffixWorkerLaunch,
+        identities: NativeSuffixPrevalidatedFileIdentities,
+    ) -> Result<(Self, ValidatedNativeSuffixBatch), NativeSuffixWorkerError> {
+        Self::launch_prevalidated(config, Some(identities), true)
             .map(|(session, validated, _)| (session, validated))
     }
 
@@ -169,12 +178,13 @@ impl NativeSuffixWorkerSession {
         ),
         NativeSuffixWorkerError,
     > {
-        Self::launch_prevalidated(config, Some(identities))
+        Self::launch_prevalidated(config, Some(identities), false)
     }
 
     fn launch_prevalidated(
         config: &NativeSuffixWorkerLaunch,
         identities: Option<NativeSuffixPrevalidatedFileIdentities>,
+        require_compact_batch_run: bool,
     ) -> Result<
         (
             Self,
@@ -187,6 +197,7 @@ impl NativeSuffixWorkerSession {
             config,
             identities,
             NativeHeadlessAuditComparators::default(),
+            require_compact_batch_run,
         )
     }
 
@@ -202,13 +213,14 @@ impl NativeSuffixWorkerSession {
         ),
         NativeSuffixWorkerError,
     > {
-        Self::launch_prevalidated_with_comparators(config, Some(identities), comparators)
+        Self::launch_prevalidated_with_comparators(config, Some(identities), comparators, false)
     }
 
     fn launch_prevalidated_with_comparators(
         config: &NativeSuffixWorkerLaunch,
         identities: Option<NativeSuffixPrevalidatedFileIdentities>,
         comparators: NativeHeadlessAuditComparators,
+        require_compact_batch_run: bool,
     ) -> Result<
         (
             Self,
@@ -239,6 +251,11 @@ impl NativeSuffixWorkerSession {
         if !hello.capabilities.persistent_control || !hello.capabilities.batch_run {
             return Err(worker_message(
                 "native child does not advertise persistent suffix-batch capability",
+            ));
+        }
+        if require_compact_batch_run && !hello.capabilities.compact_batch_run {
+            return Err(worker_message(
+                "native child does not advertise compact persistent suffix-batch capability",
             ));
         }
         let initial_batch_started = Instant::now();

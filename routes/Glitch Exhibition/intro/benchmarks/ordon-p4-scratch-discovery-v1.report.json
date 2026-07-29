@@ -1,0 +1,81 @@
+{
+  "schema": "dusklight-native-tactic-scratch-discovery/v1",
+  "content_sha256": "530bc6e0377e471ca617f6e7aea59ccbdcd0b314f8e656323d32f1b2a029abfd",
+  "optimization_request_sha256": "3f9a71eea2ef8ea6d5b6f0c72f6b092ce63d3aa1f270b91d5859edc430e034ba",
+  "route_report_sha256": "e624e149beb61cf7defb179a32e072d17f0886388fdf39c78f72698560180924",
+  "execution_plan_sha256": "305b84803b30904b0056b2a1e2c5ffa006edb057fd70bcd302143dac6aa0c87e",
+  "goal": "ordon_spring_load_committed",
+  "seeds": [
+    104729,
+    130363,
+    155921,
+    181081
+  ],
+  "exploration_horizon_ticks": 1024,
+  "promotion_before_tick": 131,
+  "maximum_graph_expansions": 4096,
+  "wall_budget_micros": 810000000,
+  "median_time_to_first_terminal_micros": 691581746,
+  "worst_time_to_first_terminal_micros": 728329708,
+  "totals": {
+    "graph_nodes": 8830,
+    "graph_edges": 8826,
+    "duplicate_transpositions": 0,
+    "completed_leases": 524,
+    "completed_graph_expansions": 1992,
+    "active_leases": 0,
+    "restore_samples": 967,
+    "simulated_ticks": 12743,
+    "terminal_paths": 24,
+    "learner_updates": 37,
+    "useful_training_transitions": 369,
+    "wall_micros": 993500957
+  },
+  "conditions": [
+    {
+      "id": "ordon_real_load_zone",
+      "passed": true
+    },
+    {
+      "id": "from_scratch_request",
+      "passed": true
+    },
+    {
+      "id": "no_assistance",
+      "passed": true
+    },
+    {
+      "id": "four_sealed_seeds",
+      "passed": true
+    },
+    {
+      "id": "generous_route_horizon",
+      "passed": true
+    },
+    {
+      "id": "bounded_graph_expansions",
+      "passed": true
+    },
+    {
+      "id": "bounded_wall_time",
+      "passed": true
+    },
+    {
+      "id": "all_seeds_reach_terminal",
+      "passed": true
+    },
+    {
+      "id": "median_terminal_within_five_minutes",
+      "passed": false
+    },
+    {
+      "id": "worst_terminal_within_fifteen_minutes",
+      "passed": true
+    },
+    {
+      "id": "inspectable_graph_and_learner_work",
+      "passed": true
+    }
+  ],
+  "passed": false
+}

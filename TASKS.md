@@ -346,18 +346,34 @@ Exit gate:
 
 ## P4 - Achieve practical scratch discovery
 
-- [ ] Run Ordon from the authenticated source with no human replay, incumbent
+- [x] Run Ordon from the authenticated source with no human replay, incumbent
       tape, authored coordinate, or promoted Ordon tactic.
-- [ ] Give discovery at least 30 seconds of possible native route horizon, but
+- [x] Give discovery at least 30 seconds of possible native route horizon, but
       cap total graph expansions and wall time.
-- [ ] Reach the actual load-zone predicate in all four sealed scratch seeds.
+- [x] Reach the actual load-zone predicate in all four sealed scratch seeds.
 - [ ] Achieve median time-to-first-terminal at or below five wall minutes and
       worst-seed time at or below fifteen wall minutes on the reference
       workstation.
-- [ ] Report unique graph nodes/edges, duplicate transpositions, leases,
+- [x] Report unique graph nodes/edges, duplicate transpositions, leases,
       restores, simulated ticks, terminal paths, learner work, and wall time.
 - [ ] Demonstrate that adding an ordinary human replay improves median
       time-to-first-terminal while remaining unnecessary for scratch success.
+
+The 2026-07-29 macOS v9 scratch campaign repaired the checked native source
+boundary and rejected stale pre-compact workers during their protocol
+handshake. With a 1,024-tick route horizon, a 4,096-expansion cap, and an
+810-second per-lane wall cap, all four sealed, unassisted seeds reached the real
+load-zone predicate in 32-33 decisions. The run retained 8,830 graph nodes,
+8,826 edges, zero duplicate transpositions, 1,992 completed graph expansions,
+524 completed leases, zero active leases, 967 restore samples, 12,743 simulated
+ticks, 24 terminal paths, 37 learner updates, and 369 useful training
+transitions in 993.501 seconds including fleet boot and finalization. Median
+time-to-first-terminal was 691.582 seconds and worst-seed time was 728.330
+seconds; the best authenticated route was 231 ticks. The campaign therefore
+proves bounded all-seed scratch discovery and the fifteen-minute worst-seed
+gate, but not the five-minute median gate, so P4 remains open. The sealed
+acceptance content SHA-256 is
+`530bc6e0377e471ca617f6e7aea59ccbdcd0b314f8e656323d32f1b2a029abfd`.
 
 Exit gate:
 
