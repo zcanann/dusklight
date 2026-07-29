@@ -60,6 +60,8 @@ fn acquisition_with_expansion_count(expansion_count: u64) -> TacticFrontierAcqui
         best_mean_q: None,
         predicted_terminal_ticks_to_go: None,
         predicted_total_terminal_ticks: None,
+        exact_terminal_ticks_to_go: None,
+        exact_total_terminal_ticks: None,
         maximum_ensemble_variance: None,
         generalized_nearest_distance: None,
         novelty_rank: 0,

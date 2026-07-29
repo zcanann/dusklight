@@ -38,6 +38,8 @@ fn frontier_learning_value_precedes_the_last_edges_immediate_cost() {
         best_mean_q: Some(10.0),
         predicted_terminal_ticks_to_go: None,
         predicted_total_terminal_ticks: None,
+        exact_terminal_ticks_to_go: None,
+        exact_total_terminal_ticks: None,
         maximum_ensemble_variance: None,
         generalized_nearest_distance: Some(0.1),
         novelty_rank: 1,
@@ -67,6 +69,8 @@ fn frontier_learning_value_precedes_coverage_count() {
         best_mean_q: Some(10.0),
         predicted_terminal_ticks_to_go: None,
         predicted_total_terminal_ticks: None,
+        exact_terminal_ticks_to_go: None,
+        exact_total_terminal_ticks: None,
         maximum_ensemble_variance: None,
         generalized_nearest_distance: Some(0.1),
         novelty_rank: 1,
@@ -95,6 +99,8 @@ fn cold_start_frontier_coverage_precedes_unsupported_sparse_return() {
         best_mean_q: Some(10.0),
         predicted_terminal_ticks_to_go: None,
         predicted_total_terminal_ticks: None,
+        exact_terminal_ticks_to_go: None,
+        exact_total_terminal_ticks: None,
         maximum_ensemble_variance: Some(0.1),
         generalized_nearest_distance: Some(0.1),
         novelty_rank: 0,
@@ -128,6 +134,8 @@ fn terminal_supported_prediction_precedes_unsupported_q_estimate() {
         best_mean_q: Some(2.0),
         predicted_terminal_ticks_to_go: Some(80.0),
         predicted_total_terminal_ticks: Some(120.0),
+        exact_terminal_ticks_to_go: None,
+        exact_total_terminal_ticks: None,
         maximum_ensemble_variance: None,
         generalized_nearest_distance: Some(0.1),
         novelty_rank: 1,
@@ -148,6 +156,41 @@ fn terminal_supported_prediction_precedes_unsupported_q_estimate() {
 }
 
 #[test]
+fn exact_terminal_path_precedes_an_optimistic_generalized_prediction() {
+    let exact = TacticFrontierAcquisition {
+        expansion_count: 1,
+        terminal: false,
+        terminal_value_supported: true,
+        achieved_goal_value_supported: false,
+        reward: -0.4,
+        best_mean_q: Some(90.0),
+        predicted_terminal_ticks_to_go: Some(180.0),
+        predicted_total_terminal_ticks: Some(196.0),
+        exact_terminal_ticks_to_go: Some(180),
+        exact_total_terminal_ticks: Some(196),
+        maximum_ensemble_variance: None,
+        generalized_nearest_distance: Some(0.1),
+        novelty_rank: 1,
+        replayed_prefix_ticks: 16,
+    };
+    let optimistic = TacticFrontierAcquisition {
+        expansion_count: 0,
+        best_mean_q: Some(99.0),
+        predicted_terminal_ticks_to_go: Some(23.0),
+        predicted_total_terminal_ticks: Some(63.0),
+        exact_terminal_ticks_to_go: None,
+        exact_total_terminal_ticks: None,
+        replayed_prefix_ticks: 40,
+        ..exact.clone()
+    };
+
+    assert_eq!(
+        compare_frontier_acquisition(&exact, &optimistic),
+        std::cmp::Ordering::Less
+    );
+}
+
+#[test]
 fn frontier_terminal_cost_includes_the_replayed_prefix() {
     let earlier = TacticFrontierAcquisition {
         expansion_count: 0,
@@ -158,6 +201,8 @@ fn frontier_terminal_cost_includes_the_replayed_prefix() {
         best_mean_q: Some(99.0),
         predicted_terminal_ticks_to_go: Some(84.0),
         predicted_total_terminal_ticks: Some(124.0),
+        exact_terminal_ticks_to_go: None,
+        exact_total_terminal_ticks: None,
         maximum_ensemble_variance: None,
         generalized_nearest_distance: Some(0.1),
         novelty_rank: 1,
@@ -188,6 +233,8 @@ fn equal_terminal_cost_prefers_the_less_expanded_frontier() {
         best_mean_q: Some(99.0),
         predicted_terminal_ticks_to_go: Some(86.0),
         predicted_total_terminal_ticks: Some(126.0),
+        exact_terminal_ticks_to_go: None,
+        exact_total_terminal_ticks: None,
         maximum_ensemble_variance: None,
         generalized_nearest_distance: Some(0.1),
         novelty_rank: 1,
@@ -218,6 +265,8 @@ fn achieved_goal_return_ranks_equally_fresh_cold_start_frontiers() {
         best_mean_q: Some(-40.0),
         predicted_terminal_ticks_to_go: None,
         predicted_total_terminal_ticks: None,
+        exact_terminal_ticks_to_go: None,
+        exact_total_terminal_ticks: None,
         maximum_ensemble_variance: None,
         generalized_nearest_distance: Some(0.2),
         novelty_rank: 8,

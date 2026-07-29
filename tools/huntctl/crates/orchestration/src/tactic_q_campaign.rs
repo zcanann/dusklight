@@ -253,6 +253,14 @@ pub struct TacticFrontierAcquisition {
     /// Root-relative route cost: replayed prefix plus learned ticks-to-go.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub predicted_total_terminal_ticks: Option<f64>,
+    /// Exact authenticated ticks from this retained state through a replay
+    /// path whose final transition reaches the native terminal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact_terminal_ticks_to_go: Option<u64>,
+    /// Root-relative cost of the retained prefix followed by the shortest
+    /// exact authenticated terminal suffix currently in replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact_total_terminal_ticks: Option<u64>,
     pub maximum_ensemble_variance: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generalized_nearest_distance: Option<f32>,
@@ -921,6 +929,19 @@ fn compare_frontier_acquisition(
         return right
             .terminal_value_supported
             .cmp(&left.terminal_value_supported);
+    }
+    match (
+        left.exact_total_terminal_ticks,
+        right.exact_total_terminal_ticks,
+    ) {
+        (Some(left_ticks), Some(right_ticks)) => {
+            return left_ticks
+                .cmp(&right_ticks)
+                .then_with(|| left.expansion_count.cmp(&right.expansion_count));
+        }
+        (Some(_), None) => return std::cmp::Ordering::Less,
+        (None, Some(_)) => return std::cmp::Ordering::Greater,
+        (None, None) => {}
     }
     match (
         left.predicted_total_terminal_ticks,

@@ -422,6 +422,7 @@ impl TacticQCampaign {
         } else {
             None
         };
+        let exact_terminal_ticks = exact_terminal_ticks_to_go_by_state(&self.training_replay);
         let mut ranked = choices
             .into_iter()
             .enumerate()
@@ -521,6 +522,9 @@ impl TacticQCampaign {
                     .ok_or(TacticQCampaignError::InvalidState(
                     "learned frontier route precedes its native root",
                 ))? as u64;
+                let exact_terminal_ticks_to_go = exact_terminal_ticks
+                    .get(&entry.transition.after_state_sha256)
+                    .copied();
                 let acquisition = TacticFrontierAcquisition {
                     expansion_count,
                     terminal: entry.transition.value_sample.terminal,
@@ -533,6 +537,9 @@ impl TacticQCampaign {
                     predicted_terminal_ticks_to_go,
                     predicted_total_terminal_ticks: predicted_terminal_ticks_to_go
                         .map(|ticks| replayed_prefix_ticks as f64 + ticks),
+                    exact_terminal_ticks_to_go,
+                    exact_total_terminal_ticks: exact_terminal_ticks_to_go
+                        .map(|ticks| replayed_prefix_ticks.saturating_add(ticks)),
                     maximum_ensemble_variance,
                     generalized_nearest_distance,
                     novelty_rank: novelty_rank as u64,
@@ -653,5 +660,35 @@ impl TacticQCampaign {
         self.route_tape = branch.route_tape.clone();
         self.episode_group = episode_group;
         Ok(())
+    }
+}
+
+fn exact_terminal_ticks_to_go_by_state(
+    transitions: &[OptionTransitionSample],
+) -> BTreeMap<Digest, u64> {
+    let mut ticks = transitions
+        .iter()
+        .filter(|transition| transition.value_sample.terminal)
+        .map(|transition| (transition.after_state_sha256, 0_u64))
+        .collect::<BTreeMap<_, _>>();
+    loop {
+        let mut changed = false;
+        for transition in transitions {
+            let Some(after_ticks) = ticks.get(&transition.after_state_sha256).copied() else {
+                continue;
+            };
+            let candidate =
+                after_ticks.saturating_add(u64::from(transition.value_sample.duration_ticks));
+            if ticks
+                .get(&transition.before_state_sha256)
+                .is_none_or(|before_ticks| candidate < *before_ticks)
+            {
+                ticks.insert(transition.before_state_sha256, candidate);
+                changed = true;
+            }
+        }
+        if !changed {
+            return ticks;
+        }
     }
 }
