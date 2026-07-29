@@ -8,8 +8,8 @@ use crate::tactic_q_campaign::{
 use dusklight_evidence::content_store::{ContentBlob, ContentKind, ContentStore};
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
 
-pub const NATIVE_TACTIC_SCRATCH_EVIDENCE_BUNDLE_SCHEMA_V1: &str =
-    "dusklight-native-tactic-scratch-evidence-bundle/v1";
+pub const NATIVE_TACTIC_SCRATCH_EVIDENCE_BUNDLE_SCHEMA_V2: &str =
+    "dusklight-native-tactic-scratch-evidence-bundle/v2";
 pub const NATIVE_TACTIC_SCRATCH_EVIDENCE_MANIFEST: &str = "manifest.json";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -69,6 +69,7 @@ pub struct NativeTacticScratchEvidenceBundle {
     pub execution_binding: NativeTacticScratchBundleArtifact,
     pub execution_plan: NativeTacticScratchBundleArtifact,
     pub route_report: NativeTacticScratchBundleArtifact,
+    pub campaign_audit: NativeTacticScratchBundleArtifact,
     pub execution_identity: NativeTacticScratchExecutionIdentity,
     pub authorities: Vec<NativeTacticScratchAuthorityArtifact>,
     pub seeds: Vec<NativeTacticScratchSeedEvidence>,
@@ -155,6 +156,14 @@ impl NativeTacticScratchEvidenceBundle {
             ContentKind::DatasetManifest,
             route_sha256,
         )?;
+        let campaign_audit_report =
+            NativeTacticScratchCampaignAudit::build(&repository_root, route)?;
+        let campaign_audit = bundle_bytes(
+            &store,
+            &campaign_audit_report.to_pretty_json()?,
+            ContentKind::DatasetManifest,
+            campaign_audit_report.content_sha256,
+        )?;
 
         let mut authorities = vec![
             bundle_authority(
@@ -209,13 +218,14 @@ impl NativeTacticScratchEvidenceBundle {
         seeds.sort_by_key(|seed| seed.seed);
 
         let mut bundle = Self {
-            schema: NATIVE_TACTIC_SCRATCH_EVIDENCE_BUNDLE_SCHEMA_V1.into(),
+            schema: NATIVE_TACTIC_SCRATCH_EVIDENCE_BUNDLE_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
             acceptance,
             optimization_request,
             execution_binding,
             execution_plan,
             route_report,
+            campaign_audit,
             execution_identity: NativeTacticScratchExecutionIdentity {
                 execution_binding_sha256: execution.content_sha256,
                 executable_sha256: execution.executable.sha256,
@@ -253,7 +263,7 @@ impl NativeTacticScratchEvidenceBundle {
     }
 
     pub fn validate(&self, bundle_root: &Path) -> Result<(), NativeTacticRouteRunError> {
-        if self.schema != NATIVE_TACTIC_SCRATCH_EVIDENCE_BUNDLE_SCHEMA_V1
+        if self.schema != NATIVE_TACTIC_SCRATCH_EVIDENCE_BUNDLE_SCHEMA_V2
             || self.content_sha256 == Digest::ZERO
             || self.compute_content_sha256()? != self.content_sha256
             || self.passed
@@ -296,14 +306,18 @@ impl NativeTacticScratchEvidenceBundle {
         execution.validate_seal(&request).map_err(route_error)?;
         let plan: NativeTacticExecutionPlan = read_json_blob(bundle_root, &self.execution_plan)?;
         let route: NativeTacticRouteReport = read_json_blob(bundle_root, &self.route_report)?;
+        let campaign_audit: NativeTacticScratchCampaignAudit =
+            read_json_blob(bundle_root, &self.campaign_audit)?;
         let acceptance: NativeTacticScratchDiscoveryReport =
             read_json_blob(bundle_root, &self.acceptance)?;
+        campaign_audit.validate()?;
         acceptance.validate()?;
 
         if self.optimization_request.logical_identity_sha256 != request.content_sha256
             || self.execution_binding.logical_identity_sha256 != execution.content_sha256
             || self.execution_plan.logical_identity_sha256 != plan.identity()?
             || self.route_report.logical_identity_sha256 != route_report_sha256(&route)?
+            || self.campaign_audit.logical_identity_sha256 != campaign_audit.content_sha256
             || self.acceptance.logical_identity_sha256 != acceptance.content_sha256
             || route.optimization_request_sha256 != request.content_sha256
             || route.execution_binding_sha256 != execution.content_sha256
@@ -311,6 +325,11 @@ impl NativeTacticScratchEvidenceBundle {
             || acceptance.optimization_request_sha256 != request.content_sha256
             || acceptance.execution_plan_sha256 != plan.identity()?
             || acceptance.route_report_sha256 != route_report_sha256(&route)?
+            || campaign_audit.route_report_sha256 != route_report_sha256(&route)?
+            || campaign_audit.execution_plan_sha256 != route.execution_plan_sha256
+            || campaign_audit.objective_sha256 != route.objective_sha256
+            || campaign_audit.execution_binding_sha256 != route.execution_binding_sha256
+            || campaign_audit.seeds.len() != route.seeds.len()
             || self.execution_identity != execution_identity(&execution)
             || route.seeds.len() != self.seeds.len()
         {
@@ -325,7 +344,14 @@ impl NativeTacticScratchEvidenceBundle {
                 .iter()
                 .find(|reported| reported.seed == bundled.seed)
                 .ok_or_else(|| route_message("scratch bundled seed is absent from route report"))?;
-            validate_seed(bundle_root, &route, reported, bundled)?;
+            let audited = campaign_audit
+                .seeds
+                .iter()
+                .find(|audited| audited.seed == bundled.seed)
+                .ok_or_else(|| {
+                    route_message("scratch bundled seed is absent from campaign audit")
+                })?;
+            validate_seed(bundle_root, &route, reported, bundled, audited)?;
         }
         Ok(())
     }
@@ -337,6 +363,7 @@ impl NativeTacticScratchEvidenceBundle {
             &self.execution_binding,
             &self.execution_plan,
             &self.route_report,
+            &self.campaign_audit,
         ];
         for seed in &self.seeds {
             artifacts.extend([
@@ -476,12 +503,20 @@ fn validate_seed(
     route: &NativeTacticRouteReport,
     reported: &NativeTacticSeedResult,
     bundled: &NativeTacticScratchSeedEvidence,
+    audited: &NativeTacticScratchSeedAudit,
 ) -> Result<(), NativeTacticRouteRunError> {
     let stored: NativeTacticSeedResult = read_json_blob(bundle_root, &bundled.seed_result)?;
     let snapshot_bytes = read_blob(bundle_root, &bundled.checkpoint_snapshot)?;
     let checkpoint: TacticQCampaignCheckpoint =
         serde_cbor::from_slice(&snapshot_bytes).map_err(route_error)?;
     validate_checkpoint(&checkpoint).map_err(route_error)?;
+    let mut terminal_path_ticks = checkpoint
+        .state_graph
+        .nodes()
+        .filter(|node| node.terminal && node.restoration.executable)
+        .map(|node| node.root_ticks.saturating_sub(1))
+        .collect::<Vec<_>>();
+    terminal_path_ticks.sort_unstable();
     if canonical_json_sha256(reported)? != canonical_json_sha256(&stored)?
         || bundled.seed_result.logical_identity_sha256 != canonical_json_sha256(&stored)?
         || bundled.seed != stored.seed
@@ -500,6 +535,20 @@ fn validate_seed(
             .content_sha256()
             .map_err(route_error)?
             != bundled.state_graph_sha256
+        || audited.terminal_discovered != stored.terminal_discovered
+        || audited.best_authenticated_tick != stored.best_authenticated_tick
+        || audited.first_terminal_decision_index != stored.first_terminal_decision_index
+        || audited.time_to_first_terminal_micros != stored.time_to_first_terminal_micros
+        || audited.total_proposal_expansions
+            != stored
+                .trace
+                .iter()
+                .map(|decision| decision.proposal_batch.len() as u64)
+                .sum::<u64>()
+        || audited.unique_useful_graph_expansions != stored.unique_useful_graph_expansions
+        || audited.native_restore_accounting != stored.native_restore_accounting
+        || audited.timing != stored.timing
+        || audited.terminal_path_ticks != terminal_path_ticks
     {
         return Err(route_message(
             "scratch bundled seed differs from route or graph evidence",

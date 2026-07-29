@@ -7,12 +7,12 @@ use super::{
     NativeFrozenPolicySuffixBatch, NativeGenericExecutionStrategy, NativeResidualExecutionBinding,
     NativeTacticPolicyRunConfig, NativeTacticRestoreLocalityConfig,
     NativeTacticRestoreLocalityReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
-    NativeTacticScratchDiscoveryReport, NativeTacticScratchEvidenceBundle,
-    NativeTacticThroughputCurveConfig, OptimizationRequest, Sha256, TacticFrozenPolicy,
-    TacticProposalPolicy, TacticQCampaign, TacticQTrainingCorpus, cli, command_conservative_q,
-    flag, native_frozen_policy_probe_model, native_tactic_execution_plan, option,
-    prove_generalized_tactic_held_out_value, realize_native_frozen_policy_tape, repeated_option,
-    required_path, run_native_tactic_policy, run_native_tactic_restore_locality,
+    NativeTacticScratchCampaignAudit, NativeTacticScratchDiscoveryReport,
+    NativeTacticScratchEvidenceBundle, NativeTacticThroughputCurveConfig, OptimizationRequest,
+    Sha256, TacticFrozenPolicy, TacticProposalPolicy, TacticQCampaign, TacticQTrainingCorpus, cli,
+    command_conservative_q, flag, native_frozen_policy_probe_model, native_tactic_execution_plan,
+    option, prove_generalized_tactic_held_out_value, realize_native_frozen_policy_tape,
+    repeated_option, required_path, run_native_tactic_policy, run_native_tactic_restore_locality,
     run_native_tactic_route, run_native_tactic_throughput_curve, tactic_macro_registry_identity,
     u64_option, usage_error, usize_option, verify_native_frozen_policy_cold_replay,
     verify_native_frozen_policy_reinference,
@@ -828,6 +828,34 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             let bundle_root = required_path(&args[1..], "--bundle")?;
             let bundle = NativeTacticScratchEvidenceBundle::read_and_validate(&bundle_root)?;
             println!("{}", serde_json::to_string_pretty(&bundle)?);
+            Ok(())
+        }
+        Some("audit-tactic-scratch-campaign") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let route: NativeTacticRouteReport =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "scratch campaign audit output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let audit = NativeTacticScratchCampaignAudit::build(&repository_root, &route)?;
+            fs::write(&output, audit.to_pretty_json()?)?;
+            println!("{}", serde_json::to_string_pretty(&audit)?);
             Ok(())
         }
         _ => usage_error(),

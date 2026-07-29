@@ -448,6 +448,15 @@ pub(super) struct NativeTacticSeedPerformance {
     pub(super) timing: NativeTacticRouteTiming,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeTacticSeedStopReason {
+    DecisionBudgetReached,
+    SimulatedTickBudgetReached,
+    NativeTickBudgetReached,
+    WallBudgetReached,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticSeedResult {
@@ -473,6 +482,11 @@ pub struct NativeTacticSeedResult {
     /// was reached. One already-issued decision may complete across the bound.
     #[serde(default)]
     pub wall_budget_reached: bool,
+    /// Every sealed budget exhausted when the coordinator stopped. A decision
+    /// may cross multiple limits, so this is deliberately not one prioritized
+    /// reason.
+    #[serde(default)]
+    pub stop_reasons: Vec<NativeTacticSeedStopReason>,
     pub success: bool,
     pub decisions: u64,
     pub episodes: u64,
@@ -582,6 +596,9 @@ pub struct NativeTacticDecisionTrace {
     #[serde(default)]
     pub result_admission_schema: String,
     pub episode: u64,
+    /// Exact root-derived tape length of the leased source boundary.
+    #[serde(default)]
+    pub source_route_ticks: u64,
     pub route_suffix_ticks: u64,
     pub selected_option_id: String,
     pub selection_reason: TacticSelectionReason,
@@ -682,6 +699,10 @@ pub struct NativeTacticProposalTrace {
     pub reward: f32,
     pub reward_components: TacticRewardBreakdown,
     pub realized_ticks: u32,
+    /// Exact root-derived tape length after this proposal. For terminal
+    /// proposals, subtracting one gives its authenticated first-hit tick.
+    #[serde(default)]
+    pub root_route_ticks: u64,
     #[serde(default)]
     pub emitted_tape_sha256: Digest,
     pub terminal: bool,
@@ -737,6 +758,8 @@ pub(super) struct NativeTacticDecisionRecord {
     pub(super) result_admission_schema: String,
     pub(super) episode: u64,
     pub(super) episode_group: u64,
+    #[serde(default)]
+    pub(super) source_route_ticks: u64,
     pub(super) route_suffix_ticks: u64,
     pub(super) selection_reason: TacticSelectionReason,
     pub(super) selected_q: Option<f64>,

@@ -49,10 +49,13 @@ The incoming 2026-07-29 work made substantial, useful progress:
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 256 tests.
+  orchestration suite is hermetic and passes all 258 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
-  tape/result, and source-authority evidence. The clean-checkout audit command
+  tape/result, source-authority evidence, and a content-bound campaign audit.
+  New reports retain every exhausted budget and every proposal's exact
+  root-route length, allowing the audit to distinguish first terminal from
+  first evaluation of the eventual best route. The clean-checkout audit command
   validates source quality, formatting, the workspace, all orchestration tests,
   and every committed bundle.
 - A bounded macOS scratch campaign reached the actual Ordon load-zone

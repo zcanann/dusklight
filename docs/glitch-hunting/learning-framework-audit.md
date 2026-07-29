@@ -14,7 +14,7 @@ The command checks:
 - the complete `huntctl` workspace build;
 - every `dusklight-orchestration` unit and documentation test; and
 - every tracked native scratch evidence bundle whose manifest uses
-  `dusklight-native-tactic-scratch-evidence-bundle/v1`.
+  `dusklight-native-tactic-scratch-evidence-bundle/v2`.
 
 Scratch discovery validation publishes a movable bundle with:
 
@@ -28,13 +28,30 @@ huntctl learn validate-tactic-scratch-discovery \
   --repository-root REPOSITORY
 ```
 
-The bundle retains content-addressed request, execution, plan, route, seed,
-checkpoint, terminal tape/result, and small source-authority artifacts. It can
-be copied away from its originating build tree and validated independently:
+The bundle retains content-addressed request, execution, plan, route, campaign
+audit, seed, checkpoint, terminal tape/result, and small source-authority
+artifacts. The campaign audit includes every decision, proposal count,
+selection reason, learner snapshot, restore source, exhausted budget, terminal
+path, and exact time/expansion point at which each shorter terminal route was
+first evaluated. It can be copied away from its originating build tree and
+validated independently:
 
 ```text
 huntctl learn validate-tactic-scratch-bundle --bundle BUNDLE-DIR
 ```
+
+An existing route report can also be audited before acceptance:
+
+```text
+huntctl learn audit-tactic-scratch-campaign \
+  --report ROUTE-REPORT.json \
+  --output CAMPAIGN-AUDIT.json \
+  --repository-root REPOSITORY
+```
+
+Reports written before proposal root-route lengths and exact stop-reason sets
+were added remain readable, but their campaign audit marks terminal-improvement
+timing or the stopping budget as legacy-unreported instead of guessing.
 
 Executable and game-image bytes are deliberately not duplicated into the
 bundle. Their exact SHA-256 identities, runtime dependency identities, native

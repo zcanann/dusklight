@@ -147,8 +147,8 @@ pub use report::{
     NativeTacticMacroDiscoveryReport, NativeTacticMacroReuseReport, NativeTacticMeasurementTrace,
     NativeTacticProposalTrace, NativeTacticReplaySharingTelemetry, NativeTacticRestoreAccounting,
     NativeTacticRestoreSource, NativeTacticRouteReport, NativeTacticRouteRunConfig,
-    NativeTacticRouteTiming, NativeTacticSeedResult, NativeTacticStateTrace,
-    NativeTacticValueTrace,
+    NativeTacticRouteTiming, NativeTacticSeedResult, NativeTacticSeedStopReason,
+    NativeTacticStateTrace, NativeTacticValueTrace,
 };
 
 mod execution_plan;
@@ -171,10 +171,16 @@ pub use scratch_discovery::{
 };
 mod scratch_evidence_bundle;
 pub use scratch_evidence_bundle::{
-    NATIVE_TACTIC_SCRATCH_EVIDENCE_BUNDLE_SCHEMA_V1, NATIVE_TACTIC_SCRATCH_EVIDENCE_MANIFEST,
+    NATIVE_TACTIC_SCRATCH_EVIDENCE_BUNDLE_SCHEMA_V2, NATIVE_TACTIC_SCRATCH_EVIDENCE_MANIFEST,
     NativeTacticScratchAuthorityArtifact, NativeTacticScratchBundleArtifact,
     NativeTacticScratchEvidenceBundle, NativeTacticScratchExecutionIdentity,
     NativeTacticScratchSeedEvidence,
+};
+mod scratch_campaign_audit;
+pub use scratch_campaign_audit::{
+    NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V1, NativeTacticScratchCampaignAudit,
+    NativeTacticScratchDecisionAudit, NativeTacticScratchSeedAudit, NativeTacticScratchStopReason,
+    NativeTacticScratchTerminalImprovementAudit,
 };
 
 mod throughput_curve;

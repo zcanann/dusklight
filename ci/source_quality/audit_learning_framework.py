@@ -11,7 +11,8 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 HUNTCTL_ROOT = REPOSITORY_ROOT / "tools" / "huntctl"
-SCRATCH_BUNDLE_SCHEMA = "dusklight-native-tactic-scratch-evidence-bundle/v1"
+SCRATCH_BUNDLE_SCHEMA = "dusklight-native-tactic-scratch-evidence-bundle/v2"
+SCRATCH_BUNDLE_SCHEMA_PREFIX = "dusklight-native-tactic-scratch-evidence-bundle/"
 
 
 def run(command: list[str], cwd: Path) -> None:
@@ -32,11 +33,15 @@ def tracked_scratch_bundles() -> list[Path]:
             document = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             continue
-        if (
-            isinstance(document, dict)
-            and document.get("schema") == SCRATCH_BUNDLE_SCHEMA
-        ):
+        if not isinstance(document, dict):
+            continue
+        schema = document.get("schema")
+        if schema == SCRATCH_BUNDLE_SCHEMA:
             bundles.append(path.parent)
+        elif isinstance(schema, str) and schema.startswith(SCRATCH_BUNDLE_SCHEMA_PREFIX):
+            raise RuntimeError(
+                f"unsupported committed scratch evidence bundle schema in {relative}: {schema}"
+            )
     return sorted(set(bundles))
 
 

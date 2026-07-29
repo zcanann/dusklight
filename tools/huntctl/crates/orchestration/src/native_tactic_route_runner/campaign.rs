@@ -882,6 +882,7 @@ pub(super) fn run_seed(
                     reward: proposal.reward.training_reward,
                     reward_components: proposal.reward.clone(),
                     realized_ticks: proposal.outcome.execution.duration.realized_ticks,
+                    root_route_ticks: proposal.outcome.route_tape.frames.len() as u64,
                     emitted_tape_sha256: proposal.transition.value_sample.realized_tape_sha256,
                     terminal: proposal.outcome.terminal,
                     goal_distance_after: after_features[encoder.goal_distance_feature()],
@@ -919,6 +920,7 @@ pub(super) fn run_seed(
             restore_source: Some(restore_source),
             result_admission_schema: NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1.into(),
             episode,
+            source_route_ticks: source_route_tape.frames.len() as u64,
             route_suffix_ticks: campaign
                 .route_tape
                 .frames
@@ -1060,6 +1062,34 @@ pub(super) fn run_seed(
                 .budgets
                 .native_ticks
                 .reached(native_ticks);
+    let mut stop_reasons = Vec::new();
+    if campaign.decision_index >= config.execution_plan.budgets.decisions_per_lane {
+        stop_reasons.push(NativeTacticSeedStopReason::DecisionBudgetReached);
+    }
+    if native_ticks >= config.optimization.budgets.simulated_tick_budget {
+        stop_reasons.push(NativeTacticSeedStopReason::SimulatedTickBudgetReached);
+    }
+    if config
+        .execution_plan
+        .budgets
+        .native_ticks
+        .reached(native_ticks)
+    {
+        stop_reasons.push(NativeTacticSeedStopReason::NativeTickBudgetReached);
+    }
+    if config
+        .execution_plan
+        .budgets
+        .wall_micros
+        .reached(prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed())))
+    {
+        stop_reasons.push(NativeTacticSeedStopReason::WallBudgetReached);
+    }
+    if stop_reasons.is_empty() {
+        return Err(route_message(
+            "native tactic route stopped without exhausting a sealed budget",
+        ));
+    }
     let final_persistence_started = Instant::now();
     compact_tactic_decision_journal(&seed_root)?;
     synchronize_graph_terminal_result(
@@ -1191,6 +1221,7 @@ pub(super) fn run_seed(
             time_to_first_terminal_micros: first_terminal
                 .map(|decision| decision.cumulative_wall_micros),
             wall_budget_reached,
+            stop_reasons,
             success,
             decisions: campaign.decision_index,
             episodes: episode + 1,
