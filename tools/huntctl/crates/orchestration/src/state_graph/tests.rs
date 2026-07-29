@@ -982,6 +982,11 @@ fn one_expansion_identity_flows_from_lease_through_worker_learner_and_report() {
     assert_eq!(admission.expansion_sha256, job.expansion_sha256);
     assert_eq!(learner.rows.len(), 1);
     assert_eq!(learner.rows[0].expansion_sha256, job.expansion_sha256);
+    assert_eq!(learner.rows[0].source, job.source);
+    assert_eq!(
+        learner.rows[0].source_state.content_sha256().unwrap(),
+        job.source.state_sha256
+    );
     assert_eq!(learner.graph_sha256, report.graph_sha256);
     assert_eq!(report.graph_sha256, stored.graph_sha256);
     assert_eq!(report.completed_expansions, 1);
