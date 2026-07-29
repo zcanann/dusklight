@@ -1,5 +1,9 @@
 use super::*;
 
+mod restoration_dispatch;
+
+use restoration_dispatch::{requires_frontier_materialization, validate_restoration_contract};
+
 pub(super) fn launch_tactic_route_worker(
     config: &NativeTacticRouteRunConfig<'_>,
     repository_root: &Path,
@@ -278,9 +282,6 @@ pub(super) fn parameterized_feedback_for_state(
     Ok(Some(ParameterizedTacticFeedback {
         previous_reward: previous.value_sample.reward,
         goal_progress: planar_distance(before, goal) - planar_distance(after, goal),
-        // Keep candidate generation policy-neutral. The learned policy uses
-        // critic uncertainty when it ranks this shared valid catalog; random
-        // and structured baselines must see the same action candidates.
         ensemble_uncertainty: None,
         endpoint_novel: prior_occurrences == 1,
         terminal: previous.value_sample.terminal,
@@ -290,6 +291,10 @@ pub(super) fn parameterized_feedback_for_state(
 pub(super) struct TimedTacticWorker<'a, W> {
     inner: &'a mut W,
     native_elapsed: Duration,
+    native_batch_elapsed: Duration,
+    ipc_elapsed: Duration,
+    observation_capture_elapsed: Duration,
+    corpus_encoding_elapsed: Duration,
     pending_accounting: NativeTacticRestoreAccounting,
     prior_cache_hits: u64,
     prior_cache_misses: u64,
@@ -301,6 +306,10 @@ impl<'a, W> TimedTacticWorker<'a, W> {
         Self {
             inner,
             native_elapsed: Duration::ZERO,
+            native_batch_elapsed: Duration::ZERO,
+            ipc_elapsed: Duration::ZERO,
+            observation_capture_elapsed: Duration::ZERO,
+            corpus_encoding_elapsed: Duration::ZERO,
             pending_accounting: NativeTacticRestoreAccounting::default(),
             prior_cache_hits: 0,
             prior_cache_misses: 0,
@@ -318,6 +327,7 @@ impl<'a, W> TimedTacticWorker<'a, W> {
         &mut self,
         route_frames: usize,
         fallback: bool,
+        replay_elapsed: Duration,
     ) -> Result<(), NativeTacticWorkerError>
     where
         W: PersistentTacticBatchWorker,
@@ -334,6 +344,10 @@ impl<'a, W> TimedTacticWorker<'a, W> {
             .pending_accounting
             .replayed_prefix_ticks
             .saturating_add(replayed_prefix_ticks);
+        self.pending_accounting.replay_restore_micros = self
+            .pending_accounting
+            .replay_restore_micros
+            .saturating_add(elapsed_micros(replay_elapsed));
         if fallback {
             self.pending_accounting.direct_restore_fallback_replays = self
                 .pending_accounting
@@ -370,13 +384,14 @@ impl<'a, W> TimedTacticWorker<'a, W> {
             .pending_accounting
             .restore_samples
             .saturating_add(batch.restore_micros.len() as u64);
-        self.pending_accounting.restore_micros =
-            self.pending_accounting.restore_micros.saturating_add(
-                batch
-                    .restore_micros
-                    .iter()
-                    .fold(0_u64, |total, micros| total.saturating_add(*micros)),
-            );
+        let batch_restore_micros = batch
+            .restore_micros
+            .iter()
+            .fold(0_u64, |total, micros| total.saturating_add(*micros));
+        self.pending_accounting.restore_micros = self
+            .pending_accounting
+            .restore_micros
+            .saturating_add(batch_restore_micros);
         let Some(cache) = batch.checkpoint_cache.as_ref() else {
             return Err(NativeTacticWorkerError::DetachedResult(
                 "tactic batch cache accounting",
@@ -388,6 +403,10 @@ impl<'a, W> TimedTacticWorker<'a, W> {
                     .pending_accounting
                     .authenticated_root_restore_requests
                     .saturating_add(1);
+                self.pending_accounting.authenticated_root_restore_micros = self
+                    .pending_accounting
+                    .authenticated_root_restore_micros
+                    .saturating_add(batch_restore_micros);
                 false
             }
             "direct_process_local_restore" => {
@@ -396,6 +415,10 @@ impl<'a, W> TimedTacticWorker<'a, W> {
                     .pending_accounting
                     .direct_process_local_restore_requests
                     .saturating_add(1);
+                self.pending_accounting.direct_process_local_restore_micros = self
+                    .pending_accounting
+                    .direct_process_local_restore_micros
+                    .saturating_add(batch_restore_micros);
                 true
             }
             "direct_process_local_continuation" => {
@@ -404,6 +427,10 @@ impl<'a, W> TimedTacticWorker<'a, W> {
                     .pending_accounting
                     .direct_process_local_continuation_requests
                     .saturating_add(1);
+                self.pending_accounting.direct_process_local_restore_micros = self
+                    .pending_accounting
+                    .direct_process_local_restore_micros
+                    .saturating_add(batch_restore_micros);
                 false
             }
             _ => {
@@ -509,13 +536,30 @@ impl<W: PersistentTacticBatchWorker> PersistentTacticBatchWorker for TimedTactic
     ) -> Result<ValidatedNativeSuffixBatch, NativeTacticWorkerError> {
         let started = Instant::now();
         let response = self.inner.run_tactic_batch(request, result);
-        self.native_elapsed = self.native_elapsed.saturating_add(started.elapsed());
+        let round_trip = started.elapsed();
         match response {
             Ok(batch) => {
+                let batch_wall = Duration::from_micros(batch.timing.batch_wall_micros);
+                self.native_batch_elapsed = self.native_batch_elapsed.saturating_add(batch_wall);
+                self.native_elapsed = self
+                    .native_elapsed
+                    .saturating_add(Duration::from_micros(batch.timing.simulation_micros));
+                self.ipc_elapsed = self
+                    .ipc_elapsed
+                    .saturating_add(round_trip.saturating_sub(batch_wall));
+                self.observation_capture_elapsed =
+                    self.observation_capture_elapsed
+                        .saturating_add(Duration::from_micros(
+                            batch.timing.observation_capture_micros,
+                        ));
+                self.corpus_encoding_elapsed = self
+                    .corpus_encoding_elapsed
+                    .saturating_add(Duration::from_micros(batch.timing.corpus_encoding_micros));
                 self.record_batch(&batch)?;
                 Ok(batch)
             }
             Err(error) => {
+                self.ipc_elapsed = self.ipc_elapsed.saturating_add(round_trip);
                 if error.is_missing_process_local_checkpoint() {
                     self.prior_cache_misses = self.prior_cache_misses.saturating_add(1);
                     self.pending_accounting.cache_misses =
@@ -554,6 +598,9 @@ pub(super) struct NativeTacticProposalWork {
     pub(super) worker_slot: usize,
     pub(super) outcome: NativeTacticWorkerOutcome,
     pub(super) native_elapsed: Duration,
+    pub(super) ipc_elapsed: Duration,
+    pub(super) observation_capture_elapsed: Duration,
+    pub(super) corpus_encoding_elapsed: Duration,
     pub(super) preparation_elapsed: Duration,
     pub(super) restore_accounting: NativeTacticRestoreAccounting,
 }
@@ -607,43 +654,6 @@ fn next_worker_excluding(
     }
 }
 
-fn requires_frontier_materialization(
-    has_restoration_contract: bool,
-    replayed_prefix: usize,
-    has_direct_source: bool,
-) -> bool {
-    has_restoration_contract && replayed_prefix != 0 && !has_direct_source
-}
-
-fn validate_restoration_contract(
-    restoration: &TacticRestorationContract,
-    source_snapshot: &FactSnapshot,
-    source_route_tape: &InputTape,
-) -> Result<(), NativeTacticRouteRunError> {
-    let snapshot_sha256 = source_snapshot.content_sha256().map_err(route_error)?;
-    let tape_sha256 =
-        Digest(Sha256::digest(source_route_tape.encode().map_err(route_error)?).into());
-    let tape_frames = u64::try_from(source_route_tape.frames.len())
-        .map_err(|_| route_message("restoration route is too long"))?;
-    if restoration.plan.expected_state_sha256 != snapshot_sha256
-        || restoration.plan.node.state_sha256 != snapshot_sha256
-        || restoration.receipt.restoration_plan_sha256 != restoration.plan.plan_sha256
-        || restoration.receipt.node != restoration.plan.node
-        || restoration.receipt.observed_state_sha256 != snapshot_sha256
-        || restoration.receipt.route_checkpoint_sha256
-            != restoration.plan.route.route_checkpoint_sha256
-        || restoration.plan.node.route_checkpoint_sha256
-            != restoration.plan.route.route_checkpoint_sha256
-        || restoration.plan.route.tape_sha256 != tape_sha256
-        || restoration.plan.route.tape_frames != tape_frames
-    {
-        return Err(route_message(
-            "native tactic restoration contract is detached from its typed source",
-        ));
-    }
-    Ok(())
-}
-
 impl NativeTacticProposalPool {
     pub(super) fn execute_batch(
         &self,
@@ -690,9 +700,6 @@ impl NativeTacticProposalPool {
             })
             .flatten();
         let mut responses = Vec::with_capacity(proposals.len());
-        // Counterfactual siblings replay the authenticated prefix independently.
-        // Submit them before the selected proposal so a one-worker pool ends
-        // with the selected live endpoint resident.
         for proposal_index in (1..proposals.len()).chain(std::iter::once(0)) {
             let selected = &proposals[proposal_index];
             let (response, receiver) = mpsc::sync_channel(1);
@@ -761,13 +768,14 @@ pub(super) struct CapturedTerminalRouteReplay {
     pub(super) native_ticks: u64,
     pub(super) wall_micros: u64,
     pub(super) native_simulation_micros: u64,
+    pub(super) ipc_and_result_transport_micros: u64,
+    pub(super) native_observation_capture_micros: u64,
+    pub(super) native_corpus_encoding_micros: u64,
+    pub(super) rust_state_extraction_micros: u64,
     pub(super) preparation_micros: u64,
     pub(super) restore_accounting: NativeTacticRestoreAccounting,
 }
 
-/// Replay an authenticated terminal route in short recorded chunks solely to
-/// materialize exact intermediate states. The recorded chunk descriptors are
-/// training evidence; callers never add them to the executable tactic catalog.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn capture_terminal_route_replay(
     config: &NativeTacticRouteRunConfig<'_>,
@@ -797,6 +805,10 @@ pub(super) fn capture_terminal_route_replay(
     let mut episode_groups = Vec::new();
     let mut native_ticks = 0_u64;
     let mut native_simulation_micros = 0_u64;
+    let mut ipc_and_result_transport_micros = 0_u64;
+    let mut native_observation_capture_micros = 0_u64;
+    let mut native_corpus_encoding_micros = 0_u64;
+    let mut rust_state_extraction_micros = 0_u64;
     let mut preparation_micros = 0_u64;
     let mut restore_accounting = NativeTacticRestoreAccounting::default();
     let mut first_hit_tick = None;
@@ -845,6 +857,14 @@ pub(super) fn capture_terminal_route_replay(
         let work = work.remove(0);
         native_simulation_micros =
             native_simulation_micros.saturating_add(elapsed_micros(work.native_elapsed));
+        ipc_and_result_transport_micros =
+            ipc_and_result_transport_micros.saturating_add(elapsed_micros(work.ipc_elapsed));
+        native_observation_capture_micros = native_observation_capture_micros
+            .saturating_add(elapsed_micros(work.observation_capture_elapsed));
+        native_corpus_encoding_micros = native_corpus_encoding_micros
+            .saturating_add(elapsed_micros(work.corpus_encoding_elapsed));
+        rust_state_extraction_micros =
+            rust_state_extraction_micros.saturating_add(work.outcome.state_extraction_micros);
         preparation_micros =
             preparation_micros.saturating_add(elapsed_micros(work.preparation_elapsed));
         restore_accounting.merge(&work.restore_accounting);
@@ -963,6 +983,10 @@ pub(super) fn capture_terminal_route_replay(
         native_ticks,
         wall_micros: elapsed_micros(started.elapsed()),
         native_simulation_micros,
+        ipc_and_result_transport_micros,
+        native_observation_capture_micros,
+        native_corpus_encoding_micros,
+        rust_state_extraction_micros,
         preparation_micros,
         restore_accounting,
     })
@@ -1101,6 +1125,10 @@ pub(super) fn load_or_capture_demonstration(
         native_ticks,
         wall_micros: captured.wall_micros,
         native_simulation_micros: captured.native_simulation_micros,
+        ipc_and_result_transport_micros: captured.ipc_and_result_transport_micros,
+        native_observation_capture_micros: captured.native_observation_capture_micros,
+        native_corpus_encoding_micros: captured.native_corpus_encoding_micros,
+        rust_state_extraction_micros: captured.rust_state_extraction_micros,
         preparation_micros: captured.preparation_micros,
         restore_accounting: captured.restore_accounting,
         corpus_path: path_text(&corpus_path),
@@ -1245,6 +1273,10 @@ pub(super) fn run_tactic_proposal_worker(
         };
         let batch_started = Instant::now();
         let native_before_batch = timed_worker.native_elapsed;
+        let native_batch_before_batch = timed_worker.native_batch_elapsed;
+        let ipc_before_batch = timed_worker.ipc_elapsed;
+        let observation_before_batch = timed_worker.observation_capture_elapsed;
+        let corpus_before_batch = timed_worker.corpus_encoding_elapsed;
         let checkpoint_source = if job.materialize_frontier {
             materialize_job_frontier(&mut timed_worker, &job, "frontier-source", false).map(Some)
         } else {
@@ -1278,6 +1310,26 @@ pub(super) fn run_tactic_proposal_worker(
                 native_before_batch
             } else {
                 timed_worker.native_elapsed
+            };
+            let native_batch_before = if batch_index == 0 {
+                native_batch_before_batch
+            } else {
+                timed_worker.native_batch_elapsed
+            };
+            let ipc_before = if batch_index == 0 {
+                ipc_before_batch
+            } else {
+                timed_worker.ipc_elapsed
+            };
+            let observation_before = if batch_index == 0 {
+                observation_before_batch
+            } else {
+                timed_worker.observation_capture_elapsed
+            };
+            let corpus_before = if batch_index == 0 {
+                corpus_before_batch
+            } else {
+                timed_worker.corpus_encoding_elapsed
             };
             let mut outcome = execute_selected_tactic_with_checkpoint_retention_and_strategy(
                 &mut timed_worker,
@@ -1353,16 +1405,34 @@ pub(super) fn run_tactic_proposal_worker(
                 }
             }
             let native_elapsed = timed_worker.native_elapsed.saturating_sub(native_before);
+            let native_batch_elapsed = timed_worker
+                .native_batch_elapsed
+                .saturating_sub(native_batch_before);
+            let ipc_elapsed = timed_worker.ipc_elapsed.saturating_sub(ipc_before);
+            let observation_capture_elapsed = timed_worker
+                .observation_capture_elapsed
+                .saturating_sub(observation_before);
+            let corpus_encoding_elapsed = timed_worker
+                .corpus_encoding_elapsed
+                .saturating_sub(corpus_before);
             let restore_accounting = timed_worker.take_accounting();
             match outcome {
                 Ok(outcome) => {
                     let elapsed = execution_started.elapsed();
+                    let state_extraction_elapsed =
+                        Duration::from_micros(outcome.state_extraction_micros);
                     work.push(NativeTacticProposalWork {
                         execution_plan_sha256: job.execution_plan_sha256,
                         worker_slot,
                         outcome,
                         native_elapsed,
-                        preparation_elapsed: elapsed.saturating_sub(native_elapsed),
+                        ipc_elapsed,
+                        observation_capture_elapsed,
+                        corpus_encoding_elapsed,
+                        preparation_elapsed: elapsed
+                            .saturating_sub(native_batch_elapsed)
+                            .saturating_sub(ipc_elapsed)
+                            .saturating_sub(state_extraction_elapsed),
                         restore_accounting,
                     });
                 }
@@ -1387,6 +1457,7 @@ fn materialize_job_frontier<W: PersistentTacticBatchWorker>(
     directory: &str,
     fallback: bool,
 ) -> Result<NativeTacticCheckpointSource, NativeTacticWorkerError> {
+    let native_batch_before = worker.native_batch_elapsed;
     let materialization_root = job.paths_root.join(directory);
     fs::create_dir_all(&materialization_root)
         .map_err(|error| NativeTacticWorkerError::Io(error.to_string()))?;
@@ -1408,7 +1479,14 @@ fn materialize_job_frontier<W: PersistentTacticBatchWorker>(
             "frontier materialization restoration receipt",
         ));
     }
-    worker.record_prefix_materialization(job.source_route_tape.frames.len(), fallback)?;
+    let replay_elapsed = worker
+        .native_batch_elapsed
+        .saturating_sub(native_batch_before);
+    worker.record_prefix_materialization(
+        job.source_route_tape.frames.len(),
+        fallback,
+        replay_elapsed,
+    )?;
     Ok(frontier.source)
 }
 

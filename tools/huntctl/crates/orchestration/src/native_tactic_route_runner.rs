@@ -249,6 +249,7 @@ pub fn run_native_tactic_route(
     let attempt_roots = (0..worker_count)
         .map(|_| reserve_attempt_root(config.output_root))
         .collect::<Result<Vec<_>, _>>()?;
+    let process_launch_started = Instant::now();
     let mut launched = std::thread::scope(|scope| {
         let root = &root;
         let initial_batch = &initial_batch;
@@ -280,6 +281,7 @@ pub fn run_native_tactic_route(
             })
             .collect::<Result<Vec<_>, _>>()
     })?;
+    let process_launch_micros = elapsed_micros(process_launch_started.elapsed());
     launched.sort_by_key(|(worker_index, _)| *worker_index);
     let mut workers = Vec::with_capacity(worker_count);
     let mut worker_initial_facts = Vec::with_capacity(worker_count);
@@ -551,6 +553,7 @@ pub fn run_native_tactic_route(
     }
     native_restore_accounting.merge(&tactic_macro_discovery.validation_restore_accounting);
     let mut timing = aggregate_route_timing(&seed_results);
+    timing.process_launch_micros = process_launch_micros;
     if let Some(demonstration) = &demonstration {
         timing.tactic_execution_micros = timing
             .tactic_execution_micros
@@ -558,6 +561,18 @@ pub fn run_native_tactic_route(
         timing.native_simulation_micros = timing
             .native_simulation_micros
             .saturating_add(demonstration.native_simulation_micros);
+        timing.ipc_and_result_transport_micros = timing
+            .ipc_and_result_transport_micros
+            .saturating_add(demonstration.ipc_and_result_transport_micros);
+        timing.native_observation_capture_micros = timing
+            .native_observation_capture_micros
+            .saturating_add(demonstration.native_observation_capture_micros);
+        timing.native_corpus_encoding_micros = timing
+            .native_corpus_encoding_micros
+            .saturating_add(demonstration.native_corpus_encoding_micros);
+        timing.rust_state_extraction_micros = timing
+            .rust_state_extraction_micros
+            .saturating_add(demonstration.rust_state_extraction_micros);
         timing.tactic_preparation_and_fact_extraction_micros = timing
             .tactic_preparation_and_fact_extraction_micros
             .saturating_add(demonstration.preparation_micros);
@@ -568,11 +583,24 @@ pub fn run_native_tactic_route(
     timing.native_simulation_micros = timing
         .native_simulation_micros
         .saturating_add(tactic_macro_discovery.validation_native_simulation_micros);
+    timing.ipc_and_result_transport_micros = timing
+        .ipc_and_result_transport_micros
+        .saturating_add(tactic_macro_discovery.validation_ipc_and_result_transport_micros);
+    timing.native_observation_capture_micros = timing
+        .native_observation_capture_micros
+        .saturating_add(tactic_macro_discovery.validation_native_observation_capture_micros);
+    timing.native_corpus_encoding_micros = timing
+        .native_corpus_encoding_micros
+        .saturating_add(tactic_macro_discovery.validation_native_corpus_encoding_micros);
+    timing.rust_state_extraction_micros = timing
+        .rust_state_extraction_micros
+        .saturating_add(tactic_macro_discovery.validation_rust_state_extraction_micros);
     timing.tactic_preparation_and_fact_extraction_micros = timing
         .tactic_preparation_and_fact_extraction_micros
         .saturating_add(tactic_macro_discovery.validation_preparation_micros);
     timing.wall_micros = elapsed_micros(campaign_started.elapsed());
     refresh_route_throughput(&mut timing, &seed_results);
+    let reporting_started = Instant::now();
     let frontier_availability = seed_results
         .iter()
         .filter_map(|seed| seed.trace.last())
@@ -625,7 +653,7 @@ pub fn run_native_tactic_route(
     let useful_training_transitions =
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
-    let report = NativeTacticRouteReport {
+    let mut report = NativeTacticRouteReport {
         schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V32.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
@@ -714,6 +742,8 @@ pub fn run_native_tactic_route(
         timing,
         seeds: seed_results,
     };
+    serde_json::to_writer(std::io::sink(), &report).map_err(route_error)?;
+    report.timing.reporting_micros = elapsed_micros(reporting_started.elapsed());
     write_new(
         &config.output_root.join("report.json"),
         &serde_json::to_vec_pretty(&report).map_err(route_error)?,

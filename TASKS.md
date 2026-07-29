@@ -115,6 +115,11 @@ The current implementation is not yet an accepted learning architecture.
   action-conditioned tick estimate, uncertainty, and its final deterministic
   queue rank. Unsupported exact or generalized heads remain explicit `None`
   rather than being inferred from queue position.
+- Native expansion reports now authenticate the child process's restore,
+  simulation, observation-capture, and corpus-encoding phase profile, while
+  host accounting separately measures process launch, IPC/result transport,
+  Rust state extraction, direct and replay restore, graph admission, learner
+  update, persistence, and report serialization.
 - Long options historically exposed only their endpoints. A graph invariant
   now admits a 40-tick realization as ten observed segments with nine ordinary
   four-tick interior nodes, then independently executes a counterfactual
@@ -262,7 +267,7 @@ Exit gate:
 
 ## P3 - Make throughput an architectural property
 
-- [ ] Measure process launch, simulation, state extraction, direct restore,
+- [x] Measure process launch, simulation, state extraction, direct restore,
       replay restore, graph admission, learner update, IPC, persistence, and
       reporting separately.
 - [ ] Establish fixed-work curves at 1, 2, 4, 8, and 16 workers using unique

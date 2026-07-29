@@ -157,6 +157,10 @@ pub(super) fn mine_and_store_tactic_macros(
             validation_native_ticks: 0,
             validation_wall_micros: 0,
             validation_native_simulation_micros: 0,
+            validation_ipc_and_result_transport_micros: 0,
+            validation_native_observation_capture_micros: 0,
+            validation_native_corpus_encoding_micros: 0,
+            validation_rust_state_extraction_micros: 0,
             validation_preparation_micros: 0,
             validation_restore_accounting: NativeTacticRestoreAccounting::default(),
             reuse: None,
@@ -287,6 +291,10 @@ pub(super) struct TacticMacroMeasuredOutcome {
 pub(super) struct TacticMacroValidationAccounting {
     native_ticks: u64,
     native_simulation_micros: u64,
+    ipc_and_result_transport_micros: u64,
+    native_observation_capture_micros: u64,
+    native_corpus_encoding_micros: u64,
+    rust_state_extraction_micros: u64,
     preparation_micros: u64,
     restore: NativeTacticRestoreAccounting,
 }
@@ -297,6 +305,18 @@ impl TacticMacroValidationAccounting {
         self.native_simulation_micros = self
             .native_simulation_micros
             .saturating_add(other.native_simulation_micros);
+        self.ipc_and_result_transport_micros = self
+            .ipc_and_result_transport_micros
+            .saturating_add(other.ipc_and_result_transport_micros);
+        self.native_observation_capture_micros = self
+            .native_observation_capture_micros
+            .saturating_add(other.native_observation_capture_micros);
+        self.native_corpus_encoding_micros = self
+            .native_corpus_encoding_micros
+            .saturating_add(other.native_corpus_encoding_micros);
+        self.rust_state_extraction_micros = self
+            .rust_state_extraction_micros
+            .saturating_add(other.rust_state_extraction_micros);
         self.preparation_micros = self
             .preparation_micros
             .saturating_add(other.preparation_micros);
@@ -506,6 +526,13 @@ pub(super) fn validate_and_store_tactic_macros(
     mined.report.validation_native_ticks = accounting.native_ticks;
     mined.report.validation_wall_micros = elapsed_micros(started.elapsed());
     mined.report.validation_native_simulation_micros = accounting.native_simulation_micros;
+    mined.report.validation_ipc_and_result_transport_micros =
+        accounting.ipc_and_result_transport_micros;
+    mined.report.validation_native_observation_capture_micros =
+        accounting.native_observation_capture_micros;
+    mined.report.validation_native_corpus_encoding_micros =
+        accounting.native_corpus_encoding_micros;
+    mined.report.validation_rust_state_extraction_micros = accounting.rust_state_extraction_micros;
     mined.report.validation_preparation_micros = accounting.preparation_micros;
     mined.report.validation_restore_accounting = accounting.restore;
     mined.report.reuse = reuse;
@@ -676,6 +703,18 @@ pub(super) fn reuse_promoted_tactic_macro(
     accounting.native_simulation_micros = accounting
         .native_simulation_micros
         .saturating_add(elapsed_micros(evaluated.native_elapsed));
+    accounting.ipc_and_result_transport_micros = accounting
+        .ipc_and_result_transport_micros
+        .saturating_add(elapsed_micros(evaluated.ipc_elapsed));
+    accounting.native_observation_capture_micros = accounting
+        .native_observation_capture_micros
+        .saturating_add(elapsed_micros(evaluated.observation_capture_elapsed));
+    accounting.native_corpus_encoding_micros = accounting
+        .native_corpus_encoding_micros
+        .saturating_add(elapsed_micros(evaluated.corpus_encoding_elapsed));
+    accounting.rust_state_extraction_micros = accounting
+        .rust_state_extraction_micros
+        .saturating_add(evaluated.outcome.state_extraction_micros);
     accounting.preparation_micros = accounting
         .preparation_micros
         .saturating_add(elapsed_micros(evaluated.preparation_elapsed));
@@ -783,6 +822,18 @@ pub(super) fn evaluate_tactic_macro_validation_batch(
             accounting.native_simulation_micros = accounting
                 .native_simulation_micros
                 .saturating_add(elapsed_micros(evaluated.native_elapsed));
+            accounting.ipc_and_result_transport_micros = accounting
+                .ipc_and_result_transport_micros
+                .saturating_add(elapsed_micros(evaluated.ipc_elapsed));
+            accounting.native_observation_capture_micros = accounting
+                .native_observation_capture_micros
+                .saturating_add(elapsed_micros(evaluated.observation_capture_elapsed));
+            accounting.native_corpus_encoding_micros = accounting
+                .native_corpus_encoding_micros
+                .saturating_add(elapsed_micros(evaluated.corpus_encoding_elapsed));
+            accounting.rust_state_extraction_micros = accounting
+                .rust_state_extraction_micros
+                .saturating_add(evaluated.outcome.state_extraction_micros);
             accounting.preparation_micros = accounting
                 .preparation_micros
                 .saturating_add(elapsed_micros(evaluated.preparation_elapsed));

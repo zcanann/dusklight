@@ -88,6 +88,9 @@ pub(super) fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> Native
     let mut timing = NativeTacticRouteTiming::default();
     for seed in seeds {
         timing.wall_micros = timing.wall_micros.saturating_add(seed.timing.wall_micros);
+        timing.process_launch_micros = timing
+            .process_launch_micros
+            .saturating_add(seed.timing.process_launch_micros);
         timing.tactic_selection_micros = timing
             .tactic_selection_micros
             .saturating_add(seed.timing.tactic_selection_micros);
@@ -100,6 +103,18 @@ pub(super) fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> Native
         timing.native_simulation_micros = timing
             .native_simulation_micros
             .saturating_add(seed.timing.native_simulation_micros);
+        timing.ipc_and_result_transport_micros = timing
+            .ipc_and_result_transport_micros
+            .saturating_add(seed.timing.ipc_and_result_transport_micros);
+        timing.native_observation_capture_micros = timing
+            .native_observation_capture_micros
+            .saturating_add(seed.timing.native_observation_capture_micros);
+        timing.native_corpus_encoding_micros = timing
+            .native_corpus_encoding_micros
+            .saturating_add(seed.timing.native_corpus_encoding_micros);
+        timing.rust_state_extraction_micros = timing
+            .rust_state_extraction_micros
+            .saturating_add(seed.timing.rust_state_extraction_micros);
         timing.tactic_preparation_and_fact_extraction_micros = timing
             .tactic_preparation_and_fact_extraction_micros
             .saturating_add(seed.timing.tactic_preparation_and_fact_extraction_micros);
@@ -124,9 +139,15 @@ pub(super) fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> Native
         timing.campaign_admission_micros = timing
             .campaign_admission_micros
             .saturating_add(seed.timing.campaign_admission_micros);
+        timing.graph_admission_micros = timing
+            .graph_admission_micros
+            .saturating_add(seed.timing.graph_admission_micros);
         timing.retained_candidate_artifact_micros = timing
             .retained_candidate_artifact_micros
             .saturating_add(seed.timing.retained_candidate_artifact_micros);
+        timing.reporting_micros = timing
+            .reporting_micros
+            .saturating_add(seed.timing.reporting_micros);
     }
     refresh_route_throughput(&mut timing, seeds);
     timing

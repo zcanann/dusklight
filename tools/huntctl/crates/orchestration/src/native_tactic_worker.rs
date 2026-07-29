@@ -49,6 +49,7 @@ use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 mod controller_execution;
 
@@ -125,6 +126,8 @@ pub struct NativeTacticWorkerOutcome {
     pub native_queries: Vec<TacticRuntimeQuery>,
     pub route_tape: InputTape,
     pub next_facts: FactSnapshot,
+    #[serde(skip_serializing)]
+    pub state_extraction_micros: u64,
     #[serde(skip_serializing)]
     pub intermediate_boundaries: Vec<OptionIntermediateBoundary>,
     pub terminal: bool,
@@ -1035,6 +1038,7 @@ fn observe_outcome(
         },
     )
     .map_err(|error| NativeTacticWorkerError::Execution(error.to_string()))?;
+    let state_extraction_started = Instant::now();
     let last = episode
         .steps
         .last()
@@ -1087,6 +1091,8 @@ fn observe_outcome(
         episode,
         candidate_prefix_ticks,
     )?;
+    let state_extraction_micros =
+        u64::try_from(state_extraction_started.elapsed().as_micros()).unwrap_or(u64::MAX);
     let retained_native_checkpoint = validated.candidates[0].retained_checkpoint.clone();
     let retained_route_ticks = request
         .checkpoint_cache
@@ -1119,6 +1125,7 @@ fn observe_outcome(
         native_queries,
         route_tape,
         next_facts,
+        state_extraction_micros,
         intermediate_boundaries,
         terminal,
     })

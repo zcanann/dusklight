@@ -112,6 +112,14 @@ pub struct NativeTacticDemonstrationReport {
     pub native_ticks: u64,
     pub wall_micros: u64,
     pub native_simulation_micros: u64,
+    #[serde(default)]
+    pub ipc_and_result_transport_micros: u64,
+    #[serde(default)]
+    pub native_observation_capture_micros: u64,
+    #[serde(default)]
+    pub native_corpus_encoding_micros: u64,
+    #[serde(default)]
+    pub rust_state_extraction_micros: u64,
     pub preparation_micros: u64,
     pub restore_accounting: NativeTacticRestoreAccounting,
     pub corpus_path: String,
@@ -147,6 +155,14 @@ pub struct NativeTacticMacroDiscoveryReport {
     pub validation_native_ticks: u64,
     pub validation_wall_micros: u64,
     pub validation_native_simulation_micros: u64,
+    #[serde(default)]
+    pub validation_ipc_and_result_transport_micros: u64,
+    #[serde(default)]
+    pub validation_native_observation_capture_micros: u64,
+    #[serde(default)]
+    pub validation_native_corpus_encoding_micros: u64,
+    #[serde(default)]
+    pub validation_rust_state_extraction_micros: u64,
     pub validation_preparation_micros: u64,
     pub validation_restore_accounting: NativeTacticRestoreAccounting,
     pub reuse: Option<NativeTacticMacroReuseReport>,
@@ -202,6 +218,8 @@ impl NativeTacticReplaySharingTelemetry {
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticRouteTiming {
     pub wall_micros: u64,
+    #[serde(default)]
+    pub process_launch_micros: u64,
     pub tactic_selection_micros: u64,
     pub checkpoint_branching_micros: u64,
     /// Coordinator wall time waiting for proposal batches. Concurrent seed
@@ -210,6 +228,16 @@ pub struct NativeTacticRouteTiming {
     /// Total native worker occupancy. This is work, not wall time, and may
     /// exceed `tactic_execution_micros` when proposals overlap.
     pub native_simulation_micros: u64,
+    /// Host/native control round-trip time outside the child's measured batch
+    /// wall, including command IPC and result transport.
+    #[serde(default)]
+    pub ipc_and_result_transport_micros: u64,
+    #[serde(default)]
+    pub native_observation_capture_micros: u64,
+    #[serde(default)]
+    pub native_corpus_encoding_micros: u64,
+    #[serde(default)]
+    pub rust_state_extraction_micros: u64,
     /// Total non-native preparation/fact-extraction occupancy across workers.
     pub tactic_preparation_and_fact_extraction_micros: u64,
     pub model_update_micros: u64,
@@ -227,11 +255,15 @@ pub struct NativeTacticRouteTiming {
     pub result_validation_and_fact_extraction_micros: u64,
     #[serde(default)]
     pub campaign_admission_micros: u64,
+    #[serde(default)]
+    pub graph_admission_micros: u64,
     /// Candidate-only artifact generation after native terminal admission.
     /// Exploration-only seeds keep this at zero; cold replay is a separate
     /// explicit command and is never charged here.
     #[serde(default)]
     pub retained_candidate_artifact_micros: u64,
+    #[serde(default)]
+    pub reporting_micros: u64,
     pub useful_decisions_per_second_millionths: u64,
     pub native_ticks_per_second_millionths: u64,
     pub episodes_per_second_millionths: u64,
@@ -257,6 +289,14 @@ pub struct NativeTacticRestoreAccounting {
     /// internal restore, so this is intentionally distinct from request count.
     pub restore_samples: u64,
     pub restore_micros: u64,
+    #[serde(default)]
+    pub authenticated_root_restore_micros: u64,
+    #[serde(default)]
+    pub direct_process_local_restore_micros: u64,
+    /// Complete native batch wall of replay-only materialization requests that
+    /// reconstruct a non-root expansion source from the authenticated root.
+    #[serde(default)]
+    pub replay_restore_micros: u64,
     pub mean_restore_micros: u64,
     pub direct_restore_request_rate_per_million: u64,
     /// Deltas from the persistent native cache's own counters. A direct
@@ -314,6 +354,15 @@ impl NativeTacticRestoreAccounting {
             .saturating_add(other.replayed_prefix_ticks);
         self.restore_samples = self.restore_samples.saturating_add(other.restore_samples);
         self.restore_micros = self.restore_micros.saturating_add(other.restore_micros);
+        self.authenticated_root_restore_micros = self
+            .authenticated_root_restore_micros
+            .saturating_add(other.authenticated_root_restore_micros);
+        self.direct_process_local_restore_micros = self
+            .direct_process_local_restore_micros
+            .saturating_add(other.direct_process_local_restore_micros);
+        self.replay_restore_micros = self
+            .replay_restore_micros
+            .saturating_add(other.replay_restore_micros);
         self.cache_hits = self.cache_hits.saturating_add(other.cache_hits);
         self.cache_misses = self.cache_misses.saturating_add(other.cache_misses);
         self.cache_evictions = self.cache_evictions.saturating_add(other.cache_evictions);

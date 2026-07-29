@@ -593,6 +593,19 @@ pub(super) fn run_seed(
         let native_elapsed = proposal_work.iter().fold(Duration::ZERO, |total, work| {
             total.saturating_add(work.native_elapsed)
         });
+        let ipc_elapsed = proposal_work.iter().fold(Duration::ZERO, |total, work| {
+            total.saturating_add(work.ipc_elapsed)
+        });
+        let observation_capture_elapsed =
+            proposal_work.iter().fold(Duration::ZERO, |total, work| {
+                total.saturating_add(work.observation_capture_elapsed)
+            });
+        let corpus_encoding_elapsed = proposal_work.iter().fold(Duration::ZERO, |total, work| {
+            total.saturating_add(work.corpus_encoding_elapsed)
+        });
+        let rust_state_extraction_micros = proposal_work.iter().fold(0_u64, |total, work| {
+            total.saturating_add(work.outcome.state_extraction_micros)
+        });
         let preparation_elapsed = proposal_work.iter().fold(Duration::ZERO, |total, work| {
             total.saturating_add(work.preparation_elapsed)
         });
@@ -634,6 +647,18 @@ pub(super) fn run_seed(
         timing.native_simulation_micros = timing
             .native_simulation_micros
             .saturating_add(elapsed_micros(native_elapsed));
+        timing.ipc_and_result_transport_micros = timing
+            .ipc_and_result_transport_micros
+            .saturating_add(elapsed_micros(ipc_elapsed));
+        timing.native_observation_capture_micros = timing
+            .native_observation_capture_micros
+            .saturating_add(elapsed_micros(observation_capture_elapsed));
+        timing.native_corpus_encoding_micros = timing
+            .native_corpus_encoding_micros
+            .saturating_add(elapsed_micros(corpus_encoding_elapsed));
+        timing.rust_state_extraction_micros = timing
+            .rust_state_extraction_micros
+            .saturating_add(rust_state_extraction_micros);
         timing.tactic_preparation_and_fact_extraction_micros = timing
             .tactic_preparation_and_fact_extraction_micros
             .saturating_add(elapsed_micros(preparation_elapsed));
@@ -710,6 +735,7 @@ pub(super) fn run_seed(
             action_schema_sha256,
             promoted_tactics,
         )?;
+        let graph_admission_started = Instant::now();
         let step = campaign
             .retain_and_refit_rewarded(
                 decision,
@@ -723,6 +749,9 @@ pub(super) fn run_seed(
                 false,
             )
             .map_err(route_error)?;
+        timing.graph_admission_micros = timing
+            .graph_admission_micros
+            .saturating_add(elapsed_micros(graph_admission_started.elapsed()));
         if step.step.transition != expected_transition
             || step.reward != evaluated[winner_index].reward
         {

@@ -831,10 +831,15 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
         native_restore_accounting: NativeTacticRestoreAccounting::default(),
         timing: NativeTacticRouteTiming {
             wall_micros: 2_000_000,
+            process_launch_micros: 30_000,
             tactic_selection_micros: 10,
             checkpoint_branching_micros: 20,
             tactic_execution_micros: 1_000_000,
             native_simulation_micros: 900_000,
+            ipc_and_result_transport_micros: 40_000,
+            native_observation_capture_micros: 50_000,
+            native_corpus_encoding_micros: 60_000,
+            rust_state_extraction_micros: 70_000,
             tactic_preparation_and_fact_extraction_micros: 100_000,
             model_update_micros: 200_000,
             evidence_projection_and_persistence_micros: 300_000,
@@ -843,6 +848,8 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
             orchestration_micros: 50_000,
             result_validation_and_fact_extraction_micros: 20_000,
             campaign_admission_micros: 20_000,
+            graph_admission_micros: 15_000,
+            reporting_micros: 25_000,
             ..NativeTacticRouteTiming::default()
         },
         selection_counts: BTreeMap::new(),
@@ -868,6 +875,13 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
     assert_eq!(timing.orchestration_micros, 50_000);
     assert_eq!(timing.result_validation_and_fact_extraction_micros, 20_000);
     assert_eq!(timing.campaign_admission_micros, 20_000);
+    assert_eq!(timing.process_launch_micros, 30_000);
+    assert_eq!(timing.ipc_and_result_transport_micros, 40_000);
+    assert_eq!(timing.native_observation_capture_micros, 50_000);
+    assert_eq!(timing.native_corpus_encoding_micros, 60_000);
+    assert_eq!(timing.rust_state_extraction_micros, 70_000);
+    assert_eq!(timing.graph_admission_micros, 15_000);
+    assert_eq!(timing.reporting_micros, 25_000);
 }
 
 #[test]
@@ -882,6 +896,9 @@ fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
         replayed_prefix_ticks: 40,
         restore_samples: 4,
         restore_micros: 30,
+        authenticated_root_restore_micros: 10,
+        direct_process_local_restore_micros: 20,
+        replay_restore_micros: 100,
         cache_hits: 2,
         cache_misses: 1,
         cache_evictions: 3,
@@ -908,6 +925,8 @@ fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
         direct_restore_fallback_replays: 2,
         restore_samples: 1,
         restore_micros: 30,
+        authenticated_root_restore_micros: 30,
+        replay_restore_micros: 50,
         cache_misses: 1,
         cache_evictions: 4,
         checkpoint_capture_attempts: 1,
@@ -933,6 +952,9 @@ fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
     assert_eq!(first.native_requests, 5);
     assert_eq!(first.restore_samples, 5);
     assert_eq!(first.restore_micros, 60);
+    assert_eq!(first.authenticated_root_restore_micros, 40);
+    assert_eq!(first.direct_process_local_restore_micros, 20);
+    assert_eq!(first.replay_restore_micros, 150);
     assert_eq!(first.mean_restore_micros, 12);
     assert_eq!(first.direct_restore_request_rate_per_million, 600_000);
     assert_eq!(first.direct_restore_fallback_replays, 3);

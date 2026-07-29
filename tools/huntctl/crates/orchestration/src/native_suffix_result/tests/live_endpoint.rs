@@ -18,6 +18,7 @@ fn result_has_no_portable_machine_image() {
     result.schema = NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V9.into();
     result.restore_identity = Some("a".repeat(32));
     result.restore_micros = vec![0];
+    result.timing.phases["checkpoint_restore"]["micros"] = Value::from(0);
     result.checkpoint_cache = Some(
         serde_json::from_value(serde_json::json!({
             "source_kind": "direct_process_local_continuation",

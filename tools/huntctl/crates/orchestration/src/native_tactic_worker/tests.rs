@@ -705,6 +705,12 @@ fn native_episode_observes_the_real_stop_and_next_fact_boundary() {
         checkpoint_bytes: 1,
         simulated_ticks: 1,
         restore_micros: vec![1],
+        timing: crate::native_suffix_result::ValidatedNativeSuffixTiming {
+            batch_wall_micros: 1,
+            simulation_micros: 1,
+            observation_capture_micros: 1,
+            corpus_encoding_micros: 1,
+        },
         checkpoint_cache: None,
         episode_shard_path: fixture_path.to_string_lossy().into_owned(),
         candidates: vec![ValidatedNativeSuffixCandidate {

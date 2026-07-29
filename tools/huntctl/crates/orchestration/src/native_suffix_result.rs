@@ -262,9 +262,18 @@ pub struct ValidatedNativeSuffixBatch {
     pub checkpoint_bytes: u64,
     pub simulated_ticks: u64,
     pub restore_micros: Vec<u64>,
+    pub timing: ValidatedNativeSuffixTiming,
     pub checkpoint_cache: Option<NativeCheckpointCacheResult>,
     pub episode_shard_path: String,
     pub candidates: Vec<ValidatedNativeSuffixCandidate>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ValidatedNativeSuffixTiming {
+    pub batch_wall_micros: u64,
+    pub simulation_micros: u64,
+    pub observation_capture_micros: u64,
+    pub corpus_encoding_micros: u64,
 }
 
 impl NativeSuffixBatchResult {
@@ -375,11 +384,13 @@ impl NativeSuffixBatchResult {
                 "native suffix winner does not match the exact successful candidates",
             ));
         }
+        let timing = validate_timing(&self.timing, &self.restore_micros)?;
         Ok(ValidatedNativeSuffixBatch {
             restore_identity: restore_identity.into(),
             checkpoint_bytes: self.checkpoint_bytes,
             simulated_ticks,
             restore_micros: self.restore_micros.clone(),
+            timing,
             checkpoint_cache: self.checkpoint_cache.clone(),
             episode_shard_path: self.episode_shard.path.clone(),
             candidates,
@@ -537,16 +548,55 @@ impl NativeSuffixBatchResult {
                 "native frozen policy winner differs from the exact terminal results",
             ));
         }
+        let timing = validate_timing(&self.timing, &self.restore_micros)?;
         Ok(ValidatedNativeSuffixBatch {
             restore_identity: restore_identity.into(),
             checkpoint_bytes: self.checkpoint_bytes,
             simulated_ticks,
             restore_micros: self.restore_micros.clone(),
+            timing,
             checkpoint_cache: None,
             episode_shard_path: self.episode_shard.path.clone(),
             candidates,
         })
     }
+}
+
+fn validate_timing(
+    timing: &NativeSuffixTimingResult,
+    restore_micros: &[u64],
+) -> Result<ValidatedNativeSuffixTiming, NativeSuffixResultError> {
+    let phase_micros = |phase: &'static str| {
+        timing
+            .phases
+            .get(phase)
+            .filter(|value| value.get("status").and_then(Value::as_str) == Some("measured"))
+            .and_then(|value| value.get("micros"))
+            .and_then(Value::as_u64)
+            .ok_or_else(|| result_error(format!("native suffix timing phase {phase} is absent")))
+    };
+    let checkpoint_restore_micros = phase_micros("checkpoint_restore")?;
+    let expected_restore_micros = restore_micros
+        .iter()
+        .try_fold(0_u64, |total, value| total.checked_add(*value))
+        .ok_or_else(|| result_error("native suffix restore timing overflows"))?;
+    let validated = ValidatedNativeSuffixTiming {
+        batch_wall_micros: timing.batch_wall_micros,
+        simulation_micros: phase_micros("simulation")?,
+        observation_capture_micros: phase_micros("observation_capture")?,
+        corpus_encoding_micros: phase_micros("corpus_encoding")?,
+    };
+    if validated.batch_wall_micros == 0
+        || checkpoint_restore_micros != expected_restore_micros
+        || validated.simulation_micros > validated.batch_wall_micros
+        || validated.observation_capture_micros > validated.batch_wall_micros
+        || validated.corpus_encoding_micros > validated.batch_wall_micros
+    {
+        return Err(result_error(
+            "native suffix timing phases are internally detached",
+        ));
+    }
+    Ok(validated)
 }
 
 impl NativeSuffixCandidateResult {
@@ -1025,7 +1075,24 @@ mod tests {
                 candidate_ticks: ticks,
                 verified: true,
                 accounting: Value::Object(Default::default()),
-                phases: Value::Object(Default::default()),
+                phases: serde_json::json!({
+                    "checkpoint_restore": {
+                        "status": "measured",
+                        "micros": 1,
+                    },
+                    "simulation": {
+                        "status": "measured",
+                        "micros": 1,
+                    },
+                    "observation_capture": {
+                        "status": "measured",
+                        "micros": 1,
+                    },
+                    "corpus_encoding": {
+                        "status": "measured",
+                        "micros": 1,
+                    },
+                }),
                 headless_audit: Value::Object(Default::default()),
             },
             audio_callback_quiesced: true,
@@ -1167,6 +1234,15 @@ mod tests {
             .validate_against(&request(true), &terminal())
             .unwrap();
         assert_eq!(miss.simulated_ticks, 2);
+        assert_eq!(
+            miss.timing,
+            ValidatedNativeSuffixTiming {
+                batch_wall_micros: 1,
+                simulation_micros: 1,
+                observation_capture_micros: 1,
+                corpus_encoding_micros: 1,
+            }
+        );
         assert_eq!(miss.candidates[0].first_hit_tick, None);
         assert_eq!(
             miss.candidates[0].terminal_boundary_fingerprint,
@@ -1178,6 +1254,25 @@ mod tests {
             .unwrap();
         assert_eq!(success.simulated_ticks, 1);
         assert_eq!(success.candidates[0].first_hit_tick, Some(0));
+    }
+
+    #[test]
+    fn rejects_missing_or_detached_native_phase_timing() {
+        let mut missing = result(false, false);
+        missing.timing.phases["simulation"] = Value::Null;
+        assert!(
+            missing
+                .validate_against(&request(false), &terminal())
+                .is_err()
+        );
+
+        let mut detached = result(false, false);
+        detached.timing.phases["checkpoint_restore"]["micros"] = Value::from(2);
+        assert!(
+            detached
+                .validate_against(&request(false), &terminal())
+                .is_err()
+        );
     }
 
     #[test]
@@ -1216,6 +1311,7 @@ mod tests {
         result.candidate_count = 2;
         result.completed_candidates = 2;
         result.restore_micros.push(1);
+        result.timing.phases["checkpoint_restore"]["micros"] = Value::from(2);
         result.timing.candidate_ticks = 2;
         result.episode_shard.episode_count = 2;
         result.winner_id = Some("candidate-z".into());

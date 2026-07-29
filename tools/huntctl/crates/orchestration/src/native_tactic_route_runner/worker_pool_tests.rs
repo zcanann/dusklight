@@ -52,12 +52,21 @@ fn missing_owner_checkpoint_is_counted_before_exact_replay_fallback() {
         .run_tactic_batch(Path::new("request"), Path::new("result"))
         .unwrap_err();
     assert!(error.is_missing_process_local_checkpoint());
-    timed.record_prefix_materialization(530, true).unwrap();
+    timed.record_route_replay(530).unwrap();
+    let direct_replay_accounting = timed.take_accounting();
+
+    assert_eq!(direct_replay_accounting.cache_misses, 1);
+    assert_eq!(direct_replay_accounting.replayed_prefix_ticks, 24);
+    assert_eq!(direct_replay_accounting.replay_restore_micros, 0);
+
+    timed
+        .record_prefix_materialization(530, true, Duration::from_micros(25))
+        .unwrap();
     let accounting = timed.take_accounting();
 
-    assert_eq!(accounting.cache_misses, 1);
     assert_eq!(accounting.prefix_materializations, 1);
     assert_eq!(accounting.replayed_prefix_ticks, 24);
+    assert_eq!(accounting.replay_restore_micros, 25);
     assert_eq!(accounting.direct_restore_fallback_replays, 1);
 }
 
