@@ -1908,6 +1908,8 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
         {"headless_audit", {
             {"active", mDoAutomationHeadlessActive()},
             {"host_pacing", mDoAutomationUnpaced() ? "disabled" : "enabled"},
+            {"presentation_lifecycle", mDoAutomationRetainsPresentationLifecycle()
+                    ? "retained_audit_comparator" : "suppressed"},
             {"imgui_frame_lifecycle", mDoAutomationRetainsImGuiFrameLifecycle()
                     ? "retained_audit_comparator" : "suppressed_on_candidate_ticks"},
             {"host_audio_device", dusk::audio::HostOutputActive() ? "active" : "suppressed"},
@@ -1916,6 +1918,8 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
             {"gameplay_draw_traversal", "retained"},
             {"cpu_renderer_submission", mDoAutomationSkipRendererSubmission()
                     ? "suppressed_on_candidate_ticks" : "retained_audit_comparator"},
+            {"gpu_frame_submission", mDoAutomationRetainsGpuFrameSubmission()
+                    ? "retained_null_backend_comparator" : "discarded_before_encoding"},
         }},
     };
     const NativeCheckpointCacheStats cacheStats = mCheckpointCache == nullptr

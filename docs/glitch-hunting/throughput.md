@@ -423,3 +423,46 @@ request bytes. Both runs bind candidate
 `02d347226cc9d75c131e3b62a7981acb7eb50a731802b62d8ebbe7b8d782a17a`;
 the smoke report file SHA-256 is
 `7948cb4938345e38cf1c71b270f2540a42d9568d083b2fb401b7498eb73558d9`.
+
+### Native subsystem suppression parity
+
+The native farming path now exposes typed audit comparators for GPU frame
+submission, CPU renderer submission, presentation, ImGui frames, host pacing,
+and the host audio device. The production path keeps deterministic game audio
+emulation, game audio updates, and gameplay draw traversal active. A seventh
+paired treatment disables state-hash proof while leaving the production
+runtime configuration unchanged.
+
+These switches have real dependencies, so the benchmark does not construct
+invalid combinations. GPU submission is added to the production-suppressed
+reference before presentation; ImGui is added after presentation; and CPU
+renderer submission is added after ImGui. Host pacing and host audio each
+compare directly with production suppression. An all-retained composite
+provides a final interaction control. The headless SDL window remains hidden
+for every comparator, including retained presentation.
+
+The 2026-07-29 macOS arm64 run at
+`build/benchmarks/native-subsystem-parity-macos-v1` evaluated one exact
+16-tick candidate from source frame 506 in nine conditions. Every condition
+produced native episode payload XXH3-128
+`b544f99fadd0781a21c81c04d90371f2`, terminal evidence SHA-256
+`366e88a4d24fe9649424886ce3bb91ed32e3e5dbb985ba03d2f0ae910073ef3f`,
+source boundary `e7ac8251329f22a5df682bbe5eb2a2ba`, and terminal boundary
+`1ec4b91fd43ce914c4e91ed6f216dc1a`. Configuration audits confirmed zero GPU
+submissions and discarded frames on the production path, nonzero null-backend
+submissions in retained comparators, zero CPU renderer time when suppressed,
+nonzero CPU renderer time when retained, and the requested pacing/audio states.
+
+All proof-enabled treatments also passed 16 samples of full-state validation
+inside their native process. Their raw state-proof digests are retained as
+diagnostics but are not compared across separately booted address spaces,
+because they include process-local pointers and allocator state. Cross-process
+parity instead requires identical authenticated episode bytes, simulated
+ticks, source and terminal boundaries, and terminal observations/evidence.
+The proof-disabled follow-up matched all of those identities and reported state
+validation as disabled.
+
+The report schema is `dusklight-native-subsystem-parity/v1`; the ignored report
+path is `build/benchmarks/native-subsystem-parity-macos-v1.report.json`, and its
+content SHA-256 is
+`69ef05bc1d62b3704e057fa3fc848260f684ea79bf0ac0762ddeb1548d42acb8`.

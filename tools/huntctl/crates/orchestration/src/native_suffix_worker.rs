@@ -29,6 +29,17 @@ use std::time::Instant;
 
 const MAXIMUM_PERSISTENT_BATCH_TICKS: usize = 4_096;
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeHeadlessAuditComparators {
+    pub gpu_frame_submission: bool,
+    pub cpu_renderer_submission: bool,
+    pub presentation_lifecycle: bool,
+    pub imgui_frame_lifecycle: bool,
+    pub host_pacing: bool,
+    pub host_audio_device: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct NativeSuffixWorkerLaunch {
     pub executable: PathBuf,
@@ -172,8 +183,42 @@ impl NativeSuffixWorkerSession {
         ),
         NativeSuffixWorkerError,
     > {
+        Self::launch_prevalidated_with_comparators(
+            config,
+            identities,
+            NativeHeadlessAuditComparators::default(),
+        )
+    }
+
+    pub fn launch_profiled_with_audit_comparators(
+        config: &NativeSuffixWorkerLaunch,
+        identities: NativeSuffixPrevalidatedFileIdentities,
+        comparators: NativeHeadlessAuditComparators,
+    ) -> Result<
+        (
+            Self,
+            ValidatedNativeSuffixBatch,
+            NativeSuffixWorkerLaunchTiming,
+        ),
+        NativeSuffixWorkerError,
+    > {
+        Self::launch_prevalidated_with_comparators(config, Some(identities), comparators)
+    }
+
+    fn launch_prevalidated_with_comparators(
+        config: &NativeSuffixWorkerLaunch,
+        identities: Option<NativeSuffixPrevalidatedFileIdentities>,
+        comparators: NativeHeadlessAuditComparators,
+    ) -> Result<
+        (
+            Self,
+            ValidatedNativeSuffixBatch,
+            NativeSuffixWorkerLaunchTiming,
+        ),
+        NativeSuffixWorkerError,
+    > {
         let total_started = Instant::now();
-        let prepared = prepare_launch(config, identities)?;
+        let prepared = prepare_launch(config, identities, comparators)?;
         let spawn_started = Instant::now();
         let transport = ProcessTransport::spawn_in(
             &prepared.executable,
@@ -349,7 +394,16 @@ impl NativeSuffixWorkerSession {
 fn prepare_launch(
     config: &NativeSuffixWorkerLaunch,
     identities: Option<NativeSuffixPrevalidatedFileIdentities>,
+    comparators: NativeHeadlessAuditComparators,
 ) -> Result<PreparedLaunch, NativeSuffixWorkerError> {
+    if (comparators.presentation_lifecycle && !comparators.gpu_frame_submission)
+        || (comparators.imgui_frame_lifecycle && !comparators.presentation_lifecycle)
+        || (comparators.cpu_renderer_submission && !comparators.imgui_frame_lifecycle)
+    {
+        return Err(worker_message(
+            "headless audit comparators must retain the GPU -> presentation -> ImGui -> CPU renderer dependency chain",
+        ));
+    }
     if config.world_context_sha256 == Digest::ZERO
         || config.card_fixture_sha256 == Digest::ZERO
         || config.terminal.program_sha256 == Digest::ZERO
@@ -511,6 +565,33 @@ fn prepare_launch(
     for cvar in FIXED_AUTOMATION_CVARS {
         args.push("--cvar".into());
         args.push((*cvar).into());
+    }
+    for (enabled, argument) in [
+        (
+            comparators.gpu_frame_submission,
+            "--headless-submit-gpu-frames",
+        ),
+        (
+            comparators.cpu_renderer_submission,
+            "--headless-retain-cpu-renderer-submission",
+        ),
+        (
+            comparators.presentation_lifecycle,
+            "--headless-retain-presentation-lifecycle",
+        ),
+        (
+            comparators.imgui_frame_lifecycle,
+            "--headless-retain-imgui-frame-lifecycle",
+        ),
+        (comparators.host_pacing, "--headless-retain-host-pacing"),
+        (
+            comparators.host_audio_device,
+            "--headless-retain-host-audio-device",
+        ),
+    ] {
+        if enabled {
+            args.push(argument.into());
+        }
     }
     Ok(PreparedLaunch {
         executable,
@@ -1251,7 +1332,8 @@ mod tests {
     #[test]
     fn launch_preflight_binds_every_persistent_source_identity() {
         let (_root, launch) = fixture();
-        let prepared = prepare_launch(&launch, None).unwrap();
+        let prepared =
+            prepare_launch(&launch, None, NativeHeadlessAuditComparators::default()).unwrap();
 
         assert_eq!(prepared.identity.source_frame, 1);
         assert_eq!(prepared.identity.maximum_ticks, 2);
@@ -1278,6 +1360,56 @@ mod tests {
     }
 
     #[test]
+    fn launch_preflight_materializes_every_headless_audit_comparator() {
+        let (_root, launch) = fixture();
+        let prepared = prepare_launch(
+            &launch,
+            None,
+            NativeHeadlessAuditComparators {
+                gpu_frame_submission: true,
+                cpu_renderer_submission: true,
+                presentation_lifecycle: true,
+                imgui_frame_lifecycle: true,
+                host_pacing: true,
+                host_audio_device: true,
+            },
+        )
+        .unwrap();
+
+        for argument in [
+            "--headless-submit-gpu-frames",
+            "--headless-retain-cpu-renderer-submission",
+            "--headless-retain-presentation-lifecycle",
+            "--headless-retain-imgui-frame-lifecycle",
+            "--headless-retain-host-pacing",
+            "--headless-retain-host-audio-device",
+        ] {
+            assert!(prepared.args.iter().any(|actual| actual == argument));
+        }
+    }
+
+    #[test]
+    fn launch_preflight_rejects_broken_headless_comparator_dependencies() {
+        let (_root, launch) = fixture();
+        for comparators in [
+            NativeHeadlessAuditComparators {
+                presentation_lifecycle: true,
+                ..NativeHeadlessAuditComparators::default()
+            },
+            NativeHeadlessAuditComparators {
+                imgui_frame_lifecycle: true,
+                ..NativeHeadlessAuditComparators::default()
+            },
+            NativeHeadlessAuditComparators {
+                cpu_renderer_submission: true,
+                ..NativeHeadlessAuditComparators::default()
+            },
+        ] {
+            assert!(prepare_launch(&launch, None, comparators).is_err());
+        }
+    }
+
+    #[test]
     fn launch_reuses_enclosing_execution_file_identities() {
         let (_root, launch) = fixture();
         let identities = NativeSuffixPrevalidatedFileIdentities {
@@ -1285,7 +1417,12 @@ mod tests {
             game_data_sha256: Digest([0xbb; 32]),
         };
 
-        let prepared = prepare_launch(&launch, Some(identities)).unwrap();
+        let prepared = prepare_launch(
+            &launch,
+            Some(identities),
+            NativeHeadlessAuditComparators::default(),
+        )
+        .unwrap();
 
         assert_eq!(
             prepared.identity.executable_sha256,
@@ -1302,6 +1439,7 @@ mod tests {
                     executable_sha256: Digest::ZERO,
                     game_data_sha256: identities.game_data_sha256,
                 }),
+                NativeHeadlessAuditComparators::default(),
             )
             .is_err()
         );
@@ -1310,7 +1448,8 @@ mod tests {
     #[test]
     fn persistent_source_accepts_a_different_bounded_tactic_horizon() {
         let (_root, launch) = fixture();
-        let prepared = prepare_launch(&launch, None).unwrap();
+        let prepared =
+            prepare_launch(&launch, None, NativeHeadlessAuditComparators::default()).unwrap();
         let mut next = prepared.batch;
         next.maximum_ticks = 1;
         validate_batch_identity(&next, &prepared.identity).unwrap();
@@ -1323,7 +1462,7 @@ mod tests {
     fn launch_preflight_rejects_terminal_and_horizon_drift() {
         let (_root, mut launch) = fixture();
         launch.terminal.definition_sha256 = Digest([9; 32]);
-        assert!(prepare_launch(&launch, None).is_err());
+        assert!(prepare_launch(&launch, None, NativeHeadlessAuditComparators::default()).is_err());
 
         let (_root, mut launch) = fixture();
         let mut batch: NativeSuffixBatch =
@@ -1334,10 +1473,10 @@ mod tests {
             serde_json::to_vec_pretty(&batch).unwrap(),
         )
         .unwrap();
-        assert!(prepare_launch(&launch, None).is_err());
+        assert!(prepare_launch(&launch, None, NativeHeadlessAuditComparators::default()).is_err());
 
         launch.world_context_sha256 = Digest::ZERO;
-        assert!(prepare_launch(&launch, None).is_err());
+        assert!(prepare_launch(&launch, None, NativeHeadlessAuditComparators::default()).is_err());
     }
 
     #[test]

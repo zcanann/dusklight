@@ -260,6 +260,9 @@ static bool unpacedMainLoop;
 static bool fixedStepMainLoop;
 static bool headlessMainLoop;
 static bool headlessRetainImGuiFrameLifecycle;
+static bool headlessRetainPresentationLifecycle;
+static bool headlessRetainHostPacing;
+static bool headlessSubmitGpuFrames;
 static std::uint16_t fixedStepSpeedPercent = 100;
 static bool pipelineWarmupGateEnabled;
 static std::uint8_t recordInputHandoffCountdownSeconds;
@@ -804,6 +807,14 @@ bool mDoAutomationUnpaced() {
 
 bool mDoAutomationRetainsImGuiFrameLifecycle() {
     return headlessRetainImGuiFrameLifecycle;
+}
+
+bool mDoAutomationRetainsGpuFrameSubmission() {
+    return headlessSubmitGpuFrames;
+}
+
+bool mDoAutomationRetainsPresentationLifecycle() {
+    return headlessRetainPresentationLifecycle;
 }
 
 namespace {
@@ -2262,6 +2273,13 @@ int game_main(int argc, char* argv[]) {
             "Audit comparator: retain ImGui initialization and per-frame lifecycle while "
             "discarding headless frames",
             cxxopts::value<bool>()->default_value("false")->implicit_value("true"))(
+            "headless-retain-presentation-lifecycle",
+            "Audit comparator: retain the null-backend presentation lifecycle while the headless "
+            "window remains hidden",
+            cxxopts::value<bool>()->default_value("false")->implicit_value("true"))(
+            "headless-retain-host-pacing",
+            "Audit comparator: retain deterministic 30 Hz host pacing in headless mode",
+            cxxopts::value<bool>()->default_value("false")->implicit_value("true"))(
             "headless-retain-host-audio-device",
             "Audit comparator: open the muted host playback device while deterministic headless "
             "audio emulation remains synchronous",
@@ -2448,12 +2466,15 @@ int game_main(int argc, char* argv[]) {
         return 1;
     }
     headlessMainLoop = parsed_arg_options["headless"].as<bool>();
-    const bool headlessSubmitGpuFrames =
-        parsed_arg_options["headless-submit-gpu-frames"].as<bool>();
+    headlessSubmitGpuFrames = parsed_arg_options["headless-submit-gpu-frames"].as<bool>();
     headlessRetainRendererSubmission =
         parsed_arg_options["headless-retain-cpu-renderer-submission"].as<bool>();
     headlessRetainImGuiFrameLifecycle =
         parsed_arg_options["headless-retain-imgui-frame-lifecycle"].as<bool>();
+    headlessRetainPresentationLifecycle =
+        parsed_arg_options["headless-retain-presentation-lifecycle"].as<bool>();
+    headlessRetainHostPacing =
+        parsed_arg_options["headless-retain-host-pacing"].as<bool>();
     headlessRetainHostAudioDevice =
         parsed_arg_options["headless-retain-host-audio-device"].as<bool>();
     if (headlessSubmitGpuFrames && !headlessMainLoop) {
@@ -2465,10 +2486,26 @@ int game_main(int argc, char* argv[]) {
             "Headless Error: --headless-retain-cpu-renderer-submission requires --headless\n");
         return 1;
     }
-    if ((headlessRetainImGuiFrameLifecycle || headlessRetainHostAudioDevice) &&
+    if ((headlessRetainImGuiFrameLifecycle || headlessRetainPresentationLifecycle ||
+            headlessRetainHostPacing || headlessRetainHostAudioDevice) &&
         !headlessMainLoop)
     {
         fprintf(stderr, "Headless Error: headless audit comparators require --headless\n");
+        return 1;
+    }
+    if (headlessRetainPresentationLifecycle && !headlessSubmitGpuFrames) {
+        fprintf(stderr,
+            "Headless Error: retained presentation requires --headless-submit-gpu-frames\n");
+        return 1;
+    }
+    if (headlessRetainImGuiFrameLifecycle && !headlessRetainPresentationLifecycle) {
+        fprintf(stderr,
+            "Headless Error: retained ImGui frames require retained presentation\n");
+        return 1;
+    }
+    if (headlessRetainRendererSubmission && !headlessRetainImGuiFrameLifecycle) {
+        fprintf(stderr,
+            "Headless Error: retained CPU renderer submission requires retained ImGui frames\n");
         return 1;
     }
     frameCaptureEnabled = parsed_arg_options.count("frame-capture-png") != 0;
@@ -2482,9 +2519,11 @@ int game_main(int argc, char* argv[]) {
         return 1;
     }
     inputTapeFastForwardActive = hasInputTapeFastForward;
-    unpacedMainLoop = headlessMainLoop || explicitlyUnpaced || inputTapeFastForwardActive ||
-                      frameCaptureEnabled || fixedStepSpeedPercent == 0;
-    fixedStepMainLoop = unpacedMainLoop || parsed_arg_options["fixed-step"].as<bool>();
+    unpacedMainLoop = (headlessMainLoop && !headlessRetainHostPacing) || explicitlyUnpaced ||
+                      inputTapeFastForwardActive || frameCaptureEnabled ||
+                      fixedStepSpeedPercent == 0;
+    fixedStepMainLoop =
+        headlessMainLoop || unpacedMainLoop || parsed_arg_options["fixed-step"].as<bool>();
     const bool useConfiguredDvd = parsed_arg_options["configured-dvd"].as<bool>();
     if (useConfiguredDvd && parsed_arg_options.count("dvd")) {
         fprintf(stderr, "DVD Error: --configured-dvd cannot be combined with --dvd PATH\n");
@@ -3944,8 +3983,11 @@ int game_main(int argc, char* argv[]) {
         config.vsync = fixedStepMainLoop ? false : dusk::getSettings().video.enableVsync;
         config.startFullscreen =
             headlessMainLoop ? false : dusk::getSettings().video.enableFullscreen;
-        config.startHidden =
-            (inputTapeFastForwardActive && !inputTapeFastForwardVisible) || frameCaptureEnabled;
+        // Window visibility is a headless safety invariant, independent of whether an audit
+        // comparator retains Aurora's presentation lifecycle.
+        config.startHidden = headlessMainLoop ||
+                             (inputTapeFastForwardActive && !inputTapeFastForwardVisible) ||
+                             frameCaptureEnabled;
         config.disablePresentation = inputTapeFastForwardActive && !inputTapeFastForwardVisible;
         config.windowPosX = -1;
         config.windowPosY = -1;
@@ -3974,7 +4016,8 @@ int game_main(int argc, char* argv[]) {
             headlessMainLoop ? false : dusk::getSettings().game.pauseOnFocusLost;
         config.imGuiInitCallback = &aurora_imgui_init_callback;
         config.allowTextureDumps = false;
-        config.disablePresentation = headlessMainLoop || frameCaptureEnabled;
+        config.disablePresentation =
+            (headlessMainLoop && !headlessRetainPresentationLifecycle) || frameCaptureEnabled;
         config.discardGpuFrames = headlessMainLoop && !headlessSubmitGpuFrames;
         config.blockOnPipelineCompilation = deterministicAutomationIo && !headlessMainLoop;
         pipelineWarmupGateEnabled = config.blockOnPipelineCompilation;
@@ -4016,7 +4059,7 @@ int game_main(int argc, char* argv[]) {
         }
         // Aurora retains a hidden SDL window as an internal size/event anchor,
         // but simulation-only mode must never expose it on the desktop or taskbar.
-        // disablePresentation bypasses Aurora's visibility/focus pause checks.
+        // This remains true when an audit comparator retains presentation.
         if ((SDL_GetWindowFlags(auroraInfo.window) & SDL_WINDOW_HIDDEN) == 0u) {
             DuskLog.error("Headless Aurora window unexpectedly became visible");
             dusk::crash_reporting::shutdown();
@@ -4026,13 +4069,17 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
         DuskLog.info("Headless renderer: CPU GX submission {}; gameplay draw callbacks retained; "
-                     "GPU frames {}; ImGui frame lifecycle {}",
+                     "GPU frames {}; presentation lifecycle {}; ImGui frame lifecycle {}; host "
+                     "pacing {}",
             headlessRetainRendererSubmission ? "retained (audit comparator)" :
                                                "suppressed on automation-owned ticks",
             headlessSubmitGpuFrames ? "submitted to the null backend (audit comparator)" :
                                       "discarded before encoding and submission",
+            headlessRetainPresentationLifecycle ? "retained (audit comparator)" : "suppressed",
             headlessRetainImGuiFrameLifecycle ? "retained (audit comparator)" :
-                                                "suppressed on automation-owned ticks");
+                                                "suppressed on automation-owned ticks",
+            headlessRetainHostPacing ? "retained at deterministic 30 Hz (audit comparator)" :
+                                       "disabled");
     }
     if (inputTapeFastForwardActive && !inputTapeFastForwardVisible &&
         (SDL_GetWindowFlags(auroraInfo.window) & SDL_WINDOW_HIDDEN) == 0u)

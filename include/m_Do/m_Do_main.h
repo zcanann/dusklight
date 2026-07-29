@@ -22,6 +22,8 @@ bool mDoAutomationSkipRendererSubmission();
 bool mDoAutomationHeadlessActive();
 bool mDoAutomationUnpaced();
 bool mDoAutomationRetainsImGuiFrameLifecycle();
+bool mDoAutomationRetainsGpuFrameSubmission();
+bool mDoAutomationRetainsPresentationLifecycle();
 #endif
 
 extern OSThread mainThread;

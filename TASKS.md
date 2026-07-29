@@ -283,9 +283,17 @@ Exit gate:
       shards. A macOS one-decision native smoke reduced the repeated request
       from 1,878 to 180 bytes (10.43x, 90.4%) with the same candidate identity
       and 16 simulated ticks.
-- [ ] Verify which rendering, audio, presentation, and proof systems may be
+- [x] Verify which rendering, audio, presentation, and proof systems may be
       disabled without changing native state or terminal evidence. Retain
       measured parity evidence for every disabled subsystem.
+      A sealed macOS paired benchmark now retains each suppressed subsystem
+      against its nearest legal dependency reference: GPU submission,
+      presentation, ImGui lifecycle, CPU renderer submission, host pacing,
+      host audio, and state-hash proof. All nine conditions produced the same
+      authenticated native episode payload, source/terminal boundaries, ticks,
+      and terminal evidence; every proof-enabled condition also passed its
+      process-local full-state validation. Report content SHA-256:
+      `69ef05bc1d62b3704e057fa3fc848260f684ea79bf0ac0762ddeb1548d42acb8`.
 - [ ] Profile restore locality and schedule leases to checkpoint owners when it
       reduces replay without collapsing exploration diversity.
 - [x] Deliver a 10x reduction in wall time to a fixed useful-evidence target

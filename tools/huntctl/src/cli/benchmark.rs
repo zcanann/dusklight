@@ -1,6 +1,6 @@
 //! Revision-pinned benchmark metadata import and selection validation.
 
-use crate::{option, repeated_option, required_path, u32_option};
+use crate::{option, repeated_option, required_path, u32_option, usize_option};
 use huntctl::benchmark::skybook::SkybookManifest;
 use huntctl::benchmark::skybook_pilot::SkybookPilot;
 use huntctl::benchmark::skybook_requirements::SkybookRequirementsIndex;
@@ -27,6 +27,9 @@ use huntctl::search_evaluator::native_checkpoint_benchmark::{
     run_native_checkpoint_benchmark,
 };
 use huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding;
+use huntctl::search_evaluator::native_subsystem_parity::{
+    NativeSubsystemParityConfig, NativeSubsystemParityReport, run_native_subsystem_parity,
+};
 use huntctl::search_evaluator::optimization_request::OptimizationRequest;
 use huntctl::throughput_benchmark::{
     ColdProcessBenchmarkConfig, ColdProcessBenchmarkReport, run_cold_process_benchmark,
@@ -189,8 +192,17 @@ pub(crate) fn command_benchmark(args: &[String]) -> Result<(), Box<dyn Error>> {
         }
         Some("route-cold-process") => route_cold_process(&args[1..]),
         Some("native-checkpoint") => native_checkpoint(&args[1..]),
+        Some("native-subsystem-parity") => native_subsystem_parity(&args[1..]),
         Some("validate-native-checkpoint") => {
             let report: NativeCheckpointBenchmarkReport = serde_json::from_slice(&fs::read(
+                required_path(&args[1..], "--report")?,
+            )?)?;
+            report.validate()?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("validate-native-subsystem-parity") => {
+            let report: NativeSubsystemParityReport = serde_json::from_slice(&fs::read(
                 required_path(&args[1..], "--report")?,
             )?)?;
             report.validate()?;
@@ -243,8 +255,46 @@ pub(crate) fn command_benchmark(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
-        _ => Err("benchmark command:\n  import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  index-skybook-requirements --manifest MANIFEST.json --output INDEX.json\n  validate-skybook-requirements --manifest MANIFEST.json --index INDEX.json\n  validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json\n  validate-skybook-pilot --manifest MANIFEST.json --pilot PILOT.json [--repository-root ROOT]\n  route-cold-process --timeline FILE --segment ID --goal GOAL --game PATH --dvd PATH --artifact-root RELATIVE_ROOT [--output REPORT.json] [--repository-root ROOT] [--repetitions N] [--timeout-seconds N]\n  cold-process --request REQUEST.json --artifact-root RELATIVE_ROOT --output REPORT.json [--repository-root ROOT] [--repetitions N] [--prefix-ticks N]\n  validate-cold-process --report REPORT.json\n  native-checkpoint --request REQUEST.json --execution EXECUTION.json --output-root DIRECTORY --report REPORT.json [--repository-root ROOT] [--frontier-ticks N --frontier-ticks N --frontier-ticks N]\n  validate-native-checkpoint --report REPORT.json".into()),
+        _ => Err("benchmark command:\n  import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  index-skybook-requirements --manifest MANIFEST.json --output INDEX.json\n  validate-skybook-requirements --manifest MANIFEST.json --index INDEX.json\n  validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json\n  validate-skybook-pilot --manifest MANIFEST.json --pilot PILOT.json [--repository-root ROOT]\n  route-cold-process --timeline FILE --segment ID --goal GOAL --game PATH --dvd PATH --artifact-root RELATIVE_ROOT [--output REPORT.json] [--repository-root ROOT] [--repetitions N] [--timeout-seconds N]\n  cold-process --request REQUEST.json --artifact-root RELATIVE_ROOT --output REPORT.json [--repository-root ROOT] [--repetitions N] [--prefix-ticks N]\n  validate-cold-process --report REPORT.json\n  native-checkpoint --request REQUEST.json --execution EXECUTION.json --output-root DIRECTORY --report REPORT.json [--repository-root ROOT] [--frontier-ticks N --frontier-ticks N --frontier-ticks N]\n  validate-native-checkpoint --report REPORT.json\n  native-subsystem-parity --request REQUEST.json --execution EXECUTION.json --output-root DIRECTORY --report REPORT.json [--candidate-ticks N] [--repository-root ROOT]\n  validate-native-subsystem-parity --report REPORT.json".into()),
     }
+}
+
+fn native_subsystem_parity(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let repository_root = fs::canonicalize(
+        option(args, "--repository-root")
+            .map(PathBuf::from)
+            .unwrap_or(env::current_dir()?),
+    )?;
+    let request: OptimizationRequest =
+        serde_json::from_slice(&fs::read(required_path(args, "--request")?)?)?;
+    let execution: NativeResidualExecutionBinding =
+        serde_json::from_slice(&fs::read(required_path(args, "--execution")?)?)?;
+    let output_root = resolve_output(&repository_root, required_path(args, "--output-root")?);
+    let report_path = resolve_output(&repository_root, required_path(args, "--report")?);
+    if report_path.exists() {
+        return Err(format!(
+            "native subsystem parity report already exists: {}",
+            report_path.display()
+        )
+        .into());
+    }
+    let report = run_native_subsystem_parity(&NativeSubsystemParityConfig {
+        repository_root: &repository_root,
+        optimization: &request,
+        execution: &execution,
+        output_root: &output_root,
+        candidate_ticks: usize_option(args, "--candidate-ticks", 16)?,
+    })?;
+    write_new_file(&report_path, &report.to_pretty_json()?)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if !report.passed {
+        return Err(format!(
+            "native subsystem parity failed; report: {}",
+            report_path.display()
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn native_checkpoint(args: &[String]) -> Result<(), Box<dyn Error>> {

@@ -235,6 +235,9 @@ fn print_usage() {
         "  huntctl learn prove-generalized-tactics (--campaign-root DIR | --input CORPUS.dtqc [--input MORE.dtqc]) --output REPORT.json [--goal-distance-feature N]"
     );
     eprintln!(
+        "  huntctl benchmark native-subsystem-parity --request OPTIMIZATION.json --execution EXECUTION.json --output-root build/DIR --report build/REPORT.json [--candidate-ticks N] [--repository-root ROOT]"
+    );
+    eprintln!(
         "  huntctl learn calibrate-tactic-value (--checkpoint TACTIC-Q.dtqz | --input CORPUS.dtqc) --output REPORT.json [--goal-distance-feature N] [--state-region-width D] [--group-folds N] [--validation-fold N] [--test-fold N] [--interval-coverage-millionths N] [--fitted-q-iterations N] [--per-tick-discount D]"
     );
     eprintln!(
