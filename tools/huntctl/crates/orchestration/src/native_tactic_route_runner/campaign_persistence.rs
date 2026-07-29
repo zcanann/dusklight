@@ -365,7 +365,8 @@ pub(super) fn read_completed_seed_result(
         .state_graph
         .content_sha256()
         .map_err(route_error)?;
-    let expected_graph_metrics = tactic_graph_metrics(&checkpoint.state_graph, &result.trace)?;
+    let expected_graph_metrics =
+        tactic_graph_metrics(&checkpoint.state_graph, graph_sha256, &result.trace)?;
     let best_graph_terminal = checkpoint.state_graph.best_terminal_path();
     if checkpoint.execution_authority_sha256 != execution_plan_sha256
         || checkpoint.decision_index != result.decisions

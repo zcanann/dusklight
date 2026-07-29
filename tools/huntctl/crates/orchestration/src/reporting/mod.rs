@@ -30,50 +30,34 @@ pub struct GraphSearchReport {
 impl GraphSearchReport {
     pub fn from_graph(graph: &StateGraph) -> Result<Self, ReportingError> {
         graph.validate()?;
-        let mut untried_expansions = 0_u64;
-        let mut leased_expansions = 0_u64;
-        let mut retryable_expansions = 0_u64;
-        let mut completed_expansions = 0_u64;
-        let mut failed_validation_expansions = 0_u64;
-        for expansion in graph.expansions() {
-            match &expansion.status {
-                ActionExpansionStatus::Untried => untried_expansions += 1,
-                ActionExpansionStatus::Leased { .. } => leased_expansions += 1,
-                ActionExpansionStatus::Retryable { .. } => retryable_expansions += 1,
-                ActionExpansionStatus::Completed { .. } => completed_expansions += 1,
-                ActionExpansionStatus::FailedValidation { .. } => {
-                    failed_validation_expansions += 1;
-                }
-            }
+        let graph_sha256 = graph.content_sha256()?;
+        Self::from_validated_graph(graph, graph_sha256)
+    }
+
+    pub(crate) fn from_validated_graph(
+        graph: &StateGraph,
+        graph_sha256: Digest,
+    ) -> Result<Self, ReportingError> {
+        if graph_sha256 == Digest::ZERO {
+            return Err(ReportingError::Invalid(
+                "validated graph report has no content identity",
+            ));
         }
-        let report = Self {
-            schema: GRAPH_SEARCH_REPORT_SCHEMA_V1.into(),
-            graph_sha256: graph.content_sha256()?,
-            graph_identity: graph.identity.clone(),
-            nodes: graph.node_count() as u64,
-            observed_segments: graph.segment_count() as u64,
-            future_equivalence_proofs: graph.future_equivalence_proof_count() as u64,
-            untried_expansions,
-            leased_expansions,
-            retryable_expansions,
-            completed_expansions,
-            failed_validation_expansions,
-            best_terminal: graph.best_terminal_path().cloned(),
-        };
-        report.validate_against(graph)?;
-        Ok(report)
+        Self::from_graph_unchecked(graph, graph_sha256)
     }
 
     pub fn validate_against(&self, graph: &StateGraph) -> Result<(), ReportingError> {
+        graph.validate()?;
+        let graph_sha256 = graph.content_sha256()?;
         if self.schema != GRAPH_SEARCH_REPORT_SCHEMA_V1
-            || self.graph_sha256 != graph.content_sha256()?
+            || self.graph_sha256 != graph_sha256
             || self.graph_identity != graph.identity
         {
             return Err(ReportingError::Invalid(
                 "graph search report identity is detached",
             ));
         }
-        let expected = Self::from_graph_unchecked(graph)?;
+        let expected = Self::from_graph_unchecked(graph, graph_sha256)?;
         if *self != expected {
             return Err(ReportingError::Invalid(
                 "graph search report metrics are detached",
@@ -87,10 +71,13 @@ impl GraphSearchReport {
             .map_err(|error| ReportingError::Serialization(error.to_string()))
     }
 
-    fn from_graph_unchecked(graph: &StateGraph) -> Result<Self, ReportingError> {
+    fn from_graph_unchecked(
+        graph: &StateGraph,
+        graph_sha256: Digest,
+    ) -> Result<Self, ReportingError> {
         let mut report = Self {
             schema: GRAPH_SEARCH_REPORT_SCHEMA_V1.into(),
-            graph_sha256: graph.content_sha256()?,
+            graph_sha256,
             graph_identity: graph.identity.clone(),
             nodes: graph.node_count() as u64,
             observed_segments: graph.segment_count() as u64,

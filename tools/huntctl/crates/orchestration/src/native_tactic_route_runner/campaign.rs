@@ -1094,7 +1094,11 @@ pub(super) fn run_seed(
         .state_graph
         .content_sha256()
         .map_err(route_error)?;
-    let graph_metrics = tactic_graph_metrics(&final_campaign_checkpoint.state_graph, &trace)?;
+    let graph_metrics = tactic_graph_metrics(
+        &final_campaign_checkpoint.state_graph,
+        state_graph_sha256,
+        &trace,
+    )?;
     let terminal_discovered = best_graph_terminal.is_some();
     let (best_terminal_tape, best_terminal_result) = if let Some(result) = best_success.as_ref() {
         let retained_candidate_started = Instant::now();
@@ -1209,9 +1213,11 @@ pub(super) fn run_seed(
 
 pub(super) fn tactic_graph_metrics(
     graph: &crate::state_graph::StateGraph,
+    graph_sha256: Digest,
     trace: &[NativeTacticDecisionTrace],
 ) -> Result<NativeTacticGraphMetrics, NativeTacticRouteRunError> {
-    let graph_report = GraphSearchReport::from_graph(graph).map_err(route_error)?;
+    let graph_report =
+        GraphSearchReport::from_validated_graph(graph, graph_sha256).map_err(route_error)?;
     let completed_leases = trace.iter().try_fold(0_u64, |total, decision| {
         total
             .checked_add(u64::try_from(decision.proposal_batch.len()).map_err(route_error)?)
@@ -1223,14 +1229,11 @@ pub(super) fn tactic_graph_metrics(
         .saturating_sub(graph_report.nodes);
     let terminal_paths =
         u64::try_from(graph.nodes().filter(|node| node.terminal).count()).map_err(route_error)?;
-    if completed_leases != graph_report.completed_expansions
-        || graph_report.completed_expansions
-            != u64::try_from(graph.completed_executable_expansion_count()).map_err(route_error)?
-        || terminal_paths == 0 && graph_report.best_terminal.is_some()
+    if terminal_paths == 0 && graph_report.best_terminal.is_some()
         || terminal_paths > 0 && graph_report.best_terminal.is_none()
     {
         return Err(route_message(
-            "native tactic graph metrics are detached from completed graph leases",
+            "native tactic graph metrics are detached from terminal paths",
         ));
     }
     Ok(NativeTacticGraphMetrics {

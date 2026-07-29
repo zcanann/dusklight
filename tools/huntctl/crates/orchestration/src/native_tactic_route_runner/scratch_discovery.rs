@@ -22,6 +22,7 @@ pub struct NativeTacticScratchTotals {
     pub graph_edges: u64,
     pub duplicate_transpositions: u64,
     pub completed_leases: u64,
+    pub completed_graph_expansions: u64,
     pub active_leases: u64,
     pub restore_samples: u64,
     pub simulated_ticks: u64,
@@ -123,7 +124,7 @@ impl NativeTacticScratchDiscoveryReport {
             condition(
                 "bounded_graph_expansions",
                 maximum_graph_expansions > 0
-                    && totals.completed_leases <= maximum_graph_expansions
+                    && totals.completed_graph_expansions <= maximum_graph_expansions
                     && route.total_decisions <= request.budgets.candidate_budget,
             ),
             condition(
@@ -159,7 +160,7 @@ impl NativeTacticScratchDiscoveryReport {
                 "inspectable_graph_and_learner_work",
                 route.seeds.iter().all(|seed| seed.graph_metrics.is_some())
                     && totals.graph_nodes >= ORDON_SCRATCH_DISCOVERY_SEEDS as u64
-                    && totals.completed_leases == route.unique_useful_graph_expansions
+                    && totals.completed_graph_expansions == route.unique_useful_graph_expansions
                     && totals.simulated_ticks == route.total_native_ticks,
             ),
         ];
@@ -290,6 +291,7 @@ fn scratch_totals(
         graph_edges: 0,
         duplicate_transpositions: 0,
         completed_leases: 0,
+        completed_graph_expansions: 0,
         active_leases: 0,
         restore_samples: route.native_restore_accounting.restore_samples,
         simulated_ticks: route.total_native_ticks,
@@ -313,6 +315,9 @@ fn scratch_totals(
         totals.completed_leases = totals
             .completed_leases
             .saturating_add(metrics.completed_leases);
+        totals.completed_graph_expansions = totals
+            .completed_graph_expansions
+            .saturating_add(metrics.graph.completed_expansions);
         totals.active_leases = totals
             .active_leases
             .saturating_add(metrics.graph.leased_expansions);
@@ -344,7 +349,8 @@ mod tests {
                 graph_nodes: 8,
                 graph_edges: 4,
                 duplicate_transpositions: 0,
-                completed_leases: 4,
+                completed_leases: 8,
+                completed_graph_expansions: 4,
                 active_leases: 0,
                 restore_samples: 4,
                 simulated_ticks: 128,
@@ -363,6 +369,7 @@ mod tests {
     #[test]
     fn acceptance_report_is_content_bound_and_rejects_resealed_failure_drift() {
         let report = report();
+        assert!(report.totals.completed_leases > report.totals.completed_graph_expansions);
         report.validate().unwrap();
 
         let mut tampered = report.clone();
