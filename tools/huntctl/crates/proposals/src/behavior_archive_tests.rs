@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::artifact::Digest;
 use crate::candidate_envelope::NamedDigest;

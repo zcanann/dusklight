@@ -1,4 +1,3 @@
-
 use super::*;
 
 fn put_u16(bytes: &mut [u8], offset: usize, value: u16) {

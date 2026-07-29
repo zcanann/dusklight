@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::residual_action::{
     AnalogChannel, AnalogResidual, ResidualCandidate, TemporalBasis, compile_residual_candidate,

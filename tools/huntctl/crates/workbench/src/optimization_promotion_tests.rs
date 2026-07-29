@@ -1,4 +1,3 @@
-
 use super::*;
 use dusklight_automation_contracts::tape::InputFrame;
 use dusklight_orchestration::native_residual_campaign::{

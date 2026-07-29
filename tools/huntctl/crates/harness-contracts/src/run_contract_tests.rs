@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::artifact::ARTIFACT_SCHEMA_VERSION;
 use crate::milestone_dsl;

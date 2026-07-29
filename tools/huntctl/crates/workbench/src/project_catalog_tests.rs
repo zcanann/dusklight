@@ -1,4 +1,3 @@
-
 use super::*;
 
 fn temporary_repository(name: &str) -> PathBuf {

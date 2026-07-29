@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::world_geometry::{CollisionCode, KclInventoryPrism, KclSourceIndices};
 use crate::world_inventory::WORLD_INVENTORY_SCHEMA;
