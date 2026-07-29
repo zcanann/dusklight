@@ -402,15 +402,18 @@ impl TacticQCampaign {
         }
         let tie_offset = seeded_frontier_index(seed, round, choices.len());
         let choice_count = choices.len();
-        let generalized_model = if !demonstration_curriculum
-            && matches!(
-                self.value_treatment,
-                TacticValueTreatment::LocalGeneralizedFittedQKnnV1
-                    | TacticValueTreatment::GoalRelabeledFittedQKnnV2
-            ) {
-            self.generalized_model(goal_distance_feature)?
-        } else {
+        let generalized_model = if demonstration_curriculum {
             None
+        } else {
+            match self.value_treatment {
+                TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => {
+                    self.generalized_model(goal_distance_feature)?
+                }
+                TacticValueTreatment::GoalRelabeledFittedQKnnV2 => {
+                    self.active_goal_relabel_model(goal_distance_feature)?
+                }
+                TacticValueTreatment::ContinuousFittedQForestV1 => None,
+            }
         };
         let continuous_model = if !demonstration_curriculum
             && self.value_treatment == TacticValueTreatment::ContinuousFittedQForestV1

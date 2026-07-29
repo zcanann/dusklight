@@ -386,6 +386,7 @@ pub struct TacticQCampaign {
     campaign_learner_authority_managed: bool,
     value_treatment: TacticValueTreatment,
     generalized_model: RefCell<Option<CachedGeneralizedTacticValueModel>>,
+    native_terminal_model: RefCell<Option<CachedGeneralizedTacticValueModel>>,
     continuous_model: RefCell<Option<CachedContinuousTacticValueModel>>,
     visited_states: BTreeSet<TacticStateDescriptor>,
     hindsight: HindsightOptionReplay,
@@ -539,6 +540,7 @@ impl TacticQCampaign {
             campaign_learner_authority_managed: false,
             value_treatment: TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
             generalized_model: RefCell::new(None),
+            native_terminal_model: RefCell::new(None),
             continuous_model: RefCell::new(None),
             visited_states,
             hindsight,
@@ -623,6 +625,14 @@ impl TacticQCampaign {
                     model_revision: snapshot.manifest.model_revision,
                     model: Arc::clone(model),
                 });
+        *self.native_terminal_model.borrow_mut() =
+            snapshot.native_terminal_model.as_ref().map(|model| {
+                CachedGeneralizedTacticValueModel {
+                    goal_distance_feature: snapshot.goal_distance_feature,
+                    model_revision: snapshot.manifest.model_revision,
+                    model: Arc::clone(model),
+                }
+            });
         *self.continuous_model.borrow_mut() =
             snapshot
                 .continuous_model

@@ -204,6 +204,7 @@ impl TacticQCampaign {
             campaign_learner_authority_managed: false,
             value_treatment: TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
             generalized_model: RefCell::new(None),
+            native_terminal_model: RefCell::new(None),
             continuous_model: RefCell::new(None),
             visited_states,
             hindsight,

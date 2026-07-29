@@ -247,16 +247,16 @@ impl TacticQCampaign {
             // than silently becoming an ordinary rank-N acquisition. Remaining
             // boundaries stay Q-ranked, preserving independent improvement.
             let terminal_support_acquisition = acquisition_partition == 0 || force_exploration;
+            let native_terminal_supported = self
+                .training_replay
+                .iter()
+                .any(|transition| transition.value_sample.terminal);
             if let Some(goal_distance_feature) = goal_distance_feature {
                 let ranked_applicable = match self.value_treatment {
-                    TacticValueTreatment::LocalGeneralizedFittedQKnnV1
-                    | TacticValueTreatment::GoalRelabeledFittedQKnnV2 => self
+                    TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => self
                         .generalized_model(goal_distance_feature)?
                         .map(|model| {
-                            if terminal_support_acquisition
-                                && self.value_treatment
-                                    == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
-                            {
+                            if terminal_support_acquisition {
                                 model.rank_terminal_support(
                                     &features,
                                     &context,
@@ -273,6 +273,28 @@ impl TacticQCampaign {
                                 .map(|estimate| estimate.descriptor)
                                 .collect::<Vec<_>>()
                         }),
+                    TacticValueTreatment::GoalRelabeledFittedQKnnV2 => {
+                        let model = self.active_goal_relabel_model(goal_distance_feature)?;
+                        model
+                            .map(|model| {
+                                if terminal_support_acquisition && native_terminal_supported {
+                                    model.rank_terminal_support(
+                                        &features,
+                                        &context,
+                                        &applicable_descriptors,
+                                    )
+                                } else {
+                                    model.rank(&features, &context, &applicable_descriptors)
+                                }
+                            })
+                            .transpose()?
+                            .map(|estimates| {
+                                estimates
+                                    .into_iter()
+                                    .map(|estimate| estimate.descriptor)
+                                    .collect::<Vec<_>>()
+                            })
+                    }
                     TacticValueTreatment::ContinuousFittedQForestV1 => self
                         .continuous_model(goal_distance_feature)?
                         .map(|model| model.rank(&features, &context, &applicable_descriptors))
@@ -291,8 +313,12 @@ impl TacticQCampaign {
                         maximum_proposals,
                         &mut proposals,
                     )?;
-                    if self.value_treatment == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
-                        && terminal_support_acquisition
+                    if terminal_support_acquisition
+                        && (self.value_treatment
+                            == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+                            || (self.value_treatment
+                                == TacticValueTreatment::GoalRelabeledFittedQKnnV2
+                                && native_terminal_supported))
                     {
                         ensure_terminal_support_factor_acquisitions(
                             &ranked_applicable,

@@ -1,5 +1,21 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GoalRelabeledCriticAuthority {
+    AchievedGoal,
+    NativeTerminal,
+}
+
+fn goal_relabel_critic_authority(
+    has_native_terminal_support: bool,
+) -> GoalRelabeledCriticAuthority {
+    if has_native_terminal_support {
+        GoalRelabeledCriticAuthority::NativeTerminal
+    } else {
+        GoalRelabeledCriticAuthority::AchievedGoal
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct CachedGeneralizedTacticValueModel {
     pub(super) goal_distance_feature: usize,
@@ -71,6 +87,81 @@ impl TacticQCampaign {
             .map(|cached| Arc::clone(&cached.model)))
     }
 
+    /// Native-terminal critic used only after authenticated terminal support
+    /// exists under the goal-relabeled treatment.
+    ///
+    /// The achieved-goal critic deliberately strips terminal authority. It is
+    /// useful for cold-start reachability but cannot estimate terminal
+    /// ticks-to-go or shorten a successful route.
+    pub(super) fn native_terminal_model(
+        &self,
+        goal_distance_feature: usize,
+    ) -> Result<Option<Arc<GeneralizedTacticValueModel>>, TacticQCampaignError> {
+        if self.value_treatment != TacticValueTreatment::GoalRelabeledFittedQKnnV2
+            || !self
+                .training_replay
+                .iter()
+                .any(|transition| transition.value_sample.terminal)
+        {
+            return Ok(None);
+        }
+        if self.campaign_learner_authority_managed {
+            return Ok(self
+                .native_terminal_model
+                .borrow()
+                .as_ref()
+                .filter(|cached| cached.goal_distance_feature == goal_distance_feature)
+                .map(|cached| Arc::clone(&cached.model)));
+        }
+        if self.training_replay.len() < 2 {
+            return Ok(None);
+        }
+        let stale = self
+            .native_terminal_model
+            .borrow()
+            .as_ref()
+            .is_none_or(|cached| {
+                cached.goal_distance_feature != goal_distance_feature
+                    || cached.model_revision != self.model_revision
+            });
+        if stale {
+            let model = Arc::new(GeneralizedTacticValueModel::fit_fitted_q_transitions(
+                &self.training_replay,
+                goal_distance_feature,
+                self.model_config.fitted_q.iterations,
+                self.model_config.fitted_q.discount,
+            )?);
+            *self.native_terminal_model.borrow_mut() = Some(CachedGeneralizedTacticValueModel {
+                goal_distance_feature,
+                model_revision: self.model_revision,
+                model,
+            });
+        }
+        Ok(self
+            .native_terminal_model
+            .borrow()
+            .as_ref()
+            .map(|cached| Arc::clone(&cached.model)))
+    }
+
+    pub(super) fn active_goal_relabel_model(
+        &self,
+        goal_distance_feature: usize,
+    ) -> Result<Option<Arc<GeneralizedTacticValueModel>>, TacticQCampaignError> {
+        match goal_relabel_critic_authority(
+            self.training_replay
+                .iter()
+                .any(|transition| transition.value_sample.terminal),
+        ) {
+            GoalRelabeledCriticAuthority::AchievedGoal => {
+                self.generalized_model(goal_distance_feature)
+            }
+            GoalRelabeledCriticAuthority::NativeTerminal => {
+                self.native_terminal_model(goal_distance_feature)
+            }
+        }
+    }
+
     pub(super) fn continuous_model(
         &self,
         goal_distance_feature: usize,
@@ -114,5 +205,22 @@ impl TacticQCampaign {
             .borrow()
             .as_ref()
             .map(|cached| Arc::clone(&cached.model)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_terminal_support_hands_off_from_achieved_goal_authority() {
+        assert_eq!(
+            goal_relabel_critic_authority(false),
+            GoalRelabeledCriticAuthority::AchievedGoal
+        );
+        assert_eq!(
+            goal_relabel_critic_authority(true),
+            GoalRelabeledCriticAuthority::NativeTerminal
+        );
     }
 }
