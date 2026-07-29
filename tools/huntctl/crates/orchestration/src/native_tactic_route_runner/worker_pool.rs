@@ -533,9 +533,10 @@ impl<W: PersistentTacticBatchWorker> PersistentTacticBatchWorker for TimedTactic
         &mut self,
         request: &Path,
         result: &Path,
+        batch: &dusklight_search::suffix_batch::NativeSuffixBatch,
     ) -> Result<ValidatedNativeSuffixBatch, NativeTacticWorkerError> {
         let started = Instant::now();
-        let response = self.inner.run_tactic_batch(request, result);
+        let response = self.inner.run_tactic_batch(request, result, batch);
         let round_trip = started.elapsed();
         match response {
             Ok(batch) => {
@@ -1340,7 +1341,7 @@ pub(super) fn run_tactic_proposal_worker(
                 &job.source_route_tape,
                 checkpoint_source.as_ref(),
                 &NativeTacticWorkerPaths {
-                    request: proposal_root.join("request.json"),
+                    request: proposal_root.join("request.dsbx"),
                     result: proposal_root.join("result.json"),
                 },
                 if proposal.proposal_index == 0 {
@@ -1385,7 +1386,7 @@ pub(super) fn run_tactic_proposal_worker(
                     &job.source_route_tape,
                     checkpoint_source.as_ref(),
                     &NativeTacticWorkerPaths {
-                        request: fallback_root.join("request.json"),
+                        request: fallback_root.join("request.dsbx"),
                         result: fallback_root.join("result.json"),
                     },
                     if proposal.proposal_index == 0 {
@@ -1466,7 +1467,7 @@ fn materialize_job_frontier<W: PersistentTacticBatchWorker>(
         &job.source_snapshot,
         &job.source_route_tape,
         &NativeTacticWorkerPaths {
-            request: materialization_root.join("request.json"),
+            request: materialization_root.join("request.dsbx"),
             result: materialization_root.join("result.json"),
         },
     )?;

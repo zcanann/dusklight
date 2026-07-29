@@ -278,6 +278,20 @@ impl NativeSuffixWorkerSession {
         let batch: NativeSuffixBatch =
             serde_json::from_slice(&fs::read(&batch_path).map_err(worker_error)?)
                 .map_err(worker_error)?;
+        self.run_prepared_batch(&batch_path, result_path, winner_tape_path, &batch)
+    }
+
+    /// Runs a transport-encoded batch while retaining the full request as the
+    /// Rust-side validation authority. This avoids decoding the compact tactic
+    /// envelope back into a second object graph.
+    pub fn run_prepared_batch(
+        &mut self,
+        batch_path: &Path,
+        result_path: &Path,
+        winner_tape_path: Option<&Path>,
+        batch: &NativeSuffixBatch,
+    ) -> Result<ValidatedNativeSuffixBatch, NativeSuffixWorkerError> {
+        let batch_path = canonical_file(batch_path, "suffix batch")?;
         validate_batch_identity(&batch, &self.identity)?;
         let result_path = prepare_new_result_output(result_path, "suffix result")?;
         let winner_tape_path = winner_tape_path

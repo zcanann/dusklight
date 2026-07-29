@@ -395,3 +395,31 @@ The ignored evidence root is
 `build/benchmarks/ordon-native-tactic-fixed-work-persistent-v2`; its sealed
 report content SHA-256 is
 `1499e563b4fb308b005e88c0fb7ff60df283edce4bfe9c47c37d0755cf656aaa`.
+
+### Compact persistent-batch transport
+
+Authored worker launches remain JSON so their source contract is directly
+inspectable. Repeated tactic decisions now use the versioned `DSKSBX` binary
+envelope. Its header binds the exact payload length and canonical XXH3-128
+digest; its bounded payload carries source and checkpoint identities as raw
+128-bit content hashes, controller programs as raw bytes, and PAD inputs as
+run-length encoded fixed-width states. Unknown flags, invalid bounds, duplicate
+candidate identities, malformed controllers, trailing bytes, and payload
+tampering fail closed in the native parser.
+
+The envelope is transport only. Rust retains the full typed request in memory,
+validates it against the authenticated persistent-worker identity before
+submission, and uses that same request to attach the result. Native transition
+trajectories continue to cross the boundary as compact `.dseps` episode shards;
+the result JSON contains report metadata and content references rather than a
+second transition blob.
+
+The 2026-07-29 macOS smoke at
+`build/benchmarks/compact-suffix-native-smoke-v2` executed one learned
+graph-authoritative proposal for 16 native ticks through a freshly sealed
+persistent worker. The hot request is 180 bytes, versus 1,878 bytes for the
+same candidate under the JSON transport: a 10.43x reduction, or 90.4% fewer
+request bytes. Both runs bind candidate
+`02d347226cc9d75c131e3b62a7981acb7eb50a731802b62d8ebbe7b8d782a17a`;
+the smoke report file SHA-256 is
+`7948cb4938345e38cf1c71b270f2540a42d9568d083b2fb401b7498eb73558d9`.

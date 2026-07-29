@@ -311,7 +311,7 @@ pub fn run_native_tactic_policy(
                 &route_tape,
                 None,
                 &NativeTacticWorkerPaths {
-                    request: decision_root.join("request.json"),
+                    request: decision_root.join("request.dsbx"),
                     result: decision_root.join("result.json"),
                 },
             )

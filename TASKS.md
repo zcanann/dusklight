@@ -273,8 +273,16 @@ Exit gate:
 - [x] Establish fixed-work curves at 1, 2, 4, 8, and 16 workers using unique
       useful graph expansions, not raw ticks, as throughput.
 - [x] Keep workers and game processes persistent across expansions.
-- [ ] Use compact binary batches and shared content identities; do not send
+- [x] Use compact binary batches and shared content identities; do not send
       repeated snapshots or JSON transition blobs through IPC.
+      Persistent tactic workers now receive the versioned, XXH3-authenticated
+      `DSKSBX` envelope after their inspectable JSON launch. It carries raw
+      128-bit source/checkpoint identities, raw controller bytes, and bounded
+      run-length PAD states; Rust retains the full request as result-validation
+      authority and native episode transitions remain in binary `.dseps`
+      shards. A macOS one-decision native smoke reduced the repeated request
+      from 1,878 to 180 bytes (10.43x, 90.4%) with the same candidate identity
+      and 16 simulated ticks.
 - [ ] Verify which rendering, audio, presentation, and proof systems may be
       disabled without changing native state or terminal evidence. Retain
       measured parity evidence for every disabled subsystem.

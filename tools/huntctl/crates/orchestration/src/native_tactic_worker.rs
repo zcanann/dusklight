@@ -1,6 +1,7 @@
 //! Execute one selected static tactic against an authenticated persistent
 //! native checkpoint worker and recover its real option boundary.
 
+use crate::compact_suffix_batch::encode_compact_suffix_batch;
 use crate::native_suffix_result::{NativeRetainedCheckpointResult, ValidatedNativeSuffixBatch};
 use crate::native_suffix_worker::{
     NativeSuffixWorkerError, NativeSuffixWorkerIdentity, NativeSuffixWorkerSession,
@@ -176,6 +177,7 @@ pub trait PersistentTacticBatchWorker {
         &mut self,
         request: &Path,
         result: &Path,
+        batch: &NativeSuffixBatch,
     ) -> Result<ValidatedNativeSuffixBatch, NativeTacticWorkerError>;
 }
 
@@ -188,8 +190,9 @@ impl PersistentTacticBatchWorker for NativeSuffixWorkerSession {
         &mut self,
         request: &Path,
         result: &Path,
+        batch: &NativeSuffixBatch,
     ) -> Result<ValidatedNativeSuffixBatch, NativeTacticWorkerError> {
-        self.run_batch(request, result, None)
+        self.run_prepared_batch(request, result, None, batch)
             .map_err(NativeTacticWorkerError::Worker)
     }
 }
@@ -254,8 +257,8 @@ pub fn materialize_tactic_frontier<W: PersistentTacticBatchWorker>(
             controller_program_hex: None,
         }],
     };
-    write_new_json(&paths.request, &request)?;
-    let validated = worker.run_tactic_batch(&paths.request, &paths.result)?;
+    write_new_compact_batch(&paths.request, &request)?;
+    let validated = worker.run_tactic_batch(&paths.request, &paths.result, &request)?;
     if validated.candidates.len() != 1
         || validated.candidates[0].id != request.candidates[0].id
         || validated.candidates[0].simulated_ticks != replay_frames.len() as u64
@@ -615,8 +618,8 @@ fn execute_static_tactic<W: PersistentTacticBatchWorker>(
         checkpoint_source,
         checkpoint_retention,
     )?;
-    write_new_json(&paths.request, &request)?;
-    let validated = worker.run_tactic_batch(&paths.request, &paths.result)?;
+    write_new_compact_batch(&paths.request, &request)?;
+    let validated = worker.run_tactic_batch(&paths.request, &paths.result, &request)?;
     observe_outcome(
         root_checkpoint_sha256,
         selected,
@@ -1253,12 +1256,15 @@ fn same_pad(observed: NativeRawPad, expected: RawPadState) -> bool {
         && observed.error == expected.error
 }
 
-fn write_new_json(path: &Path, value: &impl Serialize) -> Result<(), NativeTacticWorkerError> {
+fn write_new_compact_batch(
+    path: &Path,
+    batch: &NativeSuffixBatch,
+) -> Result<(), NativeTacticWorkerError> {
     let parent = path
         .parent()
         .ok_or_else(|| NativeTacticWorkerError::Io("request has no parent".into()))?;
     fs::create_dir_all(parent).map_err(|error| NativeTacticWorkerError::Io(error.to_string()))?;
-    let bytes = serde_json::to_vec_pretty(value)
+    let bytes = encode_compact_suffix_batch(batch)
         .map_err(|error| NativeTacticWorkerError::Serialization(error.to_string()))?;
     let mut file = OpenOptions::new()
         .write(true)

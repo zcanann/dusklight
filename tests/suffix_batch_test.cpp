@@ -1,10 +1,15 @@
 #include "dusk/automation/suffix_batch.hpp"
 
 #include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <type_traits>
 #include <utility>
+#include <vector>
+
+#include <xxhash.h>
 
 using namespace dusk::automation;
 
@@ -246,6 +251,76 @@ void test_cached_batch_binds_bounded_process_local_source() {
     REQUIRE(!parse_suffix_batch(unbounded, batch, error));
 }
 
+template <typename T>
+void append_little(std::vector<std::uint8_t>& output, const T value) {
+    static_assert(std::is_unsigned_v<T>);
+    for (std::size_t index = 0; index < sizeof(T); ++index)
+        output.push_back(static_cast<std::uint8_t>(value >> (index * 8)));
+}
+
+std::string compact_cached_batch() {
+    std::vector<std::uint8_t> payload;
+    payload.push_back(0x02 | 0x04 | 0x08);
+    append_little(payload, std::uint64_t{506});
+    for (std::uint8_t byte = 0; byte < 16; ++byte) payload.push_back(byte);
+    payload.push_back(2);
+    append_little(payload, std::uint16_t{8});
+    append_little(payload, std::uint16_t{4});
+    append_little(payload, std::uint32_t{640 * 1024 * 1024});
+    payload.push_back(2);
+    append_little(payload, std::uint32_t{40});
+    for (std::uint8_t byte = 0; byte < 16; ++byte)
+        payload.push_back(static_cast<std::uint8_t>(0xf0 + byte));
+    append_little(payload, std::uint16_t{1});
+    payload.push_back(8);
+    payload.insert(payload.end(), {'b', 'a', 's', 'e', 'l', 'i', 'n', 'e'});
+    append_little(payload, std::uint16_t{0});
+    append_little(payload, std::uint16_t{1});
+    append_little(payload, std::uint16_t{4});
+    append_little(payload, std::uint16_t{0x100});
+    payload.insert(payload.end(), {
+        static_cast<std::uint8_t>(-4), 127, 0, 1, 2, 3, 4, 5, 1,
+        static_cast<std::uint8_t>(-1)});
+
+    std::vector<std::uint8_t> envelope{'D', 'S', 'K', 'S', 'B', 'X', 1, 0};
+    append_little(envelope, static_cast<std::uint32_t>(payload.size()));
+    const XXH128_hash_t hash = XXH3_128bits(payload.data(), payload.size());
+    XXH128_canonical_t canonical{};
+    XXH128_canonicalFromHash(&canonical, hash);
+    envelope.insert(
+        envelope.end(), std::begin(canonical.digest), std::end(canonical.digest));
+    envelope.insert(envelope.end(), payload.begin(), payload.end());
+    return {reinterpret_cast<const char*>(envelope.data()), envelope.size()};
+}
+
+void test_compact_cached_batch_expands_and_authenticates() {
+    const std::string source = compact_cached_batch();
+    SuffixBatchDefinition batch;
+    std::string error;
+    REQUIRE(parse_suffix_batch(source, batch, error));
+    REQUIRE(error.empty());
+    REQUIRE(batch.sourceFrame == 506);
+    REQUIRE(batch.sourceBoundaryFingerprint == "000102030405060708090a0b0c0d0e0f");
+    REQUIRE(batch.validationTicks == 8);
+    REQUIRE(batch.maximumTicks == 4);
+    REQUIRE(batch.checkpointCache.has_value());
+    REQUIRE(batch.checkpointCache->sourceIdentity ==
+            std::optional<std::string>("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"));
+    REQUIRE(batch.checkpointCache->sourceRouteTicks == 40);
+    REQUIRE(batch.checkpointCache->retainCandidateCheckpoints);
+    REQUIRE(batch.candidates.size() == 1);
+    REQUIRE(batch.candidates[0].id == "baseline");
+    REQUIRE(batch.candidates[0].pads.size() == 4);
+    REQUIRE(batch.candidates[0].pads[0].buttons == 0x100);
+    REQUIRE(batch.candidates[0].pads[0].stickX == -4);
+    REQUIRE(batch.candidates[0].pads[0].error == -1);
+
+    std::string corrupted = source;
+    corrupted.back() ^= 1;
+    REQUIRE(!parse_suffix_batch(corrupted, batch, error));
+    REQUIRE(error.find("digest differs") != std::string::npos);
+}
+
 std::string frozen_policy_batch() {
     return R"({
         "schema":"dusklight-suffix-batch/v7",
@@ -418,6 +493,7 @@ int main() {
     test_factorized_policy_rows_expand_to_an_online_native_program();
     test_reactive_controller_executes_as_one_native_candidate();
     test_cached_batch_binds_bounded_process_local_source();
+    test_compact_cached_batch_expands_and_authenticates();
     test_frozen_policy_is_content_bound_and_one_tick();
     test_invalid_batches_fail_closed();
     std::cout << "suffix batch tests passed\n";

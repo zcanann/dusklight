@@ -73,9 +73,9 @@ pub(super) fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
             checkpoint_retention,
         )?;
         let iteration_paths = iteration_paths(paths, selected.decision_index, local_tick);
-        write_new_json(&iteration_paths.request, &request)?;
+        write_new_compact_batch(&iteration_paths.request, &request)?;
         let validated =
-            worker.run_tactic_batch(&iteration_paths.request, &iteration_paths.result)?;
+            worker.run_tactic_batch(&iteration_paths.request, &iteration_paths.result, &request)?;
         let loaded_episode = inspect_candidate_episode(&request, &validated, &candidate_tape)?;
         let episode = &loaded_episode.episode;
         if episode.steps.len() <= candidate_prefix_ticks {
@@ -287,8 +287,8 @@ pub(super) fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
         checkpoint_source,
         checkpoint_retention,
     )?;
-    write_new_json(&paths.request, &request)?;
-    let validated = worker.run_tactic_batch(&paths.request, &paths.result)?;
+    write_new_compact_batch(&paths.request, &request)?;
+    let validated = worker.run_tactic_batch(&paths.request, &paths.result, &request)?;
     let loaded_episode = load_candidate_episode(&request, &validated)?;
     let episode = &loaded_episode.episode;
     if episode.steps.len() <= candidate_prefix_ticks
@@ -464,8 +464,8 @@ pub(super) fn execute_reactive_controller_native<W: PersistentTacticBatchWorker>
         checkpoint_source,
         checkpoint_retention,
     )?;
-    write_new_json(&paths.request, &request)?;
-    let validated = worker.run_tactic_batch(&paths.request, &paths.result)?;
+    write_new_compact_batch(&paths.request, &request)?;
+    let validated = worker.run_tactic_batch(&paths.request, &paths.result, &request)?;
     let loaded_episode = load_candidate_episode(&request, &validated)?;
     let episode = &loaded_episode.episode;
     if episode.steps.len() <= candidate_prefix_ticks
@@ -684,9 +684,9 @@ pub(super) fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
             checkpoint_retention,
         )?;
         let iteration_paths = iteration_paths(paths, selected.decision_index, local_tick);
-        write_new_json(&iteration_paths.request, &request)?;
+        write_new_compact_batch(&iteration_paths.request, &request)?;
         let validated =
-            worker.run_tactic_batch(&iteration_paths.request, &iteration_paths.result)?;
+            worker.run_tactic_batch(&iteration_paths.request, &iteration_paths.result, &request)?;
         let loaded_episode = inspect_candidate_episode(&request, &validated, &candidate_tape)?;
         let episode = &loaded_episode.episode;
         if episode.steps.len() <= candidate_prefix_ticks {

@@ -14,6 +14,7 @@ impl PersistentTacticBatchWorker for MissingCheckpointWorker {
         &mut self,
         _request: &Path,
         _result: &Path,
+        _batch: &dusklight_search::suffix_batch::NativeSuffixBatch,
     ) -> Result<ValidatedNativeSuffixBatch, NativeTacticWorkerError> {
         Err(NativeTacticWorkerError::Worker(
             NativeSuffixWorkerError::Rejected {
@@ -48,8 +49,21 @@ fn missing_owner_checkpoint_is_counted_before_exact_replay_fallback() {
     };
     let mut timed = TimedTacticWorker::new(&mut worker);
 
+    let batch = dusklight_search::suffix_batch::NativeSuffixBatch {
+        schema: String::new(),
+        source_frame: 0,
+        source_boundary_fingerprint: String::new(),
+        checkpoint_validation: dusklight_search::suffix_batch::NativeCheckpointValidation {
+            kind: String::new(),
+            ticks: 0,
+        },
+        maximum_ticks: 0,
+        verify_state_hashes: false,
+        checkpoint_cache: None,
+        candidates: Vec::new(),
+    };
     let error = timed
-        .run_tactic_batch(Path::new("request"), Path::new("result"))
+        .run_tactic_batch(Path::new("request"), Path::new("result"), &batch)
         .unwrap_err();
     assert!(error.is_missing_process_local_checkpoint());
     timed.record_route_replay(530).unwrap();

@@ -617,7 +617,10 @@ add_executable(dusk_suffix_batch_test EXCLUDE_FROM_ALL
     src/dusk/automation/typed_facts.cpp
 )
 target_include_directories(dusk_suffix_batch_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(dusk_suffix_batch_test PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(dusk_suffix_batch_test PRIVATE
+    nlohmann_json::nlohmann_json
+    xxHash::xxhash
+)
 set_target_properties(dusk_suffix_batch_test PROPERTIES FOLDER "Tests")
 
 add_executable(dusk_factorized_pad_policy_test EXCLUDE_FROM_ALL

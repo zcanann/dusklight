@@ -4,17 +4,280 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <string>
 #include <type_traits>
 #include <unordered_set>
 #include <utility>
 
 #include <nlohmann/json.hpp>
+#include <xxhash.h>
 
 namespace dusk::automation {
 namespace {
 
 using json = nlohmann::json;
+
+constexpr std::array<std::uint8_t, 8> CompactSuffixBatchMagic{
+    'D', 'S', 'K', 'S', 'B', 'X', 1, 0};
+constexpr std::size_t CompactSuffixBatchHeaderBytes = 28;
+constexpr std::uint8_t CompactVerifyStateHashes = 1 << 0;
+constexpr std::uint8_t CompactCheckpointCache = 1 << 1;
+constexpr std::uint8_t CompactSourceIdentity = 1 << 2;
+constexpr std::uint8_t CompactRetainCandidateCheckpoints = 1 << 3;
+constexpr std::uint8_t CompactRetainLiveEndpoint = 1 << 4;
+constexpr std::uint8_t CompactKnownFlags = CompactVerifyStateHashes |
+                                           CompactCheckpointCache |
+                                           CompactSourceIdentity |
+                                           CompactRetainCandidateCheckpoints |
+                                           CompactRetainLiveEndpoint;
+constexpr std::uint8_t CompactRecordedReplayWindow = 2;
+
+class CompactReader {
+public:
+    explicit CompactReader(const std::span<const std::uint8_t> bytes) : mBytes(bytes) {}
+
+    template <typename T>
+    bool readLittle(T& output) {
+        static_assert(std::is_unsigned_v<T>);
+        if (remaining() < sizeof(T)) return false;
+        output = 0;
+        for (std::size_t index = 0; index < sizeof(T); ++index)
+            output |= static_cast<T>(mBytes[mOffset + index]) << (index * 8);
+        mOffset += sizeof(T);
+        return true;
+    }
+
+    bool readByte(std::uint8_t& output) {
+        if (remaining() == 0) return false;
+        output = mBytes[mOffset++];
+        return true;
+    }
+
+    bool readBytes(const std::size_t count, std::span<const std::uint8_t>& output) {
+        if (count > remaining()) return false;
+        output = mBytes.subspan(mOffset, count);
+        mOffset += count;
+        return true;
+    }
+
+    [[nodiscard]] std::size_t remaining() const { return mBytes.size() - mOffset; }
+
+private:
+    std::span<const std::uint8_t> mBytes;
+    std::size_t mOffset = 0;
+};
+
+std::string compact_hex(const std::span<const std::uint8_t> bytes) {
+    constexpr char Hex[] = "0123456789abcdef";
+    std::string output;
+    output.reserve(bytes.size() * 2);
+    for (const std::uint8_t byte : bytes) {
+        output.push_back(Hex[byte >> 4]);
+        output.push_back(Hex[byte & 0xf]);
+    }
+    return output;
+}
+
+bool compact_suffix_batch_magic(const std::string_view source) {
+    return source.size() >= CompactSuffixBatchMagic.size() &&
+           std::equal(CompactSuffixBatchMagic.begin(), CompactSuffixBatchMagic.end(),
+               reinterpret_cast<const std::uint8_t*>(source.data()));
+}
+
+bool parse_compact_suffix_batch(
+    const std::string_view source, SuffixBatchDefinition& output, std::string& error) {
+    output = {};
+    error.clear();
+    if (source.size() < CompactSuffixBatchHeaderBytes ||
+        source.size() > SuffixBatchMaximumBytes) {
+        error = "compact suffix batch is truncated or exceeds 64 MiB";
+        return false;
+    }
+    const auto bytes = std::span{
+        reinterpret_cast<const std::uint8_t*>(source.data()), source.size()};
+    CompactReader header(bytes.subspan(CompactSuffixBatchMagic.size()));
+    std::uint32_t payloadSize = 0;
+    std::span<const std::uint8_t> expectedDigest;
+    if (!header.readLittle(payloadSize) || !header.readBytes(16, expectedDigest) ||
+        payloadSize != bytes.size() - CompactSuffixBatchHeaderBytes) {
+        error = "compact suffix batch payload length is invalid";
+        return false;
+    }
+    const auto payload = bytes.subspan(CompactSuffixBatchHeaderBytes);
+    const XXH128_hash_t hash = XXH3_128bits(payload.data(), payload.size());
+    XXH128_canonical_t canonical{};
+    XXH128_canonicalFromHash(&canonical, hash);
+    if (!std::equal(expectedDigest.begin(), expectedDigest.end(), canonical.digest)) {
+        error = "compact suffix batch payload digest differs";
+        return false;
+    }
+
+    CompactReader reader(payload);
+    std::uint8_t flags = 0;
+    std::uint64_t sourceFrame = 0;
+    std::span<const std::uint8_t> sourceBoundary;
+    std::uint8_t validationKind = 0;
+    std::uint16_t validationTicks = 0;
+    std::uint16_t maximumTicks = 0;
+    std::uint32_t capacityBytes = 0;
+    std::uint8_t capacityEntries = 0;
+    std::uint32_t sourceRouteTicks = 0;
+    if (!reader.readByte(flags) || (flags & ~CompactKnownFlags) != 0 ||
+        (flags & CompactCheckpointCache) == 0 ||
+        !reader.readLittle(sourceFrame) || !reader.readBytes(16, sourceBoundary) ||
+        !reader.readByte(validationKind) ||
+        validationKind != CompactRecordedReplayWindow ||
+        !reader.readLittle(validationTicks) || validationTicks == 0 ||
+        validationTicks > SuffixBatchMaximumValidationTicks ||
+        !reader.readLittle(maximumTicks) || maximumTicks == 0 ||
+        maximumTicks > SuffixBatchMaximumTicks ||
+        !reader.readLittle(capacityBytes) || capacityBytes == 0 ||
+        capacityBytes > SuffixBatchMaximumCheckpointCacheBytes ||
+        !reader.readByte(capacityEntries) || capacityEntries == 0 ||
+        capacityEntries > SuffixBatchMaximumCheckpointCacheEntries ||
+        !reader.readLittle(sourceRouteTicks) ||
+        sourceRouteTicks > SuffixBatchMaximumExpandedTicks ||
+        sourceFrame > std::numeric_limits<std::size_t>::max()) {
+        error = "compact suffix batch contract is invalid";
+        return false;
+    }
+
+    SuffixBatchDefinition parsed;
+    parsed.sourceFrame = static_cast<std::size_t>(sourceFrame);
+    parsed.sourceBoundaryFingerprint = compact_hex(sourceBoundary);
+    parsed.checkpointValidation = SuffixCheckpointValidation::RecordedReplayWindow;
+    parsed.validationTicks = validationTicks;
+    parsed.maximumTicks = maximumTicks;
+    parsed.verifyStateHashes = (flags & CompactVerifyStateHashes) != 0;
+    SuffixCheckpointCachePolicy cache;
+    cache.capacityBytes = capacityBytes;
+    cache.capacityEntries = capacityEntries;
+    cache.sourceRouteTicks = sourceRouteTicks;
+    cache.retainCandidateCheckpoints =
+        (flags & CompactRetainCandidateCheckpoints) != 0;
+    cache.retainLiveEndpoint = (flags & CompactRetainLiveEndpoint) != 0;
+    if (cache.retainCandidateCheckpoints && cache.retainLiveEndpoint) {
+        error = "compact suffix batch checkpoint retention conflicts";
+        return false;
+    }
+    if ((flags & CompactSourceIdentity) != 0) {
+        std::span<const std::uint8_t> sourceIdentity;
+        if (!reader.readBytes(16, sourceIdentity)) {
+            error = "compact suffix batch source identity is truncated";
+            return false;
+        }
+        cache.sourceIdentity = compact_hex(sourceIdentity);
+    }
+    parsed.checkpointCache = std::move(cache);
+
+    std::uint16_t candidateCount = 0;
+    if (!reader.readLittle(candidateCount) || candidateCount == 0 ||
+        candidateCount > SuffixBatchMaximumCandidates ||
+        candidateCount > SuffixBatchMaximumExpandedTicks / parsed.maximumTicks) {
+        error = "compact suffix batch candidate count is invalid";
+        return false;
+    }
+    parsed.candidates.reserve(candidateCount);
+    std::unordered_set<std::string> ids;
+    ids.reserve(candidateCount);
+    for (std::size_t candidateIndex = 0; candidateIndex < candidateCount; ++candidateIndex) {
+        std::uint8_t idLength = 0;
+        std::span<const std::uint8_t> idBytes;
+        std::uint16_t controllerLength = 0;
+        std::span<const std::uint8_t> controllerBytes;
+        std::uint16_t runCount = 0;
+        if (!reader.readByte(idLength) || idLength == 0 || idLength > 128 ||
+            !reader.readBytes(idLength, idBytes) ||
+            !std::ranges::all_of(idBytes, [](const std::uint8_t byte) {
+                return byte >= 0x21 && byte <= 0x7e;
+            }) ||
+            !reader.readLittle(controllerLength) ||
+            !reader.readBytes(controllerLength, controllerBytes) ||
+            !reader.readLittle(runCount) || runCount > parsed.maximumTicks) {
+            error = "compact suffix candidate header is invalid";
+            return false;
+        }
+        SuffixBatchCandidate candidate;
+        candidate.id.assign(
+            reinterpret_cast<const char*>(idBytes.data()), idBytes.size());
+        if (!ids.insert(candidate.id).second) {
+            error = "compact suffix candidate has a duplicate id";
+            return false;
+        }
+        candidate.pads.reserve(parsed.maximumTicks);
+        for (std::size_t runIndex = 0; runIndex < runCount; ++runIndex) {
+            std::uint16_t frames = 0;
+            std::uint16_t buttons = 0;
+            std::uint8_t stickX = 0;
+            std::uint8_t stickY = 0;
+            std::uint8_t substickX = 0;
+            std::uint8_t substickY = 0;
+            std::uint8_t triggerLeft = 0;
+            std::uint8_t triggerRight = 0;
+            std::uint8_t analogA = 0;
+            std::uint8_t analogB = 0;
+            std::uint8_t connected = 0;
+            std::uint8_t padError = 0;
+            if (!reader.readLittle(frames) || frames == 0 ||
+                frames > parsed.maximumTicks - candidate.pads.size() ||
+                !reader.readLittle(buttons) || !reader.readByte(stickX) ||
+                !reader.readByte(stickY) || !reader.readByte(substickX) ||
+                !reader.readByte(substickY) || !reader.readByte(triggerLeft) ||
+                !reader.readByte(triggerRight) || !reader.readByte(analogA) ||
+                !reader.readByte(analogB) || !reader.readByte(connected) ||
+                connected > 1 || !reader.readByte(padError)) {
+                error = "compact suffix candidate PAD run is invalid";
+                return false;
+            }
+            RawPadState pad;
+            pad.buttons = buttons;
+            pad.stickX = static_cast<std::int8_t>(stickX);
+            pad.stickY = static_cast<std::int8_t>(stickY);
+            pad.substickX = static_cast<std::int8_t>(substickX);
+            pad.substickY = static_cast<std::int8_t>(substickY);
+            pad.triggerLeft = triggerLeft;
+            pad.triggerRight = triggerRight;
+            pad.analogA = analogA;
+            pad.analogB = analogB;
+            pad.flags = connected != 0 ? RawPadFlags::Connected : RawPadFlags::None;
+            pad.error = static_cast<std::int8_t>(padError);
+            candidate.pads.insert(candidate.pads.end(), frames, pad);
+        }
+        if (!controllerBytes.empty()) {
+            const std::size_t maximumControllerBytes =
+                kInputControllerHeaderSize +
+                kInputControllerMaximumLayers * kInputControllerRecordSize;
+            if (controllerBytes.size() > maximumControllerBytes ||
+                decode_input_controller(controllerBytes, candidate.controller) !=
+                    InputControllerError::None) {
+                error = "compact suffix candidate controller program is invalid";
+                return false;
+            }
+            candidate.controllerProgram = true;
+            candidate.controllerStartTick = candidate.pads.size();
+            if (candidate.controller.duration() !=
+                parsed.maximumTicks - candidate.controllerStartTick) {
+                error = "compact suffix controller duration differs from maximum_ticks";
+                return false;
+            }
+        } else if (candidate.pads.size() != parsed.maximumTicks) {
+            error = "compact suffix candidate PAD runs differ from maximum_ticks";
+            return false;
+        }
+        parsed.candidates.push_back(std::move(candidate));
+    }
+    if (reader.remaining() != 0) {
+        error = "compact suffix batch has trailing payload bytes";
+        return false;
+    }
+    if (parsed.checkpointCache->retainLiveEndpoint && parsed.candidates.size() != 1) {
+        error = "compact live endpoint retention requires exactly one candidate";
+        return false;
+    }
+    output = std::move(parsed);
+    return true;
+}
 
 template <std::size_t Size>
 bool has_exact_keys(const json& value, const std::array<std::string_view, Size>& allowed) {
@@ -425,6 +688,8 @@ bool parse_suffix_batch(
         error = "suffix batch is empty or exceeds 64 MiB";
         return false;
     }
+    if (compact_suffix_batch_magic(source))
+        return parse_compact_suffix_batch(source, output, error);
     const json root = json::parse(source, nullptr, false);
     constexpr std::array LegacyRootKeys{
         std::string_view{"schema"},
