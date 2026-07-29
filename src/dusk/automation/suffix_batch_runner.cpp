@@ -66,12 +66,6 @@ constexpr std::uint64_t LearningTraceChannels =
     gameplay_trace_channel_bit(GameplayTraceChannel::PlayerBackgroundCollision) |
     gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces);
 
-bool controller_requires_actor_set(const InputControllerProgram& controller) {
-    return std::ranges::any_of(controller.layers(), [](const InputControllerLayer& layer) {
-        return layer.kind == InputControllerLayerKind::SeekActor;
-    });
-}
-
 bool is_lower_hex(const std::string_view value, const std::size_t width) {
     return value.size() == width && std::ranges::all_of(value, [](const char byte) {
         return (byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f');
@@ -1072,10 +1066,10 @@ bool SuffixBatchRunner::captureEpisodePreInput(
         .collisionCorrectionPresent = collision.present,
         .collisionCorrectionX = collision.x,
         .collisionCorrectionZ = collision.z,
-        .detail = candidate.controllerProgram ? LearningObservationDetail::Tactic :
-                                                LearningObservationDetail::Full,
-        .tacticActorsRequired =
-            candidate.controllerProgram && controller_requires_actor_set(candidate.controller),
+        // Learner-owned boundaries are graph authority. The compact tactic
+        // profile does not carry configured-goal progress or every fact
+        // channel, so it cannot safely stand in for a full graph state.
+        .detail = LearningObservationDetail::Full,
         .gameplayTrace = &gameplayTrace,
         .collisionPlanes = collisionPlanes,
         .playerForm = playerForm,
@@ -1408,10 +1402,7 @@ bool SuffixBatchRunner::appendEpisodePostSimulation(const MilestoneObservation& 
         .collisionCorrectionPresent = collision.present,
         .collisionCorrectionX = collision.x,
         .collisionCorrectionZ = collision.z,
-        .detail = candidate.controllerProgram && !terminal ? LearningObservationDetail::Tactic :
-                                                            LearningObservationDetail::Full,
-        .tacticActorsRequired =
-            candidate.controllerProgram && controller_requires_actor_set(candidate.controller),
+        .detail = LearningObservationDetail::Full,
         .gameplayTrace = &gameplayTrace,
         .collisionPlanes = collisionPlanes,
         .playerForm = playerForm,

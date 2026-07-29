@@ -828,6 +828,7 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
         replay_sharing: NativeTacticReplaySharingTelemetry::default(),
         visited_states: 3,
         useful_decisions: 2,
+        unique_useful_graph_expansions: 6,
         native_restore_accounting: NativeTacticRestoreAccounting::default(),
         timing: NativeTacticRouteTiming {
             wall_micros: 2_000_000,
@@ -856,6 +857,7 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
         diagnostics: None,
         final_checkpoint: "checkpoint.dtqz".into(),
         state_graph_sha256: Digest([7; 32]),
+        useful_graph_expansion_set_sha256: Digest([8; 32]),
         best_terminal_state_sha256: None,
         best_terminal_route_checkpoint_sha256: None,
         best_terminal_tape: None,
@@ -867,6 +869,10 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
     let timing = aggregate_route_timing(&[seed]);
 
     assert_eq!(timing.useful_decisions_per_second_millionths, 1_000_000);
+    assert_eq!(
+        timing.unique_useful_graph_expansions_per_second_millionths,
+        3_000_000
+    );
     assert_eq!(timing.native_ticks_per_second_millionths, 15_000_000);
     assert_eq!(timing.episodes_per_second_millionths, 1_000_000);
     assert_eq!(timing.native_simulation_micros, 900_000);

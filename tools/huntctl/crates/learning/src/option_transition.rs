@@ -274,21 +274,48 @@ impl OptionTransitionSample {
                 ))?;
             if boundary.episode_shard_sha256 == Digest::ZERO
                 || boundary.state_sha256 == Digest::ZERO
-                || boundary.offset_ticks <= previous_offset
-                || boundary.offset_ticks >= self.execution.duration.realized_ticks
-                || boundary.state.phase != FactPhase::PreInput
-                || boundary.state.tape_frame != expected_tape_frame
-                || boundary.state.simulation_tick != expected_simulation_tick
-                || boundary.state.terminal.configured != Some(true)
-                || boundary.state.terminal.reached != Some(false)
-                || boundary.state_sha256
-                    != boundary
-                        .state
-                        .content_sha256()
-                        .map_err(|error| OptionTransitionError::Facts(error.to_string()))?
             {
                 return Err(OptionTransitionError::Invalid(
-                    "intermediate boundary is detached from its native option",
+                    "intermediate boundary has no evidence identity",
+                ));
+            }
+            if boundary.offset_ticks <= previous_offset
+                || boundary.offset_ticks >= self.execution.duration.realized_ticks
+            {
+                return Err(OptionTransitionError::Invalid(
+                    "intermediate boundary offset is outside its native option",
+                ));
+            }
+            if boundary.state.phase != FactPhase::PreInput {
+                return Err(OptionTransitionError::Invalid(
+                    "intermediate boundary is not a pre-input state",
+                ));
+            }
+            if boundary.state.tape_frame != expected_tape_frame {
+                return Err(OptionTransitionError::Invalid(
+                    "intermediate boundary tape frame is detached from its native option",
+                ));
+            }
+            if boundary.state.simulation_tick != expected_simulation_tick {
+                return Err(OptionTransitionError::Invalid(
+                    "intermediate boundary simulation tick is detached from its native option",
+                ));
+            }
+            if boundary.state.terminal.configured != Some(true)
+                || boundary.state.terminal.reached != Some(false)
+            {
+                return Err(OptionTransitionError::Invalid(
+                    "intermediate boundary has invalid terminal evidence",
+                ));
+            }
+            if boundary.state_sha256
+                != boundary
+                    .state
+                    .content_sha256()
+                    .map_err(|error| OptionTransitionError::Facts(error.to_string()))?
+            {
+                return Err(OptionTransitionError::Invalid(
+                    "intermediate boundary state digest is stale",
                 ));
             }
             previous_offset = boundary.offset_ticks;

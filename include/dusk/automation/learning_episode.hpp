@@ -80,9 +80,6 @@ struct LearningObservationContext {
     float collisionCorrectionX = 0.0F;
     float collisionCorrectionZ = 0.0F;
     LearningObservationDetail detail = LearningObservationDetail::Full;
-    // Actor-independent tactics omit the large, unchanged actor set. The
-    // compact row records that omission instead of claiming completeness.
-    bool tacticActorsRequired = false;
     // Pointer-free observer copy, consumed synchronously by append_learning_observation.
     const GameplayTraceSample* gameplayTrace = nullptr;
     GameplayCollisionPlanesObservation collisionPlanes;

@@ -56,6 +56,9 @@ pub struct NativeTacticRouteReport {
     pub total_native_ticks: u64,
     pub total_decisions: u64,
     pub useful_decisions: u64,
+    /// Unique graph-owned action expansions with completed executable native
+    /// evidence. This is the fixed-work throughput authority.
+    pub unique_useful_graph_expansions: u64,
     pub learner_authority: NativeTacticLearnerAuthorityReport,
     pub learner_updates: u64,
     pub learner_updates_per_second_millionths: u64,
@@ -265,6 +268,8 @@ pub struct NativeTacticRouteTiming {
     #[serde(default)]
     pub reporting_micros: u64,
     pub useful_decisions_per_second_millionths: u64,
+    #[serde(default)]
+    pub unique_useful_graph_expansions_per_second_millionths: u64,
     pub native_ticks_per_second_millionths: u64,
     pub episodes_per_second_millionths: u64,
 }
@@ -468,6 +473,8 @@ pub struct NativeTacticSeedResult {
     pub visited_states: usize,
     #[serde(default)]
     pub useful_decisions: u64,
+    #[serde(default)]
+    pub unique_useful_graph_expansions: u64,
     pub native_restore_accounting: NativeTacticRestoreAccounting,
     #[serde(default)]
     pub timing: NativeTacticRouteTiming,
@@ -477,6 +484,9 @@ pub struct NativeTacticSeedResult {
     pub final_checkpoint: String,
     /// Content identity of the graph embedded in `final_checkpoint`.
     pub state_graph_sha256: Digest,
+    /// Order-independent identity of graph-authoritative executable work.
+    #[serde(default)]
+    pub useful_graph_expansion_set_sha256: Digest,
     /// Exact best terminal node selected by the graph, when one exists.
     pub best_terminal_state_sha256: Option<Digest>,
     /// Exact route-checkpoint identity for the graph-selected terminal.

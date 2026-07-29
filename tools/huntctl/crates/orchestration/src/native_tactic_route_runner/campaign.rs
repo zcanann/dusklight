@@ -1045,9 +1045,17 @@ pub(super) fn run_seed(
             &checkpoint_content_root,
         )
         .map_err(route_error)?;
-    let state_graph_sha256 = campaign
-        .checkpoint()
-        .map_err(route_error)?
+    let final_campaign_checkpoint = campaign.checkpoint().map_err(route_error)?;
+    let unique_useful_graph_expansions = u64::try_from(
+        final_campaign_checkpoint
+            .state_graph
+            .completed_executable_expansion_count(),
+    )
+    .map_err(route_error)?;
+    let useful_graph_expansion_set_sha256 = final_campaign_checkpoint
+        .state_graph
+        .completed_executable_expansion_set_sha256();
+    let state_graph_sha256 = final_campaign_checkpoint
         .state_graph
         .content_sha256()
         .map_err(route_error)?;
@@ -1128,12 +1136,14 @@ pub(super) fn run_seed(
             replay_sharing,
             visited_states: campaign.visited_state_count(),
             useful_decisions,
+            unique_useful_graph_expansions,
             native_restore_accounting,
             timing,
             selection_counts,
             diagnostics: None,
             final_checkpoint: path_text(&final_checkpoint_path),
             state_graph_sha256,
+            useful_graph_expansion_set_sha256,
             best_terminal_state_sha256: best_graph_terminal
                 .as_ref()
                 .map(|path| path.terminal.state_sha256),

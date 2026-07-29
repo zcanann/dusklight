@@ -5,13 +5,14 @@ use super::{
     MAX_LEARN_INPUT_CORPORA, NativeEpisodeShard, NativeFactorizedPolicyBatchConfig,
     NativeFactorizedPolicySuffixBatch, NativeFrozenPolicyReinferenceReport,
     NativeFrozenPolicySuffixBatch, NativeGenericExecutionStrategy, NativeResidualExecutionBinding,
-    NativeTacticPolicyRunConfig, NativeTacticRouteRunConfig, OptimizationRequest, Sha256,
-    TacticFrozenPolicy, TacticProposalPolicy, TacticQCampaign, TacticQTrainingCorpus, cli,
-    command_conservative_q, flag, native_frozen_policy_probe_model, native_tactic_execution_plan,
-    option, prove_generalized_tactic_held_out_value, realize_native_frozen_policy_tape,
-    repeated_option, required_path, run_native_tactic_policy, run_native_tactic_route,
-    tactic_macro_registry_identity, u64_option, usage_error, usize_option,
-    verify_native_frozen_policy_cold_replay, verify_native_frozen_policy_reinference,
+    NativeTacticPolicyRunConfig, NativeTacticRouteRunConfig, NativeTacticThroughputCurveConfig,
+    OptimizationRequest, Sha256, TacticFrozenPolicy, TacticProposalPolicy, TacticQCampaign,
+    TacticQTrainingCorpus, cli, command_conservative_q, flag, native_frozen_policy_probe_model,
+    native_tactic_execution_plan, option, prove_generalized_tactic_held_out_value,
+    realize_native_frozen_policy_tape, repeated_option, required_path, run_native_tactic_policy,
+    run_native_tactic_route, run_native_tactic_throughput_curve, tactic_macro_registry_identity,
+    u64_option, usage_error, usize_option, verify_native_frozen_policy_cold_replay,
+    verify_native_frozen_policy_reinference,
 };
 use serde_json::json;
 use sha2::Digest as _;
@@ -606,6 +607,76 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "demonstration_transitions": report.demonstration_transitions,
                 }))?
             );
+            Ok(())
+        }
+        Some("tactic-throughput-curve") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let request: OptimizationRequest =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--request")?)?)?;
+            let execution: NativeResidualExecutionBinding =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--execution")?)?)?;
+            let output_argument = required_path(learn_args, "--output")?;
+            let output = if output_argument.is_absolute() {
+                output_argument
+            } else {
+                repository_root.join(output_argument)
+            };
+            let mut seeds = repeated_option(learn_args, "--seed")
+                .into_iter()
+                .map(|seed| seed.parse::<u64>())
+                .collect::<Result<Vec<_>, _>>()?;
+            if seeds.is_empty() {
+                seeds.push(
+                    request
+                        .execution
+                        .deterministic_seeds
+                        .first()
+                        .copied()
+                        .ok_or("optimization request has no deterministic seed")?,
+                );
+            }
+            seeds.sort_unstable();
+            seeds.dedup();
+            if seeds.len() != 1 {
+                return Err(
+                    "tactic throughput curve requires exactly one deterministic seed".into(),
+                );
+            }
+            let execution_plan = native_tactic_execution_plan(
+                learn_args,
+                &request,
+                &seeds,
+                TacticProposalPolicy::Learned,
+                NativeGenericExecutionStrategy::NativeController,
+                None,
+            )?;
+            let report = run_native_tactic_throughput_curve(&NativeTacticThroughputCurveConfig {
+                repository_root: &repository_root,
+                optimization: &request,
+                execution: &execution,
+                execution_plan: &execution_plan,
+                output_root: &output,
+                repetitions: usize_option(learn_args, "--repetitions", 2)?.try_into()?,
+            })?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": report.schema,
+                    "report": output.join("throughput-curve.json"),
+                    "fixed_unique_useful_graph_expansions":
+                        report.fixed_unique_useful_graph_expansions,
+                    "curve": report.curve,
+                    "passed": report.passed,
+                }))?
+            );
+            if !report.passed {
+                return Err("native tactic fixed-work throughput curve did not pass".into());
+            }
             Ok(())
         }
         _ => usage_error(),

@@ -158,10 +158,16 @@ pub(super) fn refresh_route_throughput(
     seeds: &[NativeTacticSeedResult],
 ) {
     let useful_decisions = seeds.iter().map(|seed| seed.useful_decisions).sum();
+    let unique_useful_graph_expansions = seeds
+        .iter()
+        .map(|seed| seed.unique_useful_graph_expansions)
+        .sum();
     let native_ticks = seeds.iter().map(|seed| seed.native_ticks).sum();
     let episodes = seeds.iter().map(|seed| seed.episodes).sum();
     timing.useful_decisions_per_second_millionths =
         per_second_millionths(useful_decisions, timing.wall_micros);
+    timing.unique_useful_graph_expansions_per_second_millionths =
+        per_second_millionths(unique_useful_graph_expansions, timing.wall_micros);
     timing.native_ticks_per_second_millionths =
         per_second_millionths(native_ticks, timing.wall_micros);
     timing.episodes_per_second_millionths = per_second_millionths(episodes, timing.wall_micros);

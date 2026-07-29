@@ -313,3 +313,45 @@ transition. Policy inference remained `not_present`; this comparison does not
 misreport it as zero. The sealed aggregate report is
 [`benchmarks/macos-worker-scaling-20260721.json`](benchmarks/macos-worker-scaling-20260721.json),
 SHA-256 `b00148589ff5e7cabe256d6852dd0e38cecc64474ab033cd37ba92e11d251e5e`.
+
+## Fixed-work graph-expansion scaling
+
+On 2026-07-29, a balanced two-repetition macOS sweep measured the complete
+native tactic path at 1, 2, 4, 8, and 16 persistent workers. Every cell
+completed one learner decision and the same 16 graph-authoritative executable
+expansions. The worker order was ascending in the first repetition and
+descending in the second to expose host-temperature and ordering bias.
+
+| Workers | Median seconds | Useful expansions/s | Speedup | Efficiency |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 103.322 | 0.155 | 1.00x | 100.0% |
+| 2 | 80.412 | 0.199 | 1.28x | 64.2% |
+| 4 | 70.952 | 0.226 | 1.46x | 36.4% |
+| 8 | 65.722 | 0.243 | 1.57x | 19.7% |
+| 16 | 85.211 | 0.188 | 1.21x | 7.6% |
+
+All ten runs reported zero replay staleness. Their serialized state-graph
+digests differ because worker scheduling changes lease and admission history,
+but a post-run audit of the completed executable expansion identities, targets,
+route checkpoints, and replay-evidence identities produced the same digest for
+every checkpoint:
+`8bc738c30fbd903dc0c62799c304d809edb9797a99a529bb861ba336e6f4e432`.
+The throughput report now compares this semantic work-set identity while
+retaining the full state-graph digests for scheduling audit.
+
+Useful execution time scaled from 45.145 seconds at one worker to 3.823 seconds
+at sixteen. Process launch and native boot instead consumed 54.355-58.226
+seconds through eight workers and 78.438-80.713 seconds at sixteen. The
+fourteen-logical-CPU host therefore saturates after eight workers, and process
+startup dominates every cell. The next fixed-work treatment is persistent
+process reuse across campaign cells or elimination of redundant native boot;
+additional worker capacity is not justified by this curve.
+
+The ignored evidence root is
+`build/benchmarks/ordon-native-tactic-fixed-work-scaling-v1`. Its sealed report
+content SHA-256 is
+`916bb1bd02827c590ccef1cfc849d30d19968c3928a75c03f4d76ca61fb2a579`;
+the optimization request, execution binding, and execution-plan identities are
+`d37c1635757049582b7fa571bf2d45b6d7be88633d4a32a42502413c3ebbbf75`,
+`e4def9095daf4500800647966e9e01b527a0af91e02f4ba88fb22dde3aee85cb`,
+and `c3896c9163d2aea867b63f0bdb44a3e7f9a96a98b315c57db03f95c4befe24fe`.

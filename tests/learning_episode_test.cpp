@@ -831,7 +831,6 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
     begin_learning_episode(successEpisode);
     fixture.setTraceBoundary(GameplayTracePhase::PreInput, 10, 10, 440);
     LearningObservationContext successPre = pre;
-    successPre.tacticActorsRequired = true;
     REQUIRE(
         append_learning_observation(successEpisode, fixture.observation, successPre, error));
     append_learning_action(successEpisode, pad, pad);
@@ -982,17 +981,9 @@ void test_tactic_detail_omits_unneeded_full_channels() {
     REQUIRE(append_learning_observation(compactBytes, fixture.observation, compact, error));
     REQUIRE(
         compactBytes.at(24) == static_cast<std::uint8_t>(LearningObservationDetail::Tactic));
-    REQUIRE(read_little<std::uint16_t>(compactBytes, 27) == 0);
+    REQUIRE(read_little<std::uint16_t>(compactBytes, 27) == 1);
     REQUIRE(read_little<std::uint32_t>(compactBytes, 31) == 1);
     REQUIRE(compactBytes.size() * 10 < fullBytes.size());
-
-    compact.tacticActorsRequired = true;
-    std::vector<std::uint8_t> actorBytes;
-    begin_learning_episode(actorBytes);
-    REQUIRE(append_learning_observation(actorBytes, fixture.observation, compact, error));
-    REQUIRE(read_little<std::uint16_t>(actorBytes, 27) == 1);
-    REQUIRE(actorBytes.size() > compactBytes.size());
-    REQUIRE(actorBytes.size() * 10 < fullBytes.size());
 }
 
 void test_duplicate_actor_identity_fails_closed() {

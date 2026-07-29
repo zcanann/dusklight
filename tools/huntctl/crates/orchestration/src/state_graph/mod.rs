@@ -33,6 +33,7 @@ use std::error::Error;
 use std::fmt;
 
 const ROUTE_CHECKPOINT_SCHEMA_V1: &[u8] = b"dusklight-route-checkpoint/v1";
+const EXECUTABLE_EXPANSION_SET_SCHEMA_V1: &[u8] = b"dusklight-executable-expansion-set/v1";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -140,6 +141,59 @@ impl StateGraph {
 
     pub fn expansion_count(&self) -> usize {
         self.expansions.len()
+    }
+
+    /// Unique graph-owned action expansions backed by executable native
+    /// evidence. Registered, leased, retryable, validation-failed, and
+    /// learner-only entries are deliberately excluded from throughput.
+    pub fn completed_executable_expansion_count(&self) -> usize {
+        self.expansions
+            .values()
+            .filter(|expansion| {
+                matches!(
+                    expansion.status,
+                    ActionExpansionStatus::Completed {
+                        authority: ExpansionEvidenceAuthority::Executable,
+                        ..
+                    }
+                )
+            })
+            .count()
+    }
+
+    /// Stable semantic identity of the executable work set. This deliberately
+    /// excludes lease and admission order while binding every completed
+    /// action, target, route, and transition-evidence identity.
+    pub fn completed_executable_expansion_set_sha256(&self) -> Digest {
+        let completed = self.expansions.values().filter_map(|expansion| {
+            let ActionExpansionStatus::Completed {
+                authority: ExpansionEvidenceAuthority::Executable,
+                route_checkpoint_sha256,
+                evidence,
+            } = &expansion.status
+            else {
+                return None;
+            };
+            Some((expansion, route_checkpoint_sha256, evidence))
+        });
+        let mut hasher = Sha256::new();
+        hasher.update(EXECUTABLE_EXPANSION_SET_SCHEMA_V1);
+        hasher.update((self.completed_executable_expansion_count() as u64).to_le_bytes());
+        for (expansion, route_checkpoint_sha256, evidence) in completed {
+            hasher.update(expansion.identity_sha256.0);
+            let target = expansion.target.unwrap_or(ExactStateId {
+                route_checkpoint_sha256: Digest::ZERO,
+                state_sha256: Digest::ZERO,
+            });
+            hasher.update(target.route_checkpoint_sha256.0);
+            hasher.update(target.state_sha256.0);
+            hasher.update(route_checkpoint_sha256.0);
+            hasher.update((evidence.len() as u64).to_le_bytes());
+            for evidence_sha256 in evidence.keys() {
+                hasher.update(evidence_sha256.0);
+            }
+        }
+        Digest(hasher.finalize().into())
     }
 
     pub fn expansions(&self) -> impl Iterator<Item = &ActionExpansion> {

@@ -160,6 +160,14 @@ pub use execution_plan::{
     NativeTacticPlanBudgets, NativeTacticReplaySharingPlan, NativeTacticResourceLimit,
 };
 
+mod throughput_curve;
+pub use throughput_curve::{
+    NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V1, NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS,
+    NativeTacticThroughputCurveCell, NativeTacticThroughputCurveConfig,
+    NativeTacticThroughputCurveReport, NativeTacticThroughputCurveSample,
+    run_native_tactic_throughput_curve,
+};
+
 mod learner_authority;
 use learner_authority::{
     CampaignLearnerPublishResult, CampaignTacticLearnerAuthority, SharedTacticLearnerAuthority,
@@ -544,6 +552,10 @@ pub fn run_native_tactic_route(
         .map(|(_, result)| result)
         .collect::<Vec<_>>();
     let useful_decisions = seed_results.iter().map(|seed| seed.useful_decisions).sum();
+    let unique_useful_graph_expansions = seed_results
+        .iter()
+        .map(|seed| seed.unique_useful_graph_expansions)
+        .sum();
     let mut native_restore_accounting = NativeTacticRestoreAccounting::default();
     for seed in &seed_results {
         native_restore_accounting.merge(&seed.native_restore_accounting);
@@ -704,6 +716,7 @@ pub fn run_native_tactic_route(
             .saturating_add(tactic_macro_discovery.validation_native_ticks),
         total_decisions: seed_results.iter().map(|seed| seed.decisions).sum(),
         useful_decisions,
+        unique_useful_graph_expansions,
         learner_authority: learner_authority_report,
         learner_updates,
         learner_updates_per_second_millionths: per_second_millionths(

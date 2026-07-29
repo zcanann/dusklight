@@ -124,6 +124,11 @@ fn one_selected_action_owns_all_observed_interior_segments() {
     assert_eq!(admission.inserted_segments, 2);
     assert_eq!(graph.node_count(), 3);
     assert_eq!(graph.expansion_count(), 1);
+    assert_eq!(graph.completed_executable_expansion_count(), 1);
+    assert_ne!(
+        graph.completed_executable_expansion_set_sha256(),
+        Digest::ZERO
+    );
     assert_eq!(graph.segment_count(), 2);
     assert_eq!(graph.completed_transitions().count(), 1);
     graph.validate().unwrap();
@@ -822,6 +827,8 @@ fn learner_only_evidence_requires_explicit_executable_promotion() {
         )
         .unwrap();
     assert!(!graph.node(admission.target).unwrap().restoration.executable);
+    assert_eq!(graph.completed_executable_expansion_count(), 0);
+    let learner_only_set_sha256 = graph.completed_executable_expansion_set_sha256();
 
     let promoted = graph
         .admit_completed_expansion(
@@ -834,6 +841,11 @@ fn learner_only_evidence_requires_explicit_executable_promotion() {
     assert!(promoted.duplicate);
     assert!(promoted.authority_promoted);
     assert!(graph.node(admission.target).unwrap().restoration.executable);
+    assert_eq!(graph.completed_executable_expansion_count(), 1);
+    assert_ne!(
+        graph.completed_executable_expansion_set_sha256(),
+        learner_only_set_sha256
+    );
     assert!(matches!(
         graph.expansion(admission.expansion_sha256).unwrap().status,
         ActionExpansionStatus::Completed {

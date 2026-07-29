@@ -1212,8 +1212,7 @@ std::array<std::uint8_t, 16> xxh128(const std::span<const std::uint8_t> value) {
 bool append_tactic_observation(std::vector<std::uint8_t>& output,
     const MilestoneObservation& observation, const LearningObservationContext& context,
     const std::array<std::uint8_t, 16>& stateIdentity, std::string& error) {
-    const bool includeActors = context.tacticActorsRequired;
-    const std::size_t actorCount = includeActors ? observation.actors.size() : 0;
+    const std::size_t actorCount = observation.actors.size();
     if (actorCount > std::numeric_limits<std::uint16_t>::max())
         return false;
 
@@ -1224,7 +1223,6 @@ bool append_tactic_observation(std::vector<std::uint8_t>& output,
     flags |= context.collisionCorrectionPresent ? 1u << 3 : 0;
     flags |= context.playerForm.present ? 1u << 4 : 0;
     flags |= context.playerForm.wolf ? 1u << 5 : 0;
-    flags |= includeActors ? 0 : 1u << 6;
 
     append_integer(output, static_cast<std::uint8_t>(context.phase));
     append_integer(output, static_cast<std::uint8_t>(context.terminalReason));
@@ -1293,18 +1291,16 @@ bool append_tactic_observation(std::vector<std::uint8_t>& output,
             return false;
     }
 
-    if (includeActors) {
-        for (const MilestoneObservation::Actor& actor : observation.actors) {
-            append_integer(output, actor.runtimeGeneration);
-            append_integer(output, actor.actorName);
-            append_integer(output, actor.setId);
-            append_integer(output, actor.homeRoom);
-            append_integer(output, actor.currentRoom);
-            if (!append_float(output, actor.positionX, error) ||
-                !append_float(output, actor.positionY, error) ||
-                !append_float(output, actor.positionZ, error))
-                return false;
-        }
+    for (const MilestoneObservation::Actor& actor : observation.actors) {
+        append_integer(output, actor.runtimeGeneration);
+        append_integer(output, actor.actorName);
+        append_integer(output, actor.setId);
+        append_integer(output, actor.homeRoom);
+        append_integer(output, actor.currentRoom);
+        if (!append_float(output, actor.positionX, error) ||
+            !append_float(output, actor.positionY, error) ||
+            !append_float(output, actor.positionZ, error))
+            return false;
     }
     return true;
 }

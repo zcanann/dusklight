@@ -270,9 +270,9 @@ Exit gate:
 - [x] Measure process launch, simulation, state extraction, direct restore,
       replay restore, graph admission, learner update, IPC, persistence, and
       reporting separately.
-- [ ] Establish fixed-work curves at 1, 2, 4, 8, and 16 workers using unique
+- [x] Establish fixed-work curves at 1, 2, 4, 8, and 16 workers using unique
       useful graph expansions, not raw ticks, as throughput.
-- [ ] Keep workers and game processes persistent across expansions.
+- [x] Keep workers and game processes persistent across expansions.
 - [ ] Use compact binary batches and shared content identities; do not send
       repeated snapshots or JSON transition blobs through IPC.
 - [ ] Verify which rendering, audio, presentation, and proof systems may be
@@ -283,6 +283,18 @@ Exit gate:
 - [ ] Deliver a 10x reduction in wall time to a fixed useful-evidence target
       against the recorded baseline, or identify and remove the measured
       saturation bottleneck before proposing more capacity.
+
+The 2026-07-29 macOS fixed-work curve held every cell to one decision and 16
+unique useful graph expansions. Median wall time fell from 103.322 seconds at
+one worker to 65.722 seconds at eight workers, then regressed to 85.211 seconds
+at sixteen. All ten runs had zero replay staleness and the same semantic
+expansion/evidence digest. Process launch and native boot consumed 54.4-80.7
+seconds per cell while useful execution fell from 45.1 seconds to 3.8 seconds;
+the next throughput treatment must therefore remove launch/boot saturation,
+not add workers. The sealed report content SHA-256 is
+`916bb1bd02827c590ccef1cfc849d30d19968c3928a75c03f4d76ca61fb2a579`;
+the post-run expansion-set audit SHA-256 is
+`8bc738c30fbd903dc0c62799c304d809edb9797a99a529bb861ba336e6f4e432`.
 
 Exit gate:
 

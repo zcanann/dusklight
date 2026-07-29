@@ -61,8 +61,14 @@ pub(super) fn native_tactic_execution_plan(
         budgets: NativeTacticPlanBudgets {
             decisions_per_lane,
             native_ticks: NativeTacticResourceLimit::Bounded(request.budgets.simulated_tick_budget),
-            memory_bytes: NativeTacticResourceLimit::Unbounded,
-            wall_micros: NativeTacticResourceLimit::Unbounded,
+            memory_bytes: option(learn_args, "--memory-bytes")
+                .map(|value| value.parse().map(NativeTacticResourceLimit::Bounded))
+                .transpose()?
+                .unwrap_or(NativeTacticResourceLimit::Unbounded),
+            wall_micros: option(learn_args, "--wall-micros")
+                .map(|value| value.parse().map(NativeTacticResourceLimit::Bounded))
+                .transpose()?
+                .unwrap_or(NativeTacticResourceLimit::Unbounded),
         },
     })
     .map_err(Into::into)
