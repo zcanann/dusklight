@@ -822,7 +822,7 @@ fn route_reward_contains_only_terminal_success_and_native_tick_cost() {
 }
 
 #[test]
-fn root_probe_cache_request_pins_the_authenticated_source_with_the_sealed_capacity() {
+fn root_probe_cache_request_binds_the_authenticated_source_with_the_sealed_capacity() {
     let mut batch = NativeSuffixBatch {
         schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
         source_frame: 0,

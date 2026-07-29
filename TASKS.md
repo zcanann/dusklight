@@ -106,6 +106,11 @@ The incoming 2026-07-29 work made substantial, useful progress:
   distinguishes lane refresh pressure from actual fitted-model replay lag,
   fails selection if that lag exceeds the sealed limit, accounts for replay
   fallback, and reports checkpoint-owner locality and assignment skew.
+- The hermetic clean-checkout gate does not launch the game executable. A
+  current-build one-decision Windows smoke exposed detached root-probe cache
+  and batch-schema contracts that the complete Rust suite had missed. Those
+  defects are fixed, but supported-platform native launch compatibility is not
+  yet a retained gate.
 - Native option summaries now retain same-tick wall-contact/commanded-motion
   overlap and the momentum loss measured on those ticks. The v5 tactic feature
   schema exposes the measured consequence with explicit legacy missingness;
@@ -211,6 +216,12 @@ journals, or learned tactics.
 
 ## P0 - Restore a truthful, auditable baseline
 
+- [ ] Add a supported-platform native campaign smoke gate that materializes a
+      current execution, launches the compact persistent worker, authenticates
+      the root probe, executes one cached tactic decision, and passes the v2
+      resource audit. It must fail clearly on stale worker capabilities,
+      detached root-cache capacity/schema, or missing native result telemetry;
+      retain at least Windows and macOS results for the same sealed request.
 - [ ] Recover the original `231`-tick macOS campaign artifacts or rerun its
       sealed execution plan, then commit its self-contained scratch evidence
       bundle. The existing summary contains only an unavailable child-report
@@ -220,6 +231,7 @@ journals, or learned tactics.
 Exit gate:
 
 - A clean checkout passes the documented audit command.
+- Current Windows and macOS builds pass the retained native launch smoke.
 - Another engineer can independently validate the `231`-tick claim and every
   per-seed terminal without access to the originating macOS build directory.
 
