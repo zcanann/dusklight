@@ -10,9 +10,9 @@ mod validation;
 
 pub use types::{
     ActionExpansion, ActionExpansionStatus, ExactStateId, ExpansionAdmission,
-    FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1, FutureEquivalenceProof, NativeBoundaryLocator,
-    ObservedSegment, RestorationLocator, RouteRecord, STATE_GRAPH_SCHEMA_V1, StateGraphIdentity,
-    StateGraphNode, TerminalPath,
+    ExpansionEvidenceAuthority, FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1, FutureEquivalenceProof,
+    NativeBoundaryLocator, ObservedSegment, RestorationLocator, RouteRecord, STATE_GRAPH_SCHEMA_V1,
+    StateGraphIdentity, StateGraphNode, TerminalPath,
 };
 
 use dusklight_automation_contracts::artifact::Digest;
@@ -77,6 +77,7 @@ impl StateGraph {
             restoration: RestorationLocator {
                 route: root_route_record,
                 native_boundary: None,
+                executable: true,
             },
             incoming_segments: Default::default(),
             outgoing_segments: Default::default(),
@@ -124,6 +125,10 @@ impl StateGraph {
         self.nodes.len()
     }
 
+    pub fn nodes(&self) -> impl Iterator<Item = &StateGraphNode> {
+        self.nodes.values()
+    }
+
     pub fn expansion_count(&self) -> usize {
         self.expansions.len()
     }
@@ -169,11 +174,31 @@ impl StateGraph {
         })
     }
 
+    pub fn completed_evidence(
+        &self,
+    ) -> impl Iterator<Item = (&OptionTransitionSample, &InputTape, u64)> {
+        self.expansions.values().filter_map(|expansion| {
+            if let ActionExpansionStatus::Completed {
+                episode_group,
+                route_checkpoint_sha256,
+                transition,
+                ..
+            } = &expansion.status
+            {
+                self.routes
+                    .get(route_checkpoint_sha256)
+                    .map(|route| (transition.as_ref(), route, *episode_group))
+            } else {
+                None
+            }
+        })
+    }
+
     fn refresh_best_terminal(&mut self) {
         self.best_terminal = self
             .nodes
             .values()
-            .filter(|node| node.terminal)
+            .filter(|node| node.terminal && node.restoration.executable)
             .min_by_key(|node| (node.root_ticks, node.id))
             .map(|node| TerminalPath {
                 terminal: node.id,

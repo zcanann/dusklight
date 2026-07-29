@@ -1,11 +1,12 @@
 //! Tactic-learning codecs over the shared content-addressed evidence store.
 
+use crate::state_graph::StateGraph;
 use crate::tactic_q_campaign::{
-    TACTIC_Q_CHECKPOINT_EXTENSION, TACTIC_Q_CHECKPOINT_SCHEMA_V2, TACTIC_Q_CHECKPOINT_SCHEMA_V3,
-    TACTIC_Q_CHECKPOINT_SCHEMA_V4, TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1,
-    TacticQCampaignCheckpoint, TacticQCampaignError, TacticQCheckpointSerializationBenchmark,
-    TacticQFinalResult, TacticQLearnerSnapshot, TacticQTrainingCorpus, checkpoint_digest,
-    validate_checkpoint, validate_final_result, validate_training_corpus,
+    TACTIC_Q_CHECKPOINT_EXTENSION, TACTIC_Q_CHECKPOINT_SCHEMA_V5,
+    TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1, TacticQCampaignCheckpoint,
+    TacticQCampaignError, TacticQCheckpointSerializationBenchmark, TacticQFinalResult,
+    TacticQLearnerSnapshot, TacticQTrainingCorpus, checkpoint_digest, validate_checkpoint,
+    validate_final_result, validate_training_corpus,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
@@ -32,9 +33,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 const FACT_OBJECT_SCHEMA_V1: &str = "dusklight-tactic-q-fact-object/v1";
-const CHECKPOINT_MANIFEST_SCHEMA_V1: &str = "dusklight-tactic-q-checkpoint-manifest/v1";
-const CHECKPOINT_MANIFEST_SCHEMA_V2: &str = "dusklight-tactic-q-checkpoint-manifest/v2";
-const CHECKPOINT_MANIFEST_SCHEMA_V3: &str = "dusklight-tactic-q-checkpoint-manifest/v3";
+const CHECKPOINT_MANIFEST_SCHEMA_V4: &str = "dusklight-tactic-q-checkpoint-manifest/v4";
 const TRAINING_CORPUS_MANIFEST_SCHEMA_V1: &str = "dusklight-tactic-q-training-corpus-manifest/v1";
 const TRAINING_CORPUS_MANIFEST_SCHEMA_V2: &str = "dusklight-tactic-q-training-corpus-manifest/v2";
 const CHECKPOINT_MAGIC: &[u8; 8] = b"DSKTQZ01";
@@ -148,6 +147,27 @@ impl TacticQContentStore {
         require_kind(reference, ContentKind::TacticTransition)?;
         let stored: StoredOptionTransition = self.read_cbor(reference)?;
         load_transition(&stored, self).map_err(TacticQContentStoreError::domain)
+    }
+
+    pub fn store_state_graph(
+        &self,
+        graph: &StateGraph,
+    ) -> Result<StoredContentRef, TacticQContentStoreError> {
+        let raw = graph.encode().map_err(TacticQContentStoreError::domain)?;
+        Ok(StoredContentRef::from(
+            &self
+                .store
+                .put_bytes(&raw, ContentKind::StateGraph)
+                .map_err(TacticQContentStoreError::Store)?,
+        ))
+    }
+
+    pub fn load_state_graph(
+        &self,
+        reference: StoredContentRef,
+    ) -> Result<StateGraph, TacticQContentStoreError> {
+        require_kind(reference, ContentKind::StateGraph)?;
+        StateGraph::decode(&self.read_bytes(reference)?).map_err(TacticQContentStoreError::domain)
     }
 
     pub fn store_fact(
@@ -443,6 +463,7 @@ struct StoredCheckpointManifest {
     decision_index: u64,
     current: StoredLearnerState,
     route_tape: StoredContentRef,
+    state_graph: StoredContentRef,
     replay: Vec<StoredContentRef>,
     replay_routes: Vec<StoredContentRef>,
     episode_groups: Vec<u64>,
@@ -872,6 +893,9 @@ fn store_checkpoint_manifest(
     let route_tape = store
         .store_tape(&checkpoint.route_tape)
         .map_err(checkpoint_store_error)?;
+    let state_graph = store
+        .store_state_graph(&checkpoint.state_graph)
+        .map_err(checkpoint_store_error)?;
     let replay = checkpoint
         .replay
         .iter()
@@ -903,7 +927,7 @@ fn store_checkpoint_manifest(
         .map(|route| store.store_tape(route).map_err(checkpoint_store_error))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(StoredCheckpointManifest {
-        schema: CHECKPOINT_MANIFEST_SCHEMA_V3.into(),
+        schema: CHECKPOINT_MANIFEST_SCHEMA_V4.into(),
         content_sha256: checkpoint.content_sha256,
         execution_authority_sha256: checkpoint.execution_authority_sha256,
         feature_schema_sha256: checkpoint.feature_schema_sha256,
@@ -913,6 +937,7 @@ fn store_checkpoint_manifest(
         decision_index: checkpoint.decision_index,
         current,
         route_tape,
+        state_graph,
         replay,
         replay_routes,
         episode_groups: checkpoint.episode_groups.clone(),
@@ -1002,21 +1027,13 @@ fn load_checkpoint_manifest(
     manifest: &StoredCheckpointManifest,
     store: &TacticQContentStore,
 ) -> Result<TacticQCampaignCheckpoint, TacticQCampaignError> {
-    let legacy = manifest.schema == CHECKPOINT_MANIFEST_SCHEMA_V1;
-    let shared_replay = manifest.schema == CHECKPOINT_MANIFEST_SCHEMA_V2;
-    let current = manifest.schema == CHECKPOINT_MANIFEST_SCHEMA_V3;
-    if (!legacy && !shared_replay && !current)
+    let graph_native = manifest.schema == CHECKPOINT_MANIFEST_SCHEMA_V4;
+    if !graph_native
         || manifest.content_sha256 == Digest::ZERO
         || manifest.replay.len() != manifest.replay_routes.len()
         || manifest.replay.len() != manifest.episode_groups.len()
-        || (legacy
-            && (!manifest.training_replay.is_empty()
-                || !manifest.training_replay_routes.is_empty()
-                || !manifest.training_episode_groups.is_empty()))
-        || ((shared_replay || current)
-            && (manifest.training_replay.len() != manifest.training_replay_routes.len()
-                || manifest.training_replay.len() != manifest.training_episode_groups.len()))
-        || (shared_replay && manifest.model_revision != 0)
+        || manifest.training_replay.len() != manifest.training_replay_routes.len()
+        || manifest.training_replay.len() != manifest.training_episode_groups.len()
     {
         return Err(TacticQCampaignError::InvalidState(
             "checkpoint manifest identity or shape is invalid",
@@ -1035,6 +1052,9 @@ fn load_checkpoint_manifest(
     };
     let route_tape = store
         .load_tape(manifest.route_tape)
+        .map_err(checkpoint_store_error)?;
+    let state_graph = store
+        .load_state_graph(manifest.state_graph)
         .map_err(checkpoint_store_error)?;
     let replay = manifest
         .replay
@@ -1065,14 +1085,7 @@ fn load_checkpoint_manifest(
         .map(|route| store.load_tape(*route).map_err(checkpoint_store_error))
         .collect::<Result<Vec<_>, _>>()?;
     let checkpoint = TacticQCampaignCheckpoint {
-        schema: if legacy {
-            TACTIC_Q_CHECKPOINT_SCHEMA_V2
-        } else if shared_replay {
-            TACTIC_Q_CHECKPOINT_SCHEMA_V3
-        } else {
-            TACTIC_Q_CHECKPOINT_SCHEMA_V4
-        }
-        .into(),
+        schema: TACTIC_Q_CHECKPOINT_SCHEMA_V5.into(),
         content_sha256: manifest.content_sha256,
         execution_authority_sha256: manifest.execution_authority_sha256,
         feature_schema_sha256: manifest.feature_schema_sha256,
@@ -1082,6 +1095,7 @@ fn load_checkpoint_manifest(
         decision_index: manifest.decision_index,
         current,
         route_tape,
+        state_graph,
         replay,
         replay_routes,
         episode_groups: manifest.episode_groups.clone(),

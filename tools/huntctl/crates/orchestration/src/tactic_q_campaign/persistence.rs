@@ -2,8 +2,20 @@ use super::*;
 
 impl TacticQCampaign {
     pub fn checkpoint(&self) -> Result<TacticQCampaignCheckpoint, TacticQCampaignError> {
+        let state_graph = self
+            .state_graph
+            .clone()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "checkpoint requires a bound state graph",
+            ))?;
+        validate_training_projection(
+            &state_graph,
+            &self.training_replay,
+            &self.training_replay_routes,
+            &self.training_episode_groups,
+        )?;
         let mut checkpoint = TacticQCampaignCheckpoint {
-            schema: TACTIC_Q_CHECKPOINT_SCHEMA_V4.into(),
+            schema: TACTIC_Q_CHECKPOINT_SCHEMA_V5.into(),
             content_sha256: Digest::ZERO,
             execution_authority_sha256: self.execution_authority_sha256,
             feature_schema_sha256: self.feature_schema_sha256,
@@ -13,6 +25,7 @@ impl TacticQCampaign {
             decision_index: self.decision_index,
             current: self.current.clone(),
             route_tape: self.route_tape.clone(),
+            state_graph,
             replay: self.replay.clone(),
             replay_routes: self.replay_routes.clone(),
             episode_groups: self.episode_groups.clone(),
@@ -131,15 +144,10 @@ impl TacticQCampaign {
     }
 
     fn resume_with_model(
-        mut checkpoint: TacticQCampaignCheckpoint,
+        checkpoint: TacticQCampaignCheckpoint,
         fit_model: bool,
     ) -> Result<Self, TacticQCampaignError> {
         validate_checkpoint(&checkpoint)?;
-        if checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V2 {
-            checkpoint.training_replay = checkpoint.replay.clone();
-            checkpoint.training_replay_routes = checkpoint.replay_routes.clone();
-            checkpoint.training_episode_groups = checkpoint.episode_groups.clone();
-        }
         let model = if fit_model {
             replay_model(
                 checkpoint.feature_schema_sha256,
@@ -168,11 +176,6 @@ impl TacticQCampaign {
         }
         let hindsight = HindsightOptionReplay::new(checkpoint.feature_schema_sha256)
             .map_err(TacticQCampaignError::Hindsight)?;
-        let training_identities = checkpoint
-            .training_replay
-            .iter()
-            .map(OptionTransitionSample::replay_identity_sha256)
-            .collect::<Result<BTreeSet<_>, _>>()?;
         let frontier_archive = build_frontier_archive(
             checkpoint.root_checkpoint_sha256,
             &checkpoint.training_replay,
@@ -189,13 +192,13 @@ impl TacticQCampaign {
             decision_index: checkpoint.decision_index,
             current: checkpoint.current,
             route_tape: checkpoint.route_tape,
+            state_graph: Some(checkpoint.state_graph),
             replay: checkpoint.replay,
             replay_routes: checkpoint.replay_routes,
             episode_groups: checkpoint.episode_groups,
             training_replay: checkpoint.training_replay,
             training_replay_routes: checkpoint.training_replay_routes,
             training_episode_groups: checkpoint.training_episode_groups,
-            training_identities,
             frontier_archive,
             model_config: checkpoint.model_config,
             exploration: checkpoint.exploration,

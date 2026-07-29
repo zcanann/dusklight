@@ -128,7 +128,7 @@ impl StateGraph {
         let expected_terminal = self
             .nodes
             .values()
-            .filter(|node| node.terminal)
+            .filter(|node| node.terminal && node.restoration.executable)
             .min_by_key(|node| (node.root_ticks, node.id))
             .map(|node| TerminalPath {
                 terminal: node.id,
@@ -150,6 +150,7 @@ impl StateGraph {
         match &expansion.status {
             ActionExpansionStatus::Completed {
                 episode_group: _,
+                authority,
                 route_checkpoint_sha256,
                 transition,
             } => {
@@ -166,6 +167,15 @@ impl StateGraph {
                     || *route_checkpoint_sha256 != target.route_checkpoint_sha256
                     || transition.value_sample.action != expansion.action
                     || expansion.execution.as_ref() != Some(&transition.execution)
+                    || (*authority == super::ExpansionEvidenceAuthority::Executable
+                        && (!self
+                            .nodes
+                            .get(&expansion.source)
+                            .is_some_and(|node| node.restoration.executable)
+                            || !self
+                                .nodes
+                                .get(&target)
+                                .is_some_and(|node| node.restoration.executable)))
                 {
                     return Err(StateGraphError::Invariant(
                         "completed action expansion is detached from native evidence",

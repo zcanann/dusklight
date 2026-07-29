@@ -63,6 +63,7 @@ pub struct NativeBoundaryLocator {
 pub struct RestorationLocator {
     pub route: RouteRecord,
     pub native_boundary: Option<NativeBoundaryLocator>,
+    pub executable: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -99,6 +100,7 @@ pub enum ActionExpansionStatus {
     },
     Completed {
         episode_group: u64,
+        authority: ExpansionEvidenceAuthority,
         route_checkpoint_sha256: Digest,
         transition: Box<OptionTransitionSample>,
     },
@@ -108,6 +110,13 @@ pub enum ActionExpansionStatus {
     Retryable {
         attempts: u32,
     },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpansionEvidenceAuthority {
+    Executable,
+    LearnerEvidenceOnly,
 }
 
 /// This is the only place a selected action appears in the graph. Interior
@@ -165,4 +174,5 @@ pub struct ExpansionAdmission {
     pub inserted_nodes: usize,
     pub inserted_segments: usize,
     pub duplicate: bool,
+    pub authority_promoted: bool,
 }

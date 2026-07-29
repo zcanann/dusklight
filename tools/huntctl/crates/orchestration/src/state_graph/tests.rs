@@ -98,7 +98,12 @@ fn graph_and_transition() -> (StateGraph, OptionTransitionSample, InputTape) {
 fn one_selected_action_owns_all_observed_interior_segments() {
     let (mut graph, transition, route) = graph_and_transition();
     let admission = graph
-        .admit_completed_expansion(transition, route, 17)
+        .admit_completed_expansion(
+            transition,
+            route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
         .unwrap();
 
     assert_eq!(admission.source, graph.root());
@@ -122,7 +127,12 @@ fn one_selected_action_owns_all_observed_interior_segments() {
 fn binary_restart_preserves_graph_identity_and_pending_truth() {
     let (mut graph, transition, route) = graph_and_transition();
     graph
-        .admit_completed_expansion(transition, route, 17)
+        .admit_completed_expansion(
+            transition,
+            route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
         .unwrap();
 
     let encoded = graph.encode().unwrap();
@@ -141,16 +151,60 @@ fn binary_restart_preserves_graph_identity_and_pending_truth() {
 fn duplicate_completed_evidence_does_not_duplicate_graph_truth() {
     let (mut graph, transition, route) = graph_and_transition();
     graph
-        .admit_completed_expansion(transition.clone(), route.clone(), 17)
+        .admit_completed_expansion(
+            transition.clone(),
+            route.clone(),
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
         .unwrap();
     let duplicate = graph
-        .admit_completed_expansion(transition, route, 17)
+        .admit_completed_expansion(
+            transition,
+            route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
         .unwrap();
 
     assert!(duplicate.duplicate);
     assert_eq!(graph.node_count(), 3);
     assert_eq!(graph.expansion_count(), 1);
     assert_eq!(graph.segment_count(), 2);
+}
+
+#[test]
+fn learner_only_evidence_requires_explicit_executable_promotion() {
+    let (mut graph, transition, route) = graph_and_transition();
+    let admission = graph
+        .admit_completed_expansion(
+            transition.clone(),
+            route.clone(),
+            17,
+            ExpansionEvidenceAuthority::LearnerEvidenceOnly,
+        )
+        .unwrap();
+    assert!(!graph.node(admission.target).unwrap().restoration.executable);
+
+    let promoted = graph
+        .admit_completed_expansion(
+            transition,
+            route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+    assert!(promoted.duplicate);
+    assert!(promoted.authority_promoted);
+    assert!(graph.node(admission.target).unwrap().restoration.executable);
+    assert!(matches!(
+        graph.expansion(admission.expansion_sha256).unwrap().status,
+        ActionExpansionStatus::Completed {
+            authority: ExpansionEvidenceAuthority::Executable,
+            ..
+        }
+    ));
+    graph.validate().unwrap();
 }
 
 #[test]
@@ -161,7 +215,12 @@ fn detached_evidence_is_rejected_before_mutating_the_graph() {
 
     assert!(
         graph
-            .admit_completed_expansion(transition, route, 17)
+            .admit_completed_expansion(
+                transition,
+                route,
+                17,
+                ExpansionEvidenceAuthority::Executable,
+            )
             .is_err()
     );
     assert_eq!(graph.node_count(), 1);

@@ -454,10 +454,12 @@ impl TacticQCampaign {
         }
         let source_checkpoint_sha256 =
             route_checkpoint(self.root_checkpoint_sha256, &self.route_tape)?;
-        let mut training_replay = self.training_replay.clone();
-        let mut training_replay_routes = self.training_replay_routes.clone();
-        let mut training_episode_groups = self.training_episode_groups.clone();
-        let mut identities = self.training_identities.clone();
+        let mut state_graph =
+            self.state_graph
+                .clone()
+                .ok_or(TacticQCampaignError::InvalidState(
+                    "evaluated replay requires a bound state graph",
+                ))?;
         let mut frontier_archive = self.frontier_archive.clone();
         let mut admitted = 0;
         for (evaluated, episode_group) in evaluated.iter().zip(episode_groups) {
@@ -485,26 +487,35 @@ impl TacticQCampaign {
                     "evaluated tactic replay is detached from its shared frontier",
                 ));
             }
-            let identity = evaluated.transition.replay_identity_sha256()?;
-            if identities.insert(identity) {
+            let admission = state_graph.admit_completed_expansion(
+                evaluated.transition.clone(),
+                evaluated.outcome.route_tape.clone(),
+                *episode_group,
+                if *episode_group == TACTIC_Q_MODEL_ONLY_EPISODE_GROUP {
+                    crate::state_graph::ExpansionEvidenceAuthority::LearnerEvidenceOnly
+                } else {
+                    crate::state_graph::ExpansionEvidenceAuthority::Executable
+                },
+            )?;
+            if !admission.duplicate || admission.authority_promoted {
                 consider_frontier_transition(
                     &mut frontier_archive,
                     self.root_checkpoint_sha256,
                     &evaluated.transition,
                     &evaluated.outcome.route_tape,
                     *episode_group,
-                    training_replay.len(),
+                    state_graph.expansion_count().saturating_sub(1),
                 )?;
-                training_replay.push(evaluated.transition.clone());
-                training_replay_routes.push(evaluated.outcome.route_tape.clone());
-                training_episode_groups.push(*episode_group);
+            }
+            if !admission.duplicate {
                 admitted += 1;
             }
         }
-        self.training_replay = training_replay;
-        self.training_replay_routes = training_replay_routes;
-        self.training_episode_groups = training_episode_groups;
-        self.training_identities = identities;
+        let projection = graph_training_projection(&state_graph)?;
+        self.state_graph = Some(state_graph);
+        self.training_replay = projection.transitions;
+        self.training_replay_routes = projection.routes;
+        self.training_episode_groups = projection.episode_groups;
         self.frontier_archive = frontier_archive;
         Ok(admitted)
     }
@@ -725,30 +736,40 @@ impl TacticQCampaign {
         replay_routes.push(outcome.route_tape.clone());
         let mut episode_groups = self.episode_groups.clone();
         episode_groups.push(self.episode_group);
-        let mut training_replay = self.training_replay.clone();
-        let mut training_replay_routes = self.training_replay_routes.clone();
-        let mut training_episode_groups = self.training_episode_groups.clone();
-        let mut training_identities = self.training_identities.clone();
+        let mut state_graph =
+            self.state_graph
+                .clone()
+                .ok_or(TacticQCampaignError::InvalidState(
+                    "native execution requires a bound state graph",
+                ))?;
         let mut frontier_archive = self.frontier_archive.clone();
-        if training_identities.insert(transition.replay_identity_sha256()?) {
+        let graph_admission = state_graph.admit_completed_expansion(
+            transition.clone(),
+            outcome.route_tape.clone(),
+            self.episode_group,
+            if self.episode_group == TACTIC_Q_MODEL_ONLY_EPISODE_GROUP {
+                crate::state_graph::ExpansionEvidenceAuthority::LearnerEvidenceOnly
+            } else {
+                crate::state_graph::ExpansionEvidenceAuthority::Executable
+            },
+        )?;
+        if !graph_admission.duplicate || graph_admission.authority_promoted {
             consider_frontier_transition(
                 &mut frontier_archive,
                 self.root_checkpoint_sha256,
                 &transition,
                 &outcome.route_tape,
                 self.episode_group,
-                training_replay.len(),
+                state_graph.expansion_count().saturating_sub(1),
             )?;
-            training_replay.push(transition.clone());
-            training_replay_routes.push(outcome.route_tape.clone());
-            training_episode_groups.push(self.episode_group);
         }
+        let projection = graph_training_projection(&state_graph)?;
         let model_update = if refit_model {
             Some(replay_model(
                 self.feature_schema_sha256,
                 self.objective_sha256,
-                &training_replay,
-                &training_episode_groups,
+                &projection.transitions,
+                &projection.episode_groups,
                 &self.model_config,
             )?)
         } else {
@@ -764,10 +785,10 @@ impl TacticQCampaign {
         self.replay = replay;
         self.replay_routes = replay_routes;
         self.episode_groups = episode_groups;
-        self.training_replay = training_replay;
-        self.training_replay_routes = training_replay_routes;
-        self.training_episode_groups = training_episode_groups;
-        self.training_identities = training_identities;
+        self.state_graph = Some(state_graph);
+        self.training_replay = projection.transitions;
+        self.training_replay_routes = projection.routes;
+        self.training_episode_groups = projection.episode_groups;
         self.frontier_archive = frontier_archive;
         if let Some(model) = model_update {
             // Exact-descriptor FQI is a small-data control, not the scalable

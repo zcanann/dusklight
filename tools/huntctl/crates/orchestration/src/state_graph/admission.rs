@@ -1,7 +1,8 @@
 use super::{
     ActionExpansion, ActionExpansionStatus, ExactStateId, ExpansionAdmission,
-    NativeBoundaryLocator, ObservedSegment, RestorationLocator, RouteRecord, StateGraph,
-    StateGraphError, StateGraphNode, route_checkpoint_sha256, tape_prefix, tape_sha256,
+    ExpansionEvidenceAuthority, NativeBoundaryLocator, ObservedSegment, RestorationLocator,
+    RouteRecord, StateGraph, StateGraphError, StateGraphNode, route_checkpoint_sha256, tape_prefix,
+    tape_sha256,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
@@ -16,10 +17,19 @@ impl StateGraph {
         transition: OptionTransitionSample,
         route: InputTape,
         episode_group: u64,
+        authority: ExpansionEvidenceAuthority,
     ) -> Result<ExpansionAdmission, StateGraphError> {
         self.validate_transition(&transition, &route)?;
         let expansion_sha256 = transition.replay_identity_sha256()?;
-        if let Some(existing) = self.expansions.get(&expansion_sha256) {
+        if self.expansions.contains_key(&expansion_sha256) {
+            let authority_promoted = authority == ExpansionEvidenceAuthority::Executable
+                && self.promote_expansion_authority(expansion_sha256)?;
+            let existing =
+                self.expansions
+                    .get(&expansion_sha256)
+                    .ok_or(StateGraphError::Invariant(
+                        "duplicate expansion disappeared during promotion",
+                    ))?;
             let target = existing.target.ok_or(StateGraphError::Invariant(
                 "completed expansion has no target",
             ))?;
@@ -30,6 +40,7 @@ impl StateGraph {
                 inserted_nodes: 0,
                 inserted_segments: 0,
                 duplicate: true,
+                authority_promoted,
             });
         }
 
@@ -44,6 +55,7 @@ impl StateGraph {
             source_route,
             transition.before.terminal.reached == Some(true),
             None,
+            authority == ExpansionEvidenceAuthority::Executable,
         )?;
 
         let mut boundaries = Vec::with_capacity(transition.intermediate_boundaries.len() + 2);
@@ -63,6 +75,7 @@ impl StateGraph {
                     episode_shard_sha256: boundary.episode_shard_sha256,
                     option_offset_ticks: boundary.offset_ticks,
                 }),
+                authority == ExpansionEvidenceAuthority::Executable,
             )?;
             inserted_nodes += usize::from(admitted.inserted);
             boundaries.push((boundary.offset_ticks, admitted));
@@ -72,6 +85,7 @@ impl StateGraph {
             tape_prefix(&route, option_end)?,
             transition.value_sample.terminal,
             None,
+            authority == ExpansionEvidenceAuthority::Executable,
         )?;
         inserted_nodes += usize::from(target.inserted);
         boundaries.push((transition.execution.duration.realized_ticks, target));
@@ -129,6 +143,7 @@ impl StateGraph {
                 observed_segments: segment_ids,
                 status: ActionExpansionStatus::Completed {
                     episode_group,
+                    authority,
                     route_checkpoint_sha256: target.id.route_checkpoint_sha256,
                     transition: Box::new(transition),
                 },
@@ -142,6 +157,7 @@ impl StateGraph {
             inserted_nodes,
             inserted_segments: boundaries.len().saturating_sub(1),
             duplicate: false,
+            authority_promoted: false,
         })
     }
 
@@ -184,6 +200,7 @@ impl StateGraph {
         route: InputTape,
         terminal: bool,
         native_boundary: Option<NativeBoundaryLocator>,
+        executable: bool,
     ) -> Result<NodeAdmission, StateGraphError> {
         let state_sha256 = state.content_sha256()?;
         let route_checkpoint_sha256 =
@@ -217,6 +234,7 @@ impl StateGraph {
         let restoration = RestorationLocator {
             route: record,
             native_boundary,
+            executable,
         };
         if let Some(existing) = self.nodes.get_mut(&id) {
             if existing.state != state
@@ -231,6 +249,7 @@ impl StateGraph {
             if existing.restoration.native_boundary.is_none() {
                 existing.restoration.native_boundary = restoration.native_boundary;
             }
+            existing.restoration.executable |= restoration.executable;
             return Ok(NodeAdmission {
                 id,
                 inserted: false,
@@ -250,6 +269,56 @@ impl StateGraph {
             },
         );
         Ok(NodeAdmission { id, inserted: true })
+    }
+
+    fn promote_expansion_authority(
+        &mut self,
+        expansion_sha256: Digest,
+    ) -> Result<bool, StateGraphError> {
+        let expansion = self
+            .expansions
+            .get_mut(&expansion_sha256)
+            .ok_or(StateGraphError::Invariant("promoted expansion is absent"))?;
+        let ActionExpansionStatus::Completed {
+            authority,
+            transition: _,
+            episode_group: _,
+            route_checkpoint_sha256: _,
+        } = &mut expansion.status
+        else {
+            return Err(StateGraphError::Invariant(
+                "only completed evidence can be promoted",
+            ));
+        };
+        if *authority == ExpansionEvidenceAuthority::Executable {
+            return Ok(false);
+        }
+        *authority = ExpansionEvidenceAuthority::Executable;
+        let mut nodes = vec![expansion.source];
+        if let Some(target) = expansion.target {
+            nodes.push(target);
+        }
+        for segment_sha256 in &expansion.observed_segments {
+            let segment = self
+                .segments
+                .get(segment_sha256)
+                .ok_or(StateGraphError::Invariant(
+                    "promoted expansion segment is absent",
+                ))?;
+            nodes.push(segment.source);
+            nodes.push(segment.target);
+        }
+        for node in nodes {
+            self.nodes
+                .get_mut(&node)
+                .ok_or(StateGraphError::Invariant(
+                    "promoted expansion node is absent",
+                ))?
+                .restoration
+                .executable = true;
+        }
+        self.refresh_best_terminal();
+        Ok(true)
     }
 }
 

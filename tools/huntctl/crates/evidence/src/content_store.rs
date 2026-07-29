@@ -46,6 +46,7 @@ pub enum ContentKind {
     Screenshot,
     Model,
     LearnerSnapshot,
+    StateGraph,
     DatasetManifest,
     CrashArtifact,
 }
@@ -91,6 +92,7 @@ impl ContentKind {
             Self::Screenshot => "image/png",
             Self::Model => "application/vnd.dusklight.model+json",
             Self::LearnerSnapshot => "application/vnd.dusklight.learner-snapshot+cbor",
+            Self::StateGraph => "application/vnd.dusklight.state-graph+cbor",
             Self::DatasetManifest => "application/vnd.dusklight.dataset-manifest+json",
             Self::CrashArtifact => "application/octet-stream",
         }

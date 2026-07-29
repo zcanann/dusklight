@@ -164,8 +164,6 @@ Exit gate:
 
 ## P1 - Implement exact save-state graph search
 
-- [ ] Admit root, option endpoints, and every configured interior native
-      boundary as authenticated graph nodes.
 - [ ] Store enough route/checkpoint evidence to restore any expandable node;
       validate the restored typed state before executing from it.
 - [ ] Implement conservative transposition detection from validated

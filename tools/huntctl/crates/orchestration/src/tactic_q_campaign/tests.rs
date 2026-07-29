@@ -651,12 +651,14 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
 
     let expected_fitted_snapshot = campaign.learner_snapshot().unwrap();
     let checkpoint = campaign.checkpoint().unwrap();
-    assert_eq!(checkpoint.schema, TACTIC_Q_CHECKPOINT_SCHEMA_V4);
+    assert_eq!(checkpoint.schema, TACTIC_Q_CHECKPOINT_SCHEMA_V5);
     assert_eq!(
         checkpoint.execution_authority_sha256,
         execution_authority_sha256
     );
     assert_eq!(checkpoint.training_replay.len(), 1);
+    assert_eq!(checkpoint.state_graph.expansion_count(), 1);
+    assert_eq!(checkpoint.state_graph.completed_transitions().count(), 1);
     let restored = TacticQCampaign::resume(checkpoint.clone()).unwrap();
     assert_eq!(
         restored.execution_authority_sha256,
@@ -1128,6 +1130,18 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     );
     assert!(branched.model().is_some());
     branched.checkpoint().unwrap();
+    let mut detached_projection = checkpoint.clone();
+    detached_projection
+        .training_replay
+        .push(checkpoint.training_replay[0].clone());
+    detached_projection
+        .training_replay_routes
+        .push(checkpoint.training_replay_routes[0].clone());
+    detached_projection
+        .training_episode_groups
+        .push(checkpoint.training_episode_groups[0]);
+    detached_projection.content_sha256 = checkpoint_digest(&detached_projection).unwrap();
+    assert!(TacticQCampaign::resume(detached_projection).is_err());
     let mut tampered = checkpoint;
     tampered.decision_index += 1;
     assert!(TacticQCampaign::resume(tampered).is_err());
@@ -1147,7 +1161,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert_ne!(stored.first(), Some(&b'{'));
     assert!(
         stored.len()
-            < serde_json::to_vec(&campaign.checkpoint().unwrap())
+            < serde_cbor::to_vec(&campaign.checkpoint().unwrap())
                 .unwrap()
                 .len()
     );
@@ -1158,27 +1172,6 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     );
     let from_file = TacticQCampaign::read_checkpoint(&path).unwrap();
     assert_eq!(from_file.replay, campaign.replay);
-    let mut legacy_checkpoint = campaign.checkpoint().unwrap();
-    legacy_checkpoint.schema = "dusklight-tactic-q-checkpoint/v1".into();
-    let legacy_path = directory.join("legacy-checkpoint.json");
-    fs::write(
-        &legacy_path,
-        serde_json::to_vec(&legacy_checkpoint).unwrap(),
-    )
-    .unwrap();
-    let codec_benchmark =
-        TacticQCampaign::benchmark_checkpoint_serialization(&legacy_path, &path, 2).unwrap();
-    assert_eq!(codec_benchmark.iterations, 2);
-    assert_eq!(codec_benchmark.decision_index, campaign.decision_index);
-    assert_eq!(
-        codec_benchmark.replay_transitions,
-        campaign.replay.len() as u64
-    );
-    assert!(
-        codec_benchmark.legacy_json_bytes_per_iteration
-            > codec_benchmark.current_manifest_envelope_bytes_per_iteration
-    );
-    fs::remove_file(legacy_path).unwrap();
     let objects = directory.join("objects");
     let hidden_objects = directory.join("objects-unavailable");
     fs::rename(&objects, &hidden_objects).unwrap();

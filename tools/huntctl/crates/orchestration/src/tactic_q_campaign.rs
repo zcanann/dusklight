@@ -1,10 +1,12 @@
 //! Online option-Q campaign over authenticated learner states and native tactic
 //! boundaries.
 
+use self::graph_projection::{graph_training_projection, validate_training_projection};
 use crate::native_tactic_worker::{
     NativeTacticWorkerError, NativeTacticWorkerOutcome, NativeTacticWorkerPaths,
     PersistentTacticBatchWorker, execute_selected_tactic,
 };
+use crate::state_graph::{StateGraph, StateGraphError, StateGraphIdentity};
 use crate::tactic_q_checkpoint_store;
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
@@ -52,15 +54,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub const TACTIC_Q_CAMPAIGN_SCHEMA_V1: &str = "dusklight-tactic-q-campaign/v1";
-pub const TACTIC_Q_CHECKPOINT_SCHEMA_V2: &str = "dusklight-tactic-q-checkpoint/v2";
-pub const TACTIC_Q_CHECKPOINT_SCHEMA_V3: &str = "dusklight-tactic-q-checkpoint/v3";
-pub const TACTIC_Q_CHECKPOINT_SCHEMA_V4: &str = "dusklight-tactic-q-checkpoint/v4";
+pub const TACTIC_Q_CHECKPOINT_SCHEMA_V5: &str = "dusklight-tactic-q-checkpoint/v5";
 pub const TACTIC_Q_CHECKPOINT_EXTENSION: &str = "dtqz";
 pub const TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1: &str =
     "dusklight-tactic-q-checkpoint-serialization-benchmark/v1";
@@ -141,6 +140,7 @@ pub struct TacticQCampaignCheckpoint {
     pub decision_index: u64,
     pub current: LearnerState,
     pub route_tape: InputTape,
+    pub state_graph: StateGraph,
     pub replay: Vec<OptionTransitionSample>,
     pub replay_routes: Vec<InputTape>,
     pub episode_groups: Vec<u64>,
@@ -378,13 +378,19 @@ pub struct TacticQCampaign {
     pub decision_index: u64,
     pub current: LearnerState,
     pub route_tape: InputTape,
+    state_graph: Option<StateGraph>,
+    // The currently retained cursor lineage, kept for final-route export.
+    // It is not consulted to decide which exact states or terminal paths exist.
     pub replay: Vec<OptionTransitionSample>,
     pub replay_routes: Vec<InputTape>,
     pub episode_groups: Vec<u64>,
+    // Read-only learner publication caches. Every production mutation replaces
+    // all three from `state_graph`; checkpoint validation rejects drift.
     training_replay: Vec<OptionTransitionSample>,
     training_replay_routes: Vec<InputTape>,
     training_episode_groups: Vec<u64>,
-    training_identities: BTreeSet<Digest>,
+    // Scheduler indexes only. Neither collection grants exact-state or
+    // terminal authority; that belongs to `state_graph`.
     frontier_archive: BehaviorArchive,
     model_config: OptionValueConfig,
     exploration: TacticExplorationConfig,
@@ -533,13 +539,13 @@ impl TacticQCampaign {
             decision_index: 0,
             current,
             route_tape,
+            state_graph: None,
             replay: Vec::new(),
             replay_routes: Vec::new(),
             episode_groups: Vec::new(),
             training_replay: Vec::new(),
             training_replay_routes: Vec::new(),
             training_episode_groups: Vec::new(),
-            training_identities: BTreeSet::new(),
             frontier_archive: BehaviorArchive::default(),
             model_config,
             exploration,
@@ -697,6 +703,16 @@ impl TacticQCampaign {
             ));
         }
         self.execution_authority_sha256 = execution_authority_sha256;
+        self.state_graph = Some(StateGraph::new(
+            StateGraphIdentity {
+                execution_authority_sha256,
+                feature_schema_sha256: self.feature_schema_sha256,
+                objective_sha256: self.objective_sha256,
+                root_checkpoint_sha256: self.root_checkpoint_sha256,
+            },
+            self.current.snapshot.clone(),
+            self.route_tape.clone(),
+        )?);
         Ok(())
     }
 
@@ -755,10 +771,12 @@ impl TacticQCampaign {
     where
         F: Fn(u64) -> bool,
     {
-        let mut training_replay = self.training_replay.clone();
-        let mut training_replay_routes = self.training_replay_routes.clone();
-        let mut training_episode_groups = self.training_episode_groups.clone();
-        let mut identities = self.training_identities.clone();
+        let mut state_graph =
+            self.state_graph
+                .clone()
+                .ok_or(TacticQCampaignError::InvalidState(
+                    "training evidence requires a bound state graph",
+                ))?;
         let mut frontier_archive = self.frontier_archive.clone();
         let mut visited_states = self.visited_states.clone();
         let mut admitted = 0_usize;
@@ -788,29 +806,37 @@ impl TacticQCampaign {
                     transition,
                     route,
                 )?;
-                let identity = transition.replay_identity_sha256()?;
-                if identities.insert(identity) {
-                    if exploration_episode(*episode_group) {
-                        consider_frontier_transition(
-                            &mut frontier_archive,
-                            self.root_checkpoint_sha256,
-                            transition,
-                            route,
-                            *episode_group,
-                            training_replay.len(),
-                        )?;
-                        visited_states.insert(tactic_state_descriptor(
-                            &transition.before,
-                            transition.before.terminal.reached == Some(true),
-                        ));
-                        visited_states.insert(tactic_state_descriptor(
-                            &transition.after,
-                            transition.value_sample.terminal,
-                        ));
-                    }
-                    training_replay.push(transition.clone());
-                    training_replay_routes.push(route.clone());
-                    training_episode_groups.push(*episode_group);
+                let admission = state_graph.admit_completed_expansion(
+                    transition.clone(),
+                    route.clone(),
+                    *episode_group,
+                    if *episode_group == TACTIC_Q_MODEL_ONLY_EPISODE_GROUP {
+                        crate::state_graph::ExpansionEvidenceAuthority::LearnerEvidenceOnly
+                    } else {
+                        crate::state_graph::ExpansionEvidenceAuthority::Executable
+                    },
+                )?;
+                if (!admission.duplicate || admission.authority_promoted)
+                    && exploration_episode(*episode_group)
+                {
+                    consider_frontier_transition(
+                        &mut frontier_archive,
+                        self.root_checkpoint_sha256,
+                        transition,
+                        route,
+                        *episode_group,
+                        state_graph.expansion_count().saturating_sub(1),
+                    )?;
+                    visited_states.insert(tactic_state_descriptor(
+                        &transition.before,
+                        transition.before.terminal.reached == Some(true),
+                    ));
+                    visited_states.insert(tactic_state_descriptor(
+                        &transition.after,
+                        transition.value_sample.terminal,
+                    ));
+                }
+                if !admission.duplicate {
                     admitted = admitted.saturating_add(1);
                 }
             }
@@ -819,21 +845,22 @@ impl TacticQCampaign {
         if admitted == 0 {
             return Ok(0);
         }
+        let projection = graph_training_projection(&state_graph)?;
         let model = refit
             .then(|| {
                 replay_model(
                     self.feature_schema_sha256,
                     self.objective_sha256,
-                    &training_replay,
-                    &training_episode_groups,
+                    &projection.transitions,
+                    &projection.episode_groups,
                     &self.model_config,
                 )
             })
             .transpose()?;
-        self.training_replay = training_replay;
-        self.training_replay_routes = training_replay_routes;
-        self.training_episode_groups = training_episode_groups;
-        self.training_identities = identities;
+        self.state_graph = Some(state_graph);
+        self.training_replay = projection.transitions;
+        self.training_replay_routes = projection.routes;
+        self.training_episode_groups = projection.episode_groups;
         self.frontier_archive = frontier_archive;
         self.visited_states = visited_states;
         if let Some(model) = model {
@@ -852,6 +879,7 @@ pub use learner_snapshot::{
 
 mod decision;
 mod frontier;
+mod graph_projection;
 mod persistence;
 mod value_treatment;
 use value_treatment::{
@@ -1089,28 +1117,26 @@ pub(crate) fn validate_checkpoint(
         .route_tape
         .validate()
         .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
-    let legacy = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V2;
-    let shared_replay = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V3;
-    let current = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V4;
-    if (!legacy && !shared_replay && !current)
+    let current = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V5;
+    checkpoint.state_graph.validate()?;
+    let graph_identity = &checkpoint.state_graph.identity;
+    if !current
         || checkpoint.content_sha256 == Digest::ZERO
         || checkpoint.content_sha256 != checkpoint_digest(checkpoint)?
         || checkpoint.feature_schema_sha256 == Digest::ZERO
         || checkpoint.objective_sha256 == Digest::ZERO
         || checkpoint.root_checkpoint_sha256 == Digest::ZERO
+        || graph_identity.execution_authority_sha256 != checkpoint.execution_authority_sha256
+        || graph_identity.feature_schema_sha256 != checkpoint.feature_schema_sha256
+        || graph_identity.objective_sha256 != checkpoint.objective_sha256
+        || graph_identity.root_checkpoint_sha256 != checkpoint.root_checkpoint_sha256
         || checkpoint.exploration.epsilon_per_million > 1_000_000
         || checkpoint.replay.len() != checkpoint.episode_groups.len()
         || checkpoint.replay.len() != checkpoint.replay_routes.len()
         || checkpoint.decision_index != checkpoint.replay.len() as u64
-        || (legacy
-            && (!checkpoint.training_replay.is_empty()
-                || !checkpoint.training_replay_routes.is_empty()
-                || !checkpoint.training_episode_groups.is_empty()))
-        || ((shared_replay || current)
-            && (checkpoint.training_replay.len() != checkpoint.training_replay_routes.len()
-                || checkpoint.training_replay.len() != checkpoint.training_episode_groups.len()
-                || checkpoint.training_replay.len() < checkpoint.replay.len()))
-        || (shared_replay && checkpoint.model_revision != 0)
+        || checkpoint.training_replay.len() != checkpoint.training_replay_routes.len()
+        || checkpoint.training_replay.len() != checkpoint.training_episode_groups.len()
+        || checkpoint.training_replay.len() < checkpoint.replay.len()
         || checkpoint.current.snapshot.tape_frame != checkpoint.route_tape.frames.len() as u64
     {
         return Err(TacticQCampaignError::InvalidState(
@@ -1174,19 +1200,9 @@ pub(crate) fn validate_checkpoint(
             "campaign checkpoint current state is not the replay endpoint",
         ));
     }
-    let (training_replay, training_routes, training_groups) = if legacy {
-        (
-            &checkpoint.replay,
-            &checkpoint.replay_routes,
-            &checkpoint.episode_groups,
-        )
-    } else {
-        (
-            &checkpoint.training_replay,
-            &checkpoint.training_replay_routes,
-            &checkpoint.training_episode_groups,
-        )
-    };
+    let training_replay = &checkpoint.training_replay;
+    let training_routes = &checkpoint.training_replay_routes;
+    let training_groups = &checkpoint.training_episode_groups;
     let mut training_identities = BTreeSet::new();
     for ((transition, route), _) in training_replay
         .iter()
@@ -1213,6 +1229,26 @@ pub(crate) fn validate_checkpoint(
     }) {
         return Err(TacticQCampaignError::InvalidState(
             "retained replay is absent from training replay",
+        ));
+    }
+    validate_training_projection(
+        &checkpoint.state_graph,
+        &checkpoint.training_replay,
+        &checkpoint.training_replay_routes,
+        &checkpoint.training_episode_groups,
+    )?;
+    let current_route =
+        route_checkpoint(checkpoint.root_checkpoint_sha256, &checkpoint.route_tape)?;
+    if checkpoint
+        .state_graph
+        .node(crate::state_graph::ExactStateId {
+            route_checkpoint_sha256: current_route,
+            state_sha256: checkpoint.current.snapshot_sha256,
+        })
+        .is_none()
+    {
+        return Err(TacticQCampaignError::InvalidState(
+            "campaign current boundary is absent from the state graph",
         ));
     }
     Ok(())
@@ -1453,120 +1489,8 @@ fn sha256(bytes: &[u8]) -> Digest {
     Digest(Sha256::digest(bytes).into())
 }
 
-#[derive(Debug)]
-pub enum TacticQCampaignError {
-    InvalidState(&'static str),
-    Features(String),
-    Tape(String),
-    Io(String),
-    Serialization(String),
-    Frontier(String),
-    LearnerState(LearnerStateError),
-    Catalog(LiveTacticCatalogError),
-    Exploration(TacticExplorationError),
-    Transition(OptionTransitionError),
-    Values(OptionValueError),
-    Shaping(ShapingError),
-    Hindsight(HindsightError),
-    FrozenPolicy(TacticFrozenPolicyError),
-    Native(NativeTacticWorkerError),
-    GeneralizedValue(GeneralizedTacticValueError),
-}
-
-impl fmt::Display for TacticQCampaignError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidState(message) => {
-                write!(formatter, "tactic-Q campaign invalid: {message}")
-            }
-            Self::Features(message) => write!(formatter, "tactic-Q features failed: {message}"),
-            Self::Tape(message) => write!(formatter, "tactic-Q tape failed: {message}"),
-            Self::Io(message) => write!(formatter, "tactic-Q checkpoint I/O failed: {message}"),
-            Self::Serialization(message) => {
-                write!(formatter, "tactic-Q serialization failed: {message}")
-            }
-            Self::Frontier(message) => write!(formatter, "tactic-Q frontier failed: {message}"),
-            Self::LearnerState(error) => write!(formatter, "tactic-Q state failed: {error}"),
-            Self::Catalog(error) => write!(formatter, "tactic-Q catalog failed: {error}"),
-            Self::Exploration(error) => write!(formatter, "tactic-Q selection failed: {error}"),
-            Self::Transition(error) => write!(formatter, "tactic-Q transition failed: {error}"),
-            Self::Values(error) => write!(formatter, "tactic-Q refit failed: {error}"),
-            Self::Shaping(error) => write!(formatter, "tactic-Q reward failed: {error}"),
-            Self::Hindsight(error) => write!(formatter, "tactic-Q hindsight failed: {error}"),
-            Self::FrozenPolicy(error) => write!(formatter, "tactic-Q freeze failed: {error}"),
-            Self::Native(error) => write!(formatter, "tactic-Q native execution failed: {error}"),
-            Self::GeneralizedValue(error) => {
-                write!(formatter, "tactic-Q generalized value failed: {error}")
-            }
-        }
-    }
-}
-
-impl Error for TacticQCampaignError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::LearnerState(error) => Some(error),
-            Self::Catalog(error) => Some(error),
-            Self::Exploration(error) => Some(error),
-            Self::Transition(error) => Some(error),
-            Self::Values(error) => Some(error),
-            Self::Shaping(error) => Some(error),
-            Self::Hindsight(error) => Some(error),
-            Self::FrozenPolicy(error) => Some(error),
-            Self::Native(error) => Some(error),
-            Self::GeneralizedValue(error) => Some(error),
-            _ => None,
-        }
-    }
-}
-
-impl From<LearnerStateError> for TacticQCampaignError {
-    fn from(value: LearnerStateError) -> Self {
-        Self::LearnerState(value)
-    }
-}
-
-impl From<LiveTacticCatalogError> for TacticQCampaignError {
-    fn from(value: LiveTacticCatalogError) -> Self {
-        Self::Catalog(value)
-    }
-}
-
-impl From<TacticExplorationError> for TacticQCampaignError {
-    fn from(value: TacticExplorationError) -> Self {
-        Self::Exploration(value)
-    }
-}
-
-impl From<OptionTransitionError> for TacticQCampaignError {
-    fn from(value: OptionTransitionError) -> Self {
-        Self::Transition(value)
-    }
-}
-
-impl From<OptionValueError> for TacticQCampaignError {
-    fn from(value: OptionValueError) -> Self {
-        Self::Values(value)
-    }
-}
-
-impl From<ShapingError> for TacticQCampaignError {
-    fn from(value: ShapingError) -> Self {
-        Self::Shaping(value)
-    }
-}
-
-impl From<NativeTacticWorkerError> for TacticQCampaignError {
-    fn from(value: NativeTacticWorkerError) -> Self {
-        Self::Native(value)
-    }
-}
-
-impl From<GeneralizedTacticValueError> for TacticQCampaignError {
-    fn from(value: GeneralizedTacticValueError) -> Self {
-        Self::GeneralizedValue(value)
-    }
-}
+mod error;
+pub use error::TacticQCampaignError;
 
 #[cfg(test)]
 #[path = "tactic_q_campaign/tests.rs"]
