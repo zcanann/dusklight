@@ -4,6 +4,7 @@
 
 mod anchored_search;
 mod campaign_replay;
+pub mod deterministic_fixture;
 mod discovery_horizon;
 pub mod generalized_tactic_evidence;
 pub mod harness;
