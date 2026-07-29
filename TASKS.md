@@ -38,6 +38,11 @@ The current implementation is not yet an accepted learning architecture.
   incoming segment, chooses the fastest authenticated member for restoration,
   and propagates relaxed costs through descendants for scheduling; binary
   restart reproduces the proof classes and relaxed costs.
+- Every executable node can now issue a compact content-bound restoration plan
+  naming its exact typed state, portable route, and optional native boundary.
+  The graph rejects a worker completion unless the restored complete typed
+  state validates against that plan; altered state or route evidence fails
+  closed.
 - The live decision loop now registers horizon-eligible actions and completes
   exact graph leases. Outside the explicit human-demonstration curriculum,
   the graph scheduler also chooses which exact node to restore by coverage in
