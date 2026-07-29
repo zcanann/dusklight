@@ -1,342 +1,333 @@
-# Active tasks: make route learning auditable, scalable, and effective
+# Active tasks: build a coherent save-state learning planner
 
-This file contains only unfinished learning-framework work. Completed
-implementation belongs in Git; benchmark history belongs in immutable reports.
+This file contains unfinished framework work only. Completed implementation
+belongs in Git, and experimental history belongs in immutable benchmark
+reports.
 
 ## Product objective
 
-Build a generic checkpointable optimizer that:
+Build a generic system that can learn efficient controller routes through a
+deterministic game from an authenticated native checkpoint.
 
-1. starts from an authenticated native checkpoint;
-2. observes typed game state, prompted-action availability, and measured
-   trajectories;
-3. proposes primitive controller actions and learned action compositions;
-4. evaluates alternatives from retained native states;
-5. shares every authenticated transition with a state/action learner;
-6. discovers and validates reusable tactics; and
-7. minimizes native input ticks to an authenticated terminal.
+The environment gives the system:
 
-The learner receives observations, available actions, and terminal/tick return.
-Trajectory, velocity, collision, straightness, rolling, and prompted-action
-availability may be inputs or auxiliary prediction targets, but are not
-hand-authored utility.
+- exact restorable game states;
+- typed observations and currently applicable actions;
+- controller inputs and their realized trajectories;
+- a terminal predicate; and
+- native ticks consumed.
 
-A human recording is optional, ablatable replay. It is not privileged policy,
-state, reward, or terminal authority.
+The system must discover a terminal route, improve it, and learn reusable
+action compositions without authored route coordinates, benchmark-specific
+rewards, or UI-authored TAS graphs.
 
-This is not a TAS-authoring or graph-UX backlog. Graph recording/playback and
-the interactive route planner are separate products. Tactics here are learned
-runtime action compositions, never UI-authored blueprints.
+The Ordon acceptance problem is intentionally elementary: walk around one
+obstacle and hit the real load zone. If scratch learning cannot solve and
+improve this in minutes rather than hours, the framework is not credible.
 
-## Current decision state
+## Current diagnosis
 
-Ordon is the acceptance benchmark. The eligible request starts at authenticated
-boundary `506`; the human incumbent first reaches the actual load-zone terminal
-at tick `125`. The best machine result ties `125`; it has not beaten it.
+The current implementation is not an accepted learning architecture.
 
-- Shared replay is no longer the immediate bottleneck. The fixed 1/2/4-worker
-  comparison passed with one campaign-owned fitter, immutable snapshots, and
-  zero lane-local fits. Evidence:
-  `ordon-p1-online-replay-scaling-v2.report.json`.
-- Selected route endpoints now remain as bounded process-local continuations
-  instead of copying a roughly 295 MB machine image on the decision hot path.
-  The representative early/middle/late benchmark proved exact continuation
-  versus authenticated-replay parity with 296-byte live endpoints and zero
-  machine capture. An ordinary width-4/four-worker Ordon campaign kept all 32
-  proposal transitions, used live continuation for all seven warm selected
-  follow-ups, captured no portable checkpoints, and measured orchestration
-  plus persistence at 3% of native simulation. Evidence:
-  `ordon-p2-live-checkpoint-path-v1.report.json` and
-  `ordon-p2-live-fixed-route-v1.report.json`.
-- Suppressing presentation work did not materially improve proof-mode wall
-  time. State proof and checkpoint work dominate, so further speculative
-  renderer stripping is not the next priority. Evidence:
-  `ordon-p2-headless-path-v1.report.json`.
-- Live learned decisions now consume newly fitted snapshots, preserve exact
-  greedy/epsilon authority, expose prompted-action factors, and can learn and
-  repeat a terminal action. The resulting suffix is still `137` ticks against
-  a deliberately degraded `131`-tick demonstration, so delayed-credit route
-  improvement remains unproved. Evidence:
-  `ordon-p3-greedy-authority-v1.report.json`.
-- The continuous fitted-Q forest remains a sealed explicit control, but is no
-  longer the live default. Independent semantic-group calibration found higher
-  weighted error than the local generalized fitted-Q k-NN treatment, and
-  positive demonstration replay caused unsupported actions to receive nearly
-  terminal-quality estimates. The local treatment is again the default while
-  native validation continues. Evidence:
-  `ordon-p3-control-comparison-v1.report.json` and
-  `ordon-p3-continuous-independent-calibration-v1.report.json`.
-- The current continuous treatment completed matched scratch,
-  ordinary-demonstration, and structured non-learning native cells under the
-  same fixed identities and budget caps. Scratch and structured exploration
-  found no terminal. The demonstration-assisted cell retained two authenticated
-  terminal candidates at tick `127`, but the v2 summary incorrectly counted
-  only candidates beating the tick-`125` promotion threshold and therefore
-  reported no terminal. Route reports now expose terminal discovery, best
-  authenticated tick, and promotion success separately. The cell still failed:
-  it used the tick-`125` incumbent rather than an ordinary suboptimal sample,
-  was slower than scratch, and did not improve on the replay.
-  Evidence: `ordon-p3-continuous-matched-controls-v2.report.json` and its
-  correction `ordon-p3-continuous-matched-controls-v3.report.json`.
-- Four independent scratch seeds produced no terminal. Across disjoint
-  semantic groups, continuous fitted-Q won `8/10` state orderings and `11/16`
-  action-realization orderings; the structured shortest-valid-action control
-  won `10/10` and `15/16` with lower weighted MAE on both axes. Useful native
-  evidence arrived at `0.471` transitions per wall second. The treatment has
-  signal but is not robustly superior, and terminal-value learning remains
-  unmeasured because no scratch seed succeeded. Evidence:
-  `ordon-p3-continuous-independent-calibration-v1.report.json`.
-- The support-aware local treatment now has a sealed ablation against an
-  ordinary `131`-tick human replay. At the full matched budget, replay-assisted
-  learning found authenticated terminals in `3/4` seeds while scratch found
-  `0/4`; useful training evidence per wall second improved by `21%` and useful
-  decisions per wall second by `47%`. Generated primitives refined the best
-  candidate from tick `136` to `135`, so this was not literal tape playback. A
-  follow-up exposed the replay at four-tick rather than 16-tick resolution,
-  preserving short setup inputs instead of averaging them into coarse action
-  summaries. At only 16 learned decisions per seed it found `2/4` terminals
-  and an authenticated tick-`130` candidate. At the full matched budget it
-  found `4/4` terminals and retained tick `130`, versus `3/4` and tick `135`
-  for the coarse replay, while visited states increased from `555` to `745`.
-  Ordinary suboptimal replay therefore improves terminal sample efficiency and
-  does not cap the learned policy: generated actions beat the `131` sample.
-  A subsequent generic cold-start correction stopped treating pre-terminal
-  sparse action cost as goal evidence and instead acquired
-  least-expanded, semantically diverse frontiers. At the full matched scratch
-  budget it increased useful decisions from `128` to `153`, useful training
-  transitions from `513` to `572`, and visited states from `571` to `668`,
-  but still found `0/4` terminals and stopped at the same roughly
-  `1,496`-distance frontier. Cold-start acquisition was a real throughput
-  defect, but is not the terminal barrier. Extending ordinary relative-heading
-  primitives from a fixed four ticks to the same `4/8/16/40` duration lattice
-  increased diagnostic useful decisions from `32` to `47` and useful training
-  transitions from `115` to `157`, but again found `0/4` terminals and
-  regressed the best proposal frontier from roughly `1,496` to `1,705`.
-  A 64-decision, eight-proposal single-seed saturation probe then evaluated
-  `511` native transitions, including `54` relative-heading proposals spanning
-  every `4/8/16/40`-tick duration, and still stopped at the same roughly
-  `1,496` frontier. Primitive-duration availability and simple sampling width
-  are not the terminal barrier. Evidence:
-  `ordon-p3-q131-local-replay-ablation-v1.report.json`.
-- A distinct goal-relabeled fitted-Q treatment now turns exact replay-achieved
-  endpoints into temporary goals and learns only negative native ticks along
-  exact predecessor edges. Relabeled rows have zero native-terminal and
-  promotion authority. On a matched 4x16 scratch diagnostic it improved the
-  current local control's best proposal depth from roughly `1,790` to `1,611`
-  and visited `278` states instead of `248`, but produced fewer useful training
-  transitions (`122` versus `152`) and no terminal in either cell. At the full
-  4x64 budget it again found `0/4` terminals and converged on the same roughly
-  `1,496` frontier, while spending `143` seconds in model updates. Generic
-  hindsight reachability is now real and ablatable, but this formulation does
-  not solve the terminal barrier. Evidence:
-  `ordon-p3-q131-local-replay-ablation-v1.report.json`.
-- Supported achieved-goal return now outranks cold-start novelty when choosing
-  among equally fresh retained frontiers, without granting native-terminal or
-  promotion authority. In the matched 4x64 native follow-up, all `49`
-  retained-frontier acquisitions had achieved-goal support. It found no
-  terminal, but broke the recorded roughly `1,496`-distance plateau with a
-  `1,322.9` proposal from the replay's westward envelope, increased useful
-  decisions from `140` to `149`, and increased useful training transitions
-  from `538` to `545`. That best route consumed the complete `160`-tick
-  discovery horizon. The next diagnostic is therefore a larger discovery
-  horizon with native terminal, promotion, and final tick authority unchanged,
-  not more mining at the truncated horizon. Evidence:
-  `ordon-p3-q131-local-replay-ablation-v1.report.json`.
-- The `160`-tick discovery horizon was only `5.3` seconds at 30 Hz and
-  invalidated the inference that scratch could not reach the terminal. A
-  sealed `256`-tick scratch probe found and retained a real load-zone hit at
-  tick `206` on decision `15`. By decision `20`, learned terminal value caused
-  the policy to greedily select a terminal-producing action at Q `98.824`;
-  `10` later retained-frontier acquisitions had native terminal support. No
-  demonstration transitions or authored route coordinates were used. Scratch
-  terminal learning is therefore real and replay-independent, but the route is
-  still slow. Discovery horizons must be generous or adaptive; the
-  `131`/`125` thresholds govern shortening and promotion, not whether initial
-  exploration may continue. Evidence:
-  `ordon-p3-q131-local-replay-ablation-v1.report.json`.
-- Unassisted learned tactic routing now requires an explicit
-  `from_scratch_discovery` request and a route horizon of at least 30 native
-  seconds (`900` ticks) and at least twice the promotion target. The unattended
-  native goal-learning loop uses the same minimum. A local-refinement request
-  can no longer silently stand in for adequate scratch discovery.
-- Four isolated learners then ran under a sealed `from_scratch_discovery`
-  request with a `1,024`-tick (`34.1`-second) horizon, no incumbent tape, no
-  demonstration, no authored route coordinates, and no cross-seed replay.
-  Two independently reached the authenticated load zone: seed `155921`
-  reproduced tick `206`, and seed `130363` found tick `337` through a selected
-  `generalized_value` action. The `2/4` terminal rate proves reproducible
-  scratch learning but is not yet reliable, and neither route clears the
-  tick-`131` promotion threshold. Evidence:
-  `ordon-p3-q131-local-replay-ablation-v1.report.json`.
-- Doubling the isolated decision budget to `128` left terminal discovery at
-  `2/4`. Tick `206` did not improve and tick `337` improved only to `336`;
-  failed seeds moved closer but still did not terminate. All `37`
-  terminal-supported frontier acquisitions had no predicted total terminal
-  ticks because the zero-terminal achieved-goal critic incorrectly remained
-  active after real terminal support existed. Discovery and terminal
-  optimization now use distinct critics. The exact tick-`206` seed reproduced
-  its terminal, and all `9` later terminal-supported frontier acquisitions
-  carried learned total-tick predictions instead of nulls. The best route
-  remained tick `206`, and predictions ranged from `51` to `211`, so terminal
-  credit became operational but was not yet calibrated. Under the stable
-  corrected binary, doubling that isolated seed to `128` decisions shortened
-  the authenticated route from tick `206` to tick `195`. All `21`
-  terminal-supported acquisitions carried learned total-tick predictions, and
-  later counterfactual proposals produced the improvement at decisions `30`
-  and `31`. The remaining `97` decisions found no further improvement, so
-  self-refinement is real but still plateaus far above tick `131`.
-- Frontier acquisition now distinguishes an exact authenticated terminal
-  suffix from approximate k-NN terminal prediction. Under the same isolated
-  `128`-decision plan, `15/20` terminal-supported acquisitions followed exact
-  replay-connected states with exact root-relative costs of `197` or `207`
-  ticks, preventing an optimistic approximate prediction from displacing
-  proven evidence. The best result was tick `196`, so exact-path authority
-  fixed evidence semantics but did not improve the route.
-- Subsequent controls reject the claim that the tick-`195` result establishes
-  a competent optimizer. Unbounded acquisition-rank cycling destroyed
-  terminal discovery; bounded frontier cycling reproduced only tick `206`;
-  and pure learned-return ranking over a fixed exact frontier also reproduced
-  only tick `206`. Retaining every exact option endpoint and using the
-  calibrated Double-Q action model increased exact-path acquisitions from
-  `12` to `21` and distinct acquired prefixes from `8` to `12`, but again
-  stopped at tick `206`. The remaining exact path contains `40`-tick gaps
-  between branchable states. The learner cannot assign or test corrective
-  actions inside those options, so the experiment is structurally incapable
-  of the fine route optimization being claimed. The isolated tick-`195`
-  result is evidence that a counterfactual can occasionally help, not evidence
-  of reliable self-refinement.
-- Shared replay had coupled training evidence to exploration coverage: every
-  peer transition entered every lane's frontier archive and visited-state set.
-  Under the full `4x64` plan this correlated all lanes onto the same failed
-  corridor and found `0/4` terminals. Training replay and immutable critics now
-  remain global while frontier routes and visitation coverage remain
-  lane-local. Under the identical plan, the corrected treatment found
-  authenticated terminals in `3/4` seeds at ticks `228`, `332`, and `246`;
-  all `18` terminal-supported acquisitions carried learned total-tick
-  predictions. Reliable scratch discovery is now established without
-  demonstration or incumbent tape, but the best scratch route is still
-  `97` ticks slower than the `131` replay. Evidence:
-  `ordon-p3-q131-local-replay-ablation-v1.report.json`.
-- The sealed tactic feature schema now exposes current velocity and speed,
-  recent straightness and momentum retention, contact plus measured slowdown,
-  camera orientation, exact A-button prompt-status bits, and the native
-  front-roll acceptance prompt (`BUTTON_STATUS_UNK_121`, `0x79`). Executable
-  action features independently encode heading, duration, camera/target
-  modifiers, button timing, and roll cadence. Prompt status is learner state,
-  not an executor gate: simultaneous and staggered inputs remain explorable.
-  These are observations and diagnostics only; learned delayed return remains
-  the sole utility ordering.
-- Replay mining, entry-conditioned validation, promoted-tactic storage, and
-  primitive-versus-macro competition exist. No tactic has yet earned promotion
-  because the held-out probe contained no successful exploration observation.
-  P4 therefore lacks demonstrated search value. Evidence:
-  `ordon-p4-entry-conditioned-promotion-v1.report.json`.
+- Save states accelerate execution, but the authoritative search state is
+  still split across linear replay, a coarse behavior archive, and policy
+  bookkeeping.
+- The existing campaign graph is primarily a projection of replay evidence,
+  not the durable structure that owns search and scheduling.
+- Long options historically exposed only their endpoints. Four-tick native
+  interior boundaries now exist, but they do not by themselves turn the
+  system into coherent graph search.
+- One isolated scratch route improved from tick `206` to tick `195`; controlled
+  variants returned to tick `206`. This is not evidence of a reliable
+  optimizer.
+- The `131`-tick recording is a deliberately ordinary human sample, not the
+  goal. Tick `123` or lower is the first credible Ordon result.
 
-A terminal hit, reliable terminal hit, `125` tie, or faster search for the same
-tie is diagnostic evidence only.
+Do not spend more native hours varying seeds or acquisition ranks on the
+current architecture. A native run is justified only when it tests a named
+architectural invariant or an exit gate below.
 
-## Non-negotiable boundaries
+## Non-negotiable design
 
-- Production modules have one reason to change. Organize related behavior in
-  named module folders; do not use grab-bag `utils`, `common`, or `misc`
-  modules.
-- A production Rust source file must stay below 1,500 physical lines, with a
-  normal target below 1,000. Existing oversized files are shrinking debt, not
-  precedent.
-- Prefer typed collaborators with narrow ownership over sprawling functions.
-- JSON is not an operational checkpoint, replay, transition, model, frontier,
-  journal, or learned-tactic format. Small authored requests and exported
-  reports may use JSON.
-- Every evaluated native transition is eligible learning evidence. Every exact
-  terminal candidate is retained independently of policy selection.
-- Evaluation results never retroactively replace the policy-selected action.
-- Primitive actions remain generic and state-local: analog direction,
-  duration, camera modifier, and currently available prompted buttons.
-- Learned tactics compete with primitives; promotion never removes primitive
-  exploration.
-- Performance reports include process launch, simulation, restore, checkpoint
-  capture, learner update, orchestration, persistence, and evidence projection.
-- First-hit comparisons bind the same source checkpoint, terminal predicate,
-  game bytes, card fixture, fidelity, and source boundary.
+### One authoritative state graph
 
-## P3 - Prove delayed-credit continuous-control learning
+The planner owns a durable, content-addressed directed graph:
 
-- [ ] Use native-terminal return and retained intermediate states to shorten
-      the authenticated scratch route below the tick-`131` demonstration
-      under separate promotion authority. First replace endpoint-only temporal
-      credit with dense, authenticated states along the learner's own
-      successful routes so it can branch inside long options. Demonstrate
-      repeated improvement across sealed seeds; do not treat the isolated
-      tick-`195` counterfactual as proof of optimization.
+- A node is an exact restorable native boundary, its complete typed state, and
+  the evidence identity that binds them.
+- An action expansion records one selected primitive or learned option and its
+  complete native realization. Observed segments connect any interior
+  boundaries without pretending that the continuing option was selected again.
+- Interior boundaries of a long option are ordinary branchable nodes, but the
+  observed continuation after an interior boundary is evidence, not a newly
+  executable action.
+- Merge nodes only when their future-affecting native state is proven
+  equivalent. Tape frame, recent-action labels, or semantic proximity may be
+  learner features but cannot by themselves prove a transposition. Keep all
+  useful incoming evidence while using the fastest authenticated route among
+  genuinely equivalent nodes for future restoration.
+- Live process handles and portable machine images are caches for graph nodes,
+  never alternative sources of search truth.
+- Replay corpora, learner batches, semantic similarity indexes,
+  visualizations, reports, and tactic mining are derived views of the graph.
+
+There must not be a second behavior archive, replay list, or lane-local state
+set with independent authority over which exact states exist or are
+expandable.
+
+### Learning ranks search; native evidence decides truth
+
+- The optimization objective is lexicographic: reach the authenticated
+  terminal, then minimize native ticks. Do not hide this behind a tunable
+  terminal-reward constant.
+- The learner predicts terminal reach/support and conditional ticks-to-go as
+  distinct quantities. A budget-censored episode is unknown beyond its
+  boundary, not evidence that the state can never succeed.
+- The learned policy/value model ranks unexecuted node/action expansions. It
+  never fabricates terminal support, replaces the policy-selected result after
+  evaluation, or promotes a route.
+- Once any terminal path exists, every node on that path receives an exact
+  Monte Carlo ticks-to-go target. N-step/TD targets may generalize from it, but
+  exact graph return remains separately inspectable.
+- Before a terminal exists, exploration uses coverage, visit counts,
+  reachability, model uncertainty, and prediction error as an explicit search
+  policy. These are exploration priorities, not terminal reward or promotion
+  authority.
+- State inputs may expose velocity, trajectory history, momentum retention,
+  camera state, contacts and their measured kinematic effects, prompted-action
+  availability, and action history. Do not hand-code “straight,” “roll,” or
+  any Ordon-specific behavior as utility.
+- The learner must rank every currently executable primitive and promoted
+  option. Unsupported estimates remain visibly unsupported.
+
+### Discovery and optimization are distinct search regimes
+
+Before the first terminal:
+
+- independent workers lease diverse node/action expansions;
+- the scheduler favors novel reachable states, uncertainty, and underexplored
+  applicable actions;
+- workers share graph evidence without sharing a single collapsed visitation
+  frontier; and
+- the discovery horizon is long enough for an unskilled trajectory to wander
+  into the goal.
+
+After the first terminal:
+
+- the successful path is decomposed into exact branchable states at no coarser
+  than four native ticks;
+- the scheduler prioritizes counterfactual actions at those states by
+  predicted total root-to-terminal ticks, uncertainty, and visit count;
+- every shorter terminal path immediately updates exact returns and the best
+  restoration route to its transposed states; and
+- a fixed fraction of work continues broad exploration so the first slow path
+  cannot become policy authority.
+
+### Optional human replay is ordinary evidence
+
+A human recording may add one authenticated path and its exact terminal return
+to the same graph. Recorded controller segments are observations unless they
+can be expressed by the ordinary live action space; loading a replay must not
+silently add a recorded-tape action class. Human replay does not add authored
+waypoints, privileged actions, behavior-cloning authority, a separate reward,
+or a mandatory curriculum. Removing it must affect sample efficiency, not
+whether the framework is capable of success.
+
+### Operational data is binary and content-addressed
+
+JSON is allowed for small authored requests and exported reports. It is not
+the operational format for checkpoints, graph nodes, edges, replay, models,
+journals, or learned tactics.
+
+## P0 - Replace the accidental architecture with explicit ownership
+
+- [ ] Create named modules with single ownership:
+      `state_graph/`, `scheduler/`, `learner/`, `worker_pool/`, `tactics/`,
+      `persistence/`, and `reporting/`.
+- [ ] Keep production Rust files below 1,500 physical lines, with a normal
+      target below 1,000. Split existing oversized route-runner and campaign
+      files by responsibility before adding more policy variants.
+- [ ] Define the typed graph node, observed segment, action expansion,
+      future-equivalence/transposition proof, restoration locator, and
+      terminal-path interfaces.
+- [ ] Make the state graph the only mutable owner of discovered states,
+      executed expansions, route costs, and terminal paths.
+- [ ] Remove or demote coarse frontier archives and linear replay fields that
+      duplicate graph authority. Compatibility projections must be read-only.
+- [ ] Add invariant tests proving that graph, learner corpus, restored state,
+      terminal path, and exported report all name the same content identities.
 
 Exit gate:
 
-- Learned return is the only action-utility ordering.
-- The learned policy reliably escapes the around-corner local optimum.
-- From-scratch learning reaches the real load zone, and demonstration-assisted
-  learning produces an authenticated route strictly better than the `131`-tick
-  degraded demonstration.
+- A code audit can trace one native expansion from scheduler lease through
+  worker execution, graph admission, learner publication, and report without
+  consulting a second source of search truth.
+- Restarting from the durable graph produces the same pending expansions and
+  best terminal path.
 
-## P4 - Demonstrate tactic discovery and reuse
+## P1 - Implement exact save-state graph search
 
-- [ ] Collect independent successful replay support sufficient to test
-      promotion; do not weaken terminal-only promotion merely to manufacture a
-      promoted tactic.
-- [ ] Prove that mining can discover and parameterize useful compositions from
-      primitives. A key generic case is direction selection plus a one-frame
-      camera/target modifier followed by sustained forward input; it must not
-      be hard-coded as an Ordon macro. Roll cadence and curved/waypoint steering
-      must use the same composition mechanism rather than bespoke rewards.
+- [ ] Admit root, option endpoints, and every configured interior native
+      boundary as authenticated graph nodes.
+- [ ] Store enough route/checkpoint evidence to restore any expandable node;
+      validate the restored typed state before executing from it.
+- [ ] Implement conservative transposition detection from validated
+      future-equivalence evidence and fastest-route relaxation. Semantic state
+      similarity may share learning but must not merge restorable nodes. Route
+      improvement to an equivalent node must propagate to descendant total
+      costs without deleting alternate incoming evidence.
+- [ ] Maintain explicit node/action expansion status:
+      untried, leased, completed, failed validation, or retryable.
+- [ ] Use bounded leases or virtual loss so workers do not duplicate the same
+      expansion while independent exploration remains diverse.
+- [ ] Implement a deterministic priority queue whose decision can be replayed
+      from graph state, learner snapshot, seed, and sealed scheduler config.
+- [ ] Add a small deterministic around-the-corner environment with a known
+      shortest path. Prove exhaustive mode finds it and transpositions reduce
+      duplicate work.
+
+Exit gate:
+
+- A terminal trajectory containing a 40-tick option exposes all configured
+  interior nodes, and a counterfactual action can execute from each one.
+- The deterministic fixture reaches its known shortest path after a bounded
+  number of unique expansions.
+
+## P2 - Make learning a serious expansion policy
+
+- [ ] Write and test the algorithm contract: state/action inputs, terminal
+      support target, censored target, conditional tick-return target,
+      bootstrap rule, uncertainty estimate, target-network/update cadence, and
+      deterministic ranking tuple.
+- [ ] Define one action-conditioned learner interface over typed node features,
+      applicable action factors, graph visits, and exact/n-step returns.
+- [ ] Fit terminal ticks-to-go from complete successful graph paths and keep
+      exact targets separate from generalized predictions.
+- [ ] Treat horizon exhaustion and cancellation as censored evidence. Only an
+      authenticated terminal or explicit terminal failure may close a return.
+- [ ] Train auxiliary predictions for next-state features, realized duration,
+      action acceptance, prompted-action availability, and terminal
+      probability. Use their errors/uncertainty for representation and
+      exploration, not hand-authored route reward.
+- [ ] Use held-out state groups and independently realized actions to measure
+      value calibration and ranking quality. In-sample fit is not evidence.
+- [ ] Implement prioritized replay over surprising, rare, terminal-connected,
+      and policy-relevant graph edges without starving ordinary evidence.
+- [ ] Compare at least one stable discrete/action-factor baseline against the
+      current k-NN and Double-Q treatments. Delete treatments that lose the
+      sealed calibration and native search controls.
+- [ ] Prove on the deterministic fixture that the learned scheduler reaches
+      the shortest path in fewer expansions than exhaustive and non-learning
+      search without losing completeness.
+
+Exit gate:
+
+- The learner measurably reduces unique expansions and wall time on held-out
+  fixture seeds.
+- Exact terminal return, generalized value, uncertainty, and exploration
+  priority are separately inspectable for every scheduled expansion.
+
+## P3 - Make throughput an architectural property
+
+- [ ] Measure process launch, simulation, state extraction, direct restore,
+      replay restore, graph admission, learner update, IPC, persistence, and
+      reporting separately.
+- [ ] Establish fixed-work curves at 1, 2, 4, 8, and 16 workers using unique
+      useful graph expansions, not raw ticks, as throughput.
+- [ ] Keep workers and game processes persistent across expansions.
+- [ ] Use compact binary batches and shared content identities; do not send
+      repeated snapshots or JSON transition blobs through IPC.
+- [ ] Verify which rendering, audio, presentation, and proof systems may be
+      disabled without changing native state or terminal evidence. Retain
+      measured parity evidence for every disabled subsystem.
+- [ ] Profile restore locality and schedule leases to checkpoint owners when it
+      reduces replay without collapsing exploration diversity.
+- [ ] Deliver a 10x reduction in wall time to a fixed useful-evidence target
+      against the recorded baseline, or identify and remove the measured
+      saturation bottleneck before proposing more capacity.
+
+Exit gate:
+
+- Additional workers increase unique useful expansions per second with bounded
+  memory and learner staleness.
+- The native integration tests below can complete within their stated
+  wall-time gates on the reference workstation.
+
+## P4 - Achieve practical scratch discovery
+
+- [ ] Run Ordon from the authenticated source with no human replay, incumbent
+      tape, authored coordinate, or promoted Ordon tactic.
+- [ ] Give discovery at least 30 seconds of possible native route horizon, but
+      cap total graph expansions and wall time.
+- [ ] Reach the actual load-zone predicate in all four sealed scratch seeds.
+- [ ] Achieve median time-to-first-terminal at or below five wall minutes and
+      worst-seed time at or below fifteen wall minutes on the reference
+      workstation.
+- [ ] Report unique graph nodes/edges, duplicate transpositions, leases,
+      restores, simulated ticks, terminal paths, learner work, and wall time.
+- [ ] Demonstrate that adding an ordinary human replay improves median
+      time-to-first-terminal while remaining unnecessary for scratch success.
+
+Exit gate:
+
+- Walking off the map is a reliable minutes-scale operation, not an overnight
+  search.
+- Failure to hit the time gate sends work back to P1/P2/P3; it does not
+  authorize more seed mining.
+
+## P5 - Reliably improve successful routes
+
+- [ ] From each newly successful path, schedule counterfactual expansions
+      across the complete interior-state sequence rather than option endpoints
+      alone.
+- [ ] Demonstrate repeated monotonic best-route improvement in at least three
+      sealed seeds. One favorable counterfactual is not proof.
+- [ ] Show that learned total-tick ranking selects better counterfactuals than
+      visit-count, random-valid, and exhaustive local controls at the same
+      expansion budget.
+- [ ] Beat the `131`-tick ordinary demonstration without making it incumbent or
+      policy authority.
+- [ ] Reach tick `123` or lower from scratch or optional-replay assistance,
+      then cold-replay the complete tape twice with the learner out of loop.
+- [ ] Require identical controller bytes, first-hit tick, terminal evidence,
+      game identity, fixture, source boundary, and execution fidelity.
+
+Exit gate:
+
+- At least three sealed seeds improve their first discovered terminal route.
+- The best authenticated route is tick `123` or lower and reproduces exactly.
+
+## P6 - Discover and reuse tactics
+
+- [ ] Mine parameterized action compositions from successful graph paths and
+      high-value counterfactuals. Direction plus camera modifier, roll cadence,
+      curved steering, and prompted actions use the same generic mechanism.
+- [ ] Learn typed entry conditions from independent source states.
 - [ ] Promote only when a composition improves terminal/tick return on held-out
-      source-state groups relative to executing its primitive components.
-- [ ] Verify the promoted tactic's typed entry conditions, bounded execution,
-      emitted controller input, outcome distribution, and exact replay lineage.
-- [ ] Run matched promotion-enabled and primitives-only campaigns and measure
-      useful transitions per wall second, terminal discovery rate, and
-      time-to-best-route on held-out seeds.
+      state groups relative to executing its primitive components.
+- [ ] Keep every valid primitive selectable after promotion.
+- [ ] Compare promotion-enabled and primitives-only search on held-out seeds
+      using terminal rate, time-to-first-terminal, time-to-best-route, and
+      unique useful expansions per second.
+- [ ] Repeat the complete discovery/improvement evaluation on a second native
+      route problem before claiming a generic framework.
 
 Exit gate:
 
-- At least one useful composition is discovered without hard-coding an Ordon
-  route, reproduces exactly, and provides measurable held-out search value.
-- Primitive actions remain selectable everywhere they are valid.
+- At least one learned composition provides reproducible held-out search value.
+- The second route problem succeeds without benchmark-specific reward or
+  authored route structure.
 
-## P5 - Establish the capacity curve
+## Experiment discipline
 
-- [ ] After the P2 hot-path change and P3 learner selection, run one sealed
-      fixed plan at 1, 2, 4, 8, and 16 workers.
-- [ ] Report proposal parallelism, environment parallelism, and learner-update
-      work separately.
-- [ ] Plot useful transitions, learner updates, unique frontier cells, native
-      ticks, checkpoint traffic, best first-hit tick, wall time, and peak
-      memory.
-- [ ] Identify the saturation point and responsible resource: simulation,
-      checkpoint capture/transfer, replay, learner fit, persistence, scheduling,
-      or duplicated exploration.
-- [ ] Demonstrate a 10x improvement in time-to-fixed-useful-evidence against the
-      recorded baseline, or publish the measured limiting curve that prevents
-      it.
-
-Exit gate:
-
-- Worker growth improves useful evidence rather than merely executed ticks.
-- No 100x capacity plan is proposed until the 10x curve is understood.
-
-## P6 - Beat and verify the authenticated Ordon incumbent
-
-- [ ] Produce a machine-generated candidate whose first authenticated load-zone
-      hit is strictly earlier than tick `125` from boundary `506`.
-- [ ] Continue to a credibility target of tick `123` or lower. Tick `124`
-      clears the formal regression gate but is weak evidence for harder routes.
-- [ ] Minimize the complete successful controller tape without changing source,
-      terminal, game build, fixture, or execution fidelity.
-- [ ] Cold-replay the complete minimized tape at least twice from process boot
-      with learner and tactic executors out of the loop.
-- [ ] Require byte-identical input and identical authenticated terminal evidence
-      across cold replays.
-- [ ] Publish execution plan, learner/replay lineage, complete timing, worker
-      topology, peak memory, winning lineage, first-hit tick, and proof
-      identities.
-
-Anything short of the sub-125 cold-replay proof is progress evidence, not task
-completion.
+- Every native run names the architectural invariant or exit gate it tests.
+- Do not run more than one diagnostic cell after a failed architectural
+  treatment. Analyze or redesign before spending another full campaign.
+- Controls share source checkpoint, terminal predicate, game bytes, fixture,
+  route horizon, expansion budget, worker topology, and fidelity.
+- Reports distinguish terminal discovery, promotion, best authenticated tick,
+  exact graph return, generalized prediction, and exploration priority.
+- A faster run of an unchanged failing algorithm is throughput evidence, not
+  learning success.
+- A terminal hit, a tick-`125` tie, or one tick-`195` scratch route is progress
+  evidence only.
