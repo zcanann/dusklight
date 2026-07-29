@@ -199,6 +199,12 @@ pub use observation_audit::{
     NATIVE_TACTIC_OBSERVATION_AUDIT_SCHEMA_V1, NativeTacticActionSurfaceCoverage,
     NativeTacticObservationAudit, NativeTacticPolicySignalContract, NativeTacticSignalCoverage,
 };
+mod post_terminal_controls;
+pub use post_terminal_controls::{
+    NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V1, NativeTacticPostTerminalControl,
+    NativeTacticPostTerminalControlReport, NativeTacticPostTerminalDecisionControl,
+    NativeTacticPostTerminalRanking, NativeTacticPostTerminalSeedControl,
+};
 
 mod throughput_curve;
 pub use throughput_curve::{

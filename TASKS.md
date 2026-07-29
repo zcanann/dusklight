@@ -82,6 +82,11 @@ The incoming 2026-07-29 work made substantial, useful progress:
   It reports unsupported actions, validation-calibrated test error, epistemic
   distance, pairwise ordering, top-action wins, and regret. The P2 gate remains
   open until a retained native corpus demonstrates an advantage.
+- A content-bound post-terminal control audit now joins immutable pre-lease
+  learner queues to later exact graph outcomes and compares predicted total
+  ticks with least-visited and random-valid ordering. It withholds the
+  exhaustive-local oracle claim unless every queued action has an authenticated
+  terminal continuation. Retained native evidence is still required.
 - Native option summaries now retain same-tick wall-contact/commanded-motion
   overlap and the momentum loss measured on those ticks. The v5 tactic feature
   schema exposes the measured consequence with explicit legacy missingness;
@@ -237,9 +242,12 @@ Exit gate:
 - [ ] Demonstrate that learned ranking reduces median unique useful expansions
       to the real terminal under matched budgets. The deterministic
       around-the-corner fixture remains a regression test, not this gate.
-- [ ] After terminal support appears, demonstrate that learned total-tick
-      ranking selects better counterfactuals than visit-count, random-valid,
-      and exhaustive-local controls on held-out successful-path states.
+- [ ] After terminal support appears, demonstrate on held-out successful-path
+      states that learned total-tick ranking selects better counterfactuals
+      than visit-count and random-valid controls, and recovers the
+      exhaustive-local oracle's best outcome with materially fewer native
+      evaluations. Exhaustive-local is an outcome ceiling and evaluation-cost
+      control, not a policy the learner can honestly beat.
 - [ ] Audit the observation vector against native evidence. Applicable actions,
       velocity and trajectory history, camera state, prompted actions, and
       kinematic consequences such as lost speed must be available when

@@ -96,12 +96,13 @@ use huntctl::search_evaluator::native_tactic_policy_runner::{
 };
 use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticDemonstrationReport, NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest,
-    NativeTacticObservationAudit, NativeTacticPlanBudgets, NativeTacticResourceLimit,
-    NativeTacticRestoreLocalityConfig, NativeTacticRestoreLocalityReport,
-    NativeTacticRouteDiagnosisReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
-    NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
-    NativeTacticScratchDiscoveryReport, NativeTacticScratchEvidenceBundle,
-    NativeTacticThroughputCurveConfig, run_native_tactic_restore_locality, run_native_tactic_route,
+    NativeTacticObservationAudit, NativeTacticPlanBudgets, NativeTacticPostTerminalControlReport,
+    NativeTacticResourceLimit, NativeTacticRestoreLocalityConfig,
+    NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport, NativeTacticRouteReport,
+    NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
+    NativeTacticScratchComparisonReport, NativeTacticScratchDiscoveryReport,
+    NativeTacticScratchEvidenceBundle, NativeTacticThroughputCurveConfig,
+    run_native_tactic_restore_locality, run_native_tactic_route,
     run_native_tactic_throughput_curve, tactic_macro_registry_identity,
 };
 use huntctl::search_evaluator::native_tactic_worker::NativeGenericExecutionStrategy;
@@ -396,10 +397,10 @@ mod q_training;
 mod reachability;
 mod tactic_calibration;
 
-pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
-    match args.first().map(String::as_str) {
-        Some(
-            "verify-frozen-policy-cold-replay"
+fn is_frozen_and_tactic_command(name: &str) -> bool {
+    matches!(
+        name,
+        "verify-frozen-policy-cold-replay"
             | "export-frozen-policy-tape"
             | "verify-frozen-policy"
             | "frozen-policy-probe-model"
@@ -418,10 +419,20 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             | "tactic-route"
             | "tactic-throughput-curve"
             | "tactic-restore-locality"
+            | "audit-post-terminal-tactic-controls"
+            | "audit-tactic-scratch-campaign"
             | "audit-tactic-observations"
+            | "compare-tactic-scratch-campaigns"
+            | "diagnose-tactic-terminal-routes"
             | "validate-tactic-scratch-discovery"
-            | "validate-tactic-restore-locality",
-        ) => frozen_and_tactics::command(args),
+            | "validate-tactic-scratch-bundle"
+            | "validate-tactic-restore-locality"
+    )
+}
+
+pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
+    match args.first().map(String::as_str) {
+        Some(name) if is_frozen_and_tactic_command(name) => frozen_and_tactics::command(args),
         Some(
             "diff-episodes"
             | "dataset"
@@ -460,5 +471,24 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             | "compare-tactic-value-controls",
         ) => tactic_calibration::command(args),
         _ => usage_error(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_frozen_and_tactic_command;
+
+    #[test]
+    fn retained_tactic_audits_are_reachable_from_the_learn_dispatcher() {
+        for command in [
+            "audit-post-terminal-tactic-controls",
+            "audit-tactic-scratch-campaign",
+            "audit-tactic-observations",
+            "compare-tactic-scratch-campaigns",
+            "diagnose-tactic-terminal-routes",
+            "validate-tactic-scratch-bundle",
+        ] {
+            assert!(is_frozen_and_tactic_command(command), "{command}");
+        }
     }
 }

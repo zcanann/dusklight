@@ -91,6 +91,20 @@ realized actions at wholly held-out native states. See
 [held-out-tactic-controls.md](held-out-tactic-controls.md) for the candidate
 surface, calibration, and unsupported-action contracts.
 
+Audit post-terminal total-tick ranking against later graph truth:
+
+```text
+huntctl learn audit-post-terminal-tactic-controls \
+  --report ROUTE-REPORT.json \
+  --output POST-TERMINAL-CONTROLS.json \
+  --repository-root REPOSITORY
+```
+
+This compares decision-time learned, least-visited, and random-valid ordering.
+It recognizes exhaustive-local as an oracle only when every queued candidate
+has an exact terminal continuation. See
+[post-terminal-tactic-controls.md](post-terminal-tactic-controls.md).
+
 Executable and game-image bytes are deliberately not duplicated into the
 bundle. Their exact SHA-256 identities, runtime dependency identities, native
 source boundary, objective, process tape, milestone program, world context,
