@@ -191,11 +191,20 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   replay-connected states with exact root-relative costs of `197` or `207`
   ticks, preventing an optimistic approximate prediction from displacing
   proven evidence. The best result was tick `196`, so exact-path authority
-  fixed evidence semantics but did not improve the route. Every retained
-  frontier in the one-worker plan had acquisition rank `0`; that rank still
-  used a demonstration-era behavior-transfer sorter for the generalized
-  proposal. Native-terminal scratch refinement must rank those actions by
-  learned return rather than imitate the first slow success.
+  fixed evidence semantics but did not improve the route.
+- Subsequent controls reject the claim that the tick-`195` result establishes
+  a competent optimizer. Unbounded acquisition-rank cycling destroyed
+  terminal discovery; bounded frontier cycling reproduced only tick `206`;
+  and pure learned-return ranking over a fixed exact frontier also reproduced
+  only tick `206`. Retaining every exact option endpoint and using the
+  calibrated Double-Q action model increased exact-path acquisitions from
+  `12` to `21` and distinct acquired prefixes from `8` to `12`, but again
+  stopped at tick `206`. The remaining exact path contains `40`-tick gaps
+  between branchable states. The learner cannot assign or test corrective
+  actions inside those options, so the experiment is structurally incapable
+  of the fine route optimization being claimed. The isolated tick-`195`
+  result is evidence that a counterfactual can occasionally help, not evidence
+  of reliable self-refinement.
 - Shared replay had coupled training evidence to exploration coverage: every
   peer transition entered every lane's frontier archive and visited-state set.
   Under the full `4x64` plan this correlated all lanes onto the same failed
@@ -253,8 +262,12 @@ tie is diagnostic evidence only.
 ## P3 - Prove delayed-credit continuous-control learning
 
 - [ ] Use native-terminal return and retained intermediate states to shorten
-      the authenticated tick-`206` scratch route below the tick-`131`
-      demonstration under separate promotion authority.
+      the authenticated scratch route below the tick-`131` demonstration
+      under separate promotion authority. First replace endpoint-only temporal
+      credit with dense, authenticated states along the learner's own
+      successful routes so it can branch inside long options. Demonstrate
+      repeated improvement across sealed seeds; do not treat the isolated
+      tick-`195` counterfactual as proof of optimization.
 
 Exit gate:
 

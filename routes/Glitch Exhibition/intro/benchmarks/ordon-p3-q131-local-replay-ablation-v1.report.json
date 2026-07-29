@@ -935,9 +935,88 @@
         "route_beats_prior_tick_195": false,
         "route_beats_demonstration": false,
         "interpretation": "Exact replay connectivity now outranks speculative k-NN terminal cost, and 15 retained-frontier acquisitions exercised proven terminal suffix states. The result did not improve tick 195. The one-worker execution plan assigned every retained frontier acquisition rank zero, which still routed the generalized proposal through demonstration-oriented behavior transfer instead of native-terminal learned-return ranking. Exact-path authority is correct, but scratch refinement remains policy-confounded."
+      },
+      "terminal_refinement_structure_probe": {
+        "implementation_commits": [
+          "f41e5ea8c2",
+          "28f9f1c467",
+          "5c2beb2f28",
+          "10bf402d85",
+          "6f084638a7"
+        ],
+        "unbounded_rank_cycle": {
+          "source_report_path": "build/campaigns/ordon-p3-q131-ranked-terminal-frontier-seed155921-1x128-b4-w1-v4-20260728/report.json",
+          "source_report_sha256": "bc79e95f6fe2b4a2ca6f959cca6131c1c1040e06b9378b42e8a7560129d50941",
+          "terminal": false,
+          "minimum_goal_distance": 1651.6,
+          "conclusion": "Rejected: broad rank cycling destroyed the stable discovery behavior."
+        },
+        "bounded_frontier_cycle": {
+          "source_report_path": "build/campaigns/ordon-p3-q131-bounded-ranked-refinement-seed155921-1x128-b4-w1-v5-20260728/report.json",
+          "source_report_sha256": "a0371f8efba9ed9d189f246ed9c06815ff710805b6f44d9d1c420eaa3a5e9cad",
+          "best_authenticated_tick": 206,
+          "exact_terminal_path_frontier_acquisitions": 3,
+          "conclusion": "Rejected: cycling frontier ranks diluted exact-path refinement and did not improve the route."
+        },
+        "fixed_exact_frontier_pure_learned_return": {
+          "source_report_path": "build/campaigns/ordon-p3-q131-exact-frontier-pure-q-seed155921-1x128-b4-w1-v6-20260728/report.json",
+          "source_report_sha256": "d9629b02587687cd3eedfca76180c47eb3481c9cb5676aa8efd347f75acb6a7f",
+          "best_authenticated_tick": 206,
+          "exact_terminal_path_frontier_acquisitions": 12,
+          "distinct_exact_prefix_ticks": [
+            32,
+            36,
+            40,
+            56,
+            80,
+            84,
+            100,
+            184
+          ],
+          "conclusion": "Correct learned-return authority did not reproduce the isolated tick-195 improvement."
+        },
+        "all_exact_endpoints_double_q": {
+          "source_report_path": "build/campaigns/ordon-p3-q131-full-exact-double-q-seed155921-1x128-b4-w1-v7-20260728/report.json",
+          "source_report_sha256": "f6b7c2dee035ca80247f706b71a825a324f33ed367f75dd9a864fd91d7181aed",
+          "execution_plan_sha256": "0a550efea3daa4dc4d0a89d33273bfbd4acfe76954ed3f181fdec4f5de25c0a7",
+          "best_authenticated_tick": 206,
+          "exact_terminal_path_frontier_acquisitions": 21,
+          "distinct_exact_prefix_ticks": [
+            16,
+            32,
+            36,
+            40,
+            56,
+            72,
+            80,
+            84,
+            100,
+            104,
+            144,
+            184
+          ],
+          "maximum_unbranchable_option_gap_ticks": 40,
+          "native_ticks": 7546,
+          "useful_decisions": 65,
+          "useful_training_transitions": 293,
+          "training_replay_rows": 481,
+          "learner_updates": 67,
+          "visited_states": 54,
+          "model_update_micros": 57321218,
+          "wall_micros": 423402368,
+          "conclusion": "Retaining all exact option endpoints and using Double-Q improved exact-path coverage but not route quality."
+        },
+        "interpretation": {
+          "isolated_tick_195_proves_reliable_optimization": false,
+          "learned_return_action_authority_operational": true,
+          "exact_option_endpoint_retention_operational": true,
+          "fine_grained_route_refinement_possible": false,
+          "next_required_change": "Replay a learner-generated successful route into dense authenticated checkpoints and admit those states for branching without adding recorded chunks to the executable action catalog."
+        },
+        "conclusion": "The current campaign is temporally under-resolved for the optimization claim. It can branch only at tactic-option endpoints, including gaps of 40 native ticks, so learned return cannot test corrections at the interior frames where route quality is determined. The tick-195 result is a single favorable counterfactual, not proof of a robust route optimizer."
       }
     },
-    "conclusion": "The learner reached the real terminal from scratch once route discovery received adequate time. Isolated learners reproduced terminals in 2/4 seeds, and separating global value evidence from lane-local frontier coverage raised the matched shared-replay result from 0/4 to 3/4. A separate native-terminal critic supplies total-tick predictions after genuine terminal support and shortened an isolated authenticated route from tick 206 to tick 195. Reliable scratch discovery and self-refinement are established; strict 131/125 authority still applies to promotion, and the best scratch route remains far too slow."
+    "conclusion": "The learner reached the real terminal from scratch once route discovery received adequate time. Isolated learners reproduced terminals in 2/4 seeds, and separating global value evidence from lane-local frontier coverage raised the matched shared-replay result from 0/4 to 3/4. A separate native-terminal critic supplies total-tick predictions after genuine terminal support, but the only improvement from tick 206 to tick 195 did not reproduce across controlled refinement variants. Scratch discovery is established; robust self-refinement is not. Endpoint-only branching leaves gaps as large as 40 native ticks and invalidates fine route-optimization claims until the learner receives dense authenticated states along its own successful routes."
   },
   "observations": {
     "ordinary_suboptimal_replay_improves_terminal_sample_efficiency": true,
@@ -968,6 +1047,8 @@
     "extra_decisions_improve_scratch_terminal_rate": false,
     "goal_relabel_critic_supplies_terminal_tick_predictions": true,
     "native_terminal_critic_shortens_scratch_route": true,
+    "native_terminal_shortening_reproduced": false,
+    "endpoint_only_temporal_resolution_sufficient": false,
     "native_terminal_critic_beats_demonstration": false,
     "exact_terminal_path_controls_frontier_acquisition": true,
     "exact_terminal_path_improves_scratch_route": false,
