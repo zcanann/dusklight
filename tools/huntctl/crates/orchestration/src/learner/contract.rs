@@ -11,7 +11,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const GRAPH_LEARNING_BATCH_SCHEMA_V2: &str = "dusklight-graph-learning-batch/v2";
-pub const GRAPH_LEARNER_CONTRACT_SCHEMA_V2: &str = "dusklight-graph-learner-contract/v2";
+pub const GRAPH_LEARNER_CONTRACT_SCHEMA_V3: &str = "dusklight-graph-learner-contract/v3";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,12 +47,17 @@ pub struct GraphLearnerContract {
     pub minimum_calibration_ranked_pairs: u64,
     pub minimum_calibration_error_improvement_millionths: u64,
     pub minimum_calibration_ranking_improvement_millionths: u64,
+    pub ordinary_replay_fraction_per_million: u32,
+    pub replay_surprise_weight_per_million: u32,
+    pub replay_rarity_weight_per_million: u32,
+    pub replay_terminal_weight_per_million: u32,
+    pub replay_policy_weight_per_million: u32,
 }
 
 impl Default for GraphLearnerContract {
     fn default() -> Self {
         Self {
-            schema: GRAPH_LEARNER_CONTRACT_SCHEMA_V2.into(),
+            schema: GRAPH_LEARNER_CONTRACT_SCHEMA_V3.into(),
             bootstrap_rule: GraphBootstrapRule::ExactMonteCarloThenCensoredNStep,
             n_step_horizon_ticks: 16,
             uncertainty_rule: GraphUncertaintyRule::HeldOutBootstrapEnsembleVariance,
@@ -65,19 +70,28 @@ impl Default for GraphLearnerContract {
             minimum_calibration_ranked_pairs: 1,
             minimum_calibration_error_improvement_millionths: 1,
             minimum_calibration_ranking_improvement_millionths: 1,
+            ordinary_replay_fraction_per_million: 250_000,
+            replay_surprise_weight_per_million: 250_000,
+            replay_rarity_weight_per_million: 250_000,
+            replay_terminal_weight_per_million: 250_000,
+            replay_policy_weight_per_million: 250_000,
         }
     }
 }
 
 impl GraphLearnerContract {
     pub fn validate(&self) -> Result<(), GraphLearnerError> {
-        if self.schema != GRAPH_LEARNER_CONTRACT_SCHEMA_V2
+        let replay_weight_sum = u64::from(self.replay_surprise_weight_per_million)
+            .saturating_add(u64::from(self.replay_rarity_weight_per_million))
+            .saturating_add(u64::from(self.replay_terminal_weight_per_million))
+            .saturating_add(u64::from(self.replay_policy_weight_per_million));
+        if self.schema != GRAPH_LEARNER_CONTRACT_SCHEMA_V3
             || self.n_step_horizon_ticks == 0
             || self.n_step_horizon_ticks > 256
             || self.ensemble_members < 2
             || self.ensemble_members > 64
             || self.target_network_update_every_batches == 0
-            || self.minimum_replay_rows == 0
+            || self.minimum_replay_rows < 2
             || self.minimum_calibration_objective_predictions == 0
             || self.maximum_calibration_tick_error_millionths > 1_000_000
             || self.minimum_calibration_ranked_pairs == 0
@@ -85,6 +99,10 @@ impl GraphLearnerContract {
             || self.minimum_calibration_error_improvement_millionths > 1_000_000
             || self.minimum_calibration_ranking_improvement_millionths == 0
             || self.minimum_calibration_ranking_improvement_millionths > 1_000_000
+            || self.minimum_replay_rows > 1_000_000
+            || self.ordinary_replay_fraction_per_million == 0
+            || self.ordinary_replay_fraction_per_million >= 1_000_000
+            || replay_weight_sum != 1_000_000
         {
             return Err(GraphLearnerError::Invalid(
                 "graph learner algorithm contract is invalid",
@@ -96,7 +114,7 @@ impl GraphLearnerContract {
     pub fn content_sha256(&self) -> Result<Digest, GraphLearnerError> {
         self.validate()?;
         let mut hasher = Sha256::new();
-        hasher.update(GRAPH_LEARNER_CONTRACT_SCHEMA_V2.as_bytes());
+        hasher.update(GRAPH_LEARNER_CONTRACT_SCHEMA_V3.as_bytes());
         hasher.update([self.bootstrap_rule as u8]);
         hasher.update(self.n_step_horizon_ticks.to_le_bytes());
         hasher.update([self.uncertainty_rule as u8]);
@@ -115,6 +133,11 @@ impl GraphLearnerContract {
             self.minimum_calibration_ranking_improvement_millionths
                 .to_le_bytes(),
         );
+        hasher.update(self.ordinary_replay_fraction_per_million.to_le_bytes());
+        hasher.update(self.replay_surprise_weight_per_million.to_le_bytes());
+        hasher.update(self.replay_rarity_weight_per_million.to_le_bytes());
+        hasher.update(self.replay_terminal_weight_per_million.to_le_bytes());
+        hasher.update(self.replay_policy_weight_per_million.to_le_bytes());
         Ok(Digest(hasher.finalize().into()))
     }
 }
@@ -374,6 +397,9 @@ mod tests {
         assert!(invalid.validate().is_err());
         invalid = GraphLearnerContract::default();
         invalid.maximum_calibration_tick_error_millionths = 1_000_001;
+        assert!(invalid.validate().is_err());
+        invalid = GraphLearnerContract::default();
+        invalid.replay_policy_weight_per_million -= 1;
         assert!(invalid.validate().is_err());
     }
 }

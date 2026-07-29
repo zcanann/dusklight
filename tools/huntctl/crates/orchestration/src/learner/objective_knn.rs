@@ -4,16 +4,22 @@ use super::{GraphLearnerError, LearnedGraphActionEstimate};
 pub(super) struct ActionObjectiveSample {
     source_feature_f32_bits: Vec<u32>,
     conditional_ticks_to_terminal: u64,
+    replay_weight: u64,
 }
 
 impl ActionObjectiveSample {
-    pub(super) fn new(source_features: &[f32], conditional_ticks_to_terminal: u64) -> Self {
+    pub(super) fn new(
+        source_features: &[f32],
+        conditional_ticks_to_terminal: u64,
+        replay_weight: u64,
+    ) -> Self {
         Self {
             source_feature_f32_bits: source_features
                 .iter()
                 .map(|value| value.to_bits())
                 .collect(),
             conditional_ticks_to_terminal,
+            replay_weight,
         }
     }
 }
@@ -36,9 +42,9 @@ impl ActionObjectiveModel {
                 "objective model requires terminal-connected samples",
             ))?;
         if width == 0
-            || samples
-                .iter()
-                .any(|sample| sample.source_feature_f32_bits.len() != width)
+            || samples.iter().any(|sample| {
+                sample.source_feature_f32_bits.len() != width || sample.replay_weight == 0
+            })
         {
             return Err(GraphLearnerError::Invalid(
                 "objective model has incompatible feature widths",
@@ -47,8 +53,13 @@ impl ActionObjectiveModel {
         let mut minimum = vec![f32::INFINITY; width];
         let mut maximum = vec![f32::NEG_INFINITY; width];
         let mut tick_sum = 0_u128;
+        let mut total_weight = 0_u128;
         for sample in &samples {
-            tick_sum = tick_sum.saturating_add(u128::from(sample.conditional_ticks_to_terminal));
+            tick_sum = tick_sum.saturating_add(
+                u128::from(sample.conditional_ticks_to_terminal)
+                    .saturating_mul(u128::from(sample.replay_weight)),
+            );
+            total_weight = total_weight.saturating_add(u128::from(sample.replay_weight));
             for ((minimum, maximum), value) in minimum
                 .iter_mut()
                 .zip(&mut maximum)
@@ -60,7 +71,7 @@ impl ActionObjectiveModel {
             }
         }
         let mean_conditional_ticks_to_terminal =
-            u64::try_from(tick_sum / samples.len().max(1) as u128).unwrap_or(u64::MAX);
+            u64::try_from(tick_sum / total_weight.max(1)).unwrap_or(u64::MAX);
         let mut model = Self {
             samples,
             feature_min_f32_bits: minimum.into_iter().map(f32::to_bits).collect(),
@@ -104,11 +115,14 @@ impl ActionObjectiveModel {
                 .map(|value| f32::from_bits(*value))
                 .collect::<Vec<_>>();
             if let Some(prediction) = self.predict_excluding(&features, Some(index)) {
-                error = error.saturating_add(u128::from(relative_tick_error(
-                    sample.conditional_ticks_to_terminal,
-                    prediction.ticks,
-                )));
-                predictions += 1;
+                error = error.saturating_add(
+                    u128::from(relative_tick_error(
+                        sample.conditional_ticks_to_terminal,
+                        prediction.ticks,
+                    ))
+                    .saturating_mul(u128::from(sample.replay_weight)),
+                );
+                predictions = predictions.saturating_add(u128::from(sample.replay_weight));
             }
         }
         u64::try_from(error / predictions.max(1)).unwrap_or(u64::MAX)
@@ -134,6 +148,7 @@ impl ActionObjectiveModel {
                     self.normalized_feature_distance(source_features, sample),
                     index,
                     sample.conditional_ticks_to_terminal,
+                    sample.replay_weight,
                 )
             })
             .collect::<Vec<_>>();
@@ -146,13 +161,25 @@ impl ActionObjectiveModel {
                 .then_with(|| left.1.cmp(&right.1))
         });
         neighbors.truncate(3);
-        let ticks = if let Some(exact) = neighbors.iter().find(|neighbor| neighbor.0 == 0.0) {
-            exact.2
+        let exact = neighbors
+            .iter()
+            .filter(|neighbor| neighbor.0 == 0.0)
+            .collect::<Vec<_>>();
+        let ticks = if !exact.is_empty() {
+            let (sum, weight) = exact.iter().fold((0_u128, 0_u128), |total, neighbor| {
+                (
+                    total.0.saturating_add(
+                        u128::from(neighbor.2).saturating_mul(u128::from(neighbor.3)),
+                    ),
+                    total.1.saturating_add(u128::from(neighbor.3)),
+                )
+            });
+            u64::try_from(sum / weight.max(1)).unwrap_or(u64::MAX)
         } else {
             let mut weighted_ticks = 0.0_f64;
             let mut weight_sum = 0.0_f64;
-            for (distance, _, ticks) in &neighbors {
-                let weight = 1.0 / (f64::from(*distance) + 1.0e-6);
+            for (distance, _, ticks, replay_weight) in &neighbors {
+                let weight = *replay_weight as f64 / (f64::from(*distance) + 1.0e-6);
                 weighted_ticks += weight * *ticks as f64;
                 weight_sum += weight;
             }
@@ -161,11 +188,19 @@ impl ActionObjectiveModel {
                 .clamp(0.0, u64::MAX as f64) as u64
         };
         let nearest_distance = neighbors[0].0.clamp(0.0, 1.0);
-        let dispersion = neighbors
+        let dispersion_sum = neighbors
             .iter()
-            .map(|neighbor| relative_tick_error(ticks, neighbor.2))
-            .sum::<u64>()
-            / neighbors.len().max(1) as u64;
+            .map(|neighbor| {
+                u128::from(relative_tick_error(ticks, neighbor.2))
+                    .saturating_mul(u128::from(neighbor.3))
+            })
+            .sum::<u128>();
+        let dispersion_weight = neighbors
+            .iter()
+            .map(|neighbor| u128::from(neighbor.3))
+            .sum::<u128>();
+        let dispersion =
+            u64::try_from(dispersion_sum / dispersion_weight.max(1)).unwrap_or(u64::MAX);
         Some(ObjectivePrediction {
             ticks,
             uncertainty_millionths: ((f64::from(nearest_distance) * 1_000_000.0).round() as u64)

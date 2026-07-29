@@ -6,7 +6,7 @@ use dusklight_control::option_execution::{
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
 use dusklight_learning::fact_snapshot::{FactPhase, FactSnapshot};
 use dusklight_learning::option_transition::{OptionIntermediateBoundary, OptionTransitionSample};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn fixture_state() -> FactSnapshot {
     let shard = NativeEpisodeShard::decode(include_bytes!(
@@ -435,6 +435,71 @@ fn held_out_objective_gate_requires_state_conditioned_ranking_gain() {
     assert!(report.ranking_accuracy_improvement_millionths > 0);
     assert!(report.objective_calibration_gate_passed);
     report.validate().unwrap();
+
+    let policy_action = batch
+        .rows
+        .iter()
+        .find(|row| row.action.option_id == "held-out-action-0")
+        .unwrap()
+        .action
+        .content_sha256()
+        .unwrap();
+    let policy_actions = BTreeSet::from([policy_action]);
+    let contract = crate::learner::GraphLearnerContract::default();
+    let replay =
+        crate::learner::GraphReplayPlan::build(&contract, &batch, &policy_actions, 0).unwrap();
+    assert_eq!(
+        replay,
+        crate::learner::GraphReplayPlan::build(&contract, &batch, &policy_actions, 0).unwrap()
+    );
+    assert_eq!(replay.ordinary_draws, 16);
+    assert_eq!(replay.prioritized_draws, 48);
+    assert_eq!(
+        replay
+            .rows
+            .iter()
+            .map(crate::learner::GraphReplayRowPriority::total_draws)
+            .sum::<u64>(),
+        64
+    );
+    let policy_draws = replay
+        .rows
+        .iter()
+        .filter(|row| row.policy_relevant)
+        .map(|row| row.prioritized_draws)
+        .sum::<u64>();
+    let ordinary_action_draws = replay
+        .rows
+        .iter()
+        .filter(|row| !row.policy_relevant)
+        .map(|row| row.prioritized_draws)
+        .sum::<u64>();
+    assert!(policy_draws > ordinary_action_draws);
+    let mut ordinarily_covered = BTreeSet::new();
+    for round in 0..replay.maximum_ordinary_starvation_rounds {
+        let rotated =
+            crate::learner::GraphReplayPlan::build(&contract, &batch, &policy_actions, round)
+                .unwrap();
+        ordinarily_covered.extend(
+            rotated
+                .rows
+                .iter()
+                .filter(|row| row.ordinary_draws > 0)
+                .map(|row| row.expansion_sha256),
+        );
+    }
+    assert_eq!(ordinarily_covered.len(), batch.rows.len());
+    let prioritized_snapshot = crate::learner::ExactGraphTableLearner
+        .fit_prioritized(&contract, &batch, &replay)
+        .unwrap();
+    assert!(
+        prioritized_snapshot
+            .generalized_objective_prediction(&[50.0], policy_action)
+            .is_some()
+    );
+    let mut detached_replay = replay;
+    detached_replay.rows[0].prioritized_draws += 1;
+    assert!(detached_replay.validate(&contract, &batch).is_err());
 }
 
 #[test]

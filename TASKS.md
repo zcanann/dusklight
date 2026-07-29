@@ -60,6 +60,11 @@ The current implementation is not yet an accepted learning architecture.
   against an action-mean baseline. Its gate requires complete independently
   realized objective coverage, bounded held-out error, and positive error and
   ranking gains; unsupported data remains explicit zero coverage.
+- A content-bound graph replay plan assigns inspectable surprise, rarity,
+  terminal-connection, and active-policy signals to authoritative realized
+  edges. A sealed ordinary-evidence lane rotates across all rows with a bounded
+  starvation interval; the remaining deterministic weighted draws feed the
+  generalized auxiliary and conditional-tick fits.
 - Long options historically exposed only their endpoints. Four-tick native
   interior boundaries now exist, but they do not by themselves turn the
   system into coherent graph search.
@@ -208,8 +213,6 @@ Exit gate:
 
 ## P2 - Make learning a serious expansion policy
 
-- [ ] Implement prioritized replay over surprising, rare, terminal-connected,
-      and policy-relevant graph edges without starving ordinary evidence.
 - [ ] Compare at least one stable discrete/action-factor baseline against the
       current k-NN and Double-Q treatments. Delete treatments that lose the
       sealed calibration and native search controls.

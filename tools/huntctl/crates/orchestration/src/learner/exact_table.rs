@@ -1,7 +1,8 @@
 use super::objective_knn::{ActionObjectiveModel, ActionObjectiveSample};
 use super::{
     ActionConditionedGraphLearner, GraphActionInput, GraphLearnerContract, GraphLearnerError,
-    GraphLearningBatch, GraphNodeInput, GraphTargetSupport, LearnedGraphActionEstimate,
+    GraphLearningBatch, GraphNodeInput, GraphReplayPlan, GraphTargetSupport,
+    LearnedGraphActionEstimate,
 };
 use crate::state_graph::ExactStateId;
 use dusklight_automation_contracts::artifact::Digest;
@@ -145,6 +146,42 @@ impl ExactGraphTableSnapshot {
     }
 }
 
+impl ExactGraphTableLearner {
+    pub fn fit_prioritized(
+        &self,
+        contract: &GraphLearnerContract,
+        batch: &GraphLearningBatch,
+        replay: &GraphReplayPlan,
+    ) -> Result<ExactGraphTableSnapshot, GraphLearnerError> {
+        replay.validate(contract, batch)?;
+        let mut snapshot = self.fit(contract, batch)?;
+        let mut accumulators = BTreeMap::<Digest, ActionAuxiliaryAccumulator>::new();
+        let mut objective_samples = BTreeMap::<Digest, Vec<ActionObjectiveSample>>::new();
+        for row in &batch.rows {
+            let replay_weight = replay.draw_weight(row.expansion_sha256);
+            if replay_weight == 0 {
+                continue;
+            }
+            let action_sha256 = row
+                .action
+                .content_sha256()
+                .map_err(|error| GraphLearnerError::Action(error.to_string()))?;
+            if let Some(ticks) = row.exact_conditional_ticks_to_terminal {
+                objective_samples.entry(action_sha256).or_default().push(
+                    ActionObjectiveSample::new(&row.source_features, ticks, replay_weight),
+                );
+            }
+            accumulate_auxiliary(&mut accumulators, action_sha256, row, replay_weight)?;
+        }
+        snapshot.action_auxiliary = finalize_auxiliary_models(batch, accumulators)?;
+        snapshot.action_objectives = objective_samples
+            .into_iter()
+            .map(|(action, samples)| Ok((action, ActionObjectiveModel::fit(samples)?)))
+            .collect::<Result<_, GraphLearnerError>>()?;
+        Ok(snapshot)
+    }
+}
+
 impl ActionConditionedGraphLearner for ExactGraphTableLearner {
     type Snapshot = ExactGraphTableSnapshot;
 
@@ -183,7 +220,7 @@ impl ActionConditionedGraphLearner for ExactGraphTableLearner {
                 objective_samples
                     .entry(action_sha256)
                     .or_default()
-                    .push(ActionObjectiveSample::new(&row.source_features, ticks));
+                    .push(ActionObjectiveSample::new(&row.source_features, ticks, 1));
             }
             if estimates
                 .insert((row.source, action_sha256), estimate)
@@ -217,61 +254,9 @@ impl ActionConditionedGraphLearner for ExactGraphTableLearner {
                     "exact learner received duplicate auxiliary targets",
                 ));
             }
-            let accumulator =
-                accumulators
-                    .entry(action_sha256)
-                    .or_insert_with(|| ActionAuxiliaryAccumulator {
-                        rows: 0,
-                        duration_sum: 0,
-                        accepted: 0,
-                        terminal: 0,
-                        prompt_counts: BTreeMap::new(),
-                        delta_sums: vec![0.0; row.source_features.len()],
-                    });
-            if accumulator.delta_sums.len() != row.source_features.len() {
-                return Err(GraphLearnerError::Invalid(
-                    "one action has incompatible auxiliary feature widths",
-                ));
-            }
-            accumulator.rows = accumulator.rows.saturating_add(1);
-            accumulator.duration_sum = accumulator
-                .duration_sum
-                .saturating_add(u64::from(row.realized_duration_ticks));
-            accumulator.accepted = accumulator
-                .accepted
-                .saturating_add(u64::from(row.action_accepted));
-            accumulator.terminal = accumulator
-                .terminal
-                .saturating_add(u64::from(row.immediate_terminal));
-            *accumulator
-                .prompt_counts
-                .entry(row.prompted_action_status)
-                .or_default() += 1;
-            for ((sum, source), target) in accumulator
-                .delta_sums
-                .iter_mut()
-                .zip(&row.source_features)
-                .zip(&row.target_features)
-            {
-                *sum += f64::from(*target - *source);
-            }
+            accumulate_auxiliary(&mut accumulators, action_sha256, row, 1)?;
         }
-        let mut action_auxiliary = accumulators
-            .into_iter()
-            .map(|(action, aggregate)| (action, finalize_auxiliary(aggregate)))
-            .collect::<BTreeMap<_, _>>();
-        let action_identities = action_auxiliary.keys().copied().collect::<Vec<_>>();
-        for action_sha256 in action_identities {
-            let error = auxiliary_prediction_error(
-                batch,
-                action_sha256,
-                &action_auxiliary[&action_sha256],
-            )?;
-            action_auxiliary
-                .get_mut(&action_sha256)
-                .expect("collected auxiliary action identity remains present")
-                .prediction_error_millionths = error;
-        }
+        let action_auxiliary = finalize_auxiliary_models(batch, accumulators)?;
         let action_objectives = objective_samples
             .into_iter()
             .map(|(action, samples)| {
@@ -351,6 +336,73 @@ impl ActionConditionedGraphLearner for ExactGraphTableLearner {
             })
             .collect()
     }
+}
+
+fn accumulate_auxiliary(
+    accumulators: &mut BTreeMap<Digest, ActionAuxiliaryAccumulator>,
+    action_sha256: Digest,
+    row: &super::GraphExpansionLearningTarget,
+    replay_weight: u64,
+) -> Result<(), GraphLearnerError> {
+    let accumulator =
+        accumulators
+            .entry(action_sha256)
+            .or_insert_with(|| ActionAuxiliaryAccumulator {
+                rows: 0,
+                duration_sum: 0,
+                accepted: 0,
+                terminal: 0,
+                prompt_counts: BTreeMap::new(),
+                delta_sums: vec![0.0; row.source_features.len()],
+            });
+    if accumulator.delta_sums.len() != row.source_features.len() {
+        return Err(GraphLearnerError::Invalid(
+            "one action has incompatible auxiliary feature widths",
+        ));
+    }
+    accumulator.rows = accumulator.rows.saturating_add(replay_weight);
+    accumulator.duration_sum = accumulator
+        .duration_sum
+        .saturating_add(u64::from(row.realized_duration_ticks).saturating_mul(replay_weight));
+    accumulator.accepted = accumulator
+        .accepted
+        .saturating_add(u64::from(row.action_accepted).saturating_mul(replay_weight));
+    accumulator.terminal = accumulator
+        .terminal
+        .saturating_add(u64::from(row.immediate_terminal).saturating_mul(replay_weight));
+    let prompt_count = accumulator
+        .prompt_counts
+        .entry(row.prompted_action_status)
+        .or_default();
+    *prompt_count = prompt_count.saturating_add(replay_weight);
+    for ((sum, source), target) in accumulator
+        .delta_sums
+        .iter_mut()
+        .zip(&row.source_features)
+        .zip(&row.target_features)
+    {
+        *sum += f64::from(*target - *source) * replay_weight as f64;
+    }
+    Ok(())
+}
+
+fn finalize_auxiliary_models(
+    batch: &GraphLearningBatch,
+    accumulators: BTreeMap<Digest, ActionAuxiliaryAccumulator>,
+) -> Result<BTreeMap<Digest, ActionAuxiliaryModel>, GraphLearnerError> {
+    let mut models = accumulators
+        .into_iter()
+        .map(|(action, aggregate)| (action, finalize_auxiliary(aggregate)))
+        .collect::<BTreeMap<_, _>>();
+    let action_identities = models.keys().copied().collect::<Vec<_>>();
+    for action_sha256 in action_identities {
+        let error = auxiliary_prediction_error(batch, action_sha256, &models[&action_sha256])?;
+        models
+            .get_mut(&action_sha256)
+            .expect("collected auxiliary action identity remains present")
+            .prediction_error_millionths = error;
+    }
+    Ok(models)
 }
 
 fn insert_node_features(

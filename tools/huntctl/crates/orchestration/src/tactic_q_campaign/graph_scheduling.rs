@@ -1,7 +1,7 @@
 use super::*;
 use crate::learner::{
     ActionConditionedGraphLearner, ExactGraphTableLearner, GraphActionInput, GraphLearnerContract,
-    GraphLearningBatch, GraphNodeInput,
+    GraphLearningBatch, GraphNodeInput, GraphReplayPlan,
 };
 use crate::scheduler::{
     LearnedExpansionPriority, SearchRegime, rank_schedulable_expansions, rank_schedulable_nodes,
@@ -152,10 +152,27 @@ impl TacticQCampaign {
             descriptors.insert(expansion_sha256, descriptor.clone());
         }
         let exact_learner = ExactGraphTableLearner;
-        let exact_snapshot = exact_learner.fit(
-            &GraphLearnerContract::default(),
-            &GraphLearningBatch::from_graph(&graph)?,
-        )?;
+        let learner_contract = GraphLearnerContract::default();
+        let learning_batch = GraphLearningBatch::from_graph(&graph)?;
+        let exact_snapshot = if learning_batch.rows.is_empty() {
+            exact_learner.fit(&learner_contract, &learning_batch)?
+        } else {
+            let policy_relevant_actions = descriptors
+                .values()
+                .map(|descriptor| {
+                    descriptor
+                        .content_sha256()
+                        .map_err(TacticQCampaignError::Values)
+                })
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            let replay = GraphReplayPlan::build(
+                &learner_contract,
+                &learning_batch,
+                &policy_relevant_actions,
+                self.decision_index,
+            )?;
+            exact_learner.fit_prioritized(&learner_contract, &learning_batch, &replay)?
+        };
         let graph_visits = graph
             .node(source)
             .map(|node| {
