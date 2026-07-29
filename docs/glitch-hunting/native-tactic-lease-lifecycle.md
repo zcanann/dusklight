@@ -1,7 +1,7 @@
 # Native tactic lease lifecycle
 
-Native tactic route report v35 separates execution attempts from unique graph
-work and interior observations.
+Native tactic route report v35 introduced the separation of execution attempts
+from unique graph work and interior observations. Current v36 retains it.
 
 Each seed owns an append-only binary `leases.dtql` journal. Before a proposal
 batch is sent to native workers, the coordinator fsyncs an `issued` record

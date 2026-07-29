@@ -42,6 +42,7 @@ pub struct NativeTacticRouteReport {
     pub value_treatment: TacticValueTreatment,
     pub execution_strategy: NativeGenericExecutionStrategy,
     pub workers: usize,
+    pub checkpoint_cache_capacity_per_worker_bytes: u64,
     pub decisions_per_seed: u64,
     pub resource_budgets: NativeTacticPlanBudgets,
     pub refit_every_decisions: u64,
@@ -211,7 +212,14 @@ pub struct NativeTacticFrontierAvailability {
 pub struct NativeTacticReplaySharingTelemetry {
     pub refreshes: u64,
     pub imported_rows: u64,
+    /// Largest number of newer fitted snapshots observed before this lane
+    /// refreshed. This is refresh pressure, not the replay lag of the model
+    /// actually consumed for selection.
     pub maximum_observed_stale_revisions: u64,
+    /// Largest difference between durable replay revision and the newest
+    /// fitted model available while a selection snapshot was acquired.
+    #[serde(default)]
+    pub maximum_model_replay_lag_revisions: u64,
 }
 
 impl NativeTacticReplaySharingTelemetry {
@@ -221,6 +229,9 @@ impl NativeTacticReplaySharingTelemetry {
         self.maximum_observed_stale_revisions = self
             .maximum_observed_stale_revisions
             .max(other.maximum_observed_stale_revisions);
+        self.maximum_model_replay_lag_revisions = self
+            .maximum_model_replay_lag_revisions
+            .max(other.maximum_model_replay_lag_revisions);
     }
 }
 

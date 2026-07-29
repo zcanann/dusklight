@@ -312,6 +312,7 @@ impl NativeTacticScratchEvidenceBundle {
         let acceptance: NativeTacticScratchDiscoveryReport =
             read_json_blob(bundle_root, &self.acceptance)?;
         campaign_audit.validate()?;
+        campaign_audit.validate_resource_binding(&route, &plan)?;
         acceptance.validate()?;
 
         if self.optimization_request.logical_identity_sha256 != request.content_sha256

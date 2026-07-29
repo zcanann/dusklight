@@ -18,6 +18,7 @@ pub(super) fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
     duration: TacticDurationBounds,
     termination: OptionCondition,
     execution_strategy: NativeGenericExecutionStrategy,
+    checkpoint_cache_capacity_bytes: usize,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
     if let Some(program) = native_generic_controller_program_for_strategy(
         stepper.plan(),
@@ -38,6 +39,7 @@ pub(super) fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
             duration,
             termination,
             program,
+            checkpoint_cache_capacity_bytes,
         );
     }
     let mut observation = before
@@ -71,6 +73,7 @@ pub(super) fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
             &candidate_tape,
             checkpoint_source,
             checkpoint_retention,
+            checkpoint_cache_capacity_bytes,
         )?;
         let iteration_paths = iteration_paths(paths, selected.decision_index, local_tick);
         write_new_compact_batch(&iteration_paths.request, &request)?;
@@ -274,6 +277,7 @@ pub(super) fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
     duration: TacticDurationBounds,
     termination: OptionCondition,
     program: ControllerProgram,
+    checkpoint_cache_capacity_bytes: usize,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
     let prefix_frames = candidate_prefix_frames(route_prefix, source_frame, checkpoint_source);
     if prefix_frames.len() != candidate_prefix_ticks {
@@ -286,6 +290,7 @@ pub(super) fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
         &program,
         checkpoint_source,
         checkpoint_retention,
+        checkpoint_cache_capacity_bytes,
     )?;
     write_new_compact_batch(&paths.request, &request)?;
     let validated = worker.run_tactic_batch(&paths.request, &paths.result, &request)?;
@@ -448,6 +453,7 @@ pub(super) fn execute_reactive_controller_native<W: PersistentTacticBatchWorker>
     termination: OptionCondition,
     mut cancellation: Vec<OptionCondition>,
     program: ControllerProgram,
+    checkpoint_cache_capacity_bytes: usize,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
     if !cancellation.is_empty() {
         return Err(NativeTacticWorkerError::DetachedSelection);
@@ -463,6 +469,7 @@ pub(super) fn execute_reactive_controller_native<W: PersistentTacticBatchWorker>
         &program,
         checkpoint_source,
         checkpoint_retention,
+        checkpoint_cache_capacity_bytes,
     )?;
     write_new_compact_batch(&paths.request, &request)?;
     let validated = worker.run_tactic_batch(&paths.request, &paths.result, &request)?;
@@ -603,6 +610,7 @@ pub(super) fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
     duration: TacticDurationBounds,
     termination: OptionCondition,
     cancellation: Vec<OptionCondition>,
+    checkpoint_cache_capacity_bytes: usize,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
     let mut observation = controller_observation_from_facts(before)?;
     let mut option_tape = InputTape {
@@ -682,6 +690,7 @@ pub(super) fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
             &candidate_tape,
             checkpoint_source,
             checkpoint_retention,
+            checkpoint_cache_capacity_bytes,
         )?;
         let iteration_paths = iteration_paths(paths, selected.decision_index, local_tick);
         write_new_compact_batch(&iteration_paths.request, &request)?;

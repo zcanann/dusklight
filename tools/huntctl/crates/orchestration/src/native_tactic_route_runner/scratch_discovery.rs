@@ -64,7 +64,7 @@ impl NativeTacticScratchDiscoveryReport {
         route: &NativeTacticRouteReport,
     ) -> Result<Self, NativeTacticRouteRunError> {
         request.validate().map_err(route_error)?;
-        if route.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V35
+        if route.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36
             || route.optimization_request_sha256 != request.content_sha256
         {
             return Err(route_message(
@@ -82,6 +82,7 @@ impl NativeTacticScratchDiscoveryReport {
             ));
         }
         validate_seed_artifacts(route, &plan)?;
+        let campaign_resources = super::scratch_campaign_audit::resource_audit(route, &plan)?;
 
         let maximum_graph_expansions = u64::try_from(plan.seeds.len())
             .ok()
@@ -122,6 +123,7 @@ impl NativeTacticScratchDiscoveryReport {
                 request.execution.deterministic_seeds.len() == ORDON_SCRATCH_DISCOVERY_SEEDS
                     && route.exploration_seeds == request.execution.deterministic_seeds,
             ),
+            condition("bounded_campaign_resources", campaign_resources.passed),
             condition(
                 "generous_route_horizon",
                 request.budgets.exploration_horizon_ticks >= minimum_horizon,

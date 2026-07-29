@@ -104,6 +104,11 @@ unavoidable mutation audit; they never count as TAS playback or proof.
 - [Authenticated cold-process throughput](throughput.md) defines the sealed
   process-per-run baseline that future persistent/reset workers must beat
   without changing native proof.
+- [Native tactic campaign resource bounds](native-tactic-resource-bounds.md)
+  defines aggregate checkpoint memory, fitted-model replay lag, fallback, and
+  checkpoint-owner accounting.
+- [Native tactic crash recovery](native-tactic-crash-recovery.md) defines the
+  recovery, decision-journal, and lease-journal transaction ordering.
 - [Engine-session reuse boundary](engine-sessions.md) defines the typed reuse
   refusal and exact reset guarantees required before one process may run a
   second authenticated stage-boot request.

@@ -5,11 +5,11 @@ use dusklight_learning::tactic_exploration::TacticProposalPolicy;
 use dusklight_orchestration::native_tactic_route_runner::{
     NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V32,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V33, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V34,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V35, NativeTacticDecisionTrace, NativeTacticExecutionPlan,
-    NativeTacticExecutionPlanRequest, NativeTacticPlanBudgets, NativeTacticReplaySharingPlan,
-    NativeTacticResourceLimit, NativeTacticRouteRunConfig, has_tactic_decision_journal,
-    materialize_tactic_decision_route, project_tactic_decision_graph, read_tactic_decision_journal,
-    run_native_tactic_route,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V35, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36,
+    NativeTacticDecisionTrace, NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest,
+    NativeTacticPlanBudgets, NativeTacticReplaySharingPlan, NativeTacticResourceLimit,
+    NativeTacticRouteRunConfig, has_tactic_decision_journal, materialize_tactic_decision_route,
+    project_tactic_decision_graph, read_tactic_decision_journal, run_native_tactic_route,
 };
 use dusklight_orchestration::native_tactic_worker::NativeGenericExecutionStrategy;
 use dusklight_orchestration::optimization_request::OptimizationRequest;
@@ -203,6 +203,7 @@ pub(super) fn tactic_route_learning_projection(
                             | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V33
                             | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V34
                             | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V35
+                            | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36
                     )
                 ) && report
                     .get("optimization_request_sha256")

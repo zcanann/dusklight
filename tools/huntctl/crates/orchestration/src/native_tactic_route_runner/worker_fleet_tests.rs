@@ -12,6 +12,7 @@ fn persistent_fleet_views_select_a_bounded_prefix_and_reset_dispatch_order() {
         440,
         NativeGenericExecutionStrategy::NativeController,
         Digest([1; 32]),
+        123,
     )
     .unwrap();
     let four = proposal_pool_view(
@@ -21,6 +22,7 @@ fn persistent_fleet_views_select_a_bounded_prefix_and_reset_dispatch_order() {
         440,
         NativeGenericExecutionStrategy::ProgressiveAudit,
         Digest([2; 32]),
+        456,
     )
     .unwrap();
 
@@ -32,6 +34,8 @@ fn persistent_fleet_views_select_a_bounded_prefix_and_reset_dispatch_order() {
     assert!(!four.direct_restore_enabled);
     assert_eq!(one.execution_plan_sha256, Digest([1; 32]));
     assert_eq!(four.execution_plan_sha256, Digest([2; 32]));
+    assert_eq!(one.checkpoint_cache_capacity_bytes, 123);
+    assert_eq!(four.checkpoint_cache_capacity_bytes, 456);
     assert!(
         proposal_pool_view(
             &senders,
@@ -40,6 +44,7 @@ fn persistent_fleet_views_select_a_bounded_prefix_and_reset_dispatch_order() {
             440,
             NativeGenericExecutionStrategy::NativeController,
             Digest([3; 32]),
+            1,
         )
         .is_err()
     );
@@ -51,6 +56,7 @@ fn persistent_fleet_views_select_a_bounded_prefix_and_reset_dispatch_order() {
             440,
             NativeGenericExecutionStrategy::NativeController,
             Digest([4; 32]),
+            1,
         )
         .is_err()
     );

@@ -593,6 +593,7 @@ pub(super) struct NativeTacticProposalJob {
     materialize_frontier: bool,
     primary_retention: NativeTacticCheckpointRetention,
     execution_strategy: NativeGenericExecutionStrategy,
+    checkpoint_cache_capacity_bytes: usize,
     paths_root: PathBuf,
     response: mpsc::SyncSender<Result<Vec<NativeTacticProposalWork>, NativeTacticRouteRunError>>,
 }
@@ -622,6 +623,7 @@ pub(super) struct NativeTacticProposalPool {
     pub(super) root_source_frame: usize,
     pub(super) execution_strategy: NativeGenericExecutionStrategy,
     pub(super) execution_plan_sha256: Digest,
+    pub(super) checkpoint_cache_capacity_bytes: usize,
     /// A sufficiently wide multi-lane fleet dedicates one stable worker to
     /// each concurrently executing lane. Counterfactual siblings use only
     /// the remaining workers, so they cannot consume another lane's live

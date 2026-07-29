@@ -1718,3 +1718,31 @@ fn route_attempts_are_append_only_across_resume_launches() {
     assert!(second.is_dir());
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn checkpoint_cache_capacity_is_derived_from_the_sealed_aggregate_memory_budget() {
+    assert_eq!(
+        tactic_checkpoint_cache_capacity_per_worker(NativeTacticResourceLimit::Bounded(1_000), 4)
+            .unwrap(),
+        250
+    );
+    assert_eq!(
+        tactic_checkpoint_cache_capacity_per_worker(
+            NativeTacticResourceLimit::Bounded(
+                (TACTIC_CHECKPOINT_CACHE_BYTES as u64).saturating_mul(8)
+            ),
+            4
+        )
+        .unwrap(),
+        TACTIC_CHECKPOINT_CACHE_BYTES
+    );
+    assert_eq!(
+        tactic_checkpoint_cache_capacity_per_worker(NativeTacticResourceLimit::Unbounded, 16)
+            .unwrap(),
+        TACTIC_CHECKPOINT_CACHE_BYTES
+    );
+    assert!(
+        tactic_checkpoint_cache_capacity_per_worker(NativeTacticResourceLimit::Bounded(3), 4)
+            .is_err()
+    );
+}

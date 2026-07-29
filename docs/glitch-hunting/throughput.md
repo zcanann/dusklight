@@ -391,6 +391,13 @@ increased useful throughput at every worker count. The v2 report rejects any
 sample with nonzero process-launch time, so a regression to per-cell boot
 cannot pass as persistent reuse.
 
+Current throughput report v3 no longer treats the number of fitted snapshots a
+lane skipped before refreshing as learner staleness. It records refresh
+pressure separately and gates on the fitted model's actual lag behind durable
+replay. Native worker cache capacity is now derived from the sealed aggregate
+memory budget instead of always requesting 640 MiB per worker; scratch
+campaign audit v2 recomputes both bounds from the route and execution plan.
+
 The ignored evidence root is
 `build/benchmarks/ordon-native-tactic-fixed-work-persistent-v2`; its sealed
 report content SHA-256 is

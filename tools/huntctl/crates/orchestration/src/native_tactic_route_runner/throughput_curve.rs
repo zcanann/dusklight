@@ -5,6 +5,8 @@ pub const NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V1: &str =
     "dusklight-native-tactic-throughput-curve/v1";
 pub const NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V2: &str =
     "dusklight-native-tactic-throughput-curve/v2";
+pub const NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V3: &str =
+    "dusklight-native-tactic-throughput-curve/v3";
 pub const NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS: [usize; 5] = [1, 2, 4, 8, 16];
 const MINIMUM_REPETITIONS: u32 = 2;
 const MAXIMUM_REPETITIONS: u32 = 6;
@@ -37,7 +39,7 @@ pub struct NativeTacticThroughputCurveSample {
     pub unique_useful_graph_expansions_per_second_millionths: u64,
     pub peak_worker_checkpoint_resident_bytes: u64,
     pub checkpoint_pool_resident_bytes_upper_bound: u64,
-    pub maximum_observed_stale_revisions: u64,
+    pub maximum_model_replay_lag_revisions: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -50,7 +52,7 @@ pub struct NativeTacticThroughputCurveCell {
     pub speedup_over_one_worker_millionths: u64,
     pub parallel_efficiency_millionths: u64,
     pub peak_checkpoint_pool_resident_bytes_upper_bound: u64,
-    pub maximum_observed_stale_revisions: u64,
+    pub maximum_model_replay_lag_revisions: u64,
     pub throughput_increased_from_prior: Option<bool>,
 }
 
@@ -86,7 +88,7 @@ pub struct NativeTacticThroughputCurveReport {
 
 impl NativeTacticThroughputCurveReport {
     pub fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
-        if self.schema != NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V2
+        if self.schema != NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V3
             || self.recorded_unix_millis == 0
             || self.operating_system.is_empty()
             || self.architecture.is_empty()
@@ -207,7 +209,7 @@ impl NativeTacticThroughputCurveReport {
         identity.content_sha256 = Digest::ZERO;
         let bytes = serde_json::to_vec(&identity).map_err(route_error)?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-tactic-throughput-curve/v2\0");
+        hasher.update(b"dusklight.native-tactic-throughput-curve/v3\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -247,7 +249,7 @@ impl DerivedCurve {
             .all(|sample| sample.checkpoint_pool_resident_bytes_upper_bound <= memory_bound);
         let learner_staleness_bound_satisfied = samples
             .iter()
-            .all(|sample| sample.maximum_observed_stale_revisions <= maximum_staleness);
+            .all(|sample| sample.maximum_model_replay_lag_revisions <= maximum_staleness);
         let mut curve = Vec::with_capacity(NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS.len());
         for workers in NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS {
             let selected = samples
@@ -278,9 +280,9 @@ impl DerivedCurve {
                     .map(|sample| sample.checkpoint_pool_resident_bytes_upper_bound)
                     .max()
                     .unwrap_or(0),
-                maximum_observed_stale_revisions: selected
+                maximum_model_replay_lag_revisions: selected
                     .iter()
-                    .map(|sample| sample.maximum_observed_stale_revisions)
+                    .map(|sample| sample.maximum_model_replay_lag_revisions)
                     .max()
                     .unwrap_or(0),
                 throughput_increased_from_prior: None,
@@ -437,9 +439,9 @@ pub fn run_native_tactic_throughput_curve(
                 peak_worker_checkpoint_resident_bytes,
                 checkpoint_pool_resident_bytes_upper_bound: peak_worker_checkpoint_resident_bytes
                     .saturating_mul(workers as u64),
-                maximum_observed_stale_revisions: route_report
+                maximum_model_replay_lag_revisions: route_report
                     .replay_sharing
-                    .maximum_observed_stale_revisions,
+                    .maximum_model_replay_lag_revisions,
             });
         }
     }
@@ -453,7 +455,7 @@ pub fn run_native_tactic_throughput_curve(
     )?;
     let passed = derived.passed();
     let mut report = NativeTacticThroughputCurveReport {
-        schema: NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V2.into(),
+        schema: NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V3.into(),
         content_sha256: Digest::ZERO,
         recorded_unix_millis: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -565,7 +567,7 @@ mod tests {
             ),
             peak_worker_checkpoint_resident_bytes: 100,
             checkpoint_pool_resident_bytes_upper_bound: 100 * workers as u64,
-            maximum_observed_stale_revisions: 2,
+            maximum_model_replay_lag_revisions: 2,
         }
     }
 
@@ -637,7 +639,7 @@ mod tests {
         let derived = DerivedCurve::from_samples(&samples, 4, 64, 2_000, 2).unwrap();
         let passed = derived.passed();
         let mut report = NativeTacticThroughputCurveReport {
-            schema: NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V2.into(),
+            schema: NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V3.into(),
             content_sha256: Digest::ZERO,
             recorded_unix_millis: 1,
             operating_system: "test".into(),

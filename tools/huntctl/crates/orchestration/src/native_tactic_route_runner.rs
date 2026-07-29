@@ -10,9 +10,9 @@ use crate::native_suffix_worker::{
 use crate::native_tactic_worker::{
     NativeGenericExecutionStrategy, NativeTacticCheckpointRetention, NativeTacticCheckpointSource,
     NativeTacticCheckpointStorage, NativeTacticWorkerError, NativeTacticWorkerOutcome,
-    NativeTacticWorkerPaths, PersistentTacticBatchWorker,
-    execute_selected_tactic_with_checkpoint_retention_and_strategy, materialize_tactic_frontier,
-    tactic_root_checkpoint_sha256,
+    NativeTacticWorkerPaths, PersistentTacticBatchWorker, TACTIC_CHECKPOINT_CACHE_BYTES,
+    execute_selected_tactic_with_checkpoint_retention_and_strategy,
+    materialize_tactic_frontier_with_cache_capacity, tactic_root_checkpoint_sha256,
 };
 use crate::optimization_request::{CampaignClass, OptimizationRequest};
 use crate::reporting::GraphSearchReport;
@@ -94,6 +94,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V32: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V33: &str = "dusklight-native-tactic-route-report/v33";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V34: &str = "dusklight-native-tactic-route-report/v34";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V35: &str = "dusklight-native-tactic-route-report/v35";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36: &str = "dusklight-native-tactic-route-report/v36";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -189,8 +190,9 @@ pub use scratch_evidence_bundle::{
 };
 mod scratch_campaign_audit;
 pub use scratch_campaign_audit::{
-    NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V1, NativeTacticScratchCampaignAudit,
-    NativeTacticScratchDecisionAudit, NativeTacticScratchSeedAudit, NativeTacticScratchStopReason,
+    NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2, NativeTacticCampaignResourceAudit,
+    NativeTacticScratchCampaignAudit, NativeTacticScratchDecisionAudit,
+    NativeTacticScratchSeedAudit, NativeTacticScratchStopReason,
     NativeTacticScratchTerminalImprovementAudit,
 };
 mod scratch_comparison;
@@ -219,9 +221,10 @@ pub use post_terminal_controls::{
 mod throughput_curve;
 pub use throughput_curve::{
     NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V1, NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V2,
-    NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS, NativeTacticThroughputCurveCell,
-    NativeTacticThroughputCurveConfig, NativeTacticThroughputCurveReport,
-    NativeTacticThroughputCurveSample, run_native_tactic_throughput_curve,
+    NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V3, NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS,
+    NativeTacticThroughputCurveCell, NativeTacticThroughputCurveConfig,
+    NativeTacticThroughputCurveReport, NativeTacticThroughputCurveSample,
+    run_native_tactic_throughput_curve,
 };
 
 mod restore_locality;
@@ -424,6 +427,8 @@ fn run_native_tactic_route_with_optional_fleet(
         )?));
 
     let pool = fleet.pool(config, execution_plan_sha256, root_source_frame)?;
+    let checkpoint_cache_capacity_per_worker_bytes =
+        u64::try_from(pool.checkpoint_cache_capacity_bytes).map_err(route_error)?;
     let (mut indexed_results, tactic_macro_discovery, shared_training_replay_rows, demonstration) =
         (|| {
             let mut results = Vec::with_capacity(config.execution_plan.lanes.len());
@@ -693,7 +698,7 @@ fn run_native_tactic_route_with_optional_fleet(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let mut report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V35.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
@@ -719,6 +724,7 @@ fn run_native_tactic_route_with_optional_fleet(
         value_treatment: config.execution_plan.value_treatment,
         execution_strategy: config.execution_plan.execution_strategy,
         workers: worker_count,
+        checkpoint_cache_capacity_per_worker_bytes,
         decisions_per_seed: config.execution_plan.budgets.decisions_per_lane,
         resource_budgets: config.execution_plan.budgets,
         refit_every_decisions: config.execution_plan.refit_every_decisions,
@@ -934,7 +940,17 @@ fn initial_probe_batch(
     // persistent worker has already captured the authenticated source
     // checkpoint before it evaluates this candidate, and subsequent batches
     // declare their own bounded horizons.
-    tactic_root_probe_batch_with_ticks(config.optimization, config.execution, 1)
+    let mut batch = tactic_root_probe_batch_with_ticks(config.optimization, config.execution, 1)?;
+    let capacity = tactic_checkpoint_cache_capacity_per_worker(
+        config.execution_plan.budgets.memory_bytes,
+        config.workers,
+    )?;
+    let cache = batch
+        .checkpoint_cache
+        .as_mut()
+        .ok_or_else(|| route_message("native tactic root probe lacks a checkpoint cache"))?;
+    cache.capacity_bytes = capacity;
+    Ok(batch)
 }
 
 mod goal_target;
@@ -1076,6 +1092,10 @@ fn validate_config(
 ) -> Result<(), NativeTacticRouteRunError> {
     config.execution_plan.validate()?;
     validate_unassisted_discovery_horizon(config)?;
+    tactic_checkpoint_cache_capacity_per_worker(
+        config.execution_plan.budgets.memory_bytes,
+        config.workers,
+    )?;
     let maximum_demonstration_chunk_ticks =
         goal_tactic_maximum_ticks(config.optimization.budgets.exploration_horizon_ticks)?;
     if config.workers == 0
@@ -1116,6 +1136,29 @@ fn planned_decisions_fit_candidate_budget(
         .ok()
         .and_then(|lanes| decisions_per_lane.checked_mul(lanes))
         .is_some_and(|total| total <= candidate_budget)
+}
+
+fn tactic_checkpoint_cache_capacity_per_worker(
+    memory_bytes: NativeTacticResourceLimit,
+    workers: usize,
+) -> Result<usize, NativeTacticRouteRunError> {
+    let workers = u64::try_from(workers).map_err(route_error)?;
+    if workers == 0 {
+        return Err(route_message(
+            "native tactic checkpoint cache requires at least one worker",
+        ));
+    }
+    let capacity = match memory_bytes {
+        NativeTacticResourceLimit::Bounded(total) => total / workers,
+        NativeTacticResourceLimit::Unbounded => TACTIC_CHECKPOINT_CACHE_BYTES as u64,
+    }
+    .min(TACTIC_CHECKPOINT_CACHE_BYTES as u64);
+    if capacity == 0 {
+        return Err(route_message(
+            "native tactic memory budget cannot provide every worker a checkpoint cache",
+        ));
+    }
+    usize::try_from(capacity).map_err(route_error)
 }
 
 fn validate_unassisted_discovery_horizon(

@@ -9,8 +9,10 @@ pub(super) struct NativeTacticWorkerFleet {
     worker_handles: Vec<std::thread::JoinHandle<Result<(), NativeTacticRouteRunError>>>,
     optimization_request_sha256: Digest,
     execution_binding_sha256: Digest,
+    execution_plan_sha256: Digest,
     initial_facts: FactSnapshot,
     root_checkpoint_sha256: Digest,
+    checkpoint_cache_capacity_bytes: usize,
     launch_micros: u64,
 }
 
@@ -26,6 +28,20 @@ impl NativeTacticWorkerFleet {
     ) -> Result<Self, NativeTacticRouteRunError> {
         if worker_count == 0 || worker_count > MAX_ROUTE_WORKERS {
             return Err(route_message("native tactic worker fleet size is invalid"));
+        }
+        let checkpoint_cache_capacity_bytes = tactic_checkpoint_cache_capacity_per_worker(
+            config.execution_plan.budgets.memory_bytes,
+            worker_count,
+        )?;
+        let execution_plan_sha256 = config.execution_plan.identity()?;
+        if initial_batch
+            .checkpoint_cache
+            .as_ref()
+            .is_none_or(|cache| cache.capacity_bytes != checkpoint_cache_capacity_bytes)
+        {
+            return Err(route_message(
+                "native tactic worker fleet cache capacity is detached from its execution plan",
+            ));
         }
         fs::create_dir_all(fleet_root).map_err(route_error)?;
         let attempt_roots = (0..worker_count)
@@ -106,8 +122,10 @@ impl NativeTacticWorkerFleet {
             worker_handles,
             optimization_request_sha256: config.optimization.content_sha256,
             execution_binding_sha256: config.execution.content_sha256,
+            execution_plan_sha256,
             initial_facts,
             root_checkpoint_sha256,
+            checkpoint_cache_capacity_bytes,
             launch_micros,
         })
     }
@@ -118,6 +136,7 @@ impl NativeTacticWorkerFleet {
     ) -> Result<(), NativeTacticRouteRunError> {
         if config.optimization.content_sha256 != self.optimization_request_sha256
             || config.execution.content_sha256 != self.execution_binding_sha256
+            || config.execution_plan.identity()? != self.execution_plan_sha256
             || config.workers == 0
             || config.workers > self.senders.len()
             || self.initial_facts.tape_frame != config.optimization.route.source_boundary_index
@@ -149,6 +168,11 @@ impl NativeTacticWorkerFleet {
         root_source_frame: usize,
     ) -> Result<NativeTacticProposalPool, NativeTacticRouteRunError> {
         self.validate_for(config)?;
+        if execution_plan_sha256 != self.execution_plan_sha256 {
+            return Err(route_message(
+                "native tactic worker fleet execution plan identity is detached",
+            ));
+        }
         Ok(proposal_pool_view(
             &self.senders,
             config.workers,
@@ -159,6 +183,7 @@ impl NativeTacticWorkerFleet {
             root_source_frame,
             config.execution_plan.execution_strategy,
             execution_plan_sha256,
+            self.checkpoint_cache_capacity_bytes,
         )?
         .with_lane_owner_partition(config.execution_plan))
     }
@@ -195,6 +220,7 @@ fn proposal_pool_view(
     root_source_frame: usize,
     execution_strategy: NativeGenericExecutionStrategy,
     execution_plan_sha256: Digest,
+    checkpoint_cache_capacity_bytes: usize,
 ) -> Result<NativeTacticProposalPool, NativeTacticRouteRunError> {
     if active_workers == 0 || active_workers > senders.len() {
         return Err(route_message(
@@ -208,6 +234,7 @@ fn proposal_pool_view(
         root_source_frame,
         execution_strategy,
         execution_plan_sha256,
+        checkpoint_cache_capacity_bytes,
         dedicated_owner_slots: 0,
         preferred_owner_slot: None,
     })

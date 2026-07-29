@@ -138,6 +138,7 @@ fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
         &prepared.option_tape,
         None,
         NativeTacticCheckpointRetention::PortableImage,
+        123_456,
     )
     .unwrap();
     assert_eq!(batch.maximum_ticks, 3);
@@ -154,6 +155,10 @@ fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
         3
     );
     assert!(!batch.verify_state_hashes);
+    assert_eq!(
+        batch.checkpoint_cache.as_ref().unwrap().capacity_bytes,
+        123_456
+    );
 
     let checkpoint_source = NativeTacticCheckpointSource {
         restore_identity: "a".repeat(32),
@@ -167,6 +172,7 @@ fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
         &prepared.option_tape,
         Some(&checkpoint_source),
         NativeTacticCheckpointRetention::PortableImage,
+        TACTIC_CHECKPOINT_CACHE_BYTES,
     )
     .unwrap();
     let cache = restored
@@ -190,6 +196,7 @@ fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
         &prepared.option_tape,
         Some(&checkpoint_source),
         NativeTacticCheckpointRetention::LiveEndpoint,
+        TACTIC_CHECKPOINT_CACHE_BYTES,
     )
     .unwrap();
     let live_cache = live
@@ -204,6 +211,7 @@ fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
         &prepared.option_tape,
         Some(&checkpoint_source),
         NativeTacticCheckpointRetention::None,
+        TACTIC_CHECKPOINT_CACHE_BYTES,
     )
     .unwrap();
     let evaluation_cache = evaluation_only
@@ -315,6 +323,7 @@ fn relative_heading_becomes_one_linear_native_controller_candidate() {
         &program,
         None,
         NativeTacticCheckpointRetention::PortableImage,
+        TACTIC_CHECKPOINT_CACHE_BYTES,
     )
     .unwrap();
 

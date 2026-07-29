@@ -36,6 +36,7 @@ fn proposal_pool(worker_count: usize) -> NativeTacticProposalPool {
         root_source_frame: 506,
         execution_strategy: NativeGenericExecutionStrategy::NativeController,
         execution_plan_sha256: Digest([1; 32]),
+        checkpoint_cache_capacity_bytes: TACTIC_CHECKPOINT_CACHE_BYTES,
         dedicated_owner_slots: 0,
         preferred_owner_slot: None,
     }

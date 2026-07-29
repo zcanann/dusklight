@@ -49,7 +49,7 @@ The incoming 2026-07-29 work made substantial, useful progress:
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 272 tests.
+  orchestration suite is hermetic and passes all 275 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
   tape/result, source-authority evidence, and a content-bound campaign audit.
@@ -87,7 +87,7 @@ The incoming 2026-07-29 work made substantial, useful progress:
   ticks with least-visited and random-valid ordering. It withholds the
   exhaustive-local oracle claim unless every queued action has an authenticated
   terminal continuation. Retained native evidence is still required.
-- Native route report v35 now owns a checksummed binary lease-lifecycle
+- Native route report v36 retains the checksummed binary lease-lifecycle
   journal. Every issued native proposal is classified as completed, retryable,
   cancelled, failed, or unresolved; scratch audits reject unresolved or
   arithmetically detached accounting. Proposal dispatches, unique graph
@@ -100,6 +100,12 @@ The incoming 2026-07-29 work made substantial, useful progress:
   Deterministic tests cover manifest integrity, real checkpoint round trip,
   unsafe paths, counter agreement, and partial-work pruning. Native
   process-loss injection remains open.
+- Bounded execution plans now divide their aggregate checkpoint-memory limit
+  across active workers and put that capacity into every native cache request.
+  The v2 campaign audit recomputes configured and observed pool bounds,
+  distinguishes lane refresh pressure from actual fitted-model replay lag,
+  fails selection if that lag exceeds the sealed limit, accounts for replay
+  fallback, and reports checkpoint-owner locality and assignment skew.
 - Native option summaries now retain same-tick wall-contact/commanded-motion
   overlap and the momentum loss measured on those ticks. The v5 tactic feature
   schema exposes the measured consequence with explicit legacy missingness;
@@ -278,8 +284,9 @@ Exit gate:
       to exercise graph growth, repeated restores, learner updates,
       persistence, and bounded checkpoint eviction. A one-decision warm-fleet
       microbenchmark is necessary but not sufficient.
-- [ ] Bound memory, learner staleness, replay fallbacks, and checkpoint-owner
-      skew during long campaigns. Inject native process loss before dispatch,
+- [ ] Retain a sealed long-campaign v2 resource audit proving the declared
+      memory and fitted-model staleness bounds while reporting replay fallback
+      and checkpoint-owner skew. Inject native process loss before dispatch,
       during execution, after native completion, after recovery-point commit,
       and after decision commit; retain evidence that exact recovery neither
       loses nor duplicates graph work.

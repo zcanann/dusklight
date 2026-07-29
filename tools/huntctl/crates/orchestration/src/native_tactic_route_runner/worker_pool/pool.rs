@@ -135,6 +135,7 @@ impl NativeTacticProposalPool {
                         NativeTacticCheckpointRetention::None
                     },
                     execution_strategy: self.execution_strategy,
+                    checkpoint_cache_capacity_bytes: self.checkpoint_cache_capacity_bytes,
                     paths_root: paths_root.to_path_buf(),
                     response,
                 })
@@ -761,6 +762,7 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
                     NativeTacticCheckpointRetention::None
                 },
                 job.execution_strategy,
+                job.checkpoint_cache_capacity_bytes,
             );
             if outcome
                 .as_ref()
@@ -804,6 +806,7 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
                         NativeTacticCheckpointRetention::None
                     },
                     job.execution_strategy,
+                    job.checkpoint_cache_capacity_bytes,
                 );
             }
             if outcome.is_ok() && checkpoint_source.is_none() {
@@ -873,7 +876,7 @@ fn materialize_job_frontier<W: PersistentTacticBatchWorker>(
         proposal_artifact_root(&job.paths_root, proposal_index).join(directory);
     fs::create_dir_all(&materialization_root)
         .map_err(|error| NativeTacticWorkerError::Io(error.to_string()))?;
-    let frontier = materialize_tactic_frontier(
+    let frontier = materialize_tactic_frontier_with_cache_capacity(
         worker,
         &job.source_snapshot,
         &job.source_route_tape,
@@ -881,6 +884,7 @@ fn materialize_job_frontier<W: PersistentTacticBatchWorker>(
             request: materialization_root.join("request.dsbx"),
             result: materialization_root.join("result.json"),
         },
+        job.checkpoint_cache_capacity_bytes,
     )?;
     let restoration = job
         .restoration

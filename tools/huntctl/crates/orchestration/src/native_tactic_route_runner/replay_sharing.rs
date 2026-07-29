@@ -32,6 +32,16 @@ impl BoundedStalenessReplaySession {
         let snapshot = {
             let learner = lock_learner_authority(&self.learner)?;
             let snapshot = learner.snapshot();
+            let replay_revision = learner.replay().replay_snapshot().revision;
+            let model_replay_lag = checked_model_replay_lag(
+                replay_revision,
+                snapshot.replay_revision,
+                self.maximum_stale_replay_revisions,
+            )?;
+            self.telemetry.maximum_model_replay_lag_revisions = self
+                .telemetry
+                .maximum_model_replay_lag_revisions
+                .max(model_replay_lag);
             let current_revision = snapshot.replay_revision;
             let observed_staleness = current_revision.saturating_sub(self.consumed_revision);
             self.telemetry.maximum_observed_stale_revisions = self
@@ -161,6 +171,22 @@ fn replay_refresh_required(consumed_revision: u64, current_revision: u64) -> boo
     current_revision > consumed_revision
 }
 
+fn checked_model_replay_lag(
+    replay_revision: u64,
+    model_replay_revision: u64,
+    maximum_stale_replay_revisions: u64,
+) -> Result<u64, NativeTacticRouteRunError> {
+    let lag = replay_revision
+        .checked_sub(model_replay_revision)
+        .ok_or_else(|| route_message("campaign learner model is ahead of durable replay"))?;
+    if lag > maximum_stale_replay_revisions {
+        return Err(route_message(
+            "campaign learner exceeded its sealed replay-staleness bound",
+        ));
+    }
+    Ok(lag)
+}
+
 pub(super) fn deterministic_generation_barrier_revision(
     replay: &TacticReplayControlPlane,
     generation: &NativeTacticGenerationPlan,
@@ -280,12 +306,19 @@ pub(super) fn publish_completed_seed_replay(
 
 #[cfg(test)]
 mod tests {
-    use super::replay_refresh_required;
+    use super::{checked_model_replay_lag, replay_refresh_required};
 
     #[test]
     fn every_newly_fitted_snapshot_is_consumed_immediately() {
         assert!(!replay_refresh_required(10, 10));
         assert!(replay_refresh_required(10, 11));
         assert!(!replay_refresh_required(11, 10));
+    }
+
+    #[test]
+    fn fitted_model_replay_lag_is_hard_bounded() {
+        assert_eq!(checked_model_replay_lag(12, 10, 2).unwrap(), 2);
+        assert!(checked_model_replay_lag(13, 10, 2).is_err());
+        assert!(checked_model_replay_lag(9, 10, 2).is_err());
     }
 }
