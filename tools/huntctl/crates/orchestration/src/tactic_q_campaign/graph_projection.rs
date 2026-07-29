@@ -153,3 +153,44 @@ pub(super) fn graph_frontier_entries(
     }
     Ok(entries)
 }
+
+impl TacticQCampaign {
+    pub fn best_graph_terminal_path(
+        &self,
+    ) -> Result<Option<&crate::state_graph::TerminalPath>, TacticQCampaignError> {
+        let graph = self
+            .state_graph
+            .as_ref()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "terminal query requires a bound state graph",
+            ))?;
+        graph.validate()?;
+        Ok(graph.best_terminal_path())
+    }
+
+    pub fn final_result_matches_graph_terminal(
+        &self,
+        result: &TacticQFinalResult,
+    ) -> Result<bool, TacticQCampaignError> {
+        validate_final_result(result)?;
+        let graph = self
+            .state_graph
+            .as_ref()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "terminal result validation requires a bound state graph",
+            ))?;
+        graph.validate()?;
+        let Some(best) = graph.best_terminal_path() else {
+            return Ok(false);
+        };
+        Ok(
+            result.execution_authority_sha256 == self.execution_authority_sha256
+                && result.objective_sha256 == self.objective_sha256
+                && result.root_checkpoint_sha256 == self.root_checkpoint_sha256
+                && result.terminal_state_sha256 == best.terminal.state_sha256
+                && route_checkpoint(self.root_checkpoint_sha256, &result.route_tape)?
+                    == best.route_checkpoint_sha256
+                && graph.route(best.route_checkpoint_sha256) == Some(&result.route_tape),
+        )
+    }
+}

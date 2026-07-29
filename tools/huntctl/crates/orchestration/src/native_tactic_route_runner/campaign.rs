@@ -191,6 +191,16 @@ pub(super) fn run_seed(
         campaign.objective_sha256,
         campaign.root_checkpoint_sha256,
     )?;
+    if let Some(result) = best_success.as_ref() {
+        if !campaign
+            .final_result_matches_graph_terminal(result)
+            .map_err(route_error)?
+        {
+            return Err(route_message(
+                "retained terminal artifact is not the state graph best path",
+            ));
+        }
+    }
     let mut replay_session = build_replay_session(
         config.execution_plan,
         live_learner,
@@ -876,6 +886,12 @@ pub(super) fn run_seed(
         )?;
         trace.push(decision_trace);
         for candidate in terminal_candidates {
+            if !campaign
+                .final_result_matches_graph_terminal(&candidate)
+                .map_err(route_error)?
+            {
+                continue;
+            }
             retain_successful_result(
                 &retained_success_root,
                 decision_index,
@@ -926,26 +942,43 @@ pub(super) fn run_seed(
 
     let final_persistence_started = Instant::now();
     compact_tactic_decision_journal(&seed_root)?;
-    let success = best_success.as_ref().is_some_and(|result| {
-        final_result_promotes(
-            result,
-            source_frame,
-            config.optimization.budgets.promotion_before_tick,
-        )
-    });
+    let best_graph_terminal = campaign
+        .best_graph_terminal_path()
+        .map_err(route_error)?
+        .cloned();
+    if let Some(result) = best_success.as_ref() {
+        if !campaign
+            .final_result_matches_graph_terminal(result)
+            .map_err(route_error)?
+        {
+            return Err(route_message(
+                "retained terminal artifact drifted from state graph authority",
+            ));
+        }
+    }
+    let best_authenticated_tick = best_graph_terminal
+        .as_ref()
+        .and_then(|path| path.root_to_terminal_ticks.checked_sub(1));
+    let success = best_authenticated_tick
+        .is_some_and(|tick| tick < config.optimization.budgets.promotion_before_tick);
     let generated_training = lane_generated_training_corpus(&campaign, lane);
     let imported_training_replay_rows = campaign
         .training_replay_len()
         .saturating_sub(generated_training.transitions.len());
-    let generated_training_path = seed_root.join("generated-training.dtqc");
-    generated_training
-        .write(&generated_training_path, &checkpoint_content_root)
-        .map_err(route_error)?;
     remove_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint)?;
-    let terminal_discovered = best_success.is_some();
-    let best_authenticated_tick = best_success
-        .as_ref()
-        .and_then(|result| authenticated_first_hit_tick(result, source_frame));
+    let final_checkpoint_path = campaign
+        .write_checkpoint_with_store(
+            &seed_root.join("final-checkpoint"),
+            &checkpoint_content_root,
+        )
+        .map_err(route_error)?;
+    let state_graph_sha256 = campaign
+        .checkpoint()
+        .map_err(route_error)?
+        .state_graph
+        .content_sha256()
+        .map_err(route_error)?;
+    let terminal_discovered = best_graph_terminal.is_some();
     let (best_terminal_tape, best_terminal_result) = if let Some(result) = best_success.as_ref() {
         let retained_candidate_started = Instant::now();
         let tape_path = seed_root.join("best-terminal.tape");
@@ -1026,9 +1059,14 @@ pub(super) fn run_seed(
             timing,
             selection_counts,
             diagnostics: None,
-            generated_training_corpus: Some(path_text(&generated_training_path)),
-            final_checkpoint: None,
-            graph: None,
+            final_checkpoint: path_text(&final_checkpoint_path),
+            state_graph_sha256,
+            best_terminal_state_sha256: best_graph_terminal
+                .as_ref()
+                .map(|path| path.terminal.state_sha256),
+            best_terminal_route_checkpoint_sha256: best_graph_terminal
+                .as_ref()
+                .map(|path| path.route_checkpoint_sha256),
             best_terminal_tape,
             best_terminal_result,
             successful_tape,

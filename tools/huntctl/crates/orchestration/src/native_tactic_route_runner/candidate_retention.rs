@@ -84,16 +84,6 @@ pub(super) fn successful_result_is_better(
     )
 }
 
-pub(super) fn final_result_promotes(
-    result: &TacticQFinalResult,
-    source_frame: u64,
-    promotion_before_tick: u64,
-) -> bool {
-    u64::try_from(result.route_tape.frames.len()).is_ok_and(|route_frames| {
-        route_frames_promote(route_frames, source_frame, promotion_before_tick)
-    })
-}
-
 pub(super) fn authenticated_first_hit_tick(
     result: &TacticQFinalResult,
     source_frame: u64,
@@ -109,6 +99,7 @@ pub(super) fn route_frames_first_hit_tick(route_frames: u64, source_frame: u64) 
         .and_then(|route_ticks| route_ticks.checked_sub(1))
 }
 
+#[cfg(test)]
 pub(super) fn route_frames_promote(
     route_frames: u64,
     source_frame: u64,

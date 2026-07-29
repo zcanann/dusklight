@@ -1259,6 +1259,11 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         .final_result_from_evaluated_terminal(&evaluated_terminal)
         .unwrap();
     validate_final_result(&evaluated_terminal_result).unwrap();
+    assert!(
+        !uninterrupted
+            .final_result_matches_graph_terminal(&evaluated_terminal_result)
+            .unwrap()
+    );
     assert!(uninterrupted.final_result().is_err());
     let uninterrupted_step = uninterrupted
         .retain_and_refit_rewarded(
@@ -1322,5 +1327,22 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert_eq!(
         uninterrupted.final_result().unwrap(),
         evaluated_terminal_result
+    );
+    assert!(
+        uninterrupted
+            .final_result_matches_graph_terminal(&evaluated_terminal_result)
+            .unwrap()
+    );
+    assert_eq!(
+        uninterrupted
+            .best_graph_terminal_path()
+            .unwrap()
+            .unwrap()
+            .route_checkpoint_sha256,
+        route_checkpoint(
+            uninterrupted.root_checkpoint_sha256,
+            &evaluated_terminal_result.route_tape
+        )
+        .unwrap()
     );
 }

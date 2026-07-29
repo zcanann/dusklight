@@ -27,13 +27,16 @@ improve this in minutes rather than hours, the framework is not credible.
 
 ## Current diagnosis
 
-The current implementation is not an accepted learning architecture.
+The current implementation is not yet an accepted learning architecture.
 
-- Save states accelerate execution, but the authoritative search state is
-  still split across linear replay, a coarse behavior archive, and policy
-  bookkeeping.
-- The existing campaign graph is primarily a projection of replay evidence,
-  not the durable structure that owns search and scheduling.
+- The durable content-addressed state graph now owns exact states, realized
+  expansions, routes, and the best terminal path. Learner replay, executable
+  frontiers, retained terminal artifacts, and completed-seed reports are
+  validated projections of that graph.
+- The live decision loop still selects work through legacy campaign/frontier
+  policy instead of leasing registered node/action expansions from the graph
+  scheduler. Until that is replaced, graph ownership does not yet produce
+  coherent distributed graph search.
 - Long options historically exposed only their endpoints. Four-tick native
   interior boundaries now exist, but they do not by themselves turn the
   system into coherent graph search.
@@ -147,8 +150,6 @@ journals, or learned tactics.
 - [ ] Keep production Rust files below 1,500 physical lines, with a normal
       target below 1,000. Split existing oversized route-runner and campaign
       files by responsibility before adding more policy variants.
-- [ ] Make the state graph the only mutable owner of discovered states,
-      executed expansions, route costs, and terminal paths.
 - [ ] Add invariant tests proving that graph, learner corpus, restored state,
       terminal path, and exported report all name the same content identities.
 

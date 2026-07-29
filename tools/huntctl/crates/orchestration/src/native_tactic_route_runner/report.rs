@@ -424,11 +424,14 @@ pub struct NativeTacticSeedResult {
     pub timing: NativeTacticRouteTiming,
     pub selection_counts: BTreeMap<String, u64>,
     pub diagnostics: Option<TacticCampaignDiagnostics>,
-    #[serde(default)]
-    pub generated_training_corpus: Option<String>,
-    #[serde(default)]
-    pub final_checkpoint: Option<String>,
-    pub graph: Option<String>,
+    /// Durable binary campaign checkpoint containing the authoritative graph.
+    pub final_checkpoint: String,
+    /// Content identity of the graph embedded in `final_checkpoint`.
+    pub state_graph_sha256: Digest,
+    /// Exact best terminal node selected by the graph, when one exists.
+    pub best_terminal_state_sha256: Option<Digest>,
+    /// Exact route-checkpoint identity for the graph-selected terminal.
+    pub best_terminal_route_checkpoint_sha256: Option<Digest>,
     #[serde(default)]
     pub best_terminal_tape: Option<String>,
     #[serde(default)]

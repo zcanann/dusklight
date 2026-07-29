@@ -300,12 +300,15 @@ pub(super) fn read_completed_seed_result(
         || result.decisions > decisions_per_seed
         || result.useful_decisions > result.decisions
         || result.terminal_discovered != result.best_authenticated_tick.is_some()
+        || result.terminal_discovered != result.best_terminal_state_sha256.is_some()
+        || result.terminal_discovered != result.best_terminal_route_checkpoint_sha256.is_some()
         || result.terminal_discovered != result.best_terminal_tape.is_some()
         || result.terminal_discovered != result.best_terminal_result.is_some()
         || (result.success && !result.terminal_discovered)
         || result.success != result.successful_tape.is_some()
         || result.success != result.final_result.is_some()
-        || result.generated_training_corpus.is_some() == result.final_checkpoint.is_some()
+        || result.final_checkpoint.is_empty()
+        || result.state_graph_sha256 == Digest::ZERO
         || (!result.terminal_discovered && result.timing.retained_candidate_artifact_micros != 0)
         || result.trace.len() as u64 != result.decisions
         || result.trace.iter().enumerate().any(|(index, decision)| {
@@ -335,6 +338,31 @@ pub(super) fn read_completed_seed_result(
             "completed tactic seed result is invalid or belongs to another run",
         ));
     }
+    let checkpoint = TacticQCampaign::read_checkpoint_payload(Path::new(&result.final_checkpoint))
+        .map_err(route_error)?;
+    let graph_sha256 = checkpoint
+        .state_graph
+        .content_sha256()
+        .map_err(route_error)?;
+    let best_graph_terminal = checkpoint.state_graph.best_terminal_path();
+    if checkpoint.execution_authority_sha256 != execution_plan_sha256
+        || checkpoint.decision_index != result.decisions
+        || checkpoint.replay.len() != result.replay_rows
+        || checkpoint.training_replay.len() != result.training_replay_rows
+        || checkpoint.state_graph.node_count() != result.visited_states
+        || graph_sha256 != result.state_graph_sha256
+        || best_graph_terminal.is_some() != result.terminal_discovered
+        || best_graph_terminal.map(|path| path.terminal.state_sha256)
+            != result.best_terminal_state_sha256
+        || best_graph_terminal.map(|path| path.route_checkpoint_sha256)
+            != result.best_terminal_route_checkpoint_sha256
+        || best_graph_terminal.and_then(|path| path.root_to_terminal_ticks.checked_sub(1))
+            != result.best_authenticated_tick
+    {
+        return Err(route_message(
+            "completed tactic seed report is detached from its authoritative state graph",
+        ));
+    }
     if let (Some(result_path), Some(tape_path), Some(first_hit_tick)) = (
         result.best_terminal_result.as_deref(),
         result.best_terminal_tape.as_deref(),
@@ -350,8 +378,20 @@ pub(super) fn read_completed_seed_result(
         let tape = InputTape::decode(&fs::read(tape_path).map_err(route_error)?)
             .map_err(route_error)?
             .tape;
+        let best_graph_terminal = best_graph_terminal.ok_or_else(|| {
+            route_message("terminal artifacts exist without a graph-selected terminal")
+        })?;
         if terminal_result.execution_authority_sha256 != execution_plan_sha256
+            || terminal_result.objective_sha256 != checkpoint.objective_sha256
+            || terminal_result.root_checkpoint_sha256 != checkpoint.root_checkpoint_sha256
             || terminal_result.route_tape != tape
+            || terminal_result.terminal_state_sha256 != best_graph_terminal.terminal.state_sha256
+            || route_checkpoint(checkpoint.root_checkpoint_sha256, &tape).map_err(route_error)?
+                != best_graph_terminal.route_checkpoint_sha256
+            || checkpoint
+                .state_graph
+                .route(best_graph_terminal.route_checkpoint_sha256)
+                != Some(&tape)
             || authenticated_first_hit_tick(&terminal_result, source_frame) != Some(first_hit_tick)
         {
             return Err(route_message(

@@ -114,18 +114,9 @@ pub(super) fn run_seed_coordinator(
 pub(super) fn load_generated_training_corpus(
     result: &NativeTacticSeedResult,
 ) -> Result<TacticQTrainingCorpus, NativeTacticRouteRunError> {
-    let corpus = if let Some(corpus) = result.generated_training_corpus.as_deref() {
-        TacticQTrainingCorpus::read(Path::new(corpus)).map_err(route_error)?
-    } else {
-        let checkpoint = result.final_checkpoint.as_deref().ok_or_else(|| {
-            route_message("completed tactic seed has no generated training corpus or checkpoint")
-        })?;
-        TacticQCampaign::read_checkpoint(Path::new(checkpoint))
-            .and_then(|campaign| {
-                campaign.training_corpus_from(result.imported_training_replay_rows)
-            })
-            .map_err(route_error)?
-    };
+    let corpus = TacticQCampaign::read_checkpoint(Path::new(&result.final_checkpoint))
+        .and_then(|campaign| campaign.training_corpus_from(result.imported_training_replay_rows))
+        .map_err(route_error)?;
     if corpus.execution_authority_sha256 != result.execution_plan_sha256 {
         return Err(route_message(
             "generated tactic training corpus belongs to another execution plan",

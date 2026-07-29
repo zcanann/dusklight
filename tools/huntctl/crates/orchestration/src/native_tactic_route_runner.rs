@@ -88,34 +88,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4: &str = "dusklight-native-tactic-route-report/v4";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5: &str = "dusklight-native-tactic-route-report/v5";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6: &str = "dusklight-native-tactic-route-report/v6";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V7: &str = "dusklight-native-tactic-route-report/v7";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V8: &str = "dusklight-native-tactic-route-report/v8";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9: &str = "dusklight-native-tactic-route-report/v9";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V10: &str = "dusklight-native-tactic-route-report/v10";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V11: &str = "dusklight-native-tactic-route-report/v11";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V12: &str = "dusklight-native-tactic-route-report/v12";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13: &str = "dusklight-native-tactic-route-report/v13";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14: &str = "dusklight-native-tactic-route-report/v14";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15: &str = "dusklight-native-tactic-route-report/v15";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V16: &str = "dusklight-native-tactic-route-report/v16";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V17: &str = "dusklight-native-tactic-route-report/v17";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V18: &str = "dusklight-native-tactic-route-report/v18";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19: &str = "dusklight-native-tactic-route-report/v19";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V20: &str = "dusklight-native-tactic-route-report/v20";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V21: &str = "dusklight-native-tactic-route-report/v21";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V22: &str = "dusklight-native-tactic-route-report/v22";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V23: &str = "dusklight-native-tactic-route-report/v23";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V24: &str = "dusklight-native-tactic-route-report/v24";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V25: &str = "dusklight-native-tactic-route-report/v25";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V26: &str = "dusklight-native-tactic-route-report/v26";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V27: &str = "dusklight-native-tactic-route-report/v27";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V28: &str = "dusklight-native-tactic-route-report/v28";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V29: &str = "dusklight-native-tactic-route-report/v29";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V30: &str = "dusklight-native-tactic-route-report/v30";
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V31: &str = "dusklight-native-tactic-route-report/v31";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V32: &str = "dusklight-native-tactic-route-report/v32";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -652,7 +625,7 @@ pub fn run_native_tactic_route(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V31.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V32.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
@@ -776,8 +749,7 @@ use timing_metrics::{
 };
 mod candidate_retention;
 use candidate_retention::{
-    authenticated_first_hit_tick, final_result_promotes, load_best_retained_success,
-    retain_successful_result,
+    authenticated_first_hit_tick, load_best_retained_success, retain_successful_result,
 };
 mod campaign_persistence;
 use campaign_persistence::{

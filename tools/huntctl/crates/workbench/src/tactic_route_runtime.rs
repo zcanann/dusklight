@@ -3,20 +3,7 @@
 use super::*;
 use dusklight_learning::tactic_exploration::TacticProposalPolicy;
 use dusklight_orchestration::native_tactic_route_runner::{
-    NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V7, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V8,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V10,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V11, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V12,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V16,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V17, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V18,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V20,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V21, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V22,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V23, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V24,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V25, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V26,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V27, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V28,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V29, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V30,
+    NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V32,
     NativeTacticDecisionTrace, NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest,
     NativeTacticPlanBudgets, NativeTacticReplaySharingPlan, NativeTacticResourceLimit,
     NativeTacticRouteRunConfig, has_tactic_decision_journal, materialize_tactic_decision_route,
@@ -209,34 +196,7 @@ pub(super) fn tactic_route_learning_projection(
             Some(report)
                 if matches!(
                     report.get("schema").and_then(Value::as_str),
-                    Some(schema)
-                        if schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V7
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V8
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V10
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V11
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V12
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V16
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V17
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V18
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V20
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V21
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V22
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V23
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V24
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V25
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V26
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V27
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V28
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V29
-                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V30
+                    Some(NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V32)
                 ) && report
                     .get("optimization_request_sha256")
                     .and_then(Value::as_str)
@@ -1301,7 +1261,7 @@ mod tests {
         fs::write(
             output.join("report.json"),
             serde_json::to_vec(&serde_json::json!({
-                "schema": NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V19,
+                "schema": NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V32,
                 "optimization_request_sha256": optimization.content_sha256,
                 "successful_seeds": 1,
                 "total_decisions": 70,
