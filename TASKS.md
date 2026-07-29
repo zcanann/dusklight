@@ -150,15 +150,24 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   `10` later retained-frontier acquisitions had native terminal support. No
   demonstration transitions or authored route coordinates were used. Scratch
   terminal learning is therefore real and replay-independent, but the route is
-  still slow and only one seed has succeeded. Discovery horizons must be
-  generous or adaptive; the `131`/`125` thresholds govern shortening and
-  promotion, not whether initial exploration may continue. Evidence:
+  still slow. Discovery horizons must be generous or adaptive; the
+  `131`/`125` thresholds govern shortening and promotion, not whether initial
+  exploration may continue. Evidence:
   `ordon-p3-q131-local-replay-ablation-v1.report.json`.
 - Unassisted learned tactic routing now requires an explicit
   `from_scratch_discovery` request and a route horizon of at least 30 native
   seconds (`900` ticks) and at least twice the promotion target. The unattended
   native goal-learning loop uses the same minimum. A local-refinement request
   can no longer silently stand in for adequate scratch discovery.
+- Four isolated learners then ran under a sealed `from_scratch_discovery`
+  request with a `1,024`-tick (`34.1`-second) horizon, no incumbent tape, no
+  demonstration, no authored route coordinates, and no cross-seed replay.
+  Two independently reached the authenticated load zone: seed `155921`
+  reproduced tick `206`, and seed `130363` found tick `337` through a selected
+  `generalized_value` action. The `2/4` terminal rate proves reproducible
+  scratch learning but is not yet reliable, and neither route clears the
+  tick-`131` promotion threshold. Evidence:
+  `ordon-p3-q131-local-replay-ablation-v1.report.json`.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
   camera orientation, exact A-button prompt-status bits, and the native

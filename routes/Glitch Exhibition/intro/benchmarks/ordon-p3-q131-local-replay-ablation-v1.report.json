@@ -3,7 +3,7 @@
   "date": "2026-07-28",
   "campaign_control_plane_commit": "4d99a87173dede8f547e52ce29c168a8e469e929",
   "acceptance_passed": false,
-  "conclusion": "Four-tick demonstration exposure proved that ordinary 131-tick human replay can improve terminal sample efficiency without capping the generated policy: the learner retained a tick-130 authenticated candidate. More importantly, the prior scratch failures were confounded by a 160-tick per-route discovery cap. A scratch-only 256-tick focused probe found and retained a real load-zone terminal at tick 206, propagated terminal value, and subsequently chose terminal-producing actions greedily. Scratch terminal learning is therefore real and does not require replay support. P3 remains incomplete because scratch success is not yet reliable and the scratch policy has not shortened its route below the 131-tick demonstration.",
+  "conclusion": "Four-tick demonstration exposure proved that ordinary 131-tick human replay can improve terminal sample efficiency without capping the generated policy: the learner retained a tick-130 authenticated candidate. More importantly, the prior scratch failures were confounded by a 160-tick per-route discovery cap. A proper 1,024-tick from-scratch campaign then found independent authenticated terminals in 2/4 isolated learners at ticks 206 and 337. Terminal value was learned and reused without demonstration transitions, incumbent tape, authored route coordinates, or cross-seed replay. P3 remains incomplete because scratch success is not yet reliable and the scratch policy has not shortened its best route below the 131-tick demonstration.",
   "fixed_authority": {
     "optimization_request_path": "routes/Glitch Exhibition/intro/benchmarks/ordon-p3-q131-learning-ablation-v1.request.json",
     "optimization_request_sha256": "81a24a41ccf521d186def8556a6c9e6ab38cd047876866ef13e50238660264cc",
@@ -633,7 +633,87 @@
       "best_terminal_result_path": "build/campaigns/ordon-p3-q131-horizon256-goal-relabel-frontier-spatial-1x64-b4-w1-v1-20260728/seed-000-155921/best-terminal-result.dtqz",
       "best_terminal_result_sha256": "f36c3ecf7216dfb151c51aa6b7f837b7dd672f467333da55bb26e71114ba00d4"
     },
-    "conclusion": "The learner reached the real terminal from scratch as soon as a route was allowed to exceed 160 ticks, retained a terminal found outside policy selection, propagated its value, and then selected terminal-producing actions greedily. Prior 160-tick scratch failures were horizon-confounded. Future discovery must use a generous or adaptive horizon; strict 131/125 authority applies only to shortening and promotion."
+    "enforced_generous_independent_probe": {
+      "optimization_request_path": "routes/Glitch Exhibition/intro/benchmarks/ordon-p3-q131-scratch-discovery-1024-v1.request.json",
+      "optimization_request_sha256": "8b6a9ba9bd5e307fb8443fe39f2ea6233bc798b3e5a81abf3824c264d8ac2d9b",
+      "execution_binding_path": "build/campaigns/ordon-p3-q131-scratch-discovery-1024-execution-v1-20260728/execution.json",
+      "execution_binding_sha256": "7b7fe5917fb9e783191e6e45d7bf797b196627cf510ab68aa69776e260d5dae4",
+      "campaign_class": "from_scratch_discovery",
+      "exploration_horizon_ticks": 1024,
+      "wall_seconds_at_30_hz": 34.133333,
+      "promotion_before_tick": 131,
+      "incumbent_tape_bound": false,
+      "demonstration_transitions": 0,
+      "authored_route_coordinates_used": false,
+      "cross_seed_replay_sharing": false,
+      "decisions_per_seed": 64,
+      "proposals_per_decision": 4,
+      "independent_terminal_seeds": 2,
+      "independent_seed_count": 4,
+      "independent_terminal_rate": 0.5,
+      "best_authenticated_tick": 206,
+      "promotion_successful_seeds": 0,
+      "aggregate_native_ticks": 14973,
+      "aggregate_useful_decisions": 145,
+      "aggregate_useful_training_transitions": 567,
+      "aggregate_proposal_transitions": 1024,
+      "aggregate_training_replay_rows": 988,
+      "aggregate_visited_states": 132,
+      "maximum_route_suffix_ticks": 344,
+      "wall_time_comparable": false,
+      "wall_time_note": "The four isolated learners and a separate shared-replay diagnostic executed concurrently. Outcome and route evidence are valid; capacity or wall-rate claims are intentionally excluded.",
+      "seeds": [
+        {
+          "seed": 104729,
+          "source_report_path": "build/campaigns/ordon-p3-q131-scratch-discovery-1024-seed104729-1x64-b4-w1-v1-20260728/report.json",
+          "source_report_sha256": "550ee77957b419c0819838f99126633b09754162c9f9fd7f39dfcfa73d0daa8b",
+          "execution_plan_sha256": "be663e79d9b106a1e56b17c88c799c3c48fa9c4d393ccda7da5a6975462007f6",
+          "terminal": false,
+          "best_authenticated_tick": null,
+          "maximum_route_suffix_ticks": 324
+        },
+        {
+          "seed": 130363,
+          "source_report_path": "build/campaigns/ordon-p3-q131-scratch-discovery-1024-seed130363-1x64-b4-w1-v1-20260728/report.json",
+          "source_report_sha256": "2ab647cd65cb18dde45f4424e702ce438ef6cc55603e098d9956db135444fa7e",
+          "execution_plan_sha256": "444cbdf874faef7b0adf546fc24669a10f863c16d84c601975c445c07fb732ca",
+          "terminal": true,
+          "best_authenticated_tick": 337,
+          "first_terminal_decision": 47,
+          "first_terminal_selection_reason": "generalized_value",
+          "maximum_route_suffix_ticks": 344
+        },
+        {
+          "seed": 155921,
+          "source_report_path": "build/campaigns/ordon-p3-q131-scratch-discovery-1024-seed155921-1x64-b4-w1-v1-20260728/report.json",
+          "source_report_sha256": "4634da29175432f39653ccd7d3995e0baefb7af729870653d91ce76f4b494612",
+          "execution_plan_sha256": "3840514e0800c38db63b75bda64cc1adf53086f19b3f7042eefc2389df4e6260",
+          "terminal": true,
+          "best_authenticated_tick": 206,
+          "first_terminal_decision": 15,
+          "first_terminal_retained_outside_policy_selection": true,
+          "maximum_route_suffix_ticks": 234
+        },
+        {
+          "seed": 181081,
+          "source_report_path": "build/campaigns/ordon-p3-q131-scratch-discovery-1024-seed181081-1x64-b4-w1-v1-20260728/report.json",
+          "source_report_sha256": "7b526ce4e2af6a2e7140b08f91df8eb799533d3ac17abeac4d90eaacc50bdfb5",
+          "execution_plan_sha256": "134d41ca28fe4a37c73c7c7314ce4ee060dd9fd396f268e44c38332cf17c6651",
+          "terminal": false,
+          "best_authenticated_tick": null,
+          "maximum_route_suffix_ticks": 344
+        }
+      ],
+      "excluded_shared_replay_diagnostic": {
+        "source_report_path": "build/campaigns/ordon-p3-q131-scratch-discovery1024-goal-relabel-frontier-spatial-4x32-b4-w4-v1-20260728/report.json",
+        "source_report_sha256": "9eca21f8a2f93c8fe72717ad37e9cd63dc433048991d50776f3fc7cbbc61b9a7",
+        "terminal_seeds": 0,
+        "decisions_per_seed": 32,
+        "maximum_route_suffix_ticks": 240,
+        "reason_excluded": "Cross-seed replay is not independent and the cell used half the isolated decision budget."
+      }
+    },
+    "conclusion": "The learner reached the real terminal from scratch as soon as a route was allowed to exceed 160 ticks, retained terminal evidence independently of policy selection, propagated its value, and then selected terminal-producing actions. The enforced 1,024-tick campaign independently reproduced tick 206 and found a second terminal at tick 337, yielding 2/4 isolated successes. Prior 160-tick scratch failures were horizon-confounded. Strict 131/125 authority applies to shortening and promotion, not terminal discovery."
   },
   "observations": {
     "ordinary_suboptimal_replay_improves_terminal_sample_efficiency": true,
@@ -656,6 +736,8 @@
     "best_spatial_route_is_discovery_horizon_limited": true,
     "prior_scratch_failures_are_discovery_horizon_confounded": true,
     "expanded_horizon_enables_scratch_terminal_learning": true,
+    "generous_horizon_independent_terminal_rate": 0.5,
+    "scratch_terminal_learning_reproduced": true,
     "p3_task_complete": false
   }
 }
