@@ -3,8 +3,9 @@
 mod calibration;
 mod contract;
 mod exact_table;
+mod objective_knn;
 
-pub use calibration::{HELD_OUT_GRAPH_CALIBRATION_SCHEMA_V1, HeldOutGraphCalibrationReport};
+pub use calibration::{HELD_OUT_GRAPH_CALIBRATION_SCHEMA_V2, HeldOutGraphCalibrationReport};
 pub use contract::{
     ActionConditionedGraphLearner, GraphActionInput, GraphBootstrapRule,
     GraphExpansionLearningTarget, GraphLearnerContract, GraphLearnerError, GraphLearningBatch,

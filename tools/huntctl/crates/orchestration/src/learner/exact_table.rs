@@ -1,3 +1,4 @@
+use super::objective_knn::{ActionObjectiveModel, ActionObjectiveSample};
 use super::{
     ActionConditionedGraphLearner, GraphActionInput, GraphLearnerContract, GraphLearnerError,
     GraphLearningBatch, GraphNodeInput, GraphTargetSupport, LearnedGraphActionEstimate,
@@ -16,6 +17,7 @@ pub struct ExactGraphTableSnapshot {
     estimates: BTreeMap<(ExactStateId, Digest), LearnedGraphActionEstimate>,
     exact_auxiliary: BTreeMap<(ExactStateId, Digest), GraphAuxiliaryPrediction>,
     action_auxiliary: BTreeMap<Digest, ActionAuxiliaryModel>,
+    action_objectives: BTreeMap<Digest, ActionObjectiveModel>,
     node_features: BTreeMap<ExactStateId, Vec<u32>>,
 }
 
@@ -120,6 +122,27 @@ impl ExactGraphTableSnapshot {
             generalized: true,
         })
     }
+
+    /// Predicts conditional ticks from independently realized terminal paths
+    /// for the same action. Open continuations are right-censored and never
+    /// become negative terminal labels. Consequently this baseline deliberately
+    /// leaves terminal-support probability unsupported.
+    pub fn generalized_objective_prediction(
+        &self,
+        source_features: &[f32],
+        action_sha256: Digest,
+    ) -> Option<LearnedGraphActionEstimate> {
+        let model = self.action_objectives.get(&action_sha256)?;
+        model.predict(source_features)
+    }
+
+    pub fn mean_objective_prediction(
+        &self,
+        action_sha256: Digest,
+    ) -> Option<LearnedGraphActionEstimate> {
+        let model = self.action_objectives.get(&action_sha256)?;
+        Some(model.mean_prediction())
+    }
 }
 
 impl ActionConditionedGraphLearner for ExactGraphTableLearner {
@@ -135,6 +158,7 @@ impl ActionConditionedGraphLearner for ExactGraphTableLearner {
         let mut estimates = BTreeMap::new();
         let mut exact_auxiliary = BTreeMap::new();
         let mut accumulators = BTreeMap::<Digest, ActionAuxiliaryAccumulator>::new();
+        let mut objective_samples = BTreeMap::<Digest, Vec<ActionObjectiveSample>>::new();
         let mut node_features = BTreeMap::new();
         for row in &batch.rows {
             let action_sha256 = row
@@ -155,6 +179,12 @@ impl ActionConditionedGraphLearner for ExactGraphTableLearner {
                     prediction_error_millionths: 0,
                 },
             };
+            if let Some(ticks) = row.exact_conditional_ticks_to_terminal {
+                objective_samples
+                    .entry(action_sha256)
+                    .or_default()
+                    .push(ActionObjectiveSample::new(&row.source_features, ticks));
+            }
             if estimates
                 .insert((row.source, action_sha256), estimate)
                 .is_some()
@@ -242,12 +272,20 @@ impl ActionConditionedGraphLearner for ExactGraphTableLearner {
                 .expect("collected auxiliary action identity remains present")
                 .prediction_error_millionths = error;
         }
+        let action_objectives = objective_samples
+            .into_iter()
+            .map(|(action, samples)| {
+                let model = ActionObjectiveModel::fit(samples)?;
+                Ok((action, model))
+            })
+            .collect::<Result<BTreeMap<_, _>, GraphLearnerError>>()?;
         Ok(ExactGraphTableSnapshot {
             contract_sha256: contract.content_sha256()?,
             graph_sha256: batch.graph_sha256,
             estimates,
             exact_auxiliary,
             action_auxiliary,
+            action_objectives,
             node_features,
         })
     }
@@ -291,8 +329,16 @@ impl ActionConditionedGraphLearner for ExactGraphTableLearner {
                 Ok(snapshot
                     .estimate(node.id, action_sha256)
                     .unwrap_or_else(|| {
+                        let generalized =
+                            snapshot.node_features.get(&node.id).and_then(|features| {
+                                let features = features
+                                    .iter()
+                                    .map(|value| f32::from_bits(*value))
+                                    .collect::<Vec<_>>();
+                                snapshot.generalized_objective_prediction(&features, action_sha256)
+                            });
                         let auxiliary = snapshot.action_auxiliary.get(&action_sha256);
-                        LearnedGraphActionEstimate {
+                        generalized.unwrap_or_else(|| LearnedGraphActionEstimate {
                             terminal_support_per_million: None,
                             conditional_ticks_to_terminal: None,
                             uncertainty_millionths: auxiliary.map_or(u64::MAX, |model| {
@@ -300,7 +346,7 @@ impl ActionConditionedGraphLearner for ExactGraphTableLearner {
                             }),
                             prediction_error_millionths: auxiliary
                                 .map_or(0, |model| model.prediction_error_millionths),
-                        }
+                        })
                     }))
             })
             .collect()

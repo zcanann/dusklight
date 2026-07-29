@@ -11,7 +11,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const GRAPH_LEARNING_BATCH_SCHEMA_V2: &str = "dusklight-graph-learning-batch/v2";
-pub const GRAPH_LEARNER_CONTRACT_SCHEMA_V1: &str = "dusklight-graph-learner-contract/v1";
+pub const GRAPH_LEARNER_CONTRACT_SCHEMA_V2: &str = "dusklight-graph-learner-contract/v2";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -42,12 +42,17 @@ pub struct GraphLearnerContract {
     pub target_network_update_every_batches: u64,
     pub minimum_replay_rows: u64,
     pub ranking_tuple: GraphRankingTuple,
+    pub minimum_calibration_objective_predictions: u64,
+    pub maximum_calibration_tick_error_millionths: u64,
+    pub minimum_calibration_ranked_pairs: u64,
+    pub minimum_calibration_error_improvement_millionths: u64,
+    pub minimum_calibration_ranking_improvement_millionths: u64,
 }
 
 impl Default for GraphLearnerContract {
     fn default() -> Self {
         Self {
-            schema: GRAPH_LEARNER_CONTRACT_SCHEMA_V1.into(),
+            schema: GRAPH_LEARNER_CONTRACT_SCHEMA_V2.into(),
             bootstrap_rule: GraphBootstrapRule::ExactMonteCarloThenCensoredNStep,
             n_step_horizon_ticks: 16,
             uncertainty_rule: GraphUncertaintyRule::HeldOutBootstrapEnsembleVariance,
@@ -55,19 +60,31 @@ impl Default for GraphLearnerContract {
             target_network_update_every_batches: 32,
             minimum_replay_rows: 64,
             ranking_tuple: GraphRankingTuple::TerminalSupportConditionalTicksUncertaintyVisits,
+            minimum_calibration_objective_predictions: 1,
+            maximum_calibration_tick_error_millionths: 250_000,
+            minimum_calibration_ranked_pairs: 1,
+            minimum_calibration_error_improvement_millionths: 1,
+            minimum_calibration_ranking_improvement_millionths: 1,
         }
     }
 }
 
 impl GraphLearnerContract {
     pub fn validate(&self) -> Result<(), GraphLearnerError> {
-        if self.schema != GRAPH_LEARNER_CONTRACT_SCHEMA_V1
+        if self.schema != GRAPH_LEARNER_CONTRACT_SCHEMA_V2
             || self.n_step_horizon_ticks == 0
             || self.n_step_horizon_ticks > 256
             || self.ensemble_members < 2
             || self.ensemble_members > 64
             || self.target_network_update_every_batches == 0
             || self.minimum_replay_rows == 0
+            || self.minimum_calibration_objective_predictions == 0
+            || self.maximum_calibration_tick_error_millionths > 1_000_000
+            || self.minimum_calibration_ranked_pairs == 0
+            || self.minimum_calibration_error_improvement_millionths == 0
+            || self.minimum_calibration_error_improvement_millionths > 1_000_000
+            || self.minimum_calibration_ranking_improvement_millionths == 0
+            || self.minimum_calibration_ranking_improvement_millionths > 1_000_000
         {
             return Err(GraphLearnerError::Invalid(
                 "graph learner algorithm contract is invalid",
@@ -79,7 +96,7 @@ impl GraphLearnerContract {
     pub fn content_sha256(&self) -> Result<Digest, GraphLearnerError> {
         self.validate()?;
         let mut hasher = Sha256::new();
-        hasher.update(GRAPH_LEARNER_CONTRACT_SCHEMA_V1.as_bytes());
+        hasher.update(GRAPH_LEARNER_CONTRACT_SCHEMA_V2.as_bytes());
         hasher.update([self.bootstrap_rule as u8]);
         hasher.update(self.n_step_horizon_ticks.to_le_bytes());
         hasher.update([self.uncertainty_rule as u8]);
@@ -87,6 +104,17 @@ impl GraphLearnerContract {
         hasher.update(self.target_network_update_every_batches.to_le_bytes());
         hasher.update(self.minimum_replay_rows.to_le_bytes());
         hasher.update([self.ranking_tuple as u8]);
+        hasher.update(self.minimum_calibration_objective_predictions.to_le_bytes());
+        hasher.update(self.maximum_calibration_tick_error_millionths.to_le_bytes());
+        hasher.update(self.minimum_calibration_ranked_pairs.to_le_bytes());
+        hasher.update(
+            self.minimum_calibration_error_improvement_millionths
+                .to_le_bytes(),
+        );
+        hasher.update(
+            self.minimum_calibration_ranking_improvement_millionths
+                .to_le_bytes(),
+        );
         Ok(Digest(hasher.finalize().into()))
     }
 }
@@ -334,9 +362,18 @@ mod tests {
         let mut changed = contract.clone();
         changed.target_network_update_every_batches += 1;
         assert_ne!(changed.content_sha256().unwrap(), identity);
+        let mut changed_calibration = contract.clone();
+        changed_calibration.maximum_calibration_tick_error_millionths -= 1;
+        assert_ne!(
+            changed_calibration.content_sha256().unwrap(),
+            contract.content_sha256().unwrap()
+        );
 
         let mut invalid = contract;
         invalid.target_network_update_every_batches = 0;
+        assert!(invalid.validate().is_err());
+        invalid = GraphLearnerContract::default();
+        invalid.maximum_calibration_tick_error_millionths = 1_000_001;
         assert!(invalid.validate().is_err());
     }
 }

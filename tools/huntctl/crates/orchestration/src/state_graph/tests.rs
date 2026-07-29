@@ -195,6 +195,14 @@ fn learner_targets_keep_exact_success_separate_from_censored_continuation() {
     )
     .unwrap();
     let censored_action_sha256 = censored_batch.rows[0].action.content_sha256().unwrap();
+    assert!(
+        censored_snapshot
+            .generalized_objective_prediction(
+                &censored_batch.rows[0].source_features,
+                censored_action_sha256,
+            )
+            .is_none()
+    );
     assert_eq!(
         censored_snapshot
             .estimate(censored_batch.rows[0].source, censored_action_sha256)
@@ -318,6 +326,25 @@ fn learner_targets_keep_exact_success_separate_from_censored_continuation() {
         .unwrap();
     assert_eq!(estimate.terminal_support_per_million, Some(1_000_000));
     assert_eq!(estimate.conditional_ticks_to_terminal, Some(8));
+    let generalized = crate::learner::ActionConditionedGraphLearner::rank(
+        &exact_learner,
+        &terminal_snapshot,
+        &crate::learner::GraphNodeInput {
+            id: terminal_batch.rows[0].target,
+            state: terminal_batch.rows[0].target_state.clone(),
+            graph_visits: 1,
+        },
+        &[crate::learner::GraphActionInput {
+            expansion_sha256: Digest([44; 32]),
+            action: terminal_batch.rows[0].action.clone(),
+            graph_visits: 0,
+        }],
+    )
+    .unwrap()
+    .pop()
+    .unwrap();
+    assert_eq!(generalized.terminal_support_per_million, None);
+    assert_eq!(generalized.conditional_ticks_to_terminal, Some(8));
     assert_eq!(
         terminal_snapshot
             .auxiliary_prediction(
@@ -328,6 +355,86 @@ fn learner_targets_keep_exact_success_separate_from_censored_continuation() {
             .immediate_terminal_per_million,
         1_000_000
     );
+}
+
+#[test]
+fn held_out_objective_gate_requires_state_conditioned_ranking_gain() {
+    let (mut graph, mut transition, route) = graph_and_transition();
+    terminalize(&mut transition);
+    graph
+        .admit_completed_expansion(
+            transition,
+            route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+    let mut batch = crate::learner::GraphLearningBatch::from_graph(&graph).unwrap();
+    let template = batch.rows[0].clone();
+    batch.rows.clear();
+    let source_features = [0.0_f32, 10.0, 20.0, 100.0, 30.0];
+    let action_a_ticks = [30_u64, 35, 38, 1_000, 40];
+    for (source_index, source_feature) in source_features.into_iter().enumerate() {
+        let source_number = source_index + 1;
+        let source_state = advanced_state(&fixture_state(), source_number as u64);
+        let mut target_state = advanced_state(&source_state, 8);
+        target_state.terminal = template.target_state.terminal.clone();
+        target_state.terminal.first_hit_tick = Some(target_state.simulation_tick);
+        target_state.validate().unwrap();
+        for action_index in 0..2 {
+            let mut row = template.clone();
+            row.expansion_sha256 =
+                Digest([u8::try_from(source_number * 2 + action_index).unwrap(); 32]);
+            row.source = ExactStateId {
+                route_checkpoint_sha256: Digest([u8::try_from(source_number).unwrap(); 32]),
+                state_sha256: source_state.content_sha256().unwrap(),
+            };
+            row.target = ExactStateId {
+                route_checkpoint_sha256: Digest(
+                    [u8::try_from(100 + source_number * 2 + action_index).unwrap(); 32],
+                ),
+                state_sha256: target_state.content_sha256().unwrap(),
+            };
+            row.source_state = source_state.clone();
+            row.target_state = target_state.clone();
+            row.source_features = vec![source_feature];
+            row.target_features = vec![source_feature + 1.0];
+            row.action.option_id = format!("held-out-action-{action_index}");
+            row.prompted_action_status = row
+                .target_state
+                .player
+                .action_state
+                .map(|action| action.do_status);
+            row.immediate_terminal = true;
+            row.graph_visits = 1;
+            row.support = crate::learner::GraphTargetSupport::ExactTerminalPath;
+            row.exact_conditional_ticks_to_terminal = Some(if action_index == 0 {
+                action_a_ticks[source_index]
+            } else {
+                60
+            });
+            batch.rows.push(row);
+        }
+    }
+    batch.validate().unwrap();
+
+    let report = crate::learner::HeldOutGraphCalibrationReport::build(
+        &crate::learner::GraphLearnerContract::default(),
+        &batch,
+    )
+    .unwrap();
+    assert_eq!(report.training_rows, 8);
+    assert_eq!(report.held_out_rows, 2);
+    assert_eq!(report.independently_realized_objective_targets, 2);
+    assert_eq!(report.objective_predictions, 2);
+    assert!(report.objective_mean_error_millionths < 250_000);
+    assert!(report.objective_error_improvement_millionths > 0);
+    assert_eq!(report.ranked_state_action_pairs, 1);
+    assert_eq!(report.correctly_ranked_state_action_pairs, 1);
+    assert_eq!(report.mean_baseline_correctly_ranked_state_action_pairs, 0);
+    assert!(report.ranking_accuracy_improvement_millionths > 0);
+    assert!(report.objective_calibration_gate_passed);
+    report.validate().unwrap();
 }
 
 #[test]

@@ -37,8 +37,10 @@ The current implementation is not yet an accepted learning architecture.
   exact graph leases. Outside the explicit human-demonstration curriculum,
   the graph scheduler also chooses which exact node to restore by coverage in
   discovery and exact successful-path membership in optimization. Action
-  ranking still falls back to the existing policy order until terminal-support
-  and conditional-tick learner heads exist.
+  ranking consumes exact heads and a censored-safe, state-conditioned
+  conditional-tick estimate when terminal-connected examples exist; otherwise
+  it falls back to the existing policy order. Generalized terminal probability
+  remains unsupported rather than being fabricated from censored continuations.
 - Exact terminal returns now come from route-specific graph identities, and
   the learner contract distinguishes authenticated terminal reconnection from
   an open censored continuation. An exact state/action table consumes those
@@ -54,9 +56,10 @@ The current implementation is not yet an accepted learning architecture.
   prediction error is published to the scheduler as exploration evidence.
 - A content-bound calibration report now withholds whole exact-state groups,
   distinguishes independently realized from unseen actions, measures
-  auxiliary error, and reports objective/ranking coverage as zero when the
-  learner is unsupported. It is a gate, not evidence that generalization is
-  already good.
+  auxiliary and conditional-tick error, and compares pairwise action ranking
+  against an action-mean baseline. Its gate requires complete independently
+  realized objective coverage, bounded held-out error, and positive error and
+  ranking gains; unsupported data remains explicit zero coverage.
 - Long options historically exposed only their endpoints. Four-tick native
   interior boundaries now exist, but they do not by themselves turn the
   system into coherent graph search.
@@ -205,10 +208,6 @@ Exit gate:
 
 ## P2 - Make learning a serious expansion policy
 
-- [ ] Populate the held-out graph calibration gate with generalized objective
-      predictions and pairwise action rankings; require calibrated tick error
-      and ranking gains on independently realized actions. In-sample fit and
-      zero prediction coverage are not evidence.
 - [ ] Implement prioritized replay over surprising, rare, terminal-connected,
       and policy-relevant graph edges without starving ordinary evidence.
 - [ ] Compare at least one stable discrete/action-factor baseline against the
