@@ -137,6 +137,144 @@ fn one_selected_action_owns_all_observed_interior_segments() {
 }
 
 #[test]
+fn forty_tick_option_exposes_and_executes_every_four_tick_counterfactual() {
+    let before = fixture_state();
+    let root_route = InputTape {
+        frames: vec![InputFrame::default(); before.tape_frame as usize],
+        ..InputTape::default()
+    };
+    let identity = StateGraphIdentity {
+        execution_authority_sha256: Digest([1; 32]),
+        future_equivalence_validator_sha256: Digest([1; 32]),
+        feature_schema_sha256: Digest([2; 32]),
+        objective_sha256: Digest([3; 32]),
+        root_checkpoint_sha256: Digest([4; 32]),
+    };
+    let mut graph = StateGraph::new(identity.clone(), before.clone(), root_route.clone()).unwrap();
+    let mut long_route = root_route;
+    long_route.frames.extend(vec![InputFrame::default(); 40]);
+    let execution = OptionExecution::capture(
+        "long-option".into(),
+        OptionType::Move,
+        BTreeMap::new(),
+        40,
+        40,
+        OptionCondition::DurationElapsed,
+        Vec::new(),
+        OptionEndReason::Completed,
+        &long_route,
+        TapeRange {
+            start_frame: before.tape_frame,
+            end_frame_exclusive: before.tape_frame + 40,
+        },
+    )
+    .unwrap();
+    let mut long_transition = OptionTransitionSample::capture(
+        identity.feature_schema_sha256,
+        graph.root().route_checkpoint_sha256,
+        route_checkpoint_sha256(identity.root_checkpoint_sha256, &long_route).unwrap(),
+        before.clone(),
+        advanced_state(&before, 40),
+        execution,
+        &long_route,
+        -40.0,
+        false,
+        |state| Ok::<_, &'static str>(vec![state.tape_frame as f32]),
+    )
+    .unwrap();
+    long_transition.execution_authority_sha256 = identity.execution_authority_sha256;
+    long_transition.intermediate_boundaries = (4..40)
+        .step_by(4)
+        .map(|offset| {
+            let state = advanced_state(&before, offset);
+            OptionIntermediateBoundary {
+                episode_shard_sha256: Digest([offset as u8; 32]),
+                offset_ticks: offset as u32,
+                state_sha256: state.content_sha256().unwrap(),
+                state,
+            }
+        })
+        .collect();
+    long_transition.validate().unwrap();
+    let long = graph
+        .admit_completed_expansion(
+            long_transition,
+            long_route,
+            1,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+
+    assert_eq!(long.inserted_nodes, 10);
+    assert_eq!(long.inserted_segments, 10);
+    let interior = graph
+        .nodes()
+        .filter(|node| node.root_ticks > 0 && node.root_ticks < 40)
+        .map(|node| node.id)
+        .collect::<Vec<_>>();
+    assert_eq!(interior.len(), 9);
+
+    for (index, source) in interior.iter().copied().enumerate() {
+        let before = graph.node(source).unwrap().state.clone();
+        let mut route = graph.route(source.route_checkpoint_sha256).unwrap().clone();
+        route.frames.push(InputFrame::default());
+        let execution = OptionExecution::capture(
+            format!("counterfactual-{index}"),
+            OptionType::Turn,
+            BTreeMap::new(),
+            1,
+            1,
+            OptionCondition::DurationElapsed,
+            Vec::new(),
+            OptionEndReason::Completed,
+            &route,
+            TapeRange {
+                start_frame: before.tape_frame,
+                end_frame_exclusive: before.tape_frame + 1,
+            },
+        )
+        .unwrap();
+        let mut transition = OptionTransitionSample::capture(
+            identity.feature_schema_sha256,
+            source.route_checkpoint_sha256,
+            route_checkpoint_sha256(identity.root_checkpoint_sha256, &route).unwrap(),
+            before.clone(),
+            advanced_state(&before, 1),
+            execution,
+            &route,
+            -1.0,
+            false,
+            |state| Ok::<_, &'static str>(vec![state.tape_frame as f32]),
+        )
+        .unwrap();
+        transition.execution_authority_sha256 = identity.execution_authority_sha256;
+        transition.validate().unwrap();
+        let counterfactual = graph
+            .admit_completed_expansion(
+                transition,
+                route,
+                2 + index as u64,
+                ExpansionEvidenceAuthority::Executable,
+            )
+            .unwrap();
+        assert_eq!(counterfactual.source, source);
+    }
+
+    for source in interior {
+        let node = graph.node(source).unwrap();
+        assert_eq!(node.outgoing_expansions.len(), 1);
+        let expansion = graph
+            .expansion(*node.outgoing_expansions.first().unwrap())
+            .unwrap();
+        assert!(matches!(
+            expansion.status,
+            ActionExpansionStatus::Completed { .. }
+        ));
+    }
+    graph.validate().unwrap();
+}
+
+#[test]
 fn exact_terminal_returns_cover_route_specific_interior_nodes() {
     let (mut graph, mut transition, route) = graph_and_transition();
     terminalize(&mut transition);
