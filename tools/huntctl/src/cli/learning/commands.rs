@@ -96,12 +96,13 @@ use huntctl::search_evaluator::native_tactic_policy_runner::{
 };
 use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticDemonstrationReport, NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest,
-    NativeTacticObservationAudit, NativeTacticPlanBudgets, NativeTacticPostTerminalControlReport,
-    NativeTacticResourceLimit, NativeTacticRestoreLocalityConfig,
-    NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport, NativeTacticRouteReport,
-    NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
-    NativeTacticScratchComparisonReport, NativeTacticScratchDiscoveryReport,
-    NativeTacticScratchEvidenceBundle, NativeTacticThroughputCurveConfig,
+    NativeTacticFaultInjector, NativeTacticObservationAudit, NativeTacticPlanBudgets,
+    NativeTacticPostTerminalControlReport, NativeTacticResourceLimit,
+    NativeTacticRestoreLocalityConfig, NativeTacticRestoreLocalityReport,
+    NativeTacticRouteDiagnosisReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
+    NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
+    NativeTacticScratchDiscoveryReport, NativeTacticScratchEvidenceBundle,
+    NativeTacticThroughputCurveConfig, audit_native_tactic_fault_recovery,
     run_native_tactic_restore_locality, run_native_tactic_route,
     run_native_tactic_throughput_curve, tactic_macro_registry_identity,
 };
@@ -419,6 +420,7 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "tactic-route"
             | "tactic-throughput-curve"
             | "tactic-restore-locality"
+            | "audit-tactic-fault-recovery"
             | "audit-post-terminal-tactic-controls"
             | "audit-tactic-scratch-campaign"
             | "audit-tactic-observations"
@@ -481,6 +483,7 @@ mod tests {
     #[test]
     fn retained_tactic_audits_are_reachable_from_the_learn_dispatcher() {
         for command in [
+            "audit-tactic-fault-recovery",
             "audit-post-terminal-tactic-controls",
             "audit-tactic-scratch-campaign",
             "audit-tactic-observations",

@@ -45,11 +45,11 @@ The incoming 2026-07-29 work made substantial, useful progress:
   suppression parity, phase timing, and checkpoint-owner locality are
   implemented. A short macOS fixed-work treatment reports a 15.54x steady-state
   speedup over relaunching the same topology.
-- The Rust source-quality gate has zero debt exemptions and all 539 production
+- The Rust source-quality gate has zero debt exemptions and all 541 production
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 275 tests.
+  orchestration suite is hermetic and passes all 280 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
   tape/result, source-authority evidence, and a content-bound campaign audit.
@@ -96,10 +96,14 @@ The incoming 2026-07-29 work made substantial, useful progress:
 - Every seed now owns an exact binary recovery transaction at each durable
   decision boundary. Resume derives its transaction index from the decision
   journal, loads only that exact content-bound campaign checkpoint, reconciles
-  the lease journal, and prunes partial, stale, or ahead recovery points.
-  Deterministic tests cover manifest integrity, real checkpoint round trip,
-  unsafe paths, counter agreement, and partial-work pruning. Native
-  process-loss injection remains open.
+  the lease journal, prunes partial native attempt directories and stale or
+  ahead recovery points, and repairs committed shared replay idempotently.
+  A one-shot hard-exit injector covers lease-issued pre-dispatch, worker
+  execution, native completion, recovery commit, and decision commit. Its
+  content-bound comparator requires identical semantic traces, useful graph
+  work, graph/replay shape, terminal results, and exact retry accounting. All
+  five one-decision Windows native cells pass locally. Retained long-campaign
+  and cross-platform fault evidence remains open.
 - Bounded execution plans now divide their aggregate checkpoint-memory limit
   across active workers and put that capacity into every native cache request.
   The v2 campaign audit recomputes configured and observed pool bounds,
@@ -298,10 +302,11 @@ Exit gate:
       microbenchmark is necessary but not sufficient.
 - [ ] Retain a sealed long-campaign v2 resource audit proving the declared
       memory and fitted-model staleness bounds while reporting replay fallback
-      and checkpoint-owner skew. Inject native process loss before dispatch,
+      and checkpoint-owner skew. Use the hard-loss injector before dispatch,
       during execution, after native completion, after recovery-point commit,
-      and after decision commit; retain evidence that exact recovery neither
-      loses nor duplicates graph work.
+      and after decision commit, and retain all five content-bound recovery
+      audits proving exact semantic work and retry accounting. Run at least one
+      fault after graph/replay growth, not only at decision zero.
 - [ ] Remove the measured end-to-end saturation bottleneck until the reference
       workstation sustains enough useful evidence to meet the P4 wall-time
       gate. Prefer reducing restore/replay and idle time before adding capacity.

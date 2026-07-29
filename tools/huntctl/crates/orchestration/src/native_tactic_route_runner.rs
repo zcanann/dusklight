@@ -161,7 +161,19 @@ pub use lease_journal::{NativeTacticLeaseAccounting, NativeTacticLeaseOutcome};
 mod recovery;
 use recovery::{
     has_tactic_recovery_point, load_tactic_recovery_point, persist_tactic_recovery_point,
-    prune_tactic_recovery_points,
+    prune_tactic_native_attempts, prune_tactic_recovery_points,
+};
+mod fault_injection;
+use fault_injection::inject_tactic_fault;
+pub use fault_injection::{
+    NATIVE_TACTIC_FAULT_EXIT_CODE, NATIVE_TACTIC_FAULT_INJECTION_FILE,
+    NATIVE_TACTIC_FAULT_INJECTION_SCHEMA_V1, NativeTacticFaultInjectionMarker,
+    NativeTacticFaultInjector, NativeTacticFaultPoint,
+};
+mod fault_recovery_audit;
+pub use fault_recovery_audit::{
+    NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V1, NativeTacticFaultRecoveryAudit,
+    NativeTacticFaultRecoverySeedAudit, audit_native_tactic_fault_recovery,
 };
 
 mod execution_plan;
@@ -1125,6 +1137,9 @@ fn validate_config(
             .promoted_tactic_registry_sha256
             .is_some()
             != config.promoted_tactic_registry.is_some()
+        || config.fault_injection.is_some_and(|fault| {
+            fault.decision_index() >= config.execution_plan.budgets.decisions_per_lane
+        })
     {
         return Err(route_message(
             "native tactic route configuration is invalid",

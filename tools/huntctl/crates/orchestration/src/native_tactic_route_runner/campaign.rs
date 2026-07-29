@@ -211,6 +211,9 @@ pub(super) fn run_seed(
         lane,
         inherited_learner_snapshot.replay_revision,
     )?;
+    if resuming_seed && let Some(session) = replay_session.as_ref() {
+        session.repair_committed(&campaign, &trace)?;
+    }
     let mut consumed_learner_snapshot = inherited_learner_snapshot;
     let mut lease_ledger = NativeTacticLeaseLedger::open(&seed_root)?;
     if resuming_seed {
@@ -238,6 +241,7 @@ pub(super) fn run_seed(
         ));
     }
     if resuming_seed {
+        prune_tactic_native_attempts(&seed_root, campaign.decision_index)?;
         prune_tactic_recovery_points(&seed_root, campaign.decision_index)?;
     } else {
         persist_tactic_recovery_point(
@@ -578,6 +582,14 @@ pub(super) fn run_seed(
         )?;
 
         let decision_index = campaign.decision_index;
+        inject_tactic_fault(
+            config,
+            NativeTacticFaultPoint::BeforeDispatch,
+            execution_plan_sha256,
+            seed,
+            decision_index,
+            &seed_root,
+        )?;
         let decision_episode_group = campaign.episode_group;
         let learner_snapshot_sha256 = consumed_learner_snapshot.sha256;
         let replay_rows_at_decision = campaign.training_replay_len() as u64;
@@ -624,7 +636,7 @@ pub(super) fn run_seed(
             NativeTacticRestoreSource::AuthenticatedRoot
         };
         let execution_started = Instant::now();
-        let proposal_work = match pool.execute_batch(
+        let proposal_work = match pool.execute_batch_with_dispatch_hook(
             &proposal_batch.proposals,
             Arc::clone(&proposal_catalog),
             Arc::clone(&proposal_blueprints),
@@ -634,6 +646,16 @@ pub(super) fn run_seed(
             usable_cached_frontier,
             true,
             &paths_root,
+            || {
+                inject_tactic_fault(
+                    config,
+                    NativeTacticFaultPoint::DuringExecution,
+                    execution_plan_sha256,
+                    seed,
+                    decision_index,
+                    &seed_root,
+                )
+            },
         ) {
             Ok(work) => work,
             Err(error) => {
@@ -648,6 +670,14 @@ pub(super) fn run_seed(
                 return Err(error);
             }
         };
+        inject_tactic_fault(
+            config,
+            NativeTacticFaultPoint::AfterNativeCompletion,
+            execution_plan_sha256,
+            seed,
+            decision_index,
+            &seed_root,
+        )?;
         let execution_elapsed = execution_started.elapsed();
         let post_execution_orchestration_started = Instant::now();
         if proposal_work
@@ -746,24 +776,6 @@ pub(super) fn run_seed(
         timing.orchestration_micros = timing
             .orchestration_micros
             .saturating_add(result_validation_micros);
-        if let Some(session) = replay_session.as_ref() {
-            let publish = session.publish_evaluated(
-                decision_index,
-                learner_snapshot_sha256,
-                &evaluated,
-                &evaluated_episode_groups,
-            )?;
-            if publish.admitted_rows.saturating_add(publish.duplicate_rows)
-                != evaluated.len() as u64
-            {
-                return Err(route_message(
-                    "campaign learner did not account for every published proposal",
-                ));
-            }
-            timing.model_update_micros = timing
-                .model_update_micros
-                .saturating_add(publish.update.update_micros);
-        }
         let admission_orchestration_started = Instant::now();
         let terminal_candidates = evaluated
             .iter()
@@ -1095,6 +1107,14 @@ pub(super) fn run_seed(
                 timing: timing.clone(),
             },
         )?;
+        inject_tactic_fault(
+            config,
+            NativeTacticFaultPoint::AfterRecoveryPointCommit,
+            execution_plan_sha256,
+            seed,
+            decision_index,
+            &seed_root,
+        )?;
         append_tactic_decision_record(
             &seed_root,
             &decision_record(
@@ -1108,6 +1128,32 @@ pub(super) fn run_seed(
                 proposal_records,
             ),
         )?;
+        inject_tactic_fault(
+            config,
+            NativeTacticFaultPoint::AfterDecisionCommit,
+            execution_plan_sha256,
+            seed,
+            decision_index,
+            &seed_root,
+        )?;
+        if let Some(session) = replay_session.as_ref() {
+            let publish = session.publish_evaluated(
+                decision_index,
+                learner_snapshot_sha256,
+                &evaluated,
+                &evaluated_episode_groups,
+            )?;
+            if publish.admitted_rows.saturating_add(publish.duplicate_rows)
+                != evaluated.len() as u64
+            {
+                return Err(route_message(
+                    "campaign learner did not account for every committed proposal",
+                ));
+            }
+            timing.model_update_micros = timing
+                .model_update_micros
+                .saturating_add(publish.update.update_micros);
+        }
         lease_ledger.resolve(lease_batch_sha256, NativeTacticLeaseOutcome::Completed)?;
         trace.push(decision_trace);
         prune_tactic_recovery_points(&seed_root, campaign.decision_index)?;

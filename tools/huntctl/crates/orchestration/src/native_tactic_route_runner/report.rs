@@ -12,6 +12,10 @@ pub struct NativeTacticRouteRunConfig<'a> {
     pub output_root: &'a Path,
     pub workers: usize,
     pub cancellation: Option<&'a AtomicBool>,
+    /// Explicit destructive diagnostic used by the crash-recovery campaign.
+    /// The execution plan is unchanged so resume consumes the exact same
+    /// search authority after the injected process loss.
+    pub fault_injection: Option<&'a NativeTacticFaultInjector>,
     pub resume: bool,
 }
 

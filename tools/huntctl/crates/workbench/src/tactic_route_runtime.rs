@@ -423,6 +423,7 @@ fn launch_tactic_route_learning(
                     output_root: &output,
                     workers: usize::from(optimization.execution.workers),
                     cancellation: Some(&thread_cancellation),
+                    fault_injection: None,
                     resume,
                 })
             });

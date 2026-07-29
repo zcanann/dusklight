@@ -65,6 +65,37 @@ impl NativeTacticProposalPool {
         retain_primary_checkpoint: bool,
         paths_root: &Path,
     ) -> Result<Vec<NativeTacticProposalWork>, NativeTacticRouteRunError> {
+        self.execute_batch_with_dispatch_hook(
+            proposals,
+            proposal_catalog,
+            proposal_blueprints,
+            source_snapshot,
+            source_route_tape,
+            restoration,
+            cached_frontier,
+            retain_primary_checkpoint,
+            paths_root,
+            || Ok(()),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::native_tactic_route_runner) fn execute_batch_with_dispatch_hook<F>(
+        &self,
+        proposals: &[SelectedTactic],
+        proposal_catalog: Arc<dusklight_learning::tactic_asset::TacticAssetCatalog>,
+        proposal_blueprints: Arc<Vec<TacticBlueprint>>,
+        source_snapshot: &FactSnapshot,
+        source_route_tape: &InputTape,
+        restoration: Option<&TacticRestorationContract>,
+        cached_frontier: Option<&CachedTacticFrontier>,
+        retain_primary_checkpoint: bool,
+        paths_root: &Path,
+        after_dispatch: F,
+    ) -> Result<Vec<NativeTacticProposalWork>, NativeTacticRouteRunError>
+    where
+        F: FnOnce() -> Result<(), NativeTacticRouteRunError>,
+    {
         if self.senders.is_empty() {
             return Err(route_message("native tactic proposal pool is empty"));
         }
@@ -98,6 +129,7 @@ impl NativeTacticProposalPool {
         for proposal_index in (1..proposals.len()).chain(std::iter::once(0)) {
             let selected = &proposals[proposal_index];
             let (response, receiver) = mpsc::sync_channel(1);
+            let (execution_started, execution_started_receiver) = mpsc::sync_channel(1);
             let primary_source = (proposal_index == 0).then_some(direct).flatten();
             let worker_slot = primary_source.map_or_else(
                 || {
@@ -137,14 +169,21 @@ impl NativeTacticProposalPool {
                     execution_strategy: self.execution_strategy,
                     checkpoint_cache_capacity_bytes: self.checkpoint_cache_capacity_bytes,
                     paths_root: paths_root.to_path_buf(),
+                    execution_started,
                     response,
                 })
                 .map_err(|_| route_message("native tactic proposal pool stopped"))?;
-            responses.push((proposal_index, receiver));
+            responses.push((proposal_index, execution_started_receiver, receiver));
         }
+        for (_, execution_started, _) in &responses {
+            execution_started
+                .recv()
+                .map_err(|_| route_message("native tactic proposal stopped before execution"))?;
+        }
+        after_dispatch()?;
         let mut work = responses
             .into_iter()
-            .map(|(proposal_index, receiver)| {
+            .map(|(proposal_index, _, receiver)| {
                 let mut work = receiver
                     .recv()
                     .map_err(|_| route_message("native tactic proposal worker stopped"))??;
@@ -685,6 +724,7 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
                 .send(Err(route_message("native tactic proposal job is empty")));
             continue;
         };
+        let _ = job.execution_started.send(());
         let checkpoint_source = if job.materialize_frontier {
             materialize_job_frontier(
                 &mut timed_worker,

@@ -107,6 +107,27 @@ impl BoundedStalenessReplaySession {
         )
     }
 
+    pub(super) fn repair_committed(
+        &self,
+        campaign: &TacticQCampaign,
+        trace: &[NativeTacticDecisionTrace],
+    ) -> Result<(), NativeTacticRouteRunError> {
+        if trace.is_empty() {
+            return Ok(());
+        }
+        let generated = lane_generated_training_corpus(campaign, &self.lane);
+        let mut learner = lock_learner_authority(&self.learner)?;
+        let (admitted_rows, duplicate_rows) =
+            publish_trace_replay(&mut learner, trace, &generated)?;
+        learner.finish_decision(
+            admitted_rows,
+            duplicate_rows,
+            trace.iter().any(|decision| decision.terminal),
+            self.maximum_stale_replay_revisions,
+        )?;
+        Ok(())
+    }
+
     pub(super) fn telemetry(&self) -> NativeTacticReplaySharingTelemetry {
         self.telemetry
     }
@@ -246,17 +267,31 @@ pub(super) fn publish_completed_seed_replay(
     learner: &mut CampaignTacticLearnerAuthority,
     completion: &CompletedNativeTacticSeed,
 ) -> Result<(), NativeTacticRouteRunError> {
-    for ((transition, route), episode_group) in completion
-        .generated_training
+    publish_trace_replay(
+        learner,
+        &completion.result.trace,
+        &completion.generated_training,
+    )
+    .map(drop)
+}
+
+fn publish_trace_replay(
+    learner: &mut CampaignTacticLearnerAuthority,
+    trace: &[NativeTacticDecisionTrace],
+    generated_training: &TacticQTrainingCorpus,
+) -> Result<(u64, u64), NativeTacticRouteRunError> {
+    let mut admitted_rows = 0_u64;
+    let mut duplicate_rows = 0_u64;
+    for ((transition, route), episode_group) in generated_training
         .transitions
         .iter()
-        .zip(&completion.generated_training.routes)
-        .zip(&completion.generated_training.episode_groups)
+        .zip(&generated_training.routes)
+        .zip(&generated_training.episode_groups)
     {
         // The same exact transition may be evaluated again at a revisited
         // frontier. Replay retains the first admission, so resume repair must
         // bind it to the first learner decision as well.
-        let decision = completion.result.trace.iter().find(|decision| {
+        let decision = trace.iter().find(|decision| {
             decision.before.snapshot_sha256 == transition.before_state_sha256
                 && decision.proposal_batch.iter().any(|proposal| {
                     proposal.option_id == transition.value_sample.action.option_id
@@ -272,8 +307,7 @@ pub(super) fn publish_completed_seed_replay(
             ));
         };
         if decision.learner_snapshot_sha256 == Digest::ZERO
-            || decision.execution_plan_sha256
-                != completion.generated_training.execution_authority_sha256
+            || decision.execution_plan_sha256 != generated_training.execution_authority_sha256
         {
             return Err(route_message(
                 "generated replay learner authority is detached",
@@ -289,6 +323,14 @@ pub(super) fn publish_completed_seed_replay(
                 *episode_group,
             )
             .map_err(route_error)?;
+        match &outcome {
+            TacticReplayAdmissionOutcome::Admitted { .. } => {
+                admitted_rows = admitted_rows.saturating_add(1);
+            }
+            TacticReplayAdmissionOutcome::Duplicate { .. } => {
+                duplicate_rows = duplicate_rows.saturating_add(1);
+            }
+        }
         if matches!(
             outcome,
             TacticReplayAdmissionOutcome::Duplicate {
@@ -301,7 +343,7 @@ pub(super) fn publish_completed_seed_replay(
             ));
         }
     }
-    Ok(())
+    Ok((admitted_rows, duplicate_rows))
 }
 
 #[cfg(test)]

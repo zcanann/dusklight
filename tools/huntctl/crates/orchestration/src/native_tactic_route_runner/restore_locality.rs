@@ -280,6 +280,7 @@ pub fn run_native_tactic_restore_locality(
         output_root: &fleet_root,
         workers: config.workers,
         cancellation: None,
+        fault_injection: None,
         resume: false,
     };
     let fleet = launch_native_tactic_worker_fleet(&fleet_config, &fleet_root, config.workers)?;
@@ -318,6 +319,7 @@ pub fn run_native_tactic_restore_locality(
                     output_root: &sample_root,
                     workers: config.workers,
                     cancellation: None,
+                    fault_injection: None,
                     resume: false,
                 },
                 &fleet,

@@ -374,6 +374,7 @@ pub fn run_native_tactic_throughput_curve(
         output_root: &fleet_root,
         workers: fleet_workers,
         cancellation: None,
+        fault_injection: None,
         resume: false,
     };
     let fleet = launch_native_tactic_worker_fleet(&fleet_config, &fleet_root, fleet_workers)?;
@@ -404,6 +405,7 @@ pub fn run_native_tactic_throughput_curve(
                     output_root: &sample_root,
                     workers,
                     cancellation: None,
+                    fault_injection: None,
                     resume: false,
                 },
                 &fleet,

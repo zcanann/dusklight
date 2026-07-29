@@ -5,19 +5,21 @@ use super::{
     MAX_LEARN_INPUT_CORPORA, NativeEpisodeShard, NativeFactorizedPolicyBatchConfig,
     NativeFactorizedPolicySuffixBatch, NativeFrozenPolicyReinferenceReport,
     NativeFrozenPolicySuffixBatch, NativeGenericExecutionStrategy, NativeResidualExecutionBinding,
-    NativeTacticDemonstrationReport, NativeTacticObservationAudit, NativeTacticPolicyRunConfig,
-    NativeTacticPostTerminalControlReport, NativeTacticRestoreLocalityConfig,
-    NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport, NativeTacticRouteReport,
-    NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
-    NativeTacticScratchComparisonReport, NativeTacticScratchDiscoveryReport,
-    NativeTacticScratchEvidenceBundle, NativeTacticThroughputCurveConfig, OptimizationRequest,
-    Sha256, TacticFrozenPolicy, TacticProposalPolicy, TacticQCampaign, TacticQFinalResult,
-    TacticQTrainingCorpus, cli, command_conservative_q, flag, native_frozen_policy_probe_model,
-    native_tactic_execution_plan, option, prove_generalized_tactic_held_out_value,
-    realize_native_frozen_policy_tape, repeated_option, required_path, run_native_tactic_policy,
-    run_native_tactic_restore_locality, run_native_tactic_route,
-    run_native_tactic_throughput_curve, tactic_macro_registry_identity, u64_option, usage_error,
-    usize_option, verify_native_frozen_policy_cold_replay, verify_native_frozen_policy_reinference,
+    NativeTacticDemonstrationReport, NativeTacticFaultInjector, NativeTacticObservationAudit,
+    NativeTacticPolicyRunConfig, NativeTacticPostTerminalControlReport,
+    NativeTacticRestoreLocalityConfig, NativeTacticRestoreLocalityReport,
+    NativeTacticRouteDiagnosisReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
+    NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
+    NativeTacticScratchDiscoveryReport, NativeTacticScratchEvidenceBundle,
+    NativeTacticThroughputCurveConfig, OptimizationRequest, Sha256, TacticFrozenPolicy,
+    TacticProposalPolicy, TacticQCampaign, TacticQFinalResult, TacticQTrainingCorpus,
+    audit_native_tactic_fault_recovery, cli, command_conservative_q, flag,
+    native_frozen_policy_probe_model, native_tactic_execution_plan, option,
+    prove_generalized_tactic_held_out_value, realize_native_frozen_policy_tape, repeated_option,
+    required_path, run_native_tactic_policy, run_native_tactic_restore_locality,
+    run_native_tactic_route, run_native_tactic_throughput_curve, tactic_macro_registry_identity,
+    u64_option, usage_error, usize_option, verify_native_frozen_policy_cold_replay,
+    verify_native_frozen_policy_reinference,
 };
 use serde_json::json;
 use sha2::Digest as _;
@@ -584,6 +586,14 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 execution_strategy,
                 promoted_tactic_registry_sha256,
             )?;
+            let fault_injection = option(learn_args, "--fault-inject")
+                .map(|point| {
+                    Ok::<_, Box<dyn Error>>(NativeTacticFaultInjector::process_exit(
+                        point.parse()?,
+                        u64_option(learn_args, "--fault-decision", 0)?,
+                    ))
+                })
+                .transpose()?;
             let report = run_native_tactic_route(&NativeTacticRouteRunConfig {
                 repository_root: &repository_root,
                 optimization: &request,
@@ -593,6 +603,7 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 output_root: &output,
                 workers,
                 cancellation: None,
+                fault_injection: fault_injection.as_ref(),
                 resume: flag(learn_args, "--resume"),
             })?;
             println!(
@@ -830,6 +841,19 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             let bundle_root = required_path(&args[1..], "--bundle")?;
             let bundle = NativeTacticScratchEvidenceBundle::read_and_validate(&bundle_root)?;
             println!("{}", serde_json::to_string_pretty(&bundle)?);
+            Ok(())
+        }
+        Some("audit-tactic-fault-recovery") => {
+            let learn_args = &args[1..];
+            let audit = audit_native_tactic_fault_recovery(
+                &required_path(learn_args, "--control-report")?,
+                &required_path(learn_args, "--recovered-report")?,
+                &required_path(learn_args, "--output")?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&audit)?);
+            if !audit.passed {
+                return Err("native tactic fault recovery did not preserve exact work".into());
+            }
             Ok(())
         }
         Some("audit-tactic-scratch-campaign") => {

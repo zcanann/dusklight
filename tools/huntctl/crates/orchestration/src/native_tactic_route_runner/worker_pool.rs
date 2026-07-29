@@ -595,6 +595,7 @@ pub(super) struct NativeTacticProposalJob {
     execution_strategy: NativeGenericExecutionStrategy,
     checkpoint_cache_capacity_bytes: usize,
     paths_root: PathBuf,
+    execution_started: mpsc::SyncSender<()>,
     response: mpsc::SyncSender<Result<Vec<NativeTacticProposalWork>, NativeTacticRouteRunError>>,
 }
 

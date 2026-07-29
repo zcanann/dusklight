@@ -181,6 +181,42 @@ pub(super) fn prune_tactic_recovery_points(
     sync_directory(&recovery_root)
 }
 
+pub(super) fn prune_tactic_native_attempts(
+    seed_root: &Path,
+    completed_decisions: u64,
+) -> Result<(), NativeTacticRouteRunError> {
+    let native_root = seed_root.join("native");
+    let metadata = match fs::symlink_metadata(&native_root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(route_error(error)),
+    };
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        return Err(route_message(
+            "native tactic attempt root is not a physical directory",
+        ));
+    }
+    for entry in fs::read_dir(&native_root).map_err(route_error)? {
+        let entry = entry.map_err(route_error)?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(route_error)?;
+        let decision_index = entry
+            .file_name()
+            .to_str()
+            .and_then(parse_recovery_directory_name)
+            .ok_or_else(|| route_message("native tactic attempt root contains an invalid entry"))?;
+        if !file_type.is_dir() || file_type.is_symlink() {
+            return Err(route_message(
+                "native tactic attempt root contains a non-physical decision",
+            ));
+        }
+        if decision_index >= completed_decisions {
+            remove_recovery_directory(&native_root, &path)?;
+        }
+    }
+    sync_directory(&native_root)
+}
+
 fn remove_recovery_directory(
     recovery_root: &Path,
     directory: &Path,
@@ -470,6 +506,28 @@ mod tests {
         prune_tactic_recovery_points(&root, 0).unwrap();
         assert!(!partial.exists());
         assert!(load_tactic_recovery_point(&root, 0).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resume_prunes_only_native_attempts_without_a_committed_decision() {
+        let root = std::env::temp_dir().join(format!(
+            "dusklight-native-tactic-attempt-prune-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let native = root.join("native");
+        let committed = native.join("decision-000000");
+        let partial = native.join("decision-000001");
+        fs::create_dir_all(&committed).unwrap();
+        fs::create_dir_all(&partial).unwrap();
+        fs::write(committed.join("result"), b"committed").unwrap();
+        fs::write(partial.join("result"), b"partial").unwrap();
+
+        prune_tactic_native_attempts(&root, 1).unwrap();
+
+        assert!(committed.join("result").is_file());
+        assert!(!partial.exists());
         fs::remove_dir_all(root).unwrap();
     }
 
