@@ -3,7 +3,7 @@
   "date": "2026-07-28",
   "campaign_control_plane_commit": "4d99a87173dede8f547e52ce29c168a8e469e929",
   "acceptance_passed": false,
-  "conclusion": "Four-tick demonstration exposure proved that ordinary 131-tick human replay can improve terminal sample efficiency without capping the generated policy: the learner retained a tick-130 authenticated candidate. More importantly, the prior scratch failures were confounded by a 160-tick per-route discovery cap. A proper 1,024-tick from-scratch campaign then found independent authenticated terminals in 2/4 isolated learners at ticks 206 and 337. Terminal value was learned and reused without demonstration transitions, incumbent tape, authored route coordinates, or cross-seed replay. P3 remains incomplete because scratch success is not yet reliable and the scratch policy has not shortened its best route below the 131-tick demonstration.",
+  "conclusion": "Four-tick demonstration exposure proved that ordinary 131-tick human replay can improve terminal sample efficiency without capping the generated policy: the learner retained a tick-130 authenticated candidate. Prior scratch failures were confounded by a 160-tick route cap and by global peer frontiers collapsing parallel exploration. A proper 1,024-tick from-scratch campaign with global training evidence but lane-local frontier coverage found authenticated terminals in 3/4 seeds at ticks 228, 332, and 246. Terminal value was learned and reused without demonstration transitions, incumbent tape, or authored route coordinates. Reliable scratch discovery is established; P3 remains incomplete because the scratch policy has not shortened its best route below the 131-tick demonstration.",
   "fixed_authority": {
     "optimization_request_path": "routes/Glitch Exhibition/intro/benchmarks/ordon-p3-q131-learning-ablation-v1.request.json",
     "optimization_request_sha256": "81a24a41ccf521d186def8556a6c9e6ab38cd047876866ef13e50238660264cc",
@@ -793,9 +793,89 @@
         "native_terminal_critic_handoff_operational": true,
         "route_shortened": false,
         "interpretation": "After authenticated native-terminal support appears, the zero-terminal achieved-goal critic now hands authority to a separately fitted native-terminal critic. The exact prior seed and execution plan reproduced tick 206, and every later terminal-supported acquisition carried a learned total-tick prediction rather than null. This repairs terminal-cost availability but does not establish calibration or optimization: predictions spanned 51 to 211 ticks and the retained route did not improve."
+      },
+      "lane_local_shared_replay_probe": {
+        "implementation_commits": [
+          "1cc51876918dbb4fea83a59e834a274bdb85d8a2",
+          "b33f95d9e1eb7c31848be36fac2df3ae7374c97d"
+        ],
+        "change": "Every authenticated transition remains global training evidence for the campaign-owned immutable critic. Peer routes and peer visited states no longer enter another lane's exploration frontier; each lane retains independent coverage while consuming shared value evidence.",
+        "control": {
+          "source_report_path": "build/campaigns/ordon-p3-q131-scratch-discovery1024-goal-relabel-frontier-spatial-4x64-b4-w4-v1-20260728/report.json",
+          "source_report_sha256": "eeece17f8c0a79a353412e73adfdf0a324c019e31c357f6e1dfbbe883d6e60ec",
+          "execution_plan_sha256": "25ce73d21924ccc8d68e5bab45f8606898e427f1dfc159905ced6368144b4954",
+          "peer_training_shared": true,
+          "peer_frontiers_shared": true,
+          "terminal_seeds": 0,
+          "best_authenticated_tick": null,
+          "promotion_successful_seeds": 0,
+          "native_ticks": 21188,
+          "useful_decisions": 149,
+          "useful_training_transitions": 555,
+          "proposal_transitions": 1024,
+          "training_replay_rows": 1000,
+          "visited_states_sum": 517,
+          "minimum_proposal_goal_distance": 1496.1198,
+          "maximum_route_suffix_ticks": 304,
+          "terminal_supported_frontier_acquisitions": 0,
+          "model_update_micros": 154133068,
+          "wall_micros": 585682924
+        },
+        "treatment": {
+          "source_report_path": "build/campaigns/ordon-p3-q131-scratch-discovery1024-lane-local-frontier-4x64-b4-w4-v1-20260728/report.json",
+          "source_report_sha256": "aad905406391f71bffdd640f8e5f5a7a1f86650e519c1f077ae268a60c753c1d",
+          "execution_plan_sha256": "25ce73d21924ccc8d68e5bab45f8606898e427f1dfc159905ced6368144b4954",
+          "peer_training_shared": true,
+          "peer_frontiers_shared": false,
+          "terminal_seeds": 3,
+          "terminal_rate": 0.75,
+          "best_authenticated_tick": 228,
+          "promotion_successful_seeds": 0,
+          "native_ticks": 20295,
+          "useful_decisions": 147,
+          "useful_training_transitions": 544,
+          "proposal_transitions": 1024,
+          "training_replay_rows": 1008,
+          "visited_states_sum": 811,
+          "minimum_proposal_goal_distance": 47.186893,
+          "maximum_route_suffix_ticks": 316,
+          "terminal_selected_decisions": 1,
+          "terminal_supported_frontier_acquisitions": 18,
+          "terminal_supported_acquisitions_with_predicted_total_terminal_ticks": 18,
+          "minimum_predicted_total_terminal_ticks": 185.0,
+          "maximum_predicted_total_terminal_ticks": 337.0,
+          "model_update_micros": 183573273,
+          "wall_micros": 687806188,
+          "best_ticks_by_seed": {
+            "104729": 228,
+            "130363": 332,
+            "155921": null,
+            "181081": 246
+          }
+        },
+        "treatment_deltas": {
+          "terminal_seeds": 3,
+          "native_ticks": -893,
+          "useful_decisions": -2,
+          "useful_training_transitions": -11,
+          "proposal_transitions": 0,
+          "training_replay_rows": 8,
+          "visited_states_sum": 294,
+          "minimum_proposal_goal_distance": -1448.932907,
+          "model_update_micros": 29440205,
+          "wall_micros": 102123264
+        },
+        "interpretation": {
+          "reliable_scratch_terminal_discovery": true,
+          "global_training_evidence_preserved": true,
+          "lane_exploration_independence_preserved": true,
+          "best_route_beats_demonstration": false,
+          "p3_exit_gate_passed": false
+        },
+        "conclusion": "Global peer frontiers collapsed all four lanes onto a zero-terminal corridor. Keeping peer transitions in the shared critic while retaining lane-local frontier and visitation coverage raised authenticated terminal discovery to 3/4 under the identical full plan. Scratch discovery is now reliable, but the best tick-228 route remains far above the tick-131 demonstration."
       }
     },
-    "conclusion": "The learner reached the real terminal from scratch as soon as a route was allowed to exceed 160 ticks, retained terminal evidence independently of policy selection, propagated its value, and then selected terminal-producing actions. The enforced 1,024-tick campaign independently reproduced tick 206 and found a second terminal at tick 337, yielding 2/4 isolated successes. Prior 160-tick scratch failures were horizon-confounded. A separate native-terminal critic now supplies total-tick predictions after genuine terminal support, but has not shortened the tick-206 route. Strict 131/125 authority applies to shortening and promotion, not terminal discovery."
+    "conclusion": "The learner reached the real terminal from scratch once route discovery received adequate time. Isolated learners reproduced terminals in 2/4 seeds, and separating global value evidence from lane-local frontier coverage raised the matched shared-replay result from 0/4 to 3/4. A separate native-terminal critic supplies total-tick predictions after genuine terminal support. Reliable scratch discovery is established; strict 131/125 authority still applies to shortening and promotion, and the best scratch route remains tick 228."
   },
   "observations": {
     "ordinary_suboptimal_replay_improves_terminal_sample_efficiency": true,
@@ -819,7 +899,10 @@
     "prior_scratch_failures_are_discovery_horizon_confounded": true,
     "expanded_horizon_enables_scratch_terminal_learning": true,
     "generous_horizon_independent_terminal_rate": 0.5,
+    "generous_horizon_lane_local_shared_terminal_rate": 0.75,
     "scratch_terminal_learning_reproduced": true,
+    "scratch_terminal_discovery_reliable": true,
+    "shared_training_preserves_lane_local_exploration": true,
     "extra_decisions_improve_scratch_terminal_rate": false,
     "goal_relabel_critic_supplies_terminal_tick_predictions": true,
     "p3_task_complete": false

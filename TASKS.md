@@ -179,6 +179,18 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   carried learned total-tick predictions instead of nulls. The best route
   remained tick `206`, and predictions ranged from `51` to `211`, so terminal
   credit is now operational but not yet calibrated or route-improving.
+- Shared replay had coupled training evidence to exploration coverage: every
+  peer transition entered every lane's frontier archive and visited-state set.
+  Under the full `4x64` plan this correlated all lanes onto the same failed
+  corridor and found `0/4` terminals. Training replay and immutable critics now
+  remain global while frontier routes and visitation coverage remain
+  lane-local. Under the identical plan, the corrected treatment found
+  authenticated terminals in `3/4` seeds at ticks `228`, `332`, and `246`;
+  all `18` terminal-supported acquisitions carried learned total-tick
+  predictions. Reliable scratch discovery is now established without
+  demonstration or incumbent tape, but the best scratch route is still
+  `97` ticks slower than the `131` replay. Evidence:
+  `ordon-p3-q131-local-replay-ablation-v1.report.json`.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
   camera orientation, exact A-button prompt-status bits, and the native
@@ -223,12 +235,6 @@ tie is diagnostic evidence only.
 
 ## P3 - Prove delayed-credit continuous-control learning
 
-- [ ] Run the enforced generous scratch-discovery horizon across independent
-      seeds and establish reliable authenticated terminal discovery.
-- [x] Hand off from the zero-terminal achieved-goal critic to a distinct
-      native-terminal critic after authenticated support exists. Prove that
-      terminal-supported frontier acquisitions carry learned total tick
-      predictions.
 - [ ] Use native-terminal return and retained intermediate states to shorten
       the authenticated tick-`206` scratch route below the tick-`131`
       demonstration under separate promotion authority.
