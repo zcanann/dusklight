@@ -61,6 +61,22 @@ Reports written before proposal root-route lengths and exact stop-reason sets
 were added remain readable, but their campaign audit marks terminal-improvement
 timing or the stopping budget as legacy-unreported instead of guessing.
 
+Audit the actual learner input and action surface from a route report plus its
+generated binary corpora:
+
+```text
+huntctl learn audit-tactic-observations \
+  --request OPTIMIZATION.json \
+  --report ROUTE-REPORT.json \
+  --input GENERATED-TRAINING.dtqc \
+  --output OBSERVATION-AUDIT.json
+```
+
+This recomputes every retained feature vector bit from native facts and reports
+velocity, trajectory, camera, prompt, kinematic-consequence, roll, A, and L
+coverage. It also rejects authored route coordinates and benchmark-specific
+policy signals.
+
 Executable and game-image bytes are deliberately not duplicated into the
 bundle. Their exact SHA-256 identities, runtime dependency identities, native
 source boundary, objective, process tape, milestone program, world context,

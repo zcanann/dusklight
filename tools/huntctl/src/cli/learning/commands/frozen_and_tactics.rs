@@ -5,7 +5,7 @@ use super::{
     MAX_LEARN_INPUT_CORPORA, NativeEpisodeShard, NativeFactorizedPolicyBatchConfig,
     NativeFactorizedPolicySuffixBatch, NativeFrozenPolicyReinferenceReport,
     NativeFrozenPolicySuffixBatch, NativeGenericExecutionStrategy, NativeResidualExecutionBinding,
-    NativeTacticDemonstrationReport, NativeTacticPolicyRunConfig,
+    NativeTacticDemonstrationReport, NativeTacticObservationAudit, NativeTacticPolicyRunConfig,
     NativeTacticRestoreLocalityConfig, NativeTacticRestoreLocalityReport,
     NativeTacticRouteDiagnosisReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
     NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
@@ -858,6 +858,54 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             let audit = NativeTacticScratchCampaignAudit::build(&repository_root, &route)?;
             fs::write(&output, audit.to_pretty_json()?)?;
             println!("{}", serde_json::to_string_pretty(&audit)?);
+            Ok(())
+        }
+        Some("audit-tactic-observations") => {
+            let learn_args = &args[1..];
+            let request: OptimizationRequest =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--request")?)?)?;
+            let route: NativeTacticRouteReport =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            let corpus_paths = repeated_option(learn_args, "--input")
+                .into_iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            if corpus_paths.is_empty() || corpus_paths.len() > MAX_LEARN_INPUT_CORPORA {
+                return Err(format!(
+                    "observation audit requires 1..={MAX_LEARN_INPUT_CORPORA} --input corpora"
+                )
+                .into());
+            }
+            let corpora = corpus_paths
+                .iter()
+                .map(|path| {
+                    let bytes = fs::read(path)?;
+                    Ok::<_, Box<dyn Error>>((
+                        Digest(Sha256::digest(&bytes).into()),
+                        TacticQTrainingCorpus::read(path)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "observation audit output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let audit = NativeTacticObservationAudit::build(&request, &route, &corpora)?;
+            fs::write(&output, audit.to_pretty_json()?)?;
+            println!("{}", serde_json::to_string_pretty(&audit)?);
+            if !audit.passed {
+                return Err("native tactic observation coverage is incomplete".into());
+            }
             Ok(())
         }
         Some("compare-tactic-scratch-campaigns") => {

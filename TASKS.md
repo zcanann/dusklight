@@ -69,6 +69,13 @@ The incoming 2026-07-29 work made substantial, useful progress:
   exploration ranks, consumed learner-model identity, evaluated subset, and
   final committed expansion. The queue is content-bound, campaign audits mark
   legacy gaps explicitly, and a binary-checkpoint restart must reproduce it.
+- A content-bound observation audit now recomputes every learner feature
+  vector bit from the retained native facts and joins decision sources to
+  their typed applicable-action surfaces. It reports actual velocity,
+  trajectory, camera, prompt, kinematic-consequence, roll, A, and L coverage
+  and fails on missing legacy evidence, authored route sequences, or
+  benchmark-specific features. A retained native campaign still has to pass
+  this audit before the P2 observation task is complete.
 - Native option summaries now retain same-tick wall-contact/commanded-motion
   overlap and the momentum loss measured on those ticks. The v5 tactic feature
   schema exposes the measured consequence with explicit legacy missingness;

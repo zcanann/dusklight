@@ -194,6 +194,11 @@ pub use route_diagnosis::{
     NATIVE_TACTIC_ROUTE_DIAGNOSIS_SCHEMA_V1, NativeTacticRouteActionSurfaceProfile,
     NativeTacticRouteDiagnosisReport, NativeTacticRouteProfile, NativeTacticScratchRouteDiagnosis,
 };
+mod observation_audit;
+pub use observation_audit::{
+    NATIVE_TACTIC_OBSERVATION_AUDIT_SCHEMA_V1, NativeTacticActionSurfaceCoverage,
+    NativeTacticObservationAudit, NativeTacticPolicySignalContract, NativeTacticSignalCoverage,
+};
 
 mod throughput_curve;
 pub use throughput_curve::{
