@@ -6,6 +6,7 @@
 
 mod admission;
 mod lifecycle;
+mod restoration;
 mod returns;
 mod transpositions;
 mod types;
@@ -14,8 +15,9 @@ mod validation;
 pub use types::{
     ActionExpansion, ActionExpansionStatus, CompletedExpansionEvidence, ExactStateId,
     ExpansionAdmission, ExpansionEvidenceAuthority, FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1,
-    FutureEquivalenceProof, NativeBoundaryLocator, ObservedSegment, RestorationLocator,
-    RouteRecord, STATE_GRAPH_SCHEMA_V1, StateGraphIdentity, StateGraphNode, TerminalPath,
+    FutureEquivalenceProof, GRAPH_RESTORATION_PLAN_SCHEMA_V1, GraphRestorationPlan,
+    NativeBoundaryLocator, ObservedSegment, RestorationLocator, RestoredStateReceipt, RouteRecord,
+    STATE_GRAPH_SCHEMA_V1, StateGraphIdentity, StateGraphNode, TerminalPath,
 };
 
 use dusklight_automation_contracts::artifact::Digest;

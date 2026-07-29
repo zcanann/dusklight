@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const STATE_GRAPH_SCHEMA_V1: &str = "dusklight-state-graph/v1";
 pub const FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1: &str = "dusklight-future-equivalence-proof/v1";
+pub const GRAPH_RESTORATION_PLAN_SCHEMA_V1: &str = "dusklight-graph-restoration-plan/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -69,6 +70,29 @@ pub struct RestorationLocator {
     pub route: RouteRecord,
     pub native_boundary: Option<NativeBoundaryLocator>,
     pub executable: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GraphRestorationPlan {
+    pub schema: String,
+    /// Graph identity at dispatch time. Later independent leases may advance
+    /// the graph without invalidating this exact immutable node plan.
+    pub dispatch_graph_sha256: Digest,
+    pub node: ExactStateId,
+    pub expected_state_sha256: Digest,
+    pub route: RouteRecord,
+    pub native_boundary: Option<NativeBoundaryLocator>,
+    pub plan_sha256: Digest,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestoredStateReceipt {
+    pub restoration_plan_sha256: Digest,
+    pub node: ExactStateId,
+    pub observed_state_sha256: Digest,
+    pub route_checkpoint_sha256: Digest,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

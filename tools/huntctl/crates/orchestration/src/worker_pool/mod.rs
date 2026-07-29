@@ -3,7 +3,7 @@
 use crate::scheduler::ReplayableExpansionQueue;
 use crate::state_graph::{
     ActionExpansionStatus, ExactStateId, ExpansionAdmission, ExpansionEvidenceAuthority,
-    StateGraph, StateGraphError,
+    GraphRestorationPlan, StateGraph, StateGraphError,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
@@ -26,6 +26,7 @@ pub struct GraphExpansionJob {
     pub scheduler_queue_sha256: Digest,
     pub expansion_sha256: Digest,
     pub source: ExactStateId,
+    pub restoration: GraphRestorationPlan,
     pub action: OptionActionDescriptor,
     pub lease_sha256: Digest,
     pub lease_expires_at_generation: u64,
@@ -62,11 +63,13 @@ impl GraphExpansionJob {
             ));
         }
         let leased_graph_sha256 = graph.content_sha256()?;
+        let restoration = graph.restoration_plan(expansion.source)?;
         let job_sha256 = graph_expansion_job_sha256(
             leased_graph_sha256,
             queue.queue_sha256,
             expansion_sha256,
             expansion.source,
+            restoration.plan_sha256,
             &expansion.action,
             lease_sha256,
             *expires_at_generation,
@@ -77,6 +80,7 @@ impl GraphExpansionJob {
             scheduler_queue_sha256: queue.queue_sha256,
             expansion_sha256,
             source: expansion.source,
+            restoration,
             action: expansion.action.clone(),
             lease_sha256,
             lease_expires_at_generation: *expires_at_generation,
@@ -88,8 +92,10 @@ impl GraphExpansionJob {
         let expansion = graph
             .expansion(self.expansion_sha256)
             .ok_or(WorkerPoolError::Invalid("worker job expansion is absent"))?;
+        graph.restoration_route(&self.restoration)?;
         if self.schema != GRAPH_EXPANSION_JOB_SCHEMA_V1
             || expansion.source != self.source
+            || self.restoration.node != self.source
             || expansion.action != self.action
             || !matches!(
                 &expansion.status,
@@ -105,6 +111,7 @@ impl GraphExpansionJob {
                     self.scheduler_queue_sha256,
                     self.expansion_sha256,
                     self.source,
+                    self.restoration.plan_sha256,
                     &self.action,
                     self.lease_sha256,
                     self.lease_expires_at_generation,
@@ -133,6 +140,7 @@ pub fn admit_graph_expansion_completion(
     completion: GraphExpansionCompletion,
 ) -> Result<ExpansionAdmission, WorkerPoolError> {
     job.validate_against(graph)?;
+    graph.validate_restored_state(&job.restoration, &completion.transition.before)?;
     if completion.job_sha256 != job.job_sha256
         || completion.transition.before_state_sha256 != job.source.state_sha256
         || completion.transition.source_checkpoint_sha256 != job.source.route_checkpoint_sha256
@@ -156,6 +164,7 @@ fn graph_expansion_job_sha256(
     scheduler_queue_sha256: Digest,
     expansion_sha256: Digest,
     source: ExactStateId,
+    restoration_plan_sha256: Digest,
     action: &OptionActionDescriptor,
     lease_sha256: Digest,
     lease_expires_at_generation: u64,
@@ -167,6 +176,7 @@ fn graph_expansion_job_sha256(
     hasher.update(expansion_sha256.0);
     hasher.update(source.route_checkpoint_sha256.0);
     hasher.update(source.state_sha256.0);
+    hasher.update(restoration_plan_sha256.0);
     hasher.update(action.content_sha256()?.0);
     hasher.update(lease_sha256.0);
     hasher.update(lease_expires_at_generation.to_le_bytes());

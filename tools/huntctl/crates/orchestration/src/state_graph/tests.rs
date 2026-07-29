@@ -1049,6 +1049,30 @@ fn durable_graph_and_exported_report_share_one_content_identity() {
 }
 
 #[test]
+fn restoration_plan_requires_the_complete_typed_state_before_execution() {
+    let (graph, _, _) = graph_and_transition();
+    let plan = graph.restoration_plan(graph.root()).unwrap();
+    let expected = graph.node(graph.root()).unwrap().state.clone();
+    let receipt = graph.validate_restored_state(&plan, &expected).unwrap();
+
+    assert_eq!(receipt.restoration_plan_sha256, plan.plan_sha256);
+    assert_eq!(receipt.node, graph.root());
+    assert_eq!(
+        graph.restoration_route(&plan).unwrap(),
+        graph.route(graph.root().route_checkpoint_sha256).unwrap()
+    );
+
+    let mut wrong_state = expected;
+    wrong_state.state_identity[0] ^= 1;
+    wrong_state.validate().unwrap();
+    assert!(graph.validate_restored_state(&plan, &wrong_state).is_err());
+
+    let mut tampered_plan = plan;
+    tampered_plan.route.tape_frames += 1;
+    assert!(graph.restoration_route(&tampered_plan).is_err());
+}
+
+#[test]
 fn one_expansion_identity_flows_from_lease_through_worker_learner_and_report() {
     let (mut graph, mut transition, route) = graph_and_transition();
     terminalize(&mut transition);
@@ -1092,7 +1116,8 @@ fn one_expansion_identity_flows_from_lease_through_worker_learner_and_report() {
     let job =
         crate::worker_pool::GraphExpansionJob::from_leased_graph(&graph, &queue, lease_sha256)
             .unwrap();
-    assert!(serde_cbor::to_vec(&job).unwrap().len() < 1_024);
+    let job_bytes = serde_cbor::to_vec(&job).unwrap();
+    assert!(job_bytes.len() < 2_048, "job bytes: {}", job_bytes.len());
     let admission = crate::worker_pool::admit_graph_expansion_completion(
         &mut graph,
         &job,
