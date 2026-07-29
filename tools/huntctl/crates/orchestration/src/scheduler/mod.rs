@@ -76,6 +76,10 @@ pub struct ScheduledNode {
     pub root_ticks: u64,
     pub registered_expansions: u64,
     pub completed_expansions: u64,
+    /// Squared, quantized world-state distance to the nearest graph node that
+    /// has already owned expansion work. This is derived from exact graph
+    /// states and is used only before terminal support exists.
+    pub reachability_novelty: u128,
     pub exact_terminal_ticks_to_go: Option<u64>,
     pub tie_rank: Digest,
 }
@@ -310,6 +314,11 @@ pub fn rank_schedulable_nodes(
         .nodes()
         .map(|node| Ok((node.id, graph.canonical_restoration_node(node.id)?)))
         .collect::<Result<BTreeMap<_, _>, SchedulerError>>()?;
+    let expanded_references = graph
+        .nodes()
+        .filter(|node| node.id == graph.root() || !node.outgoing_expansions.is_empty())
+        .map(|node| ReachabilityCell::from_state(&node.state))
+        .collect::<Vec<_>>();
     let mut ranked = graph
         .nodes()
         .filter(|node| {
@@ -353,6 +362,10 @@ pub fn rank_schedulable_nodes(
                     .unwrap_or(node.root_ticks),
                 registered_expansions,
                 completed_expansions,
+                reachability_novelty: reachability_novelty(
+                    &ReachabilityCell::from_state(&node.state),
+                    &expanded_references,
+                ),
                 exact_terminal_ticks_to_go,
                 tie_rank: node_tie_rank(seed, generation, node.id),
             }
@@ -520,12 +533,16 @@ fn compare_scheduled_node(
             .then_with(|| left.registered_expansions.cmp(&right.registered_expansions))
     };
     let ordering = match regime {
-        // Before terminal support exists, a fresh deep boundary represents
-        // strictly more realized reachability than an equally fresh shallow
-        // boundary. Preferring the shallow prefix repeatedly resets discovery
-        // near the authenticated root and makes the declared route horizon
-        // fictitious.
-        SearchRegime::Discovery => coverage().then_with(|| right.root_ticks.cmp(&left.root_ticks)),
+        // Long options create many fresh deep boundaries on the same
+        // wall-adjacent trajectory. Extend the graph's explored spatial
+        // envelope before using raw route depth as a horizon tie-break.
+        SearchRegime::Discovery => coverage()
+            .then_with(|| {
+                right
+                    .reachability_novelty
+                    .cmp(&left.reachability_novelty)
+            })
+            .then_with(|| right.root_ticks.cmp(&left.root_ticks)),
         SearchRegime::Optimization => left
             .exact_terminal_ticks_to_go
             .is_none()
@@ -545,6 +562,53 @@ fn same_tape_origin(
     left.boot == right.boot
         && left.tick_rate_numerator == right.tick_rate_numerator
         && left.tick_rate_denominator == right.tick_rate_denominator
+}
+
+const REACHABILITY_POSITION_BIN_WORLD_UNITS: f64 = 64.0;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ReachabilityCell {
+    stage: String,
+    room: i8,
+    layer: Option<i8>,
+    position_bin: [i64; 3],
+}
+
+impl ReachabilityCell {
+    fn from_state(state: &dusklight_learning::fact_snapshot::FactSnapshot) -> Self {
+        let position_bin = state.player.position_f32_bits.map(|bits| {
+            (f64::from(f32::from_bits(bits)) / REACHABILITY_POSITION_BIN_WORLD_UNITS).floor()
+                as i64
+        });
+        Self {
+            stage: state.world.stage.clone(),
+            room: state.world.room,
+            layer: state.world.layer,
+            position_bin,
+        }
+    }
+}
+
+fn reachability_novelty(candidate: &ReachabilityCell, references: &[ReachabilityCell]) -> u128 {
+    references
+        .iter()
+        .map(|reference| reachability_distance(candidate, reference))
+        .min()
+        .unwrap_or(u128::MAX)
+}
+
+fn reachability_distance(left: &ReachabilityCell, right: &ReachabilityCell) -> u128 {
+    let mut distance = 0_u128;
+    if left.stage != right.stage {
+        distance += 1_u128 << 127;
+    }
+    if left.room != right.room || left.layer != right.layer {
+        distance += 1_u128 << 112;
+    }
+    for (left, right) in left.position_bin.iter().zip(right.position_bin) {
+        distance = distance.saturating_add(u128::from(left.abs_diff(right)).pow(2));
+    }
+    distance
 }
 
 fn node_tie_rank(seed: u64, generation: u64, node: ExactStateId) -> Digest {
@@ -685,6 +749,7 @@ mod tests {
             root_ticks: identity as u64,
             registered_expansions: completed_expansions,
             completed_expansions,
+            reachability_novelty: 0,
             exact_terminal_ticks_to_go,
             tie_rank: Digest([identity; 32]),
         }
@@ -925,6 +990,50 @@ mod tests {
         assert_eq!(
             compare_scheduled_node(SearchRegime::Discovery, &deep, &shallow),
             Ordering::Less
+        );
+    }
+
+    #[test]
+    fn node_discovery_prefers_spatial_reachability_over_raw_depth() {
+        let mut deep_wall_tail = node_entry(40, 0, None);
+        deep_wall_tail.reachability_novelty = 1;
+        let mut shallower_new_region = node_entry(20, 0, None);
+        shallower_new_region.reachability_novelty = 25;
+
+        assert_eq!(
+            compare_scheduled_node(
+                SearchRegime::Discovery,
+                &shallower_new_region,
+                &deep_wall_tail,
+            ),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn spatial_novelty_is_measured_from_expanded_graph_states() {
+        let reference = ReachabilityCell {
+            stage: "field".into(),
+            room: 1,
+            layer: Some(0),
+            position_bin: [0, 0, 0],
+        };
+        let nearby = ReachabilityCell {
+            position_bin: [1, 0, 0],
+            ..reference.clone()
+        };
+        let unexplored = ReachabilityCell {
+            position_bin: [3, 0, 4],
+            ..reference.clone()
+        };
+
+        assert_eq!(
+            reachability_novelty(&nearby, std::slice::from_ref(&reference)),
+            1
+        );
+        assert_eq!(
+            reachability_novelty(&unexplored, std::slice::from_ref(&reference)),
+            25
         );
     }
 

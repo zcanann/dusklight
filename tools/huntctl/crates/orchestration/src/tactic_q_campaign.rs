@@ -255,6 +255,10 @@ pub struct TacticFrontierAcquisition {
     pub maximum_ensemble_variance: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generalized_nearest_distance: Option<f32>,
+    /// Squared quantized distance from this node to the nearest graph node
+    /// that already owned expansion work during preterminal discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery_spatial_novelty: Option<u128>,
     pub novelty_rank: u64,
     pub replayed_prefix_ticks: u64,
 }

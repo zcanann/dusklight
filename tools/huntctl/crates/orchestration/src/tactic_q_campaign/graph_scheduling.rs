@@ -102,6 +102,7 @@ impl TacticQCampaign {
                 .map(|ticks| selected.root_ticks.saturating_add(ticks)),
             maximum_ensemble_variance: None,
             generalized_nearest_distance: None,
+            discovery_spatial_novelty: Some(selected.reachability_novelty),
             novelty_rank: 0,
             replayed_prefix_ticks: selected.root_ticks,
         };

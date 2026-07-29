@@ -66,6 +66,7 @@ fn acquisition_with_expansion_count(expansion_count: u64) -> TacticFrontierAcqui
         exact_total_terminal_ticks: None,
         maximum_ensemble_variance: None,
         generalized_nearest_distance: None,
+        discovery_spatial_novelty: None,
         novelty_rank: 0,
         replayed_prefix_ticks: 0,
     }

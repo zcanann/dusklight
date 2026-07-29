@@ -44,6 +44,7 @@ fn frontier_learning_value_precedes_the_last_edges_immediate_cost() {
         exact_total_terminal_ticks: None,
         maximum_ensemble_variance: None,
         generalized_nearest_distance: Some(0.1),
+        discovery_spatial_novelty: None,
         novelty_rank: 1,
         replayed_prefix_ticks: 40,
     };
@@ -77,6 +78,7 @@ fn frontier_learning_value_precedes_coverage_count() {
         exact_total_terminal_ticks: None,
         maximum_ensemble_variance: None,
         generalized_nearest_distance: Some(0.1),
+        discovery_spatial_novelty: None,
         novelty_rank: 1,
         replayed_prefix_ticks: 40,
     };
@@ -109,6 +111,7 @@ fn cold_start_frontier_coverage_precedes_unsupported_sparse_return() {
         exact_total_terminal_ticks: None,
         maximum_ensemble_variance: Some(0.1),
         generalized_nearest_distance: Some(0.1),
+        discovery_spatial_novelty: None,
         novelty_rank: 0,
         replayed_prefix_ticks: 4,
     };
@@ -146,6 +149,7 @@ fn terminal_supported_prediction_precedes_unsupported_q_estimate() {
         exact_total_terminal_ticks: None,
         maximum_ensemble_variance: None,
         generalized_nearest_distance: Some(0.1),
+        discovery_spatial_novelty: None,
         novelty_rank: 1,
         replayed_prefix_ticks: 40,
     };
@@ -180,6 +184,7 @@ fn exact_terminal_path_precedes_an_optimistic_generalized_prediction() {
         exact_total_terminal_ticks: Some(196),
         maximum_ensemble_variance: None,
         generalized_nearest_distance: Some(0.1),
+        discovery_spatial_novelty: None,
         novelty_rank: 1,
         replayed_prefix_ticks: 16,
     };
@@ -217,6 +222,7 @@ fn frontier_terminal_cost_includes_the_replayed_prefix() {
         exact_total_terminal_ticks: None,
         maximum_ensemble_variance: None,
         generalized_nearest_distance: Some(0.1),
+        discovery_spatial_novelty: None,
         novelty_rank: 1,
         replayed_prefix_ticks: 40,
     };
@@ -251,6 +257,7 @@ fn equal_terminal_cost_prefers_the_less_expanded_frontier() {
         exact_total_terminal_ticks: None,
         maximum_ensemble_variance: None,
         generalized_nearest_distance: Some(0.1),
+        discovery_spatial_novelty: None,
         novelty_rank: 1,
         replayed_prefix_ticks: 40,
     };
@@ -285,6 +292,7 @@ fn goal_reachability_ranks_equally_fresh_cold_start_frontiers() {
         exact_total_terminal_ticks: None,
         maximum_ensemble_variance: None,
         generalized_nearest_distance: Some(0.2),
+        discovery_spatial_novelty: None,
         novelty_rank: 8,
         replayed_prefix_ticks: 40,
     };

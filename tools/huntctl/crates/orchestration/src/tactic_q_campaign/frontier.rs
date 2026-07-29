@@ -557,6 +557,7 @@ impl TacticQCampaign {
                         .map(|ticks| replayed_prefix_ticks.saturating_add(ticks)),
                     maximum_ensemble_variance,
                     generalized_nearest_distance,
+                    discovery_spatial_novelty: None,
                     novelty_rank: novelty_rank as u64,
                     replayed_prefix_ticks,
                 };
