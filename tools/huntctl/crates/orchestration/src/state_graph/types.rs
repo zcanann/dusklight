@@ -4,7 +4,7 @@ use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::option_transition::OptionTransitionSample;
 use dusklight_learning::option_values::OptionActionDescriptor;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const STATE_GRAPH_SCHEMA_V1: &str = "dusklight-state-graph/v1";
 pub const FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1: &str = "dusklight-future-equivalence-proof/v1";
@@ -99,10 +99,9 @@ pub enum ActionExpansionStatus {
         expires_at_generation: u64,
     },
     Completed {
-        episode_group: u64,
         authority: ExpansionEvidenceAuthority,
         route_checkpoint_sha256: Digest,
-        transition: Box<OptionTransitionSample>,
+        evidence: BTreeMap<Digest, CompletedExpansionEvidence>,
     },
     FailedValidation {
         evidence_sha256: Digest,
@@ -110,6 +109,14 @@ pub enum ActionExpansionStatus {
     Retryable {
         attempts: u32,
     },
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompletedExpansionEvidence {
+    pub episode_group: u64,
+    pub authority: ExpansionEvidenceAuthority,
+    pub transition: Box<OptionTransitionSample>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

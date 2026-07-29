@@ -5,14 +5,15 @@
 //! projections or caches of this data, never parallel sources of truth.
 
 mod admission;
+mod lifecycle;
 mod types;
 mod validation;
 
 pub use types::{
-    ActionExpansion, ActionExpansionStatus, ExactStateId, ExpansionAdmission,
-    ExpansionEvidenceAuthority, FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1, FutureEquivalenceProof,
-    NativeBoundaryLocator, ObservedSegment, RestorationLocator, RouteRecord, STATE_GRAPH_SCHEMA_V1,
-    StateGraphIdentity, StateGraphNode, TerminalPath,
+    ActionExpansion, ActionExpansionStatus, CompletedExpansionEvidence, ExactStateId,
+    ExpansionAdmission, ExpansionEvidenceAuthority, FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1,
+    FutureEquivalenceProof, NativeBoundaryLocator, ObservedSegment, RestorationLocator,
+    RouteRecord, STATE_GRAPH_SCHEMA_V1, StateGraphIdentity, StateGraphNode, TerminalPath,
 };
 
 use dusklight_automation_contracts::artifact::Digest;
@@ -20,6 +21,7 @@ use dusklight_automation_contracts::tape::InputTape;
 use dusklight_control::option_execution::OptionExecutionError;
 use dusklight_learning::fact_snapshot::{FactSnapshot, FactSnapshotError};
 use dusklight_learning::option_transition::{OptionTransitionError, OptionTransitionSample};
+use dusklight_learning::option_values::{OptionActionDescriptor, OptionValueError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
@@ -133,6 +135,10 @@ impl StateGraph {
         self.expansions.len()
     }
 
+    pub fn expansions(&self) -> impl Iterator<Item = &ActionExpansion> {
+        self.expansions.values()
+    }
+
     pub fn segment_count(&self) -> usize {
         self.segments.len()
     }
@@ -160,37 +166,36 @@ impl StateGraph {
     /// The learner view is derived from completed graph expansions in stable
     /// content-identity order.
     pub fn completed_transitions(&self) -> impl Iterator<Item = (&OptionTransitionSample, u64)> {
-        self.expansions.values().filter_map(|expansion| {
-            if let ActionExpansionStatus::Completed {
-                episode_group,
-                transition,
-                ..
-            } = &expansion.status
-            {
-                Some((transition.as_ref(), *episode_group))
-            } else {
-                None
-            }
+        self.expansions.values().flat_map(|expansion| {
+            let evidence = match &expansion.status {
+                ActionExpansionStatus::Completed { evidence, .. } => Some(evidence),
+                _ => None,
+            };
+            evidence.into_iter().flat_map(|rows| {
+                rows.values()
+                    .map(|row| (row.transition.as_ref(), row.episode_group))
+            })
         })
     }
 
     pub fn completed_evidence(
         &self,
     ) -> impl Iterator<Item = (&OptionTransitionSample, &InputTape, u64)> {
-        self.expansions.values().filter_map(|expansion| {
-            if let ActionExpansionStatus::Completed {
-                episode_group,
-                route_checkpoint_sha256,
-                transition,
-                ..
-            } = &expansion.status
-            {
-                self.routes
-                    .get(route_checkpoint_sha256)
-                    .map(|route| (transition.as_ref(), route, *episode_group))
-            } else {
-                None
-            }
+        self.expansions.values().flat_map(|expansion| {
+            let (route, evidence) = match &expansion.status {
+                ActionExpansionStatus::Completed {
+                    route_checkpoint_sha256,
+                    evidence,
+                    ..
+                } => (self.routes.get(route_checkpoint_sha256), Some(evidence)),
+                _ => (None, None),
+            };
+            route.into_iter().flat_map(move |route| {
+                evidence.into_iter().flat_map(move |rows| {
+                    rows.values()
+                        .map(move |row| (row.transition.as_ref(), route, row.episode_group))
+                })
+            })
         })
     }
 
@@ -224,6 +229,18 @@ pub(crate) fn route_checkpoint_sha256(
     Ok(Digest(hasher.finalize().into()))
 }
 
+pub fn action_expansion_identity(
+    source: ExactStateId,
+    action: &OptionActionDescriptor,
+) -> Result<Digest, StateGraphError> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-action-expansion/v1");
+    hasher.update(source.route_checkpoint_sha256.0);
+    hasher.update(source.state_sha256.0);
+    hasher.update(action.content_sha256()?.0);
+    Ok(Digest(hasher.finalize().into()))
+}
+
 pub(crate) fn tape_sha256(route: &InputTape) -> Result<Digest, StateGraphError> {
     let bytes = route.encode()?;
     Ok(Digest(Sha256::digest(bytes).into()))
@@ -250,6 +267,7 @@ pub enum StateGraphError {
     Facts(String),
     Execution(String),
     Transition(OptionTransitionError),
+    Action(String),
     Serialization(String),
 }
 
@@ -272,6 +290,7 @@ impl fmt::Display for StateGraphError {
                 write!(formatter, "state graph execution failed: {message}")
             }
             Self::Transition(error) => write!(formatter, "state graph transition failed: {error}"),
+            Self::Action(message) => write!(formatter, "state graph action failed: {message}"),
             Self::Serialization(message) => {
                 write!(formatter, "state graph serialization failed: {message}")
             }
@@ -309,6 +328,12 @@ impl From<OptionExecutionError> for StateGraphError {
 impl From<OptionTransitionError> for StateGraphError {
     fn from(value: OptionTransitionError) -> Self {
         Self::Transition(value)
+    }
+}
+
+impl From<OptionValueError> for StateGraphError {
+    fn from(value: OptionValueError) -> Self {
+        Self::Action(value.to_string())
     }
 }
 

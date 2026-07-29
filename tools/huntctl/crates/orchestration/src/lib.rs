@@ -30,6 +30,7 @@ pub mod residual_critic_ranking;
 pub mod residual_horizon_tightening;
 pub mod residual_reverse_curriculum;
 pub mod residual_winner_minimization;
+pub mod scheduler;
 pub mod stage_actor_coverage;
 pub mod stage_observation_coverage;
 pub mod stage_survey;

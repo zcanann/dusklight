@@ -1,6 +1,6 @@
 use super::{
     ActionExpansionStatus, ExactStateId, StateGraph, StateGraphError, TerminalPath,
-    route_checkpoint_sha256, tape_sha256,
+    action_expansion_identity, route_checkpoint_sha256, tape_sha256,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use std::collections::BTreeSet;
@@ -116,7 +116,9 @@ impl StateGraph {
             }
         }
         for (identity, expansion) in &self.expansions {
-            if expansion.identity_sha256 != *identity || !self.nodes.contains_key(&expansion.source)
+            if expansion.identity_sha256 != *identity
+                || action_expansion_identity(expansion.source, &expansion.action)? != *identity
+                || !self.nodes.contains_key(&expansion.source)
             {
                 return Err(StateGraphError::Invariant(
                     "action expansion identity is detached",
@@ -149,24 +151,39 @@ impl StateGraph {
     ) -> Result<(), StateGraphError> {
         match &expansion.status {
             ActionExpansionStatus::Completed {
-                episode_group: _,
                 authority,
                 route_checkpoint_sha256,
-                transition,
+                evidence,
             } => {
-                transition.validate()?;
                 let target = expansion.target.ok_or(StateGraphError::Invariant(
                     "completed expansion has no target",
                 ))?;
-                if transition.replay_identity_sha256()? != expansion.identity_sha256
-                    || transition.before_state_sha256 != expansion.source.state_sha256
-                    || transition.source_checkpoint_sha256
-                        != expansion.source.route_checkpoint_sha256
-                    || transition.after_state_sha256 != target.state_sha256
-                    || transition.next_checkpoint_sha256 != target.route_checkpoint_sha256
-                    || *route_checkpoint_sha256 != target.route_checkpoint_sha256
-                    || transition.value_sample.action != expansion.action
-                    || expansion.execution.as_ref() != Some(&transition.execution)
+                let first = evidence.values().next().ok_or(StateGraphError::Invariant(
+                    "completed expansion has no evidence",
+                ))?;
+                let any_executable = evidence
+                    .values()
+                    .any(|row| row.authority == super::ExpansionEvidenceAuthority::Executable);
+                for (evidence_sha256, row) in evidence {
+                    row.transition.validate()?;
+                    if row.transition.replay_identity_sha256()? != *evidence_sha256
+                        || !same_native_realization(&first.transition, &row.transition)
+                        || row.transition.before_state_sha256 != expansion.source.state_sha256
+                        || row.transition.source_checkpoint_sha256
+                            != expansion.source.route_checkpoint_sha256
+                        || row.transition.after_state_sha256 != target.state_sha256
+                        || row.transition.next_checkpoint_sha256 != target.route_checkpoint_sha256
+                        || row.transition.value_sample.action != expansion.action
+                        || expansion.execution.as_ref() != Some(&row.transition.execution)
+                    {
+                        return Err(StateGraphError::Invariant(
+                            "completed evidence is detached from its action expansion",
+                        ));
+                    }
+                }
+                if *route_checkpoint_sha256 != target.route_checkpoint_sha256
+                    || (*authority == super::ExpansionEvidenceAuthority::Executable)
+                        != any_executable
                     || (*authority == super::ExpansionEvidenceAuthority::Executable
                         && (!self
                             .nodes
@@ -184,17 +201,17 @@ impl StateGraph {
                 self.validate_segment_chain(
                     expansion.source,
                     target,
-                    transition.execution.duration.realized_ticks,
+                    first.transition.execution.duration.realized_ticks,
                     expansion.identity_sha256,
                     &expansion.observed_segments,
                 )
             }
             ActionExpansionStatus::Leased {
                 lease_sha256,
-                expires_at_generation: _,
-            } if *lease_sha256 == Digest::ZERO => Err(StateGraphError::Invariant(
-                "leased expansion has no lease identity",
-            )),
+                expires_at_generation,
+            } if *lease_sha256 == Digest::ZERO || *expires_at_generation == 0 => Err(
+                StateGraphError::Invariant("leased expansion has no lease identity"),
+            ),
             ActionExpansionStatus::FailedValidation { evidence_sha256 }
                 if *evidence_sha256 == Digest::ZERO =>
             {
@@ -202,6 +219,9 @@ impl StateGraph {
                     "failed expansion has no evidence identity",
                 ))
             }
+            ActionExpansionStatus::Retryable { attempts } if *attempts == 0 => Err(
+                StateGraphError::Invariant("retryable expansion has no attempts"),
+            ),
             _ if expansion.target.is_some()
                 || expansion.execution.is_some()
                 || !expansion.observed_segments.is_empty() =>
@@ -256,4 +276,20 @@ impl StateGraph {
         }
         Ok(())
     }
+}
+
+fn same_native_realization(
+    left: &dusklight_learning::option_transition::OptionTransitionSample,
+    right: &dusklight_learning::option_transition::OptionTransitionSample,
+) -> bool {
+    left.execution_authority_sha256 == right.execution_authority_sha256
+        && left.before_state_sha256 == right.before_state_sha256
+        && left.after_state_sha256 == right.after_state_sha256
+        && left.source_checkpoint_sha256 == right.source_checkpoint_sha256
+        && left.next_checkpoint_sha256 == right.next_checkpoint_sha256
+        && left.before == right.before
+        && left.after == right.after
+        && left.execution == right.execution
+        && left.value_sample.terminal == right.value_sample.terminal
+        && left.intermediate_boundaries == right.intermediate_boundaries
 }

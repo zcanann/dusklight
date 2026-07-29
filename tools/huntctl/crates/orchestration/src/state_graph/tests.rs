@@ -124,6 +124,71 @@ fn one_selected_action_owns_all_observed_interior_segments() {
 }
 
 #[test]
+fn scheduled_action_completion_requires_and_consumes_the_exact_lease() {
+    let (mut graph, transition, route) = graph_and_transition();
+    let expansion_sha256 = graph
+        .register_action_expansion(graph.root(), transition.value_sample.action.clone())
+        .unwrap();
+    assert!(graph.expansion_is_schedulable(expansion_sha256, 0));
+    graph
+        .lease_action_expansion(expansion_sha256, Digest([6; 32]), 0, 3)
+        .unwrap();
+    assert!(!graph.expansion_is_schedulable(expansion_sha256, 2));
+    assert!(
+        graph
+            .admit_leased_completed_expansion(
+                transition.clone(),
+                route.clone(),
+                17,
+                ExpansionEvidenceAuthority::Executable,
+                Digest([7; 32]),
+            )
+            .is_err()
+    );
+
+    let admission = graph
+        .admit_leased_completed_expansion(
+            transition,
+            route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+            Digest([6; 32]),
+        )
+        .unwrap();
+    assert_eq!(admission.expansion_sha256, expansion_sha256);
+    assert!(!graph.expansion_is_schedulable(expansion_sha256, 4));
+    graph.validate().unwrap();
+
+    let restored = StateGraph::decode(&graph.encode().unwrap()).unwrap();
+    assert!(!restored.expansion_is_schedulable(expansion_sha256, 4));
+}
+
+#[test]
+fn expired_and_retryable_work_has_an_explicit_lifecycle() {
+    let (mut graph, transition, _) = graph_and_transition();
+    let expansion_sha256 = graph
+        .register_action_expansion(graph.root(), transition.value_sample.action)
+        .unwrap();
+    graph
+        .lease_action_expansion(expansion_sha256, Digest([6; 32]), 0, 3)
+        .unwrap();
+    assert!(graph.expansion_is_schedulable(expansion_sha256, 3));
+    graph
+        .lease_action_expansion(expansion_sha256, Digest([7; 32]), 3, 6)
+        .unwrap();
+    assert!(
+        graph
+            .mark_expansion_retryable(expansion_sha256, Digest([6; 32]), 1)
+            .is_err()
+    );
+    graph
+        .mark_expansion_retryable(expansion_sha256, Digest([7; 32]), 1)
+        .unwrap();
+    assert!(graph.expansion_is_schedulable(expansion_sha256, 4));
+    graph.validate().unwrap();
+}
+
+#[test]
 fn binary_restart_preserves_graph_identity_and_pending_truth() {
     let (mut graph, transition, route) = graph_and_transition();
     graph
@@ -171,6 +236,31 @@ fn duplicate_completed_evidence_does_not_duplicate_graph_truth() {
     assert_eq!(graph.node_count(), 3);
     assert_eq!(graph.expansion_count(), 1);
     assert_eq!(graph.segment_count(), 2);
+}
+
+#[test]
+fn one_deterministic_action_retains_distinct_learner_labels_as_evidence() {
+    let (mut graph, transition, route) = graph_and_transition();
+    let first = graph
+        .admit_completed_expansion(
+            transition.clone(),
+            route.clone(),
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+    let mut relabeled = transition;
+    relabeled.value_sample.reward = -4.0;
+    relabeled.validate().unwrap();
+    let second = graph
+        .admit_completed_expansion(relabeled, route, 18, ExpansionEvidenceAuthority::Executable)
+        .unwrap();
+
+    assert_eq!(second.expansion_sha256, first.expansion_sha256);
+    assert!(!second.duplicate);
+    assert_eq!(graph.expansion_count(), 1);
+    assert_eq!(graph.completed_transitions().count(), 2);
+    graph.validate().unwrap();
 }
 
 #[test]

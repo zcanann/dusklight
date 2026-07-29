@@ -171,8 +171,6 @@ Exit gate:
       similarity may share learning but must not merge restorable nodes. Route
       improvement to an equivalent node must propagate to descendant total
       costs without deleting alternate incoming evidence.
-- [ ] Maintain explicit node/action expansion status:
-      untried, leased, completed, failed validation, or retryable.
 - [ ] Use bounded leases or virtual loss so workers do not duplicate the same
       expansion while independent exploration remains diverse.
 - [ ] Implement a deterministic priority queue whose decision can be replayed

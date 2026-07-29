@@ -1,15 +1,15 @@
 use super::{
-    ActionExpansion, ActionExpansionStatus, ExactStateId, ExpansionAdmission,
-    ExpansionEvidenceAuthority, NativeBoundaryLocator, ObservedSegment, RestorationLocator,
-    RouteRecord, StateGraph, StateGraphError, StateGraphNode, route_checkpoint_sha256, tape_prefix,
-    tape_sha256,
+    ActionExpansion, ActionExpansionStatus, CompletedExpansionEvidence, ExactStateId,
+    ExpansionAdmission, ExpansionEvidenceAuthority, NativeBoundaryLocator, ObservedSegment,
+    RestorationLocator, RouteRecord, StateGraph, StateGraphError, StateGraphNode,
+    action_expansion_identity, route_checkpoint_sha256, tape_prefix, tape_sha256,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::option_transition::OptionTransitionSample;
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl StateGraph {
     pub fn admit_completed_expansion(
@@ -19,31 +19,40 @@ impl StateGraph {
         episode_group: u64,
         authority: ExpansionEvidenceAuthority,
     ) -> Result<ExpansionAdmission, StateGraphError> {
-        self.validate_transition(&transition, &route)?;
-        let expansion_sha256 = transition.replay_identity_sha256()?;
-        if self.expansions.contains_key(&expansion_sha256) {
-            let authority_promoted = authority == ExpansionEvidenceAuthority::Executable
-                && self.promote_expansion_authority(expansion_sha256)?;
-            let existing =
-                self.expansions
-                    .get(&expansion_sha256)
-                    .ok_or(StateGraphError::Invariant(
-                        "duplicate expansion disappeared during promotion",
-                    ))?;
-            let target = existing.target.ok_or(StateGraphError::Invariant(
-                "completed expansion has no target",
-            ))?;
-            return Ok(ExpansionAdmission {
-                expansion_sha256,
-                source: existing.source,
-                target,
-                inserted_nodes: 0,
-                inserted_segments: 0,
-                duplicate: true,
-                authority_promoted,
-            });
-        }
+        self.admit_completed_expansion_with_lease(transition, route, episode_group, authority, None)
+    }
 
+    pub fn admit_leased_completed_expansion(
+        &mut self,
+        transition: OptionTransitionSample,
+        route: InputTape,
+        episode_group: u64,
+        authority: ExpansionEvidenceAuthority,
+        lease_sha256: Digest,
+    ) -> Result<ExpansionAdmission, StateGraphError> {
+        if lease_sha256 == Digest::ZERO {
+            return Err(StateGraphError::Invalid(
+                "completed expansion lease is missing",
+            ));
+        }
+        self.admit_completed_expansion_with_lease(
+            transition,
+            route,
+            episode_group,
+            authority,
+            Some(lease_sha256),
+        )
+    }
+
+    fn admit_completed_expansion_with_lease(
+        &mut self,
+        transition: OptionTransitionSample,
+        route: InputTape,
+        episode_group: u64,
+        authority: ExpansionEvidenceAuthority,
+        lease_sha256: Option<Digest>,
+    ) -> Result<ExpansionAdmission, StateGraphError> {
+        self.validate_transition(&transition, &route)?;
         let option_start = usize::try_from(transition.execution.realized_tape_range.start_frame)
             .map_err(|_| StateGraphError::Invalid("option start frame overflows"))?;
         let option_end =
@@ -57,6 +66,94 @@ impl StateGraph {
             None,
             authority == ExpansionEvidenceAuthority::Executable,
         )?;
+        let expansion_sha256 =
+            action_expansion_identity(source.id, &transition.value_sample.action)?;
+        let evidence_sha256 = transition.replay_identity_sha256()?;
+        if let Some(existing) = self.expansions.get_mut(&expansion_sha256)
+            && let ActionExpansionStatus::Completed {
+                authority: existing_authority,
+                route_checkpoint_sha256: _,
+                evidence,
+            } = &mut existing.status
+        {
+            let canonical = evidence.values().next().ok_or(StateGraphError::Invariant(
+                "completed expansion has no evidence",
+            ))?;
+            if !same_native_realization(&canonical.transition, &transition) {
+                return Err(StateGraphError::Invariant(
+                    "one deterministic node/action expansion produced conflicting native evidence",
+                ));
+            }
+            let duplicate = evidence.contains_key(&evidence_sha256);
+            if duplicate && authority == ExpansionEvidenceAuthority::Executable {
+                evidence
+                    .get_mut(&evidence_sha256)
+                    .ok_or(StateGraphError::Invariant(
+                        "duplicate expansion evidence disappeared",
+                    ))?
+                    .authority = ExpansionEvidenceAuthority::Executable;
+            } else if !duplicate {
+                evidence.insert(
+                    evidence_sha256,
+                    CompletedExpansionEvidence {
+                        episode_group,
+                        authority,
+                        transition: Box::new(transition),
+                    },
+                );
+            }
+            let authority_promoted = authority == ExpansionEvidenceAuthority::Executable
+                && *existing_authority != ExpansionEvidenceAuthority::Executable;
+            let target = existing.target.ok_or(StateGraphError::Invariant(
+                "completed expansion has no target",
+            ))?;
+            let source = existing.source;
+            if authority_promoted {
+                self.promote_expansion_authority(expansion_sha256)?;
+            }
+            return Ok(ExpansionAdmission {
+                expansion_sha256,
+                source,
+                target,
+                inserted_nodes: 0,
+                inserted_segments: 0,
+                duplicate,
+                authority_promoted,
+            });
+        }
+        match self.expansions.get(&expansion_sha256) {
+            Some(ActionExpansion {
+                status:
+                    ActionExpansionStatus::Leased {
+                        lease_sha256: active,
+                        ..
+                    },
+                ..
+            }) if Some(*active) == lease_sha256 => {}
+            Some(ActionExpansion {
+                status: ActionExpansionStatus::Untried | ActionExpansionStatus::Retryable { .. },
+                ..
+            }) if lease_sha256.is_none() => {}
+            Some(ActionExpansion {
+                status: ActionExpansionStatus::FailedValidation { .. },
+                ..
+            }) => {
+                return Err(StateGraphError::Invalid(
+                    "validation-failed expansion cannot complete without retry",
+                ));
+            }
+            Some(_) => {
+                return Err(StateGraphError::Invalid(
+                    "completed evidence does not own the scheduled expansion",
+                ));
+            }
+            None if lease_sha256.is_some() => {
+                return Err(StateGraphError::Invalid(
+                    "leased completion names an unregistered expansion",
+                ));
+            }
+            None => {}
+        }
 
         let mut boundaries = Vec::with_capacity(transition.intermediate_boundaries.len() + 2);
         boundaries.push((0_u32, source));
@@ -142,10 +239,16 @@ impl StateGraph {
                 execution: Some(transition.execution.clone()),
                 observed_segments: segment_ids,
                 status: ActionExpansionStatus::Completed {
-                    episode_group,
                     authority,
                     route_checkpoint_sha256: target.id.route_checkpoint_sha256,
-                    transition: Box::new(transition),
+                    evidence: BTreeMap::from([(
+                        evidence_sha256,
+                        CompletedExpansionEvidence {
+                            episode_group,
+                            authority,
+                            transition: Box::new(transition),
+                        },
+                    )]),
                 },
             },
         );
@@ -281,8 +384,7 @@ impl StateGraph {
             .ok_or(StateGraphError::Invariant("promoted expansion is absent"))?;
         let ActionExpansionStatus::Completed {
             authority,
-            transition: _,
-            episode_group: _,
+            evidence: _,
             route_checkpoint_sha256: _,
         } = &mut expansion.status
         else {
@@ -320,6 +422,19 @@ impl StateGraph {
         self.refresh_best_terminal();
         Ok(true)
     }
+}
+
+fn same_native_realization(left: &OptionTransitionSample, right: &OptionTransitionSample) -> bool {
+    left.execution_authority_sha256 == right.execution_authority_sha256
+        && left.before_state_sha256 == right.before_state_sha256
+        && left.after_state_sha256 == right.after_state_sha256
+        && left.source_checkpoint_sha256 == right.source_checkpoint_sha256
+        && left.next_checkpoint_sha256 == right.next_checkpoint_sha256
+        && left.before == right.before
+        && left.after == right.after
+        && left.execution == right.execution
+        && left.value_sample.terminal == right.value_sample.terminal
+        && left.intermediate_boundaries == right.intermediate_boundaries
 }
 
 #[derive(Clone, Copy)]
