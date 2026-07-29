@@ -1,4 +1,8 @@
 use super::*;
+use crate::learner::{
+    ActionConditionedGraphLearner, ExactGraphTableLearner, GraphActionInput, GraphLearnerContract,
+    GraphLearningBatch, GraphNodeInput,
+};
 use crate::scheduler::{
     LearnedExpansionPriority, SearchRegime, rank_schedulable_expansions, rank_schedulable_nodes,
 };
@@ -143,10 +147,49 @@ impl TacticQCampaign {
         }
 
         let mut descriptors = BTreeMap::new();
-        let mut priorities = BTreeMap::new();
         for descriptor in eligible {
             let expansion_sha256 = graph.register_action_expansion(source, descriptor.clone())?;
             descriptors.insert(expansion_sha256, descriptor.clone());
+        }
+        let exact_learner = ExactGraphTableLearner;
+        let exact_snapshot = exact_learner.fit(
+            &GraphLearnerContract::default(),
+            &GraphLearningBatch::from_graph(&graph)?,
+        )?;
+        let graph_visits = graph
+            .node(source)
+            .map(|node| {
+                1_u64
+                    .saturating_add(node.incoming_segments.len() as u64)
+                    .saturating_add(node.outgoing_expansions.len() as u64)
+            })
+            .ok_or(TacticQCampaignError::InvalidState(
+                "scheduled graph source disappeared",
+            ))?;
+        let action_inputs = descriptors
+            .iter()
+            .map(|(expansion_sha256, descriptor)| GraphActionInput {
+                expansion_sha256: *expansion_sha256,
+                action: descriptor.clone(),
+                graph_visits: 0,
+            })
+            .collect::<Vec<_>>();
+        let exact_estimates = exact_learner.rank(
+            &exact_snapshot,
+            &GraphNodeInput {
+                id: source,
+                state: self.current.snapshot.clone(),
+                graph_visits,
+            },
+            &action_inputs,
+        )?;
+        let exact_estimates = action_inputs
+            .iter()
+            .zip(exact_estimates)
+            .map(|(action, estimate)| (action.expansion_sha256, estimate))
+            .collect::<BTreeMap<_, _>>();
+        let mut priorities = BTreeMap::new();
+        for (expansion_sha256, descriptor) in &descriptors {
             let ranked = batch
                 .ranking
                 .values
@@ -159,13 +202,29 @@ impl TacticQCampaign {
                 .position(|proposal| proposal.descriptor == *descriptor)
                 .map(|rank| rank as u64);
             priorities.insert(
-                expansion_sha256,
+                *expansion_sha256,
                 LearnedExpansionPriority {
                     policy_rank,
-                    uncertainty_millionths: ranked
-                        .map(|entry| variance_millionths(entry.ensemble_variance))
-                        .transpose()?
-                        .unwrap_or(u64::MAX),
+                    terminal_support_per_million: exact_estimates
+                        .get(expansion_sha256)
+                        .and_then(|estimate| estimate.terminal_support_per_million),
+                    conditional_ticks_to_go: exact_estimates
+                        .get(expansion_sha256)
+                        .and_then(|estimate| estimate.conditional_ticks_to_terminal),
+                    uncertainty_millionths: if exact_estimates
+                        .get(expansion_sha256)
+                        .is_some_and(|estimate| estimate.terminal_support_per_million.is_some())
+                    {
+                        exact_estimates[expansion_sha256].uncertainty_millionths
+                    } else {
+                        ranked
+                            .map(|entry| variance_millionths(entry.ensemble_variance))
+                            .transpose()?
+                            .unwrap_or(u64::MAX)
+                    },
+                    prediction_error_millionths: exact_estimates
+                        .get(expansion_sha256)
+                        .map_or(0, |estimate| estimate.prediction_error_millionths),
                     ..Default::default()
                 },
             );

@@ -176,6 +176,21 @@ fn learner_targets_keep_exact_success_separate_from_censored_continuation() {
         censored_batch.rows[0].exact_conditional_ticks_to_terminal,
         None
     );
+    let exact_learner = crate::learner::ExactGraphTableLearner;
+    let censored_snapshot = crate::learner::ActionConditionedGraphLearner::fit(
+        &exact_learner,
+        &crate::learner::GraphLearnerContract::default(),
+        &censored_batch,
+    )
+    .unwrap();
+    let censored_action_sha256 = censored_batch.rows[0].action.content_sha256().unwrap();
+    assert_eq!(
+        censored_snapshot
+            .estimate(censored_batch.rows[0].source, censored_action_sha256)
+            .unwrap()
+            .terminal_support_per_million,
+        None
+    );
 
     let (mut terminal_graph, mut terminal, terminal_route) = graph_and_transition();
     terminalize(&mut terminal);
@@ -197,6 +212,20 @@ fn learner_targets_keep_exact_success_separate_from_censored_continuation() {
         terminal_batch.rows[0].exact_conditional_ticks_to_terminal,
         Some(8)
     );
+    let terminal_snapshot = crate::learner::ActionConditionedGraphLearner::fit(
+        &exact_learner,
+        &crate::learner::GraphLearnerContract::default(),
+        &terminal_batch,
+    )
+    .unwrap();
+    let estimate = terminal_snapshot
+        .estimate(
+            terminal_batch.rows[0].source,
+            terminal_batch.rows[0].action.content_sha256().unwrap(),
+        )
+        .unwrap();
+    assert_eq!(estimate.terminal_support_per_million, Some(1_000_000));
+    assert_eq!(estimate.conditional_ticks_to_terminal, Some(8));
 }
 
 #[test]
