@@ -365,6 +365,7 @@ pub(super) fn read_completed_seed_result(
         .state_graph
         .content_sha256()
         .map_err(route_error)?;
+    let expected_graph_metrics = tactic_graph_metrics(&checkpoint.state_graph, &result.trace)?;
     let best_graph_terminal = checkpoint.state_graph.best_terminal_path();
     if checkpoint.execution_authority_sha256 != execution_plan_sha256
         || checkpoint.decision_index != result.decisions
@@ -379,6 +380,10 @@ pub(super) fn read_completed_seed_result(
             != result.best_terminal_route_checkpoint_sha256
         || best_graph_terminal.and_then(|path| path.root_to_terminal_ticks.checked_sub(1))
             != result.best_authenticated_tick
+        || result
+            .graph_metrics
+            .as_ref()
+            .is_some_and(|metrics| metrics != &expected_graph_metrics)
     {
         return Err(route_message(
             "completed tactic seed report is detached from its authoritative state graph",

@@ -15,7 +15,7 @@ pub struct NativeTacticRouteRunConfig<'a> {
     pub resume: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticRouteReport {
     pub schema: String,
@@ -507,6 +507,11 @@ pub struct NativeTacticSeedResult {
     /// Order-independent identity of graph-authoritative executable work.
     #[serde(default)]
     pub useful_graph_expansion_set_sha256: Digest,
+    /// Recomputed projection of the final authoritative state graph plus
+    /// lifetime lease and transposition counters recoverable from the durable
+    /// decision journal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_metrics: Option<NativeTacticGraphMetrics>,
     /// Exact best terminal node selected by the graph, when one exists.
     pub best_terminal_state_sha256: Option<Digest>,
     /// Exact route-checkpoint identity for the graph-selected terminal.
@@ -518,6 +523,22 @@ pub struct NativeTacticSeedResult {
     pub successful_tape: Option<String>,
     pub final_result: Option<String>,
     pub trace: Vec<NativeTacticDecisionTrace>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticGraphMetrics {
+    pub graph: GraphSearchReport,
+    /// Leases issued and completed by native proposal evaluation over the
+    /// lifetime of this seed. Active leases remain separately visible in
+    /// `graph.leased_expansions`.
+    pub completed_leases: u64,
+    /// Observed graph edges beyond the spanning tree required to introduce
+    /// every exact state. These are exact-state convergence/transposition
+    /// events, including cycles back to an existing state.
+    pub duplicate_transpositions: u64,
+    /// Exact terminal nodes, each retaining its own root-derived route.
+    pub terminal_paths: u64,
 }
 
 pub(super) struct CompletedNativeTacticSeed {

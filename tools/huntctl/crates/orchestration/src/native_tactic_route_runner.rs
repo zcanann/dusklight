@@ -15,6 +15,7 @@ use crate::native_tactic_worker::{
     tactic_root_checkpoint_sha256,
 };
 use crate::optimization_request::{CampaignClass, OptimizationRequest};
+use crate::reporting::GraphSearchReport;
 use crate::tactic_macro_store::{
     TACTIC_MACRO_REGISTRY_EXTENSION, read_tactic_macro_registry, write_tactic_macro_registry,
 };
@@ -142,7 +143,7 @@ use report::{
 };
 pub use report::{
     NativeTacticDecisionTrace, NativeTacticDemonstrationReport, NativeTacticFrontierAvailability,
-    NativeTacticImportedMacroReport, NativeTacticLearnerAuthorityReport,
+    NativeTacticGraphMetrics, NativeTacticImportedMacroReport, NativeTacticLearnerAuthorityReport,
     NativeTacticMacroDiscoveryReport, NativeTacticMacroReuseReport, NativeTacticMeasurementTrace,
     NativeTacticProposalTrace, NativeTacticReplaySharingTelemetry, NativeTacticRestoreAccounting,
     NativeTacticRestoreSource, NativeTacticRouteReport, NativeTacticRouteRunConfig,
@@ -159,6 +160,14 @@ pub use execution_plan::{
     NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest, NativeTacticGenerationPlan,
     NativeTacticInterventionPlan, NativeTacticLanePlan, NativeTacticLaneRole,
     NativeTacticPlanBudgets, NativeTacticReplaySharingPlan, NativeTacticResourceLimit,
+};
+
+mod scratch_discovery;
+pub use scratch_discovery::{
+    NATIVE_TACTIC_SCRATCH_DISCOVERY_SCHEMA_V1, NativeTacticScratchCondition,
+    NativeTacticScratchDiscoveryReport, NativeTacticScratchTotals,
+    ORDON_MEDIAN_TERMINAL_WALL_LIMIT_MICROS, ORDON_SCRATCH_DISCOVERY_GOAL,
+    ORDON_SCRATCH_DISCOVERY_SEEDS, ORDON_WORST_TERMINAL_WALL_LIMIT_MICROS,
 };
 
 mod throughput_curve;
@@ -774,7 +783,7 @@ use worker_pool::{
 mod worker_fleet;
 use worker_fleet::NativeTacticWorkerFleet;
 mod campaign;
-use campaign::{NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1, run_seed};
+use campaign::{NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1, run_seed, tactic_graph_metrics};
 mod timing_metrics;
 use timing_metrics::{
     aggregate_route_timing, censored_training_transitions, decision_evaluated_ticks,

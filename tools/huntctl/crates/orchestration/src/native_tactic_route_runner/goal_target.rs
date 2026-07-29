@@ -39,7 +39,7 @@ pub(super) fn parameterized_policy_action_schema_sha256(
     Digest(hasher.finalize().into())
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticGoalTargetReport {
     pub source_stage: String,

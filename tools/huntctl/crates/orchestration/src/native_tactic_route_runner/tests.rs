@@ -889,6 +889,7 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
         final_checkpoint: "checkpoint.dtqz".into(),
         state_graph_sha256: Digest([7; 32]),
         useful_graph_expansion_set_sha256: Digest([8; 32]),
+        graph_metrics: None,
         best_terminal_state_sha256: None,
         best_terminal_route_checkpoint_sha256: None,
         best_terminal_tape: None,
