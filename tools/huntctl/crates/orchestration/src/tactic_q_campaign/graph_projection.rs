@@ -180,6 +180,16 @@ impl TacticQCampaign {
         Ok(graph.best_terminal_path())
     }
 
+    pub fn graph_terminal_path_available(&self) -> Result<bool, TacticQCampaignError> {
+        let graph = self
+            .state_graph
+            .as_ref()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "terminal query requires a bound state graph",
+            ))?;
+        Ok(graph.best_terminal_path().is_some())
+    }
+
     pub fn final_result_matches_graph_terminal(
         &self,
         result: &TacticQFinalResult,

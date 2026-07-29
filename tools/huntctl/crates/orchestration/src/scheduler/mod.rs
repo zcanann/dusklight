@@ -518,15 +518,20 @@ fn compare_scheduled_node(
         left.completed_expansions
             .cmp(&right.completed_expansions)
             .then_with(|| left.registered_expansions.cmp(&right.registered_expansions))
-            .then_with(|| left.root_ticks.cmp(&right.root_ticks))
     };
     let ordering = match regime {
-        SearchRegime::Discovery => coverage(),
+        // Before terminal support exists, a fresh deep boundary represents
+        // strictly more realized reachability than an equally fresh shallow
+        // boundary. Preferring the shallow prefix repeatedly resets discovery
+        // near the authenticated root and makes the declared route horizon
+        // fictitious.
+        SearchRegime::Discovery => coverage().then_with(|| right.root_ticks.cmp(&left.root_ticks)),
         SearchRegime::Optimization => left
             .exact_terminal_ticks_to_go
             .is_none()
             .cmp(&right.exact_terminal_ticks_to_go.is_none())
-            .then_with(coverage),
+            .then_with(coverage)
+            .then_with(|| left.root_ticks.cmp(&right.root_ticks)),
     };
     ordering
         .then_with(|| left.tie_rank.cmp(&right.tie_rank))
@@ -908,6 +913,17 @@ mod tests {
         let visited = node_entry(1, 1, None);
         assert_eq!(
             compare_scheduled_node(SearchRegime::Discovery, &fresh, &visited),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn node_discovery_prefers_deeper_reachability_when_coverage_is_equal() {
+        let shallow = node_entry(1, 0, None);
+        let deep = node_entry(9, 0, None);
+        assert!(deep.root_ticks > shallow.root_ticks);
+        assert_eq!(
+            compare_scheduled_node(SearchRegime::Discovery, &deep, &shallow),
             Ordering::Less
         );
     }

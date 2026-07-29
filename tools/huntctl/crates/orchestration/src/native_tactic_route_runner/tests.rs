@@ -70,6 +70,25 @@ fn acquisition_with_expansion_count(expansion_count: u64) -> TacticFrontierAcqui
 }
 
 #[test]
+fn scratch_discovery_uses_its_route_horizon_before_periodic_branching() {
+    assert!(!campaign::should_periodically_branch(
+        8, 8, false, false, false
+    ));
+    assert!(!campaign::should_periodically_branch(
+        256, 8, false, false, false
+    ));
+    assert!(campaign::should_periodically_branch(
+        8, 8, false, true, false
+    ));
+    assert!(campaign::should_periodically_branch(
+        8, 8, false, false, true
+    ));
+    assert!(campaign::should_periodically_branch(
+        3, 8, true, false, false
+    ));
+}
+
+#[test]
 fn demonstration_frontier_intervention_only_forces_the_first_expansion() {
     let unexpanded = acquisition_with_expansion_count(0);
     let revisited = acquisition_with_expansion_count(1);

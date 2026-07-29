@@ -13,6 +13,19 @@ pub(super) fn first_demonstration_intervention(
         && acquisition.is_some_and(|acquisition| acquisition.expansion_count == 0)
 }
 
+pub(super) fn should_periodically_branch(
+    decision_index: u64,
+    branch_every_decisions: u64,
+    terminal_restart: bool,
+    terminal_path_available: bool,
+    demonstration_coverage_pending: bool,
+) -> bool {
+    terminal_restart
+        || (decision_index > 0
+            && (demonstration_coverage_pending || terminal_path_available)
+            && decision_index % branch_every_decisions == 0)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_seed(
     config: &NativeTacticRouteRunConfig<'_>,
@@ -243,11 +256,16 @@ pub(super) fn run_seed(
         let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
         let demonstration_coverage_pending = demonstration_curriculum
             && first_demonstration_expansions < demonstration_frontier_count;
-        let periodic_branch = terminal_restart
-            || (campaign.decision_index > 0
-                && (demonstration_coverage_pending
-                    || campaign.decision_index % config.execution_plan.branch_every_decisions
-                        == 0));
+        let terminal_path_available = campaign
+            .graph_terminal_path_available()
+            .map_err(route_error)?;
+        let periodic_branch = should_periodically_branch(
+            campaign.decision_index,
+            config.execution_plan.branch_every_decisions,
+            terminal_restart,
+            terminal_path_available,
+            demonstration_coverage_pending,
+        );
         if !campaign.replay.is_empty() && periodic_branch {
             let branch_started = Instant::now();
             episode = episode
