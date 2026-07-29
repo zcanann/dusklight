@@ -3,6 +3,7 @@ use crate::native_suffix_result::ValidatedNativeSuffixCandidate;
 use dusklight_control::controller_program::ControllerProgram;
 use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
 use dusklight_control::option_execution::{OptionParameter, OptionType};
+use dusklight_evidence::native_episode_shard::NativeTerminalReason;
 use dusklight_learning::tactic_asset::{TacticAssetSource, TacticCatalogEntry};
 use dusklight_learning::tactic_exploration::TacticSelectionReason;
 use dusklight_learning::{
@@ -793,4 +794,38 @@ fn materialized_frontier_rejects_a_changed_typed_field_with_same_native_identity
             "frontier materialization typed state"
         ))
     ));
+}
+
+#[test]
+fn materialized_frontier_ignores_exact_replay_budget_exhaustion_at_nonterminal_boundary() {
+    let shard = NativeEpisodeShard::decode(include_bytes!(
+        "../../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+    ))
+    .unwrap();
+    let episode = &shard.episodes[0];
+    let last = episode.steps.last().unwrap();
+    assert_eq!(
+        last.post_simulation.terminal_reason,
+        NativeTerminalReason::TickBudgetExhausted
+    );
+    let mut boundary = last.post_simulation.clone();
+    boundary.phase = NativeObservationPhase::PreInput;
+    boundary.simulation_tick += 1;
+    boundary.tape_frame += 1;
+    let mut prior = episode
+        .steps
+        .iter()
+        .rev()
+        .take(dusklight_learning::fact_snapshot::MAX_FACT_HISTORY)
+        .map(|step| step.pre_input.clone())
+        .collect::<Vec<_>>();
+    prior.reverse();
+    let mut expected =
+        FactSnapshot::from_native_learning(&boundary, &prior, None, Vec::new()).unwrap();
+    expected.terminal.reason = FactTerminalReason::None;
+
+    assert_eq!(
+        validate_materialized_frontier_state(&expected, episode).unwrap(),
+        expected.content_sha256().unwrap()
+    );
 }

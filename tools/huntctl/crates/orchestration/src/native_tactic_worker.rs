@@ -23,7 +23,7 @@ use dusklight_evidence::native_episode_shard::{
     NativeRawPad,
 };
 use dusklight_learning::fact_snapshot::{
-    FactPhase, FactSnapshot, MAX_FACT_HISTORY, OptionTrajectoryFactSnapshot,
+    FactPhase, FactSnapshot, FactTerminalReason, MAX_FACT_HISTORY, OptionTrajectoryFactSnapshot,
     RecentOptionFactSnapshot,
 };
 use dusklight_learning::learner_state::tactic_intrinsically_applicable;
@@ -373,6 +373,18 @@ fn validate_materialized_frontier_state(
     // native observation and its bounded history above are reconstructed from
     // the fresh replay before they are compared with the graph state.
     restored.recent_option = expected.recent_option.clone();
+    // An exact-length frontier replay ends because its request budget is
+    // exhausted even when the original option ended normally at that same
+    // non-terminal boundary. This reason describes the replay envelope, not
+    // native game state; retain the graph-authenticated normal completion only
+    // when every goal observation remains explicitly non-terminal.
+    if restored.terminal.reason == FactTerminalReason::TickBudgetExhausted
+        && expected.terminal.reason == FactTerminalReason::None
+        && restored.terminal.reached == Some(false)
+        && expected.terminal.reached == Some(false)
+    {
+        restored.terminal.reason = FactTerminalReason::None;
+    }
     restored
         .validate()
         .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
