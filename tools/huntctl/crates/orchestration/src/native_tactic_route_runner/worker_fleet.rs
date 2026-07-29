@@ -149,7 +149,7 @@ impl NativeTacticWorkerFleet {
         root_source_frame: usize,
     ) -> Result<NativeTacticProposalPool, NativeTacticRouteRunError> {
         self.validate_for(config)?;
-        proposal_pool_view(
+        Ok(proposal_pool_view(
             &self.senders,
             config.workers,
             config
@@ -159,7 +159,8 @@ impl NativeTacticWorkerFleet {
             root_source_frame,
             config.execution_plan.execution_strategy,
             execution_plan_sha256,
-        )
+        )?
+        .with_lane_owner_partition(config.execution_plan))
     }
 
     pub(super) fn shutdown(mut self) -> Result<(), NativeTacticRouteRunError> {
@@ -207,6 +208,8 @@ fn proposal_pool_view(
         root_source_frame,
         execution_strategy,
         execution_plan_sha256,
+        dedicated_owner_slots: 0,
+        preferred_owner_slot: None,
     })
 }
 

@@ -90,9 +90,17 @@ pub(super) fn run_seed_coordinator(
             generated_training,
         })
     } else {
+        let lane_pool = pool.for_lane(
+            config
+                .execution_plan
+                .lanes
+                .get(seed_index)
+                .ok_or_else(|| route_message("tactic seed lane is absent from execution plan"))?
+                .generation_lane_index,
+        )?;
         let completion = run_seed(
             config,
-            pool,
+            &lane_pool,
             registry,
             encoder,
             reward_spec,
@@ -614,6 +622,12 @@ pub(super) struct NativeTacticProposalPool {
     pub(super) root_source_frame: usize,
     pub(super) execution_strategy: NativeGenericExecutionStrategy,
     pub(super) execution_plan_sha256: Digest,
+    /// A sufficiently wide multi-lane fleet dedicates one stable worker to
+    /// each concurrently executing lane. Counterfactual siblings use only
+    /// the remaining workers, so they cannot consume another lane's live
+    /// endpoint between decisions.
+    pub(super) dedicated_owner_slots: usize,
+    pub(super) preferred_owner_slot: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -634,14 +648,6 @@ fn primary_checkpoint_retention(retain: bool) -> NativeTacticCheckpointRetention
     }
 }
 
-fn direct_frontier_eligible(
-    direct_restore_enabled: bool,
-    worker_count: usize,
-    frontier: &CachedTacticFrontier,
-) -> bool {
-    direct_restore_enabled && frontier.worker_slot < worker_count
-}
-
 fn next_worker_excluding(
     next_worker: &AtomicUsize,
     worker_count: usize,
@@ -655,7 +661,77 @@ fn next_worker_excluding(
     }
 }
 
+fn dedicated_owner_slot_count(
+    worker_count: usize,
+    concurrent_lanes: usize,
+    proposal_width: usize,
+    direct_restore_enabled: bool,
+) -> usize {
+    let required_workers = concurrent_lanes.saturating_mul(proposal_width);
+    if direct_restore_enabled
+        && concurrent_lanes > 0
+        && proposal_width > 0
+        && worker_count >= required_workers
+    {
+        concurrent_lanes
+    } else {
+        0
+    }
+}
+
 impl NativeTacticProposalPool {
+    pub(super) fn with_lane_owner_partition(
+        mut self,
+        execution_plan: &NativeTacticExecutionPlan,
+    ) -> Self {
+        let concurrent_lanes = execution_plan
+            .generations
+            .iter()
+            .map(|generation| generation.lane_indices.len())
+            .max()
+            .unwrap_or(0);
+        self.dedicated_owner_slots = dedicated_owner_slot_count(
+            self.senders.len(),
+            concurrent_lanes,
+            execution_plan.proposal_width_per_decision,
+            self.direct_restore_enabled,
+        );
+        self
+    }
+
+    pub(super) fn for_lane(
+        &self,
+        generation_lane_index: usize,
+    ) -> Result<Self, NativeTacticRouteRunError> {
+        let mut lane = self.clone();
+        if self.dedicated_owner_slots > 0 {
+            if generation_lane_index >= self.dedicated_owner_slots {
+                return Err(route_message(
+                    "native tactic lane exceeds its dedicated worker partition",
+                ));
+            }
+            lane.preferred_owner_slot = Some(generation_lane_index);
+        }
+        Ok(lane)
+    }
+
+    fn direct_frontier_eligible(&self, frontier: &CachedTacticFrontier) -> bool {
+        self.direct_restore_enabled
+            && frontier.worker_slot < self.senders.len()
+            && self
+                .preferred_owner_slot
+                .is_none_or(|owner| frontier.worker_slot == owner)
+    }
+
+    fn next_counterfactual_worker(&self, excluded: Option<usize>) -> usize {
+        if self.preferred_owner_slot.is_some() {
+            let sibling_workers = self.senders.len() - self.dedicated_owner_slots;
+            return self.dedicated_owner_slots
+                + self.next_worker.fetch_add(1, Ordering::Relaxed) % sibling_workers;
+        }
+        next_worker_excluding(&self.next_worker, self.senders.len(), excluded)
+    }
+
     pub(super) fn execute_batch(
         &self,
         proposals: &[SelectedTactic],
@@ -686,17 +762,14 @@ impl NativeTacticProposalPool {
         let direct = (replayed_prefix != 0 && restoration.is_some())
             .then(|| {
                 cached_frontier.filter(|frontier| {
-                    direct_frontier_eligible(
-                        self.direct_restore_enabled,
-                        self.senders.len(),
-                        frontier,
-                    ) && restoration.is_some_and(|contract| {
-                        frontier.state_sha256 == contract.plan.expected_state_sha256
-                            && frontier.route_frames == source_route_tape.frames.len()
-                            && frontier.route_checkpoint_sha256
-                                == contract.plan.route.route_checkpoint_sha256
-                            && frontier.route_tape_sha256 == contract.plan.route.tape_sha256
-                    })
+                    self.direct_frontier_eligible(frontier)
+                        && restoration.is_some_and(|contract| {
+                            frontier.state_sha256 == contract.plan.expected_state_sha256
+                                && frontier.route_frames == source_route_tape.frames.len()
+                                && frontier.route_checkpoint_sha256
+                                    == contract.plan.route.route_checkpoint_sha256
+                                && frontier.route_tape_sha256 == contract.plan.route.tape_sha256
+                        })
                 })
             })
             .flatten();
@@ -707,11 +780,13 @@ impl NativeTacticProposalPool {
             let primary_source = (proposal_index == 0).then_some(direct).flatten();
             let worker_slot = primary_source.map_or_else(
                 || {
-                    next_worker_excluding(
-                        &self.next_worker,
-                        self.senders.len(),
-                        direct.map(|frontier| frontier.worker_slot),
-                    )
+                    if proposal_index == 0
+                        && let Some(owner) = self.preferred_owner_slot
+                    {
+                        owner
+                    } else {
+                        self.next_counterfactual_worker(direct.map(|frontier| frontier.worker_slot))
+                    }
                 },
                 |frontier| frontier.worker_slot,
             );

@@ -25,6 +25,22 @@ impl PersistentTacticBatchWorker for MissingCheckpointWorker {
     }
 }
 
+fn proposal_pool(worker_count: usize) -> NativeTacticProposalPool {
+    let (senders, _receivers): (Vec<_>, Vec<_>) = (0..worker_count)
+        .map(|_| mpsc::channel::<NativeTacticProposalJob>())
+        .unzip();
+    NativeTacticProposalPool {
+        senders: Arc::new(senders),
+        next_worker: Arc::new(AtomicUsize::new(0)),
+        direct_restore_enabled: true,
+        root_source_frame: 506,
+        execution_strategy: NativeGenericExecutionStrategy::NativeController,
+        execution_plan_sha256: Digest([1; 32]),
+        dedicated_owner_slots: 0,
+        preferred_owner_slot: None,
+    }
+}
+
 #[test]
 fn missing_owner_checkpoint_is_counted_before_exact_replay_fallback() {
     let mut worker = MissingCheckpointWorker {
@@ -111,11 +127,41 @@ fn selected_live_frontiers_remain_directly_eligible_for_wide_decisions() {
         route_checkpoint_sha256: Digest([4; 32]),
         route_tape_sha256: Digest([5; 32]),
     };
-    assert!(direct_frontier_eligible(true, 2, &frontier));
+    assert!(proposal_pool(2).direct_frontier_eligible(&frontier));
 
     let mut portable = frontier;
     portable.source.storage = NativeTacticCheckpointStorage::PortableImage;
-    assert!(direct_frontier_eligible(true, 2, &portable));
+    assert!(proposal_pool(2).direct_frontier_eligible(&portable));
+}
+
+#[test]
+fn dedicated_lane_owners_are_never_used_for_counterfactual_siblings() {
+    assert_eq!(dedicated_owner_slot_count(16, 4, 4, true), 4);
+    assert_eq!(dedicated_owner_slot_count(15, 4, 4, true), 0);
+    assert_eq!(dedicated_owner_slot_count(16, 4, 4, false), 0);
+    let mut pool = proposal_pool(16);
+    pool.dedicated_owner_slots = 4;
+    pool.preferred_owner_slot = Some(2);
+    for _ in 0..24 {
+        assert!((4..16).contains(&pool.next_counterfactual_worker(Some(2))));
+    }
+    let owner = CachedTacticFrontier {
+        worker_slot: 2,
+        source: NativeTacticCheckpointSource {
+            restore_identity: "a".repeat(32),
+            boundary_fingerprint: "b".repeat(32),
+            route_ticks: 40,
+            storage: NativeTacticCheckpointStorage::LiveEndpoint,
+        },
+        state_sha256: Digest([3; 32]),
+        route_frames: 546,
+        route_checkpoint_sha256: Digest([4; 32]),
+        route_tape_sha256: Digest([5; 32]),
+    };
+    assert!(pool.direct_frontier_eligible(&owner));
+    let mut another_lane = owner;
+    another_lane.worker_slot = 1;
+    assert!(!pool.direct_frontier_eligible(&another_lane));
 }
 
 #[test]
