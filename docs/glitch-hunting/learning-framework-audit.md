@@ -33,8 +33,11 @@ audit, seed, checkpoint, terminal tape/result, and small source-authority
 artifacts. The campaign audit includes every decision, proposal count,
 selection reason, learner snapshot, restore source, exhausted budget, terminal
 path, and exact time/expansion point at which each shorter terminal route was
-first evaluated. It can be copied away from its originating build tree and
-validated independently:
+first evaluated. New reports also retain every state-local applicable action,
+its fitted value and uncertainty when supported, and the selected action.
+Audits mark the action-surface timeline incomplete for legacy reports instead
+of reconstructing availability after the fact. A bundle can be copied away
+from its originating build tree and validated independently:
 
 ```text
 huntctl learn validate-tactic-scratch-bundle --bundle BUNDLE-DIR

@@ -57,6 +57,10 @@ pub struct NativeTacticScratchDecisionAudit {
     pub restore_source: Option<NativeTacticRestoreSource>,
     pub selected_option_id: String,
     pub selection_reason: TacticSelectionReason,
+    /// Exact applicable action surface and fitted value support visible to the
+    /// policy before native execution. Legacy reports omitted this evidence.
+    #[serde(default)]
+    pub applicable_tactics: Vec<NativeTacticValueTrace>,
     pub branch_acquisition: Option<TacticFrontierAcquisition>,
     pub proposal_count: u64,
     pub terminal_proposal_count: u64,
@@ -88,6 +92,16 @@ pub struct NativeTacticScratchSeedAudit {
     pub native_ticks: u64,
     pub unique_useful_graph_expansions: u64,
     pub graph_expansion_timeline_complete: bool,
+    /// True only when every decision retained a non-empty, duplicate-free
+    /// action surface containing exactly one selected action.
+    #[serde(default)]
+    pub action_surface_timeline_complete: bool,
+    /// Number of decisions on which each action was applicable.
+    #[serde(default)]
+    pub action_availability_counts: BTreeMap<String, u64>,
+    /// Applicable decisions for which the learner had no fitted estimate.
+    #[serde(default)]
+    pub unsupported_action_availability_counts: BTreeMap<String, u64>,
     pub completed_graph_leases: u64,
     pub terminal_path_ticks: Vec<u64>,
     pub selection_counts: BTreeMap<String, u64>,
@@ -202,11 +216,41 @@ fn seed_audit(
     let mut useful_graph_expansions_to_first_terminal = None;
     let mut proposal_selection_counts = BTreeMap::<String, u64>::new();
     let mut learner_snapshots = BTreeSet::new();
+    let mut action_availability_counts = BTreeMap::<String, u64>::new();
+    let mut unsupported_action_availability_counts = BTreeMap::<String, u64>::new();
+    let mut action_surface_timeline_complete = true;
     let mut terminal_improvements = Vec::new();
     let mut terminal_improvement_timing_complete = true;
     let mut best_observed_terminal_tick = None;
     let mut decisions = Vec::with_capacity(seed.trace.len());
     for trace in &seed.trace {
+        let unique_action_ids = trace
+            .applicable_tactics
+            .iter()
+            .map(|tactic| tactic.option_id.as_str())
+            .collect::<BTreeSet<_>>();
+        action_surface_timeline_complete &= !trace.applicable_tactics.is_empty()
+            && unique_action_ids.len() == trace.applicable_tactics.len()
+            && trace
+                .applicable_tactics
+                .iter()
+                .filter(|tactic| tactic.selected)
+                .count()
+                == 1
+            && trace
+                .applicable_tactics
+                .iter()
+                .any(|tactic| tactic.selected && tactic.option_id == trace.selected_option_id);
+        for tactic in &trace.applicable_tactics {
+            *action_availability_counts
+                .entry(tactic.option_id.clone())
+                .or_default() += 1;
+            if tactic.mean_q.is_none() {
+                *unsupported_action_availability_counts
+                    .entry(tactic.option_id.clone())
+                    .or_default() += 1;
+            }
+        }
         let proposal_count = u64::try_from(trace.proposal_batch.len()).map_err(route_error)?;
         proposal_expansions = proposal_expansions.saturating_add(proposal_count);
         if Some(trace.decision_index) == seed.first_terminal_decision_index {
@@ -260,6 +304,7 @@ fn seed_audit(
             restore_source: trace.restore_source,
             selected_option_id: trace.selected_option_id.clone(),
             selection_reason: trace.selection_reason,
+            applicable_tactics: trace.applicable_tactics.clone(),
             branch_acquisition: trace.branch_acquisition.clone(),
             proposal_count,
             terminal_proposal_count: trace
@@ -334,6 +379,9 @@ fn seed_audit(
         native_ticks: seed.native_ticks,
         unique_useful_graph_expansions: seed.unique_useful_graph_expansions,
         graph_expansion_timeline_complete,
+        action_surface_timeline_complete,
+        action_availability_counts,
+        unsupported_action_availability_counts,
         completed_graph_leases: graph_metrics.completed_leases,
         terminal_path_ticks,
         selection_counts: seed.selection_counts.clone(),
@@ -400,6 +448,19 @@ fn seed_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
         .all(|pair| pair[0].decision_index < pair[1].decision_index)
         && !seed.stop_reasons.is_empty()
         && total_proposals == seed.total_proposal_expansions
+        && (!seed.action_surface_timeline_complete
+            || seed.decisions.iter().all(|decision| {
+                !decision.applicable_tactics.is_empty()
+                    && decision
+                        .applicable_tactics
+                        .iter()
+                        .filter(|tactic| tactic.selected)
+                        .count()
+                        == 1
+                    && decision.applicable_tactics.iter().any(|tactic| {
+                        tactic.selected && tactic.option_id == decision.selected_option_id
+                    })
+            }))
         && first_terminal_valid
         && seed.terminal_discovered == !seed.terminal_path_ticks.is_empty()
         && seed.best_authenticated_tick == seed.terminal_path_ticks.first().copied()

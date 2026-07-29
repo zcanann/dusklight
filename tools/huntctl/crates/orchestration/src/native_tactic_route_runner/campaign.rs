@@ -852,6 +852,41 @@ pub(super) fn run_seed(
             .ranked
             .first()
             .map(|ranked| ranked.mean_q);
+        let applicable_tactics = step
+            .step
+            .decision
+            .ranking
+            .choices
+            .iter()
+            .filter(|choice| choice.applicable)
+            .map(|choice| {
+                let estimate = step
+                    .step
+                    .decision
+                    .ranking
+                    .values
+                    .ranked
+                    .iter()
+                    .find(|ranked| ranked.descriptor == choice.descriptor);
+                NativeTacticValueTrace {
+                    option_id: choice.choice_id.clone(),
+                    mean_q: estimate.map(|ranked| ranked.mean_q),
+                    ensemble_variance: estimate.map(|ranked| ranked.ensemble_variance),
+                    selected: choice.choice_id == selected.descriptor.option_id,
+                }
+            })
+            .collect::<Vec<_>>();
+        if applicable_tactics.is_empty()
+            || applicable_tactics
+                .iter()
+                .filter(|tactic| tactic.selected)
+                .count()
+                != 1
+        {
+            return Err(route_message(
+                "selected tactic is detached from the applicable action surface",
+            ));
+        }
         native_ticks = native_ticks.saturating_add(evaluated_native_ticks);
         let frontier_cells = campaign.frontier_cell_count();
         let before_features = encoder
@@ -952,7 +987,7 @@ pub(super) fn run_seed(
             before: tactic_state_trace(&step.step.transition.before)?,
             after: tactic_state_trace(&step.step.transition.after)?,
             measurements: Vec::new(),
-            applicable_tactics: Vec::new(),
+            applicable_tactics,
             proposal_feedback,
             proposal_batch: proposal_traces,
         };

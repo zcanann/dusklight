@@ -677,7 +677,7 @@ pub struct NativeTacticMeasurementTrace {
     pub after: f32,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticValueTrace {
     pub option_id: String,
@@ -791,6 +791,10 @@ pub(super) struct NativeTacticDecisionRecord {
     pub(super) visited_states: usize,
     #[serde(default)]
     pub(super) completed_executable_graph_expansions: u64,
+    /// The exact state-local action surface and value estimates used by the
+    /// decision. Older journals omitted this evidence and decode as empty.
+    #[serde(default)]
+    pub(super) applicable_tactics: Vec<NativeTacticValueTrace>,
     pub(super) root_checkpoint_sha256: Digest,
     pub(super) root_tape: StoredContentRef,
     /// Exact route at this decision's source boundary. Cross-seed replay can

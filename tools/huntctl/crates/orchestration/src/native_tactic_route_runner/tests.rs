@@ -648,6 +648,10 @@ fn journal_projects_graph_and_materializes_routes_from_content_objects() {
     let projected_trace = read_tactic_decision_journal(&root).unwrap();
     assert_eq!(projected_trace[0].proposal_batch, trace.proposal_batch);
     assert_eq!(
+        projected_trace[0].applicable_tactics,
+        trace.applicable_tactics
+    );
+    assert_eq!(
         projected_trace[0].cumulative_wall_micros,
         trace.cumulative_wall_micros
     );

@@ -71,5 +71,8 @@ orchestration phase costs.
 
 `sample_efficiency_timeline_complete` and
 `terminal_improvement_timing_complete` must both be true before drawing a
-learning conclusion. Legacy reports remain inspectable but cannot silently
-stand in for missing per-decision evidence.
+sample-efficiency conclusion. `action_surface_timeline_complete` must also be
+true before attributing a difference to learned ranking: every decision then
+retains the exact applicable actions, unsupported estimates, values,
+uncertainty, and selected action. Legacy reports remain inspectable but cannot
+silently stand in for missing per-decision evidence.

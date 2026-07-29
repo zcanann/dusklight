@@ -37,6 +37,10 @@ pub struct NativeTacticScratchEfficiencyMetrics {
     pub median_proposal_expansions_to_best_terminal: Option<u64>,
     pub sample_efficiency_timeline_complete: bool,
     pub terminal_improvement_timing_complete: bool,
+    /// False means action availability/support was not retained for at least
+    /// one decision, so policy-quality differences are not fully auditable.
+    #[serde(default)]
+    pub action_surface_timeline_complete: bool,
     pub total_useful_graph_expansions: u64,
     pub useful_graph_expansions_per_second_millionths: u64,
     pub search_native_ticks: u64,
@@ -368,6 +372,10 @@ fn efficiency_metrics(
         .iter()
         .all(|seed| seed.terminal_improvement_timing_complete)
         && best_useful.len() as u64 == terminal_count;
+    let action_surface_timeline_complete = audit
+        .seeds
+        .iter()
+        .all(|seed| seed.action_surface_timeline_complete);
     let timing = &route.timing;
     let accounted = timing
         .tactic_execution_micros
@@ -388,6 +396,7 @@ fn efficiency_metrics(
         median_proposal_expansions_to_best_terminal: median(best_proposals),
         sample_efficiency_timeline_complete,
         terminal_improvement_timing_complete,
+        action_surface_timeline_complete,
         total_useful_graph_expansions: route.unique_useful_graph_expansions,
         useful_graph_expansions_per_second_millionths: timing
             .unique_useful_graph_expansions_per_second_millionths,

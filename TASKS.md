@@ -58,6 +58,11 @@ The incoming 2026-07-29 work made substantial, useful progress:
   first evaluation of the eventual best route. The clean-checkout audit command
   validates source quality, formatting, the workspace, all orchestration tests,
   and every committed bundle.
+- New decision journals retain the exact applicable action surface, fitted
+  value and uncertainty support, and selected action across restart. Campaign
+  audits and matched comparisons explicitly mark legacy or incomplete
+  action-surface timelines, so absent roll/camera opportunities cannot be
+  misreported as bad learned ranking.
 - Matched scratch comparison now keeps graph-node acquisition schedules fixed
   across learned, scheduler-only, and random-valid action ranking. Its
   fail-closed comparator rejects source, horizon, topology, schema, budget, or

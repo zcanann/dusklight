@@ -499,6 +499,7 @@ pub(super) fn decision_record(
         replay_only_frontiers: trace.replay_only_frontiers,
         visited_states: trace.visited_states,
         completed_executable_graph_expansions: trace.completed_executable_graph_expansions,
+        applicable_tactics: trace.applicable_tactics.clone(),
         root_checkpoint_sha256,
         root_tape,
         source_route_tape,
@@ -673,7 +674,7 @@ pub(super) fn project_tactic_decision_record(
         before: tactic_state_trace(&transition.before)?,
         after: tactic_state_trace(&transition.after)?,
         measurements: Vec::new(),
-        applicable_tactics: Vec::new(),
+        applicable_tactics: record.applicable_tactics,
         proposal_feedback: record.proposal_feedback,
         proposal_batch,
     })
