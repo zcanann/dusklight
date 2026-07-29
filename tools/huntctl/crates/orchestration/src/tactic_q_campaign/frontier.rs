@@ -329,6 +329,7 @@ impl TacticQCampaign {
         &self,
         seed: u64,
         round: u64,
+        acquisition_rank: u64,
         reference: &[TacticEndpointDescriptor],
         maximum_route_frames: usize,
         demonstration_curriculum: bool,
@@ -559,15 +560,23 @@ impl TacticQCampaign {
                     .cmp(&right.1.expansion_count)
                     .then_with(|| left.2.cmp(&right.2))
             } else {
-                compare_frontier_acquisition(&left.1, &right.1).then_with(|| left.2.cmp(&right.2))
+                compare_frontier_acquisition_with_exact_authority(
+                    &left.1,
+                    &right.1,
+                    acquisition_rank == 0,
+                )
+                .then_with(|| left.2.cmp(&right.2))
             }
             .then_with(|| left.1.novelty_rank.cmp(&right.1.novelty_rank))
             .then_with(|| left.0.descriptor.cmp(&right.0.descriptor))
         });
-        let (selected, acquisition, _) = ranked
-            .into_iter()
-            .next()
-            .expect("nonempty learned frontier ranking");
+        let selection_index = if demonstration_curriculum || acquisition_rank == 0 {
+            0
+        } else {
+            usize::try_from(acquisition_rank % ranked.len() as u64)
+                .expect("frontier acquisition rank is bounded by the candidate count")
+        };
+        let (selected, acquisition, _) = ranked.remove(selection_index);
         let frontier = TacticCampaignBranch {
             kind: TacticBranchKind::RetainedFrontier,
             logical_frontier: LogicalTacticFrontierRecord {

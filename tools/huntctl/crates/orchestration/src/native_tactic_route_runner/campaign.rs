@@ -241,6 +241,7 @@ pub(super) fn run_seed(
                 TacticProposalPolicy::Learned => campaign.sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
+                    lane.acquisition.rank(campaign.decision_index),
                     &[],
                     maximum_frontier_frames,
                     demonstration_coverage_pending,
@@ -414,6 +415,7 @@ pub(super) fn run_seed(
                 TacticProposalPolicy::Learned => campaign.sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
+                    lane.acquisition.rank(campaign.decision_index),
                     &[],
                     maximum_frontier_frames,
                     demonstration_coverage_pending,

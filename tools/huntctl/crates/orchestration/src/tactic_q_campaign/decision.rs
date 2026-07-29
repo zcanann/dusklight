@@ -276,17 +276,12 @@ impl TacticQCampaign {
                     TacticValueTreatment::GoalRelabeledFittedQKnnV2 => {
                         let model = self.active_goal_relabel_model(goal_distance_feature)?;
                         model
-                            .map(|model| {
-                                if terminal_support_acquisition && native_terminal_supported {
-                                    model.rank_terminal_support(
-                                        &features,
-                                        &context,
-                                        &applicable_descriptors,
-                                    )
-                                } else {
-                                    model.rank(&features, &context, &applicable_descriptors)
-                                }
-                            })
+                            // Achieved-goal and native-terminal scratch critics
+                            // order actions only by learned return. Behavior
+                            // transfer is reserved for the optional
+                            // demonstration treatment; repeating the first
+                            // slow scratch success cannot optimize it.
+                            .map(|model| model.rank(&features, &context, &applicable_descriptors))
                             .transpose()?
                             .map(|estimates| {
                                 estimates

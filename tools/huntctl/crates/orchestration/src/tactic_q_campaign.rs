@@ -875,9 +875,18 @@ fn option_f64(value: Option<f64>) -> f64 {
     value.unwrap_or(f64::NEG_INFINITY)
 }
 
+#[cfg(test)]
 fn compare_frontier_acquisition(
     left: &TacticFrontierAcquisition,
     right: &TacticFrontierAcquisition,
+) -> std::cmp::Ordering {
+    compare_frontier_acquisition_with_exact_authority(left, right, true)
+}
+
+fn compare_frontier_acquisition_with_exact_authority(
+    left: &TacticFrontierAcquisition,
+    right: &TacticFrontierAcquisition,
+    exact_terminal_path_authoritative: bool,
 ) -> std::cmp::Ordering {
     let terminal = right.terminal.cmp(&left.terminal);
     if terminal != std::cmp::Ordering::Equal {
@@ -930,18 +939,20 @@ fn compare_frontier_acquisition(
             .terminal_value_supported
             .cmp(&left.terminal_value_supported);
     }
-    match (
-        left.exact_total_terminal_ticks,
-        right.exact_total_terminal_ticks,
-    ) {
-        (Some(left_ticks), Some(right_ticks)) => {
-            return left_ticks
-                .cmp(&right_ticks)
-                .then_with(|| left.expansion_count.cmp(&right.expansion_count));
+    if exact_terminal_path_authoritative {
+        match (
+            left.exact_total_terminal_ticks,
+            right.exact_total_terminal_ticks,
+        ) {
+            (Some(left_ticks), Some(right_ticks)) => {
+                return left_ticks
+                    .cmp(&right_ticks)
+                    .then_with(|| left.expansion_count.cmp(&right.expansion_count));
+            }
+            (Some(_), None) => return std::cmp::Ordering::Less,
+            (None, Some(_)) => return std::cmp::Ordering::Greater,
+            (None, None) => {}
         }
-        (Some(_), None) => return std::cmp::Ordering::Less,
-        (None, Some(_)) => return std::cmp::Ordering::Greater,
-        (None, None) => {}
     }
     match (
         left.predicted_total_terminal_ticks,

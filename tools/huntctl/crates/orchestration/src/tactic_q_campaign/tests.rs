@@ -188,6 +188,10 @@ fn exact_terminal_path_precedes_an_optimistic_generalized_prediction() {
         compare_frontier_acquisition(&exact, &optimistic),
         std::cmp::Ordering::Less
     );
+    assert_eq!(
+        compare_frontier_acquisition_with_exact_authority(&exact, &optimistic, false),
+        std::cmp::Ordering::Greater
+    );
 }
 
 #[test]
@@ -994,6 +998,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     let [ranked_root, ranked_frontier] = restored
         .sample_root_and_ranked_frontier(
             5,
+            0,
             0,
             &[],
             usize::MAX,
