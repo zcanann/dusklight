@@ -775,9 +775,27 @@
           }
         ],
         "interpretation": "Doubling decisions did not improve terminal rate and shortened the best successful routes by only zero and one tick. The goal-relabeled achieved-goal critic deliberately carries no native-terminal authority, but it remained the active generalized critic after terminal discovery. Consequently every terminal-supported acquisition lacked a predicted total terminal tick cost. More mining cannot exercise the intended shortening comparator until native-terminal and achieved-goal critics are separated."
+      },
+      "terminal_critic_handoff_probe": {
+        "source_report_path": "build/campaigns/ordon-p3-q131-terminal-critic-handoff-seed155921-1x64-b4-w1-v1-20260728/report.json",
+        "source_report_sha256": "a662ab59fafecda9a81eab3536ea76fa536b4a17c43c5839668a240d9607b21b",
+        "execution_plan_sha256": "3840514e0800c38db63b75bda64cc1adf53086f19b3f7042eefc2389df4e6260",
+        "seed": 155921,
+        "decisions": 64,
+        "proposals_per_decision": 4,
+        "demonstration_transitions": 0,
+        "terminal": true,
+        "best_authenticated_tick": 206,
+        "terminal_supported_frontier_acquisitions": 9,
+        "terminal_supported_acquisitions_with_predicted_total_terminal_ticks": 9,
+        "minimum_predicted_total_terminal_ticks": 51.0,
+        "maximum_predicted_total_terminal_ticks": 211.0,
+        "native_terminal_critic_handoff_operational": true,
+        "route_shortened": false,
+        "interpretation": "After authenticated native-terminal support appears, the zero-terminal achieved-goal critic now hands authority to a separately fitted native-terminal critic. The exact prior seed and execution plan reproduced tick 206, and every later terminal-supported acquisition carried a learned total-tick prediction rather than null. This repairs terminal-cost availability but does not establish calibration or optimization: predictions spanned 51 to 211 ticks and the retained route did not improve."
       }
     },
-    "conclusion": "The learner reached the real terminal from scratch as soon as a route was allowed to exceed 160 ticks, retained terminal evidence independently of policy selection, propagated its value, and then selected terminal-producing actions. The enforced 1,024-tick campaign independently reproduced tick 206 and found a second terminal at tick 337, yielding 2/4 isolated successes. Prior 160-tick scratch failures were horizon-confounded. Strict 131/125 authority applies to shortening and promotion, not terminal discovery."
+    "conclusion": "The learner reached the real terminal from scratch as soon as a route was allowed to exceed 160 ticks, retained terminal evidence independently of policy selection, propagated its value, and then selected terminal-producing actions. The enforced 1,024-tick campaign independently reproduced tick 206 and found a second terminal at tick 337, yielding 2/4 isolated successes. Prior 160-tick scratch failures were horizon-confounded. A separate native-terminal critic now supplies total-tick predictions after genuine terminal support, but has not shortened the tick-206 route. Strict 131/125 authority applies to shortening and promotion, not terminal discovery."
   },
   "observations": {
     "ordinary_suboptimal_replay_improves_terminal_sample_efficiency": true,
@@ -803,7 +821,7 @@
     "generous_horizon_independent_terminal_rate": 0.5,
     "scratch_terminal_learning_reproduced": true,
     "extra_decisions_improve_scratch_terminal_rate": false,
-    "goal_relabel_critic_supplies_terminal_tick_predictions": false,
+    "goal_relabel_critic_supplies_terminal_tick_predictions": true,
     "p3_task_complete": false
   }
 }

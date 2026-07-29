@@ -172,11 +172,13 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   `2/4`. Tick `206` did not improve and tick `337` improved only to `336`;
   failed seeds moved closer but still did not terminate. All `37`
   terminal-supported frontier acquisitions had no predicted total terminal
-  ticks. The goal-relabeled critic correctly strips native-terminal authority
-  from achieved-goal labels, but it incorrectly remained the active critic
-  after real terminal support existed. Extra mining cannot shorten routes
-  until achieved-goal discovery and native-terminal optimization use distinct
-  learned models.
+  ticks because the zero-terminal achieved-goal critic incorrectly remained
+  active after real terminal support existed. Discovery and terminal
+  optimization now use distinct critics. The exact tick-`206` seed reproduced
+  its terminal, and all `9` later terminal-supported frontier acquisitions
+  carried learned total-tick predictions instead of nulls. The best route
+  remained tick `206`, and predictions ranged from `51` to `211`, so terminal
+  credit is now operational but not yet calibrated or route-improving.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
   camera orientation, exact A-button prompt-status bits, and the native
@@ -223,7 +225,7 @@ tie is diagnostic evidence only.
 
 - [ ] Run the enforced generous scratch-discovery horizon across independent
       seeds and establish reliable authenticated terminal discovery.
-- [ ] Hand off from the zero-terminal achieved-goal critic to a distinct
+- [x] Hand off from the zero-terminal achieved-goal critic to a distinct
       native-terminal critic after authenticated support exists. Prove that
       terminal-supported frontier acquisitions carry learned total tick
       predictions.
