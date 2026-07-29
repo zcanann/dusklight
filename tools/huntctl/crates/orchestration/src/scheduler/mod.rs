@@ -12,6 +12,10 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
+pub const EXPANSION_SCHEDULER_CONFIG_SCHEMA_V1: &str = "dusklight-expansion-scheduler-config/v1";
+pub const GRAPH_PRIORITY_SNAPSHOT_SCHEMA_V1: &str = "dusklight-graph-priority-snapshot/v1";
+pub const REPLAYABLE_EXPANSION_QUEUE_SCHEMA_V1: &str = "dusklight-replayable-expansion-queue/v1";
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchRegime {
@@ -64,6 +68,212 @@ pub struct ScheduledNode {
     pub completed_expansions: u64,
     pub exact_terminal_ticks_to_go: Option<u64>,
     pub tie_rank: Digest,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpansionSchedulerConfig {
+    pub schema: String,
+    pub regime: SearchRegime,
+    pub seed: u64,
+    pub generation: u64,
+    pub lease_generations: u64,
+}
+
+impl ExpansionSchedulerConfig {
+    pub fn validate(&self) -> Result<(), SchedulerError> {
+        if self.schema != EXPANSION_SCHEDULER_CONFIG_SCHEMA_V1 || self.lease_generations == 0 {
+            return Err(SchedulerError::Invalid(
+                "sealed expansion scheduler config is invalid",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn content_sha256(&self) -> Result<Digest, SchedulerError> {
+        self.validate()?;
+        let mut hasher = Sha256::new();
+        hasher.update(EXPANSION_SCHEDULER_CONFIG_SCHEMA_V1.as_bytes());
+        hasher.update([self.regime as u8]);
+        hasher.update(self.seed.to_le_bytes());
+        hasher.update(self.generation.to_le_bytes());
+        hasher.update(self.lease_generations.to_le_bytes());
+        Ok(Digest(hasher.finalize().into()))
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GraphPrioritySnapshot {
+    pub schema: String,
+    pub graph_sha256: Digest,
+    /// Identity of the model or exact table that published these estimates.
+    /// `None` is an explicit cold-start snapshot, not an implicit mutable map.
+    pub learner_snapshot_sha256: Option<Digest>,
+    pub estimates: BTreeMap<Digest, LearnedExpansionPriority>,
+}
+
+impl GraphPrioritySnapshot {
+    pub fn cold_start(graph: &StateGraph) -> Result<Self, SchedulerError> {
+        Ok(Self {
+            schema: GRAPH_PRIORITY_SNAPSHOT_SCHEMA_V1.into(),
+            graph_sha256: graph.content_sha256()?,
+            learner_snapshot_sha256: None,
+            estimates: BTreeMap::new(),
+        })
+    }
+
+    pub fn validate_against(&self, graph: &StateGraph) -> Result<(), SchedulerError> {
+        if self.schema != GRAPH_PRIORITY_SNAPSHOT_SCHEMA_V1
+            || self.graph_sha256 != graph.content_sha256()?
+            || self.learner_snapshot_sha256 == Some(Digest::ZERO)
+        {
+            return Err(SchedulerError::Invalid(
+                "learner priority snapshot is detached from the graph",
+            ));
+        }
+        for (expansion_sha256, estimate) in &self.estimates {
+            if graph.expansion(*expansion_sha256).is_none() {
+                return Err(SchedulerError::Invalid(
+                    "learner priority snapshot names an absent expansion",
+                ));
+            }
+            estimate.validate()?;
+        }
+        Ok(())
+    }
+
+    pub fn content_sha256(&self) -> Result<Digest, SchedulerError> {
+        let mut hasher = Sha256::new();
+        hasher.update(GRAPH_PRIORITY_SNAPSHOT_SCHEMA_V1.as_bytes());
+        hasher.update(self.graph_sha256.0);
+        match self.learner_snapshot_sha256 {
+            Some(identity) => {
+                hasher.update([1]);
+                hasher.update(identity.0);
+            }
+            None => hasher.update([0]),
+        }
+        hasher.update((self.estimates.len() as u64).to_le_bytes());
+        for (identity, estimate) in &self.estimates {
+            estimate.validate()?;
+            hasher.update(identity.0);
+            hash_learned_priority(&mut hasher, *estimate);
+        }
+        Ok(Digest(hasher.finalize().into()))
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplayableExpansionQueue {
+    pub schema: String,
+    pub graph_sha256: Digest,
+    pub learner_priority_snapshot_sha256: Digest,
+    pub scheduler_config_sha256: Digest,
+    pub ranked_expansions: Vec<Digest>,
+    pub selected_expansion_sha256: Option<Digest>,
+    pub queue_sha256: Digest,
+}
+
+impl ReplayableExpansionQueue {
+    fn seal(
+        graph_sha256: Digest,
+        learner_priority_snapshot_sha256: Digest,
+        scheduler_config_sha256: Digest,
+        ranked_expansions: Vec<Digest>,
+    ) -> Self {
+        let selected_expansion_sha256 = ranked_expansions.first().copied();
+        let queue_sha256 = expansion_queue_sha256(
+            graph_sha256,
+            learner_priority_snapshot_sha256,
+            scheduler_config_sha256,
+            &ranked_expansions,
+        );
+        Self {
+            schema: REPLAYABLE_EXPANSION_QUEUE_SCHEMA_V1.into(),
+            graph_sha256,
+            learner_priority_snapshot_sha256,
+            scheduler_config_sha256,
+            ranked_expansions,
+            selected_expansion_sha256,
+            queue_sha256,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), SchedulerError> {
+        if self.schema != REPLAYABLE_EXPANSION_QUEUE_SCHEMA_V1
+            || self.selected_expansion_sha256 != self.ranked_expansions.first().copied()
+            || self.queue_sha256
+                != expansion_queue_sha256(
+                    self.graph_sha256,
+                    self.learner_priority_snapshot_sha256,
+                    self.scheduler_config_sha256,
+                    &self.ranked_expansions,
+                )
+        {
+            return Err(SchedulerError::Invalid(
+                "replayable expansion queue is invalid",
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub fn replay_expansion_queue(
+    graph: &StateGraph,
+    config: &ExpansionSchedulerConfig,
+    learned: &GraphPrioritySnapshot,
+) -> Result<ReplayableExpansionQueue, SchedulerError> {
+    graph.validate()?;
+    config.validate()?;
+    learned.validate_against(graph)?;
+    let ranked = rank_schedulable_expansions_with_seed(
+        graph,
+        config.regime,
+        config.generation,
+        config.seed,
+        &learned.estimates,
+    )?;
+    let queue = ReplayableExpansionQueue::seal(
+        graph.content_sha256()?,
+        learned.content_sha256()?,
+        config.content_sha256()?,
+        ranked
+            .into_iter()
+            .map(|entry| entry.expansion_sha256)
+            .collect(),
+    );
+    queue.validate()?;
+    Ok(queue)
+}
+
+pub fn lease_replayed_expansion(
+    graph: &mut StateGraph,
+    config: &ExpansionSchedulerConfig,
+    learned: &GraphPrioritySnapshot,
+    lease_sha256: Digest,
+) -> Result<ReplayableExpansionQueue, SchedulerError> {
+    if lease_sha256 == Digest::ZERO {
+        return Err(SchedulerError::Invalid(
+            "scheduler lease identity is missing",
+        ));
+    }
+    let queue = replay_expansion_queue(graph, config, learned)?;
+    if let Some(selected) = queue.selected_expansion_sha256 {
+        graph.lease_action_expansion(
+            selected,
+            lease_sha256,
+            config.generation,
+            config
+                .generation
+                .checked_add(config.lease_generations)
+                .ok_or(SchedulerError::Invalid(
+                    "scheduler lease generation overflows",
+                ))?,
+        )?;
+    }
+    Ok(queue)
 }
 
 pub fn rank_schedulable_nodes(
@@ -139,6 +349,16 @@ pub fn rank_schedulable_expansions(
     current_generation: u64,
     learned: &BTreeMap<Digest, LearnedExpansionPriority>,
 ) -> Result<Vec<ScheduledExpansion>, SchedulerError> {
+    rank_schedulable_expansions_with_seed(graph, regime, current_generation, 0, learned)
+}
+
+fn rank_schedulable_expansions_with_seed(
+    graph: &StateGraph,
+    regime: SearchRegime,
+    current_generation: u64,
+    seed: u64,
+    learned: &BTreeMap<Digest, LearnedExpansionPriority>,
+) -> Result<Vec<ScheduledExpansion>, SchedulerError> {
     graph.validate()?;
     if regime == SearchRegime::Optimization && graph.best_terminal_path().is_none() {
         return Err(SchedulerError::Invalid(
@@ -168,7 +388,13 @@ pub fn rank_schedulable_expansions(
             })
         })
         .collect::<Result<Vec<_>, SchedulerError>>()?;
-    ranked.sort_by(|left, right| compare_scheduled(regime, left, right));
+    ranked.sort_by(|left, right| {
+        compare_scheduled(regime, left, right).then_with(|| {
+            expansion_tie_rank(seed, current_generation, left.expansion_sha256).cmp(
+                &expansion_tie_rank(seed, current_generation, right.expansion_sha256),
+            )
+        })
+    });
     Ok(ranked)
 }
 
@@ -249,8 +475,6 @@ fn compare_scheduled(
         }
     };
     ordering
-        .then_with(|| left.source.cmp(&right.source))
-        .then_with(|| left.expansion_sha256.cmp(&right.expansion_sha256))
 }
 
 fn compare_scheduled_node(
@@ -296,6 +520,58 @@ fn node_tie_rank(seed: u64, generation: u64, node: ExactStateId) -> Digest {
     Digest(hasher.finalize().into())
 }
 
+fn expansion_tie_rank(seed: u64, generation: u64, expansion_sha256: Digest) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-scheduled-expansion-tie/v1");
+    hasher.update(seed.to_le_bytes());
+    hasher.update(generation.to_le_bytes());
+    hasher.update(expansion_sha256.0);
+    Digest(hasher.finalize().into())
+}
+
+fn hash_learned_priority(hasher: &mut Sha256, estimate: LearnedExpansionPriority) {
+    hash_optional_u64(hasher, estimate.policy_rank);
+    match estimate.terminal_support_per_million {
+        Some(value) => {
+            hasher.update([1]);
+            hasher.update(value.to_le_bytes());
+        }
+        None => hasher.update([0]),
+    }
+    hash_optional_u64(hasher, estimate.conditional_ticks_to_go);
+    hasher.update(estimate.uncertainty_millionths.to_le_bytes());
+    hasher.update(estimate.prediction_error_millionths.to_le_bytes());
+    hasher.update(estimate.completed_visits.to_le_bytes());
+}
+
+fn hash_optional_u64(hasher: &mut Sha256, value: Option<u64>) {
+    match value {
+        Some(value) => {
+            hasher.update([1]);
+            hasher.update(value.to_le_bytes());
+        }
+        None => hasher.update([0]),
+    }
+}
+
+fn expansion_queue_sha256(
+    graph_sha256: Digest,
+    learner_priority_snapshot_sha256: Digest,
+    scheduler_config_sha256: Digest,
+    ranked_expansions: &[Digest],
+) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(REPLAYABLE_EXPANSION_QUEUE_SCHEMA_V1.as_bytes());
+    hasher.update(graph_sha256.0);
+    hasher.update(learner_priority_snapshot_sha256.0);
+    hasher.update(scheduler_config_sha256.0);
+    hasher.update((ranked_expansions.len() as u64).to_le_bytes());
+    for identity in ranked_expansions {
+        hasher.update(identity.0);
+    }
+    Digest(hasher.finalize().into())
+}
+
 #[derive(Debug)]
 pub enum SchedulerError {
     Invalid(&'static str),
@@ -329,6 +605,12 @@ impl From<StateGraphError> for SchedulerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dusklight_automation_contracts::tape::{InputFrame, InputTape};
+    use dusklight_control::option_execution::OptionType;
+    use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
+    use dusklight_learning::fact_snapshot::FactSnapshot;
+    use dusklight_learning::option_values::OptionActionDescriptor;
+    use std::collections::BTreeMap;
 
     fn entry(
         identity: u8,
@@ -362,6 +644,56 @@ mod tests {
             exact_terminal_ticks_to_go,
             tie_rank: Digest([identity; 32]),
         }
+    }
+
+    fn replay_graph() -> (StateGraph, Digest, Digest) {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let state = FactSnapshot::from_native_learning(
+            &shard.episodes[0].steps[0].pre_input,
+            &[],
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        let route = InputTape {
+            frames: vec![InputFrame::default(); state.tape_frame as usize],
+            ..InputTape::default()
+        };
+        let mut graph = StateGraph::new(
+            crate::state_graph::StateGraphIdentity {
+                execution_authority_sha256: Digest([1; 32]),
+                feature_schema_sha256: Digest([2; 32]),
+                objective_sha256: Digest([3; 32]),
+                root_checkpoint_sha256: Digest([4; 32]),
+            },
+            state,
+            route,
+        )
+        .unwrap();
+        let first = graph
+            .register_action_expansion(
+                graph.root(),
+                OptionActionDescriptor {
+                    option_id: "move".into(),
+                    option_type: OptionType::Move,
+                    parameters: BTreeMap::new(),
+                },
+            )
+            .unwrap();
+        let second = graph
+            .register_action_expansion(
+                graph.root(),
+                OptionActionDescriptor {
+                    option_id: "turn".into(),
+                    option_type: OptionType::Turn,
+                    parameters: BTreeMap::new(),
+                },
+            )
+            .unwrap();
+        (graph, first, second)
     }
 
     #[test]
@@ -459,5 +791,88 @@ mod tests {
             compare_scheduled_node(SearchRegime::Optimization, &path, &broad),
             Ordering::Less
         );
+    }
+
+    #[test]
+    fn sealed_queue_replays_across_a_binary_graph_restart() {
+        let (graph, first, second) = replay_graph();
+        let learned = GraphPrioritySnapshot {
+            schema: GRAPH_PRIORITY_SNAPSHOT_SCHEMA_V1.into(),
+            graph_sha256: graph.content_sha256().unwrap(),
+            learner_snapshot_sha256: Some(Digest([9; 32])),
+            estimates: BTreeMap::from([
+                (
+                    first,
+                    LearnedExpansionPriority {
+                        policy_rank: Some(1),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    second,
+                    LearnedExpansionPriority {
+                        policy_rank: Some(0),
+                        ..Default::default()
+                    },
+                ),
+            ]),
+        };
+        let config = ExpansionSchedulerConfig {
+            schema: EXPANSION_SCHEDULER_CONFIG_SCHEMA_V1.into(),
+            regime: SearchRegime::Discovery,
+            seed: 17,
+            generation: 4,
+            lease_generations: 3,
+        };
+
+        let before = replay_expansion_queue(&graph, &config, &learned).unwrap();
+        let restored = StateGraph::decode(&graph.encode().unwrap()).unwrap();
+        let after = replay_expansion_queue(&restored, &config, &learned).unwrap();
+
+        assert_eq!(before, after);
+        assert_eq!(before.selected_expansion_sha256, Some(second));
+        assert_eq!(before.ranked_expansions, vec![second, first]);
+        before.validate().unwrap();
+    }
+
+    #[test]
+    fn leasing_consumes_the_replayed_graph_owned_expansion() {
+        let (mut graph, first, second) = replay_graph();
+        let learned = GraphPrioritySnapshot {
+            schema: GRAPH_PRIORITY_SNAPSHOT_SCHEMA_V1.into(),
+            graph_sha256: graph.content_sha256().unwrap(),
+            learner_snapshot_sha256: Some(Digest([8; 32])),
+            estimates: BTreeMap::from([
+                (
+                    first,
+                    LearnedExpansionPriority {
+                        policy_rank: Some(1),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    second,
+                    LearnedExpansionPriority {
+                        policy_rank: Some(0),
+                        ..Default::default()
+                    },
+                ),
+            ]),
+        };
+        let config = ExpansionSchedulerConfig {
+            schema: EXPANSION_SCHEDULER_CONFIG_SCHEMA_V1.into(),
+            regime: SearchRegime::Discovery,
+            seed: 23,
+            generation: 10,
+            lease_generations: 2,
+        };
+
+        let queue =
+            lease_replayed_expansion(&mut graph, &config, &learned, Digest([7; 32])).unwrap();
+
+        assert_eq!(queue.selected_expansion_sha256, Some(second));
+        assert!(!graph.expansion_is_schedulable(second, 10));
+        assert!(graph.expansion_is_schedulable(second, 12));
+        assert!(replay_expansion_queue(&graph, &config, &learned).is_err());
     }
 }
