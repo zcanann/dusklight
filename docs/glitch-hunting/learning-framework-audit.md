@@ -77,6 +77,20 @@ velocity, trajectory, camera, prompt, kinematic-consequence, roll, A, and L
 coverage. It also rejects authored route coordinates and benchmark-specific
 policy signals.
 
+Compare the actual pre-terminal reachability learner with matched action-mean,
+production scheduler-only, and production random-valid controls:
+
+```text
+huntctl learn compare-tactic-value-controls \
+  --input GENERATED-TRAINING.dtqc \
+  --output HELD-OUT-CONTROLS.json
+```
+
+The state-region split measures pairwise ordering and regret on independently
+realized actions at wholly held-out native states. See
+[held-out-tactic-controls.md](held-out-tactic-controls.md) for the candidate
+surface, calibration, and unsupported-action contracts.
+
 Executable and game-image bytes are deliberately not duplicated into the
 bundle. Their exact SHA-256 identities, runtime dependency identities, native
 source boundary, objective, process tape, milestone program, world context,

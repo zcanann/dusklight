@@ -600,8 +600,8 @@ fn canonical_digest(
 
 mod comparison;
 pub use comparison::{
-    GENERALIZED_TACTIC_CONTROL_COMPARISON_SCHEMA_V1, GeneralizedTacticControlComparisonReport,
-    compare_generalized_tactic_controls,
+    GENERALIZED_TACTIC_CONTROL_COMPARISON_SCHEMA_V2, GeneralizedTacticControlComparisonReport,
+    GeneralizedTacticControlKind, compare_generalized_tactic_controls,
 };
 mod cross;
 pub use cross::{

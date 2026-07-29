@@ -76,6 +76,12 @@ The incoming 2026-07-29 work made substantial, useful progress:
   and fails on missing legacy evidence, authored route sequences, or
   benchmark-specific features. A retained native campaign still has to pass
   this audit before the P2 observation task is complete.
+- The held-out tactic comparator now evaluates the actual scratch-discovery
+  achieved-goal learner against exact-action mean and the production
+  scheduler-only and random-valid policies on identical whole-group splits.
+  It reports unsupported actions, validation-calibrated test error, epistemic
+  distance, pairwise ordering, top-action wins, and regret. The P2 gate remains
+  open until a retained native corpus demonstrates an advantage.
 - Native option summaries now retain same-tick wall-contact/commanded-motion
   overlap and the momentum loss measured on those ticks. The v5 tactic feature
   schema exposes the measured consequence with explicit legacy missingness;

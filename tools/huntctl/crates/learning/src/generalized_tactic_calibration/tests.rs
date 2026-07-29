@@ -1,5 +1,6 @@
 use super::*;
 use crate::fact_snapshot::{FactSnapshot, FactTerminalReason};
+use crate::tactic_features::GoalConditionedTacticFeatureEncoder;
 use crate::tactic_value_treatment::{ContinuousTacticDoubleQModel, ContinuousTacticValueModel};
 use crate::tape::{InputFrame, InputTape};
 use dusklight_control::option_execution::{
@@ -43,6 +44,9 @@ fn fact_pair() -> (FactSnapshot, FactSnapshot) {
 
 fn transition(_index: usize, state_group: usize, action_group: usize) -> OptionTransitionSample {
     let (mut before, mut after) = fact_pair();
+    let duration = action_group as u32 + 1;
+    after.tape_frame = before.tape_frame + u64::from(duration) - 1;
+    after.simulation_tick = before.simulation_tick + u64::from(duration) - 1;
     let x = state_group as f32 * 300.0;
     before.player.position_f32_bits[0] = x.to_bits();
     before.player.position_f32_bits[2] = 0.0_f32.to_bits();
@@ -64,18 +68,22 @@ fn transition(_index: usize, state_group: usize, action_group: usize) -> OptionT
     tape.frames[before.tape_frame as usize].pads[0].stick_x = action_group as i8 * 20;
     tape.frames[before.tape_frame as usize].pads[0].stick_y = 100;
     let action = format!("direction-{action_group}");
+    let encoder = GoalConditionedTacticFeatureEncoder::new([10_000.0, 0.0, 0.0]).unwrap();
     let execution = OptionExecution::capture(
         action.clone(),
         OptionType::Move,
         BTreeMap::from([
-            ("duration_ticks".into(), OptionParameter::Unsigned(1)),
+            (
+                "duration_ticks".into(),
+                OptionParameter::Unsigned(u64::from(duration)),
+            ),
             (
                 "direction_degrees".into(),
                 OptionParameter::Signed(action_group as i64 * 15),
             ),
         ]),
-        1,
-        1,
+        duration,
+        duration,
         OptionCondition::DurationElapsed,
         Vec::new(),
         OptionEndReason::Completed,
@@ -87,21 +95,16 @@ fn transition(_index: usize, state_group: usize, action_group: usize) -> OptionT
     )
     .unwrap();
     OptionTransitionSample::capture(
-        Digest([1; 32]),
+        encoder.schema_sha256,
         Digest([2; 32]),
         Digest([3; 32]),
         before,
         after,
         execution,
         &tape,
-        99.0,
+        99.0 - action_group as f32,
         terminal,
-        |facts| {
-            Ok::<_, &'static str>(vec![
-                10_000.0 - f32::from_bits(facts.player.position_f32_bits[0]),
-                f32::from_bits(facts.player.position_f32_bits[0]),
-            ])
-        },
+        |facts| encoder.encode(facts),
     )
     .unwrap()
 }
@@ -197,7 +200,9 @@ fn rejects_row_scale_splits_without_enough_semantic_groups() {
 fn compares_all_controls_on_the_same_whole_group_partitions() {
     let report = compare_generalized_tactic_controls(
         &corpus(),
-        0,
+        GoalConditionedTacticFeatureEncoder::new([0.0; 3])
+            .unwrap()
+            .goal_distance_feature(),
         GeneralizedTacticCalibrationConfig {
             fitted_q_iterations: 8,
             ..GeneralizedTacticCalibrationConfig::default()
@@ -208,18 +213,17 @@ fn compares_all_controls_on_the_same_whole_group_partitions() {
     report.validate().unwrap();
     for axis in [&report.state_region, &report.action_realization] {
         assert_eq!(axis.group_overlap_count, 0);
-        assert_eq!(axis.models.len(), 5);
+        assert_eq!(axis.models.len(), 4);
         assert_eq!(
             axis.models
                 .iter()
                 .map(|metrics| metrics.model.as_str())
                 .collect::<Vec<_>>(),
             vec![
-                "local_generalized_fitted_q_knn",
-                "continuous_fitted_q_forest",
-                "continuous_double_q",
-                "continuous_conservative_offline_q",
-                "structured_shortest_valid_action",
+                "pre_terminal_goal_relabel_fitted_q_knn",
+                "action_mean",
+                "production_scheduler_only",
+                "production_random_valid",
             ]
         );
         assert!(
@@ -227,10 +231,36 @@ fn compares_all_controls_on_the_same_whole_group_partitions() {
                 .iter()
                 .all(|metrics| metrics.evaluation_samples > 0)
         );
+        assert!(
+            axis.models
+                .iter()
+                .skip(2)
+                .all(|metrics| metrics.mean_absolute_error.is_none())
+        );
     }
+    assert!(report.state_region.models[0].mean_absolute_error.is_some());
+    assert!(report.state_region.models[1].mean_absolute_error.is_some());
+    assert_eq!(
+        report.action_realization.models[1].unsupported_samples,
+        report.action_realization.models[1].evaluation_samples
+    );
+    assert!(
+        report.action_realization.models[1]
+            .mean_absolute_error
+            .is_none()
+    );
+    assert!(
+        report
+            .state_region
+            .models
+            .iter()
+            .all(|metrics| metrics.comparable_action_pairs > 0),
+        "{:?}",
+        report.state_region.models
+    );
 
     let mut mislabeled = report;
-    mislabeled.state_region.models[0].model = "structured_shortest_valid_action".into();
+    mislabeled.state_region.models[0].model = "production_scheduler_only".into();
     mislabeled.report_sha256 = mislabeled.digest().unwrap();
     assert!(mislabeled.validate().is_err());
 }
