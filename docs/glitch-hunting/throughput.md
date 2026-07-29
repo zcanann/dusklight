@@ -355,3 +355,43 @@ the optimization request, execution binding, and execution-plan identities are
 `d37c1635757049582b7fa571bf2d45b6d7be88633d4a32a42502413c3ebbbf75`,
 `e4def9095daf4500800647966e9e01b527a0af91e02f4ba88fb22dde3aee85cb`,
 and `c3896c9163d2aea867b63f0bdb44a3e7f9a96a98b315c57db03f95c4befe24fe`.
+
+### Persistent-fleet treatment
+
+The v2 treatment on 2026-07-29 moved native worker ownership above individual
+route runs. One authenticated 16-process fleet now remains alive while each
+curve cell selects a bounded active prefix. Every submitted batch still
+restores and validates the complete typed source boundary; the optimization
+request, execution binding, terminal predicate, initial facts, and root
+checkpoint must match the fleet before a route run is admitted.
+
+The fleet took 79.465 seconds to launch once. The ten measured samples then
+reported exactly zero process-launch time:
+
+| Active workers | Median seconds | Useful expansions/s | Warm speedup | Efficiency |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 45.478 | 0.352 | 1.00x | 100.0% |
+| 2 | 24.014 | 0.666 | 1.89x | 94.7% |
+| 4 | 13.010 | 1.230 | 3.50x | 87.4% |
+| 8 | 7.386 | 2.166 | 6.16x | 77.0% |
+| 16 | 5.485 | 2.917 | 8.29x | 51.8% |
+
+The same-topology 16-worker fixed target fell from the cold curve's 85.211
+seconds to 5.485 seconds, a 15.54x steady-state reduction. The complete
+balanced curve consumed 190.747 seconds of measured work and 270.212 seconds
+including its one fleet boot, versus 811.235 seconds when all ten cells booted
+their own pools. Startup is therefore amortized and retained as a separate
+top-level measurement, not removed from the evidence.
+
+All ten cells completed the same 16 graph-authoritative expansions, agreed on
+semantic expansion/evidence digest
+`8bc738c30fbd903dc0c62799c304d809edb9797a99a529bb861ba336e6f4e432`,
+had zero replay staleness, remained inside the checkpoint-memory bound, and
+increased useful throughput at every worker count. The v2 report rejects any
+sample with nonzero process-launch time, so a regression to per-cell boot
+cannot pass as persistent reuse.
+
+The ignored evidence root is
+`build/benchmarks/ordon-native-tactic-fixed-work-persistent-v2`; its sealed
+report content SHA-256 is
+`1499e563b4fb308b005e88c0fb7ff60df283edce4bfe9c47c37d0755cf656aaa`.

@@ -3,6 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V1: &str =
     "dusklight-native-tactic-throughput-curve/v1";
+pub const NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V2: &str =
+    "dusklight-native-tactic-throughput-curve/v2";
 pub const NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS: [usize; 5] = [1, 2, 4, 8, 16];
 const MINIMUM_REPETITIONS: u32 = 2;
 const MAXIMUM_REPETITIONS: u32 = 6;
@@ -64,6 +66,8 @@ pub struct NativeTacticThroughputCurveReport {
     pub optimization_request_sha256: Digest,
     pub execution_binding_sha256: Digest,
     pub execution_plan_sha256: Digest,
+    pub fleet_workers: usize,
+    pub fleet_launch_micros: u64,
     pub repetitions: u32,
     pub worker_counts: Vec<usize>,
     pub fixed_completed_decisions: u64,
@@ -82,7 +86,7 @@ pub struct NativeTacticThroughputCurveReport {
 
 impl NativeTacticThroughputCurveReport {
     pub fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
-        if self.schema != NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V1
+        if self.schema != NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V2
             || self.recorded_unix_millis == 0
             || self.operating_system.is_empty()
             || self.architecture.is_empty()
@@ -90,6 +94,12 @@ impl NativeTacticThroughputCurveReport {
             || self.optimization_request_sha256 == Digest::ZERO
             || self.execution_binding_sha256 == Digest::ZERO
             || self.execution_plan_sha256 == Digest::ZERO
+            || self.fleet_workers
+                != NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS
+                    .last()
+                    .copied()
+                    .unwrap_or(0)
+            || self.fleet_launch_micros == 0
             || !(MINIMUM_REPETITIONS..=MAXIMUM_REPETITIONS).contains(&self.repetitions)
             || self.worker_counts != NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS
             || self.fixed_completed_decisions == 0
@@ -127,16 +137,13 @@ impl NativeTacticThroughputCurveReport {
                 || sample.route_report_path.is_empty()
                 || sample.route_report_sha256 == Digest::ZERO
                 || sample.state_graph_sha256s.is_empty()
-                || sample
-                    .state_graph_sha256s
-                    .iter()
-                    .any(|sha256| *sha256 == Digest::ZERO)
+                || sample.state_graph_sha256s.contains(&Digest::ZERO)
                 || sample.useful_graph_expansion_set_sha256s.is_empty()
                 || sample
                     .useful_graph_expansion_set_sha256s
-                    .iter()
-                    .any(|sha256| *sha256 == Digest::ZERO)
+                    .contains(&Digest::ZERO)
                 || sample.wall_micros == 0
+                || sample.process_launch_micros != 0
                 || sample.unique_useful_graph_expansions_per_second_millionths
                     != per_second_millionths(
                         sample.unique_useful_graph_expansions,
@@ -200,7 +207,7 @@ impl NativeTacticThroughputCurveReport {
         identity.content_sha256 = Digest::ZERO;
         let bytes = serde_json::to_vec(&identity).map_err(route_error)?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-tactic-throughput-curve/v1\0");
+        hasher.update(b"dusklight.native-tactic-throughput-curve/v2\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -351,6 +358,24 @@ pub fn run_native_tactic_throughput_curve(
         } => maximum_stale_replay_revisions,
         NativeTacticReplaySharingPlan::GenerationBarrier => 0,
     };
+    let fleet_workers = NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS
+        .last()
+        .copied()
+        .ok_or_else(|| route_message("throughput curve worker topology is empty"))?;
+    let fleet_root = config.output_root.join("worker-fleet");
+    let fleet_config = NativeTacticRouteRunConfig {
+        repository_root: config.repository_root,
+        optimization: config.optimization,
+        execution: config.execution,
+        execution_plan: config.execution_plan,
+        promoted_tactic_registry: None,
+        output_root: &fleet_root,
+        workers: fleet_workers,
+        cancellation: None,
+        resume: false,
+    };
+    let fleet = launch_native_tactic_worker_fleet(&fleet_config, &fleet_root, fleet_workers)?;
+    let fleet_launch_micros = fleet.launch_micros();
     let mut execution_order = Vec::new();
     for repetition in 1..=config.repetitions {
         let worker_order = if repetition % 2 == 1 {
@@ -367,17 +392,20 @@ pub fn run_native_tactic_throughput_curve(
             let sample_root = config
                 .output_root
                 .join(format!("sample-{ordinal:02}-r{repetition}-w{workers}"));
-            let route_report = run_native_tactic_route(&NativeTacticRouteRunConfig {
-                repository_root: config.repository_root,
-                optimization: config.optimization,
-                execution: config.execution,
-                execution_plan: config.execution_plan,
-                promoted_tactic_registry: None,
-                output_root: &sample_root,
-                workers,
-                cancellation: None,
-                resume: false,
-            })?;
+            let route_report = run_native_tactic_route_with_fleet(
+                &NativeTacticRouteRunConfig {
+                    repository_root: config.repository_root,
+                    optimization: config.optimization,
+                    execution: config.execution,
+                    execution_plan: config.execution_plan,
+                    promoted_tactic_registry: None,
+                    output_root: &sample_root,
+                    workers,
+                    cancellation: None,
+                    resume: false,
+                },
+                &fleet,
+            )?;
             let route_report_path = sample_root.join("report.json");
             let route_report_bytes = fs::read(&route_report_path).map_err(route_error)?;
             let route_report_sha256 = Digest(Sha256::digest(route_report_bytes).into());
@@ -415,6 +443,7 @@ pub fn run_native_tactic_throughput_curve(
             });
         }
     }
+    fleet.shutdown()?;
     let derived = DerivedCurve::from_samples(
         &execution_order,
         fixed_completed_decisions,
@@ -424,7 +453,7 @@ pub fn run_native_tactic_throughput_curve(
     )?;
     let passed = derived.passed();
     let mut report = NativeTacticThroughputCurveReport {
-        schema: NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V1.into(),
+        schema: NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V2.into(),
         content_sha256: Digest::ZERO,
         recorded_unix_millis: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -438,6 +467,8 @@ pub fn run_native_tactic_throughput_curve(
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
+        fleet_workers,
+        fleet_launch_micros,
         repetitions: config.repetitions,
         worker_counts: NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS.to_vec(),
         fixed_completed_decisions,
@@ -527,7 +558,7 @@ mod tests {
             completed_decisions: 4,
             unique_useful_graph_expansions: 64,
             wall_micros,
-            process_launch_micros: 1,
+            process_launch_micros: 0,
             unique_useful_graph_expansions_per_second_millionths: per_second_millionths(
                 64,
                 wall_micros,
@@ -586,5 +617,58 @@ mod tests {
         assert!(!derived.fixed_work_satisfied);
         assert!(!derived.strictly_increasing_throughput);
         assert!(!derived.passed());
+    }
+
+    #[test]
+    fn persistent_curve_rejects_per_sample_process_relaunch() {
+        let order = [1, 2, 4, 8, 16, 16, 8, 4, 2, 1];
+        let samples = order
+            .into_iter()
+            .enumerate()
+            .map(|(index, workers)| {
+                sample(
+                    index as u32 + 1,
+                    if index < 5 { 1 } else { 2 },
+                    workers,
+                    16_000_000 / workers as u64,
+                )
+            })
+            .collect::<Vec<_>>();
+        let derived = DerivedCurve::from_samples(&samples, 4, 64, 2_000, 2).unwrap();
+        let passed = derived.passed();
+        let mut report = NativeTacticThroughputCurveReport {
+            schema: NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V2.into(),
+            content_sha256: Digest::ZERO,
+            recorded_unix_millis: 1,
+            operating_system: "test".into(),
+            architecture: "test".into(),
+            logical_cpu_count: 16,
+            optimization_request_sha256: Digest([1; 32]),
+            execution_binding_sha256: Digest([2; 32]),
+            execution_plan_sha256: Digest([3; 32]),
+            fleet_workers: 16,
+            fleet_launch_micros: 10,
+            repetitions: 2,
+            worker_counts: NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS.to_vec(),
+            fixed_completed_decisions: 4,
+            fixed_unique_useful_graph_expansions: 64,
+            checkpoint_pool_memory_bound_bytes: 2_000,
+            maximum_allowed_stale_revisions: 2,
+            execution_order: samples,
+            curve: derived.curve,
+            fixed_work_satisfied: derived.fixed_work_satisfied,
+            identical_useful_expansion_evidence_satisfied: derived
+                .identical_useful_expansion_evidence_satisfied,
+            memory_bound_satisfied: derived.memory_bound_satisfied,
+            learner_staleness_bound_satisfied: derived.learner_staleness_bound_satisfied,
+            strictly_increasing_throughput: derived.strictly_increasing_throughput,
+            passed,
+        };
+        report.refresh_content_sha256().unwrap();
+        report.validate().unwrap();
+
+        report.execution_order[0].process_launch_micros = 1;
+        report.refresh_content_sha256().unwrap();
+        assert!(report.validate().is_err());
     }
 }

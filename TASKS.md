@@ -280,7 +280,7 @@ Exit gate:
       measured parity evidence for every disabled subsystem.
 - [ ] Profile restore locality and schedule leases to checkpoint owners when it
       reduces replay without collapsing exploration diversity.
-- [ ] Deliver a 10x reduction in wall time to a fixed useful-evidence target
+- [x] Deliver a 10x reduction in wall time to a fixed useful-evidence target
       against the recorded baseline, or identify and remove the measured
       saturation bottleneck before proposing more capacity.
 
@@ -295,6 +295,18 @@ not add workers. The sealed report content SHA-256 is
 `916bb1bd02827c590ccef1cfc849d30d19968c3928a75c03f4d76ca61fb2a579`;
 the post-run expansion-set audit SHA-256 is
 `8bc738c30fbd903dc0c62799c304d809edb9797a99a529bb861ba336e6f4e432`.
+
+The v2 treatment keeps one authenticated 16-process fleet alive across every
+cell and varies only the active worker prefix. It paid 79.465 seconds of launch
+once, then every sample reported zero launch time. Median steady-state wall
+time now falls monotonically from 45.478 seconds at one worker to 5.485
+seconds at sixteen, or 2.917 useful expansions per second. Against the prior
+same-topology 85.211-second median, the fixed 16-expansion target is 15.54x
+faster. Including the one fleet boot, the complete ten-cell treatment took
+270.212 seconds instead of 811.235 seconds; the one-time startup remains
+reported rather than hidden. All cells retained the same expansion/evidence
+digest with zero staleness. The sealed v2 report content SHA-256 is
+`1499e563b4fb308b005e88c0fb7ff60df283edce4bfe9c47c37d0755cf656aaa`.
 
 Exit gate:
 

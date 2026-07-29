@@ -162,10 +162,10 @@ pub use execution_plan::{
 
 mod throughput_curve;
 pub use throughput_curve::{
-    NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V1, NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS,
-    NativeTacticThroughputCurveCell, NativeTacticThroughputCurveConfig,
-    NativeTacticThroughputCurveReport, NativeTacticThroughputCurveSample,
-    run_native_tactic_throughput_curve,
+    NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V1, NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V2,
+    NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS, NativeTacticThroughputCurveCell,
+    NativeTacticThroughputCurveConfig, NativeTacticThroughputCurveReport,
+    NativeTacticThroughputCurveSample, run_native_tactic_throughput_curve,
 };
 
 mod learner_authority;
@@ -174,8 +174,54 @@ use learner_authority::{
     lock_learner_authority,
 };
 
+fn launch_native_tactic_worker_fleet(
+    config: &NativeTacticRouteRunConfig<'_>,
+    fleet_root: &Path,
+    worker_count: usize,
+) -> Result<NativeTacticWorkerFleet, NativeTacticRouteRunError> {
+    validate_config(config)?;
+    let root = config.repository_root.canonicalize().map_err(route_error)?;
+    config
+        .execution
+        .validate_files(&root, config.optimization)
+        .map_err(route_error)?;
+    let initial_batch = initial_probe_batch(config)?;
+    let terminal = NativeTerminalBinding {
+        goal: config.optimization.terminal_predicate.goal.clone(),
+        program_sha256: config.optimization.terminal_predicate.program_sha256,
+        definition_sha256: config.optimization.terminal_predicate.definition_sha256,
+    };
+    let card_fixture = config
+        .execution
+        .card_fixture_root(&root, config.optimization)
+        .map_err(route_error)?;
+    NativeTacticWorkerFleet::launch(
+        config,
+        &root,
+        fleet_root,
+        &initial_batch,
+        &terminal,
+        &card_fixture,
+        worker_count,
+    )
+}
+
 pub fn run_native_tactic_route(
     config: &NativeTacticRouteRunConfig<'_>,
+) -> Result<NativeTacticRouteReport, NativeTacticRouteRunError> {
+    run_native_tactic_route_with_optional_fleet(config, None)
+}
+
+fn run_native_tactic_route_with_fleet(
+    config: &NativeTacticRouteRunConfig<'_>,
+    fleet: &NativeTacticWorkerFleet,
+) -> Result<NativeTacticRouteReport, NativeTacticRouteRunError> {
+    run_native_tactic_route_with_optional_fleet(config, Some(fleet))
+}
+
+fn run_native_tactic_route_with_optional_fleet(
+    config: &NativeTacticRouteRunConfig<'_>,
+    external_fleet: Option<&NativeTacticWorkerFleet>,
 ) -> Result<NativeTacticRouteReport, NativeTacticRouteRunError> {
     let campaign_started = Instant::now();
     validate_config(config)?;
@@ -243,79 +289,21 @@ pub fn run_native_tactic_route(
         .store_tape(&route_prefix)
         .map_err(route_error)?;
 
-    let initial_batch = initial_probe_batch(config)?;
-    let terminal = NativeTerminalBinding {
-        goal: config.optimization.terminal_predicate.goal.clone(),
-        program_sha256: config.optimization.terminal_predicate.program_sha256,
-        definition_sha256: config.optimization.terminal_predicate.definition_sha256,
-    };
-    let card_fixture = config
-        .execution
-        .card_fixture_root(&root, config.optimization)
-        .map_err(route_error)?;
     let worker_count = config.workers;
-    let attempt_roots = (0..worker_count)
-        .map(|_| reserve_attempt_root(config.output_root))
-        .collect::<Result<Vec<_>, _>>()?;
-    let process_launch_started = Instant::now();
-    let mut launched = std::thread::scope(|scope| {
-        let root = &root;
-        let initial_batch = &initial_batch;
-        let terminal = &terminal;
-        let card_fixture = &card_fixture;
-        let handles = attempt_roots
-            .iter()
-            .enumerate()
-            .map(|(worker_index, attempt_root)| {
-                scope.spawn(move || {
-                    launch_tactic_route_worker(
-                        config,
-                        root,
-                        attempt_root,
-                        initial_batch,
-                        terminal,
-                        card_fixture,
-                    )
-                    .map(|worker| (worker_index, worker))
-                })
-            })
-            .collect::<Vec<_>>();
-        handles
-            .into_iter()
-            .map(|handle| {
-                handle
-                    .join()
-                    .map_err(|_| route_message("native tactic route worker launch panicked"))?
-            })
-            .collect::<Result<Vec<_>, _>>()
-    })?;
-    let process_launch_micros = elapsed_micros(process_launch_started.elapsed());
-    launched.sort_by_key(|(worker_index, _)| *worker_index);
-    let mut workers = Vec::with_capacity(worker_count);
-    let mut worker_initial_facts = Vec::with_capacity(worker_count);
-    let mut worker_root_checkpoints = Vec::with_capacity(worker_count);
-    for (_, (worker, facts, root_checkpoint_sha256)) in launched {
-        workers.push(worker);
-        worker_initial_facts.push(facts);
-        worker_root_checkpoints.push(root_checkpoint_sha256);
-    }
-    let initial_facts = worker_initial_facts
-        .first()
-        .cloned()
-        .ok_or_else(|| route_message("tactic route worker pool is empty"))?;
-    if initial_facts.tape_frame != config.optimization.route.source_boundary_index
-        || initial_facts.terminal.reached != Some(false)
-        || worker_initial_facts
-            .iter()
-            .any(|facts| facts != &initial_facts)
-        || worker_root_checkpoints
-            .iter()
-            .any(|checkpoint| *checkpoint != worker_root_checkpoints[0])
-    {
-        return Err(route_message(
-            "native worker pool does not share the requested source boundary",
-        ));
-    }
+    let owned_fleet = external_fleet
+        .is_none()
+        .then(|| launch_native_tactic_worker_fleet(config, config.output_root, worker_count))
+        .transpose()?;
+    let fleet = external_fleet
+        .or(owned_fleet.as_ref())
+        .ok_or_else(|| route_message("native tactic worker fleet is absent"))?;
+    fleet.validate_for(config)?;
+    let process_launch_micros = if external_fleet.is_some() {
+        0
+    } else {
+        fleet.launch_micros()
+    };
+    let initial_facts = fleet.initial_facts().clone();
     let GoalConditionedTacticContext {
         encoder,
         report: goal_target,
@@ -330,7 +318,7 @@ pub fn run_native_tactic_route(
             .as_ref()
             .map(|imported| imported.report.registry_sha256),
     );
-    let root_checkpoint_sha256 = worker_root_checkpoints[0];
+    let root_checkpoint_sha256 = fleet.root_checkpoint_sha256();
     let reward_spec = route_tactic_reward_spec();
     let root_source_frame = usize::try_from(initial_facts.tape_frame)
         .map_err(|_| route_message("native tactic source frame exceeds platform limits"))?;
@@ -371,171 +359,137 @@ pub fn run_native_tactic_route(
             config.execution_plan.refit_every_decisions,
         )?));
 
+    let pool = fleet.pool(config, execution_plan_sha256, root_source_frame)?;
     let (mut indexed_results, tactic_macro_discovery, shared_training_replay_rows, demonstration) =
-        std::thread::scope(|scope| {
-            let mut senders = Vec::with_capacity(workers.len());
-            let worker_handles = workers
-                .into_iter()
-                .enumerate()
-                .map(|(worker_slot, worker)| {
-                    let (sender, receiver) = mpsc::channel();
-                    senders.push(sender);
-                    scope.spawn(move || run_tactic_proposal_worker(worker_slot, worker, receiver))
-                })
-                .collect::<Vec<_>>();
-            let pool = NativeTacticProposalPool {
-                senders: Arc::new(senders),
-                next_worker: Arc::new(AtomicUsize::new(0)),
-                direct_restore_enabled: config
-                    .execution_plan
-                    .checkpoint
-                    .cross_decision_direct_restore,
-                root_source_frame,
-                execution_strategy: config.execution_plan.execution_strategy,
-                execution_plan_sha256,
-            };
-            let coordinator_results = (|| {
-                let mut results = Vec::with_capacity(config.execution_plan.lanes.len());
-                let demonstration = load_or_capture_demonstration(
+        (|| {
+            let mut results = Vec::with_capacity(config.execution_plan.lanes.len());
+            let demonstration = load_or_capture_demonstration(
+                config,
+                &pool,
+                &encoder,
+                &reward_spec,
+                &process_tape,
+                &initial_facts,
+                &route_prefix,
+                root_checkpoint_sha256,
+            )?;
+            let demonstration_report = demonstration.as_ref().map(|value| value.report.clone());
+            if let Some(demonstration) = &demonstration {
+                let mut learner = lock_learner_authority(&learner_authority)?;
+                publish_demonstration_replay(&mut learner, demonstration)?;
+            }
+            for generation in &config.execution_plan.generations {
+                let inherited_learner_snapshot = {
+                    let mut learner = lock_learner_authority(&learner_authority)?;
+                    match config.execution_plan.replay_sharing {
+                        NativeTacticReplaySharingPlan::GenerationBarrier => {
+                            let barrier_revision = deterministic_generation_barrier_revision(
+                                learner.replay(),
+                                generation,
+                            )?;
+                            learner.snapshot_through(barrier_revision)?
+                        }
+                        NativeTacticReplaySharingPlan::BoundedStaleness { .. } => {
+                            learner.snapshot()
+                        }
+                    }
+                };
+                let live_learner = matches!(
+                    config.execution_plan.replay_sharing,
+                    NativeTacticReplaySharingPlan::BoundedStaleness { .. }
+                )
+                .then(|| Arc::clone(&learner_authority));
+                let mut generation_results = std::thread::scope(|generation_scope| {
+                    let coordinator_handles = generation
+                        .lane_indices
+                        .iter()
+                        .map(|lane_index| {
+                            let lane = &config.execution_plan.lanes[*lane_index];
+                            let seed_index = lane.lane_index;
+                            let seed = lane.seed;
+                            let pool = pool.clone();
+                            let registry = &registry;
+                            let encoder = &encoder;
+                            let reward_spec = &reward_spec;
+                            let promoted_tactics = imported_promoted_tactics
+                                .as_ref()
+                                .map_or(&[][..], |imported| imported.entries.as_slice());
+                            let initial_facts = &initial_facts;
+                            let route_prefix = &route_prefix;
+                            let live_learner = live_learner.clone();
+                            let inherited_learner_snapshot =
+                                Arc::clone(&inherited_learner_snapshot);
+                            generation_scope.spawn(move || {
+                                run_seed_coordinator(
+                                    config,
+                                    &pool,
+                                    registry,
+                                    encoder,
+                                    reward_spec,
+                                    initial_facts,
+                                    route_prefix,
+                                    action_schema_sha256,
+                                    promoted_tactics,
+                                    root_checkpoint_sha256,
+                                    root_tape_ref,
+                                    inherited_learner_snapshot,
+                                    live_learner,
+                                    seed_index,
+                                    seed,
+                                )
+                                .map(|completion| (seed_index, completion))
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    coordinator_handles
+                        .into_iter()
+                        .map(|handle| {
+                            handle.join().map_err(|_| {
+                                route_message("native tactic route coordinator panicked")
+                            })?
+                        })
+                        .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()
+                })?;
+                generation_results.sort_by_key(|(seed_index, _)| *seed_index);
+                // Live lanes already publish on each decision. Replaying
+                // the completed corpus here is an idempotent resume repair:
+                // if an older or interrupted campaign lost its shared
+                // journal, completed lane artifacts reconstruct authority.
+                let mut learner = lock_learner_authority(&learner_authority)?;
+                for (_, completion) in &generation_results {
+                    publish_completed_seed_replay(&mut learner, completion)?;
+                }
+                learner.force_update()?;
+                results.extend(
+                    generation_results
+                        .into_iter()
+                        .map(|(seed_index, completion)| (seed_index, completion.result)),
+                );
+            }
+            let completion = (|| {
+                let mined = mine_and_store_tactic_macros(
+                    config.output_root,
+                    &config.execution_plan.seeds,
+                    &encoder,
+                )?;
+                validate_and_store_tactic_macros(
                     config,
                     &pool,
                     &encoder,
-                    &reward_spec,
-                    &process_tape,
-                    &initial_facts,
-                    &route_prefix,
                     root_checkpoint_sha256,
-                )?;
-                let demonstration_report = demonstration.as_ref().map(|value| value.report.clone());
-                if let Some(demonstration) = &demonstration {
-                    let mut learner = lock_learner_authority(&learner_authority)?;
-                    publish_demonstration_replay(&mut learner, demonstration)?;
-                }
-                for generation in &config.execution_plan.generations {
-                    let inherited_learner_snapshot = {
-                        let mut learner = lock_learner_authority(&learner_authority)?;
-                        match config.execution_plan.replay_sharing {
-                            NativeTacticReplaySharingPlan::GenerationBarrier => {
-                                let barrier_revision = deterministic_generation_barrier_revision(
-                                    learner.replay(),
-                                    generation,
-                                )?;
-                                learner.snapshot_through(barrier_revision)?
-                            }
-                            NativeTacticReplaySharingPlan::BoundedStaleness { .. } => {
-                                learner.snapshot()
-                            }
-                        }
-                    };
-                    let live_learner = matches!(
-                        config.execution_plan.replay_sharing,
-                        NativeTacticReplaySharingPlan::BoundedStaleness { .. }
-                    )
-                    .then(|| Arc::clone(&learner_authority));
-                    let mut generation_results = std::thread::scope(|generation_scope| {
-                        let coordinator_handles = generation
-                            .lane_indices
-                            .iter()
-                            .map(|lane_index| {
-                                let lane = &config.execution_plan.lanes[*lane_index];
-                                let seed_index = lane.lane_index;
-                                let seed = lane.seed;
-                                let pool = pool.clone();
-                                let registry = &registry;
-                                let encoder = &encoder;
-                                let reward_spec = &reward_spec;
-                                let promoted_tactics = imported_promoted_tactics
-                                    .as_ref()
-                                    .map_or(&[][..], |imported| imported.entries.as_slice());
-                                let initial_facts = &initial_facts;
-                                let route_prefix = &route_prefix;
-                                let live_learner = live_learner.clone();
-                                let inherited_learner_snapshot =
-                                    Arc::clone(&inherited_learner_snapshot);
-                                generation_scope.spawn(move || {
-                                    run_seed_coordinator(
-                                        config,
-                                        &pool,
-                                        registry,
-                                        encoder,
-                                        reward_spec,
-                                        initial_facts,
-                                        route_prefix,
-                                        action_schema_sha256,
-                                        promoted_tactics,
-                                        root_checkpoint_sha256,
-                                        root_tape_ref,
-                                        inherited_learner_snapshot,
-                                        live_learner,
-                                        seed_index,
-                                        seed,
-                                    )
-                                    .map(|completion| (seed_index, completion))
-                                })
-                            })
-                            .collect::<Vec<_>>();
-                        coordinator_handles
-                            .into_iter()
-                            .map(|handle| {
-                                handle.join().map_err(|_| {
-                                    route_message("native tactic route coordinator panicked")
-                                })?
-                            })
-                            .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()
-                    })?;
-                    generation_results.sort_by_key(|(seed_index, _)| *seed_index);
-                    // Live lanes already publish on each decision. Replaying
-                    // the completed corpus here is an idempotent resume repair:
-                    // if an older or interrupted campaign lost its shared
-                    // journal, completed lane artifacts reconstruct authority.
-                    let mut learner = lock_learner_authority(&learner_authority)?;
-                    for (_, completion) in &generation_results {
-                        publish_completed_seed_replay(&mut learner, completion)?;
-                    }
-                    learner.force_update()?;
-                    results.extend(
-                        generation_results
-                            .into_iter()
-                            .map(|(seed_index, completion)| (seed_index, completion.result)),
-                    );
-                }
-                let completion = (|| {
-                    let mined = mine_and_store_tactic_macros(
-                        config.output_root,
-                        &config.execution_plan.seeds,
-                        &encoder,
-                    )?;
-                    validate_and_store_tactic_macros(
-                        config,
-                        &pool,
-                        &encoder,
-                        root_checkpoint_sha256,
-                        mined,
-                    )
-                })()?;
-                let shared_training_replay_rows =
-                    lock_learner_authority(&learner_authority)?.replay().len() as u64;
-                Ok((
-                    results,
-                    completion,
-                    shared_training_replay_rows,
-                    demonstration_report,
-                ))
-            })();
-            drop(pool);
-            let worker_results = worker_handles
-                .into_iter()
-                .map(|handle| {
-                    handle
-                        .join()
-                        .map_err(|_| route_message("native tactic route worker thread panicked"))?
-                })
-                .collect::<Result<Vec<_>, _>>();
-            match (coordinator_results, worker_results) {
-                (Ok(results), Ok(_)) => Ok(results),
-                (Err(error), _) | (Ok(_), Err(error)) => Err(error),
-            }
-        })?;
+                    mined,
+                )
+            })()?;
+            let shared_training_replay_rows =
+                lock_learner_authority(&learner_authority)?.replay().len() as u64;
+            Ok::<_, NativeTacticRouteRunError>((
+                results,
+                completion,
+                shared_training_replay_rows,
+                demonstration_report,
+            ))
+        })()?;
+    drop(pool);
     indexed_results.sort_by_key(|(seed_index, _)| *seed_index);
     if indexed_results.len() != config.execution_plan.seeds.len()
         || indexed_results
@@ -761,6 +715,9 @@ pub fn run_native_tactic_route(
         &config.output_root.join("report.json"),
         &serde_json::to_vec_pretty(&report).map_err(route_error)?,
     )?;
+    if let Some(fleet) = owned_fleet {
+        fleet.shutdown()?;
+    }
     Ok(report)
 }
 
@@ -779,10 +736,11 @@ use replay_sharing::{
 mod worker_pool;
 use worker_pool::{
     CachedTacticFrontier, NativeTacticProposalPool, applicable_parameterized_descriptors_for_state,
-    launch_tactic_route_worker, load_or_capture_demonstration,
-    parameterized_catalog_for_state_with_promoted, parameterized_feedback_for_state,
-    run_seed_coordinator, run_tactic_proposal_worker,
+    load_or_capture_demonstration, parameterized_catalog_for_state_with_promoted,
+    parameterized_feedback_for_state, run_seed_coordinator,
 };
+mod worker_fleet;
+use worker_fleet::NativeTacticWorkerFleet;
 mod campaign;
 use campaign::{NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1, run_seed};
 mod timing_metrics;
