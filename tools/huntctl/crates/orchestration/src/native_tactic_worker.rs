@@ -944,7 +944,7 @@ fn tactic_controller_batch(
     })
 }
 
-fn tactic_checkpoint_cache_request(
+pub(crate) fn tactic_checkpoint_cache_request(
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
     checkpoint_retention: NativeTacticCheckpointRetention,
     capacity_bytes: usize,

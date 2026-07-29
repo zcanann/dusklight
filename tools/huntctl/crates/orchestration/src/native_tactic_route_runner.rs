@@ -12,7 +12,8 @@ use crate::native_tactic_worker::{
     NativeTacticCheckpointStorage, NativeTacticWorkerError, NativeTacticWorkerOutcome,
     NativeTacticWorkerPaths, PersistentTacticBatchWorker, TACTIC_CHECKPOINT_CACHE_BYTES,
     execute_selected_tactic_with_checkpoint_retention_and_strategy,
-    materialize_tactic_frontier_with_cache_capacity, tactic_root_checkpoint_sha256,
+    materialize_tactic_frontier_with_cache_capacity, tactic_checkpoint_cache_request,
+    tactic_root_checkpoint_sha256,
 };
 use crate::optimization_request::{CampaignClass, OptimizationRequest};
 use crate::reporting::GraphSearchReport;
@@ -71,8 +72,8 @@ use dusklight_objectives::milestone_dsl::{Comparison, Expression, Field, Value};
 use dusklight_proposals::behavior_archive::BehaviorArchive;
 use dusklight_search::search::{MacroAction, SearchPadState};
 use dusklight_search::suffix_batch::{
-    NATIVE_SUFFIX_BATCH_SCHEMA, NativeCheckpointValidation, NativeSuffixBatch,
-    NativeSuffixCandidate,
+    NATIVE_CACHED_SUFFIX_BATCH_SCHEMA, NATIVE_SUFFIX_BATCH_SCHEMA, NativeCheckpointValidation,
+    NativeSuffixBatch, NativeSuffixCandidate,
 };
 use dusklight_world::world_context::WorldContext;
 use dusklight_world::world_geometry::KclReconstruction;
@@ -945,12 +946,17 @@ fn initial_probe_batch(
         config.execution_plan.budgets.memory_bytes,
         config.workers,
     )?;
-    let cache = batch
-        .checkpoint_cache
-        .as_mut()
-        .ok_or_else(|| route_message("native tactic root probe lacks a checkpoint cache"))?;
-    cache.capacity_bytes = capacity;
+    attach_root_probe_checkpoint_cache(&mut batch, capacity);
     Ok(batch)
+}
+
+fn attach_root_probe_checkpoint_cache(batch: &mut NativeSuffixBatch, capacity: usize) {
+    batch.schema = NATIVE_CACHED_SUFFIX_BATCH_SCHEMA.into();
+    batch.checkpoint_cache = Some(tactic_checkpoint_cache_request(
+        None,
+        NativeTacticCheckpointRetention::None,
+        capacity,
+    ));
 }
 
 mod goal_target;

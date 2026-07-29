@@ -5,6 +5,7 @@ use super::macro_discovery::*;
 use super::worker_pool::recorded_demonstration_chunks;
 use super::worker_pool::*;
 use super::*;
+use crate::native_tactic_worker::TACTIC_CHECKPOINT_CACHE_ENTRIES;
 
 #[test]
 fn unassisted_learning_requires_declared_generous_discovery_capacity() {
@@ -821,8 +822,30 @@ fn route_reward_contains_only_terminal_success_and_native_tick_cost() {
 }
 
 #[test]
-fn root_probe_uses_the_full_declared_horizon() {
-    assert!(MAX_ROUTE_DECISIONS > 0);
+fn root_probe_cache_request_pins_the_authenticated_source_with_the_sealed_capacity() {
+    let mut batch = NativeSuffixBatch {
+        schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
+        source_frame: 0,
+        source_boundary_fingerprint: "0".repeat(32),
+        checkpoint_validation: NativeCheckpointValidation {
+            kind: "recorded_replay_window".into(),
+            ticks: 1,
+        },
+        maximum_ticks: 1,
+        verify_state_hashes: false,
+        checkpoint_cache: None,
+        candidates: Vec::new(),
+    };
+    attach_root_probe_checkpoint_cache(&mut batch, 384 * 1024 * 1024);
+    let request = batch.checkpoint_cache.unwrap();
+
+    assert_eq!(batch.schema, NATIVE_CACHED_SUFFIX_BATCH_SCHEMA);
+    assert_eq!(request.capacity_bytes, 384 * 1024 * 1024);
+    assert_eq!(request.capacity_entries, TACTIC_CHECKPOINT_CACHE_ENTRIES);
+    assert_eq!(request.source_identity, None);
+    assert_eq!(request.source_route_ticks, 0);
+    assert!(!request.retain_candidate_checkpoints);
+    assert!(!request.retain_live_endpoint);
 }
 
 #[test]
