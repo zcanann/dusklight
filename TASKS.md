@@ -168,6 +168,15 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   scratch learning but is not yet reliable, and neither route clears the
   tick-`131` promotion threshold. Evidence:
   `ordon-p3-q131-local-replay-ablation-v1.report.json`.
+- Doubling the isolated decision budget to `128` left terminal discovery at
+  `2/4`. Tick `206` did not improve and tick `337` improved only to `336`;
+  failed seeds moved closer but still did not terminate. All `37`
+  terminal-supported frontier acquisitions had no predicted total terminal
+  ticks. The goal-relabeled critic correctly strips native-terminal authority
+  from achieved-goal labels, but it incorrectly remained the active critic
+  after real terminal support existed. Extra mining cannot shorten routes
+  until achieved-goal discovery and native-terminal optimization use distinct
+  learned models.
 - The sealed tactic feature schema now exposes current velocity and speed,
   recent straightness and momentum retention, contact plus measured slowdown,
   camera orientation, exact A-button prompt-status bits, and the native
@@ -214,8 +223,12 @@ tie is diagnostic evidence only.
 
 - [ ] Run the enforced generous scratch-discovery horizon across independent
       seeds and establish reliable authenticated terminal discovery.
-- [ ] Use learned terminal return and retained intermediate native states to
-      shorten the authenticated tick-`206` scratch route below the tick-`131`
+- [ ] Hand off from the zero-terminal achieved-goal critic to a distinct
+      native-terminal critic after authenticated support exists. Prove that
+      terminal-supported frontier acquisitions carry learned total tick
+      predictions.
+- [ ] Use native-terminal return and retained intermediate states to shorten
+      the authenticated tick-`206` scratch route below the tick-`131`
       demonstration under separate promotion authority.
 
 Exit gate:

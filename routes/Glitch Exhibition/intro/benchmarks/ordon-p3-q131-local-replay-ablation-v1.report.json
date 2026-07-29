@@ -711,6 +711,70 @@
         "decisions_per_seed": 32,
         "maximum_route_suffix_ticks": 240,
         "reason_excluded": "Cross-seed replay is not independent and the cell used half the isolated decision budget."
+      },
+      "decision_budget_follow_up": {
+        "decisions_per_seed": 128,
+        "cross_seed_replay_sharing": false,
+        "independent_terminal_seeds": 2,
+        "independent_seed_count": 4,
+        "independent_terminal_rate": 0.5,
+        "best_authenticated_tick": 206,
+        "promotion_successful_seeds": 0,
+        "aggregate_native_ticks": 30205,
+        "aggregate_useful_decisions": 288,
+        "aggregate_useful_training_transitions": 1122,
+        "aggregate_proposal_transitions": 2048,
+        "aggregate_training_replay_rows": 1994,
+        "aggregate_visited_states": 230,
+        "aggregate_model_update_micros": 204633579,
+        "terminal_supported_frontier_acquisitions": 37,
+        "terminal_supported_acquisitions_with_predicted_total_terminal_ticks": 0,
+        "maximum_route_suffix_ticks": 428,
+        "wall_time_comparable": false,
+        "wall_time_note": "The four isolated learners executed concurrently with a staggered start. Outcome and internal timing evidence are valid; no worker-scaling claim is made.",
+        "seeds": [
+          {
+            "seed": 104729,
+            "source_report_path": "build/campaigns/ordon-p3-q131-scratch-discovery-1024-seed104729-1x128-b4-w1-v1-20260728/report.json",
+            "source_report_sha256": "f916a6500d35c2a90fbaa401f3c1cb7c7e4c62b4a54c7765702caa13c33839da",
+            "execution_plan_sha256": "117df3546a409b32bf39a7344a35e4c9722c984f5457aa8b5c767cac5ff1f360",
+            "terminal": false,
+            "best_authenticated_tick": null,
+            "minimum_proposal_goal_distance": 635.4648,
+            "maximum_route_suffix_ticks": 348
+          },
+          {
+            "seed": 130363,
+            "source_report_path": "build/campaigns/ordon-p3-q131-scratch-discovery-1024-seed130363-1x128-b4-w1-v1-20260728/report.json",
+            "source_report_sha256": "5cd76cd6bb8e97eeab3d2bbc26e6758ce68c5d7737a5fa21c949902f27270b11",
+            "execution_plan_sha256": "3029bdc3b4ef34ca501a4dbd27825209b453326a342710f7a98625bf47fb672e",
+            "terminal": true,
+            "best_authenticated_tick": 336,
+            "terminal_supported_frontier_acquisitions": 14,
+            "maximum_route_suffix_ticks": 428
+          },
+          {
+            "seed": 155921,
+            "source_report_path": "build/campaigns/ordon-p3-q131-scratch-discovery-1024-seed155921-1x128-b4-w1-v1-20260728/report.json",
+            "source_report_sha256": "bfbe1890691f8d157f2b556d2d79b44fc5dae23ba267879fd9248b091305d63c",
+            "execution_plan_sha256": "0a550efea3daa4dc4d0a89d33273bfbd4acfe76954ed3f181fdec4f5de25c0a7",
+            "terminal": true,
+            "best_authenticated_tick": 206,
+            "terminal_supported_frontier_acquisitions": 23,
+            "maximum_route_suffix_ticks": 251
+          },
+          {
+            "seed": 181081,
+            "source_report_path": "build/campaigns/ordon-p3-q131-scratch-discovery-1024-seed181081-1x128-b4-w1-v1-20260728/report.json",
+            "source_report_sha256": "ab47da7f2945273e09a9c60edebea1cb60c27363867c98c4aa1ca9d8cecab683",
+            "execution_plan_sha256": "ab7d81758ee93e892e42b890846676cc3fcefd6cda598ff5394df84aa7ed61a6",
+            "terminal": false,
+            "best_authenticated_tick": null,
+            "minimum_proposal_goal_distance": 1105.3274,
+            "maximum_route_suffix_ticks": 408
+          }
+        ],
+        "interpretation": "Doubling decisions did not improve terminal rate and shortened the best successful routes by only zero and one tick. The goal-relabeled achieved-goal critic deliberately carries no native-terminal authority, but it remained the active generalized critic after terminal discovery. Consequently every terminal-supported acquisition lacked a predicted total terminal tick cost. More mining cannot exercise the intended shortening comparator until native-terminal and achieved-goal critics are separated."
       }
     },
     "conclusion": "The learner reached the real terminal from scratch as soon as a route was allowed to exceed 160 ticks, retained terminal evidence independently of policy selection, propagated its value, and then selected terminal-producing actions. The enforced 1,024-tick campaign independently reproduced tick 206 and found a second terminal at tick 337, yielding 2/4 isolated successes. Prior 160-tick scratch failures were horizon-confounded. Strict 131/125 authority applies to shortening and promotion, not terminal discovery."
@@ -738,6 +802,8 @@
     "expanded_horizon_enables_scratch_terminal_learning": true,
     "generous_horizon_independent_terminal_rate": 0.5,
     "scratch_terminal_learning_reproduced": true,
+    "extra_decisions_improve_scratch_terminal_rate": false,
+    "goal_relabel_critic_supplies_terminal_tick_predictions": false,
     "p3_task_complete": false
   }
 }
