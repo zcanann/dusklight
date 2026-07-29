@@ -62,6 +62,11 @@ The current implementation is not yet an accepted learning architecture.
   validation, graph completion, exact terminal selection, learner publication,
   durable binary restart, and JSON report using the same graph and expansion
   content identities.
+- A repository-wide Rust source audit now excludes only explicit test modules
+  and finds no production file at or above 1,500 physical lines; the largest is
+  `tactic_q_campaign.rs` at 1,499. Route planning, search, playback, corpus
+  inspection, semantic evaluation, transition validation, and CLI dispatch are
+  split along explicit ownership boundaries rather than extended as monoliths.
 - Exact terminal returns now come from route-specific graph identities, and
   the learner contract distinguishes authenticated terminal reconnection from
   an open censored continuation. An exact state/action table consumes those
@@ -207,7 +212,7 @@ journals, or learned tactics.
 
 ## P0 - Replace the accidental architecture with explicit ownership
 
-- [ ] Keep production Rust files below 1,500 physical lines, with a normal
+- [x] Keep production Rust files below 1,500 physical lines, with a normal
       target below 1,000. Split existing oversized route-runner and campaign
       files by responsibility before adding more policy variants.
 
