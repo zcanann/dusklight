@@ -41,6 +41,11 @@ The current implementation is not yet an accepted learning architecture.
   conditional-tick estimate when terminal-connected examples exist; otherwise
   it falls back to the existing policy order. Generalized terminal probability
   remains unsupported rather than being fabricated from censored continuations.
+- Expansion scheduling now seals graph identity, learner-priority snapshot,
+  regime, seed, generation, lease policy, complete queue order, and selected
+  expansion into one replayable decision. Binary graph restart reproduces the
+  same queue exactly, and leasing consumes the graph-owned expansion rather
+  than mutating scheduler-local work.
 - Exact terminal returns now come from route-specific graph identities, and
   the learner contract distinguishes authenticated terminal reconnection from
   an open censored continuation. An exact state/action table consumes those
@@ -210,8 +215,6 @@ Exit gate:
       similarity may share learning but must not merge restorable nodes. Route
       improvement to an equivalent node must propagate to descendant total
       costs without deleting alternate incoming evidence.
-- [ ] Implement a deterministic priority queue whose decision can be replayed
-      from graph state, learner snapshot, seed, and sealed scheduler config.
 Exit gate:
 
 - A terminal trajectory containing a 40-tick option exposes all configured
