@@ -536,6 +536,9 @@ pub(super) fn run_seed(
         fs::create_dir_all(&paths_root).map_err(route_error)?;
         let source_snapshot = campaign.current.snapshot.clone();
         let source_route_tape = campaign.route_tape.clone();
+        let restoration = campaign
+            .current_restoration_contract()
+            .map_err(route_error)?;
         let source_tape_persistence_started = Instant::now();
         let source_route_tape_ref = decision_content_store
             .store_tape(&source_route_tape)
@@ -553,6 +556,9 @@ pub(super) fn run_seed(
             pool.direct_restore_enabled
                 && frontier.state_sha256 == source_snapshot_sha256
                 && frontier.route_frames == source_route_tape.frames.len()
+                && frontier.route_checkpoint_sha256
+                    == restoration.plan.route.route_checkpoint_sha256
+                && frontier.route_tape_sha256 == restoration.plan.route.tape_sha256
         });
         let directly_restored_frontier = usable_cached_frontier.is_some();
         let restore_source = if directly_restored_frontier {
@@ -569,6 +575,7 @@ pub(super) fn run_seed(
             Arc::clone(&proposal_blueprints),
             &source_snapshot,
             &source_route_tape,
+            Some(&restoration),
             usable_cached_frontier,
             true,
             &paths_root,
@@ -723,13 +730,17 @@ pub(super) fn run_seed(
                 "retained tactic proposal differs from its pre-admission evaluation",
             ));
         }
+        let retained_restoration = (!winning_outcome.terminal)
+            .then(|| campaign.current_restoration_contract().map_err(route_error))
+            .transpose()?;
         cached_frontier = match (
             winning_outcome.retained_native_checkpoint.as_ref(),
             winning_outcome
                 .retained_native_boundary_fingerprint
                 .as_ref(),
+            retained_restoration.as_ref(),
         ) {
-            (Some(checkpoint), Some(boundary_fingerprint))
+            (Some(checkpoint), Some(boundary_fingerprint), Some(restoration))
                 if checkpoint.route_ticks
                     == winning_outcome
                         .route_tape
@@ -755,9 +766,11 @@ pub(super) fn run_seed(
                     },
                     state_sha256: step.step.transition.after_state_sha256,
                     route_frames: winning_outcome.route_tape.frames.len(),
+                    route_checkpoint_sha256: restoration.plan.route.route_checkpoint_sha256,
+                    route_tape_sha256: restoration.plan.route.tape_sha256,
                 })
             }
-            (None, None) => None,
+            (None, None, _) | (_, _, None) => None,
             _ => {
                 return Err(route_message(
                     "retained native checkpoint lacks its exact endpoint boundary",

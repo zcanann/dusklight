@@ -20,7 +20,38 @@ pub struct LeasedTacticQProposalBatch {
     pub leases: Vec<TacticExpansionLease>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TacticRestorationContract {
+    pub plan: crate::state_graph::GraphRestorationPlan,
+    pub receipt: crate::state_graph::RestoredStateReceipt,
+}
+
 impl TacticQCampaign {
+    pub fn current_restoration_contract(
+        &self,
+    ) -> Result<TacticRestorationContract, TacticQCampaignError> {
+        let graph = self
+            .state_graph
+            .as_ref()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "current restoration requires a bound state graph",
+            ))?;
+        let route_checkpoint_sha256 =
+            route_checkpoint(self.root_checkpoint_sha256, &self.route_tape)?;
+        let node = crate::state_graph::ExactStateId {
+            route_checkpoint_sha256,
+            state_sha256: self.current.snapshot_sha256,
+        };
+        let plan = graph.restoration_plan(node)?;
+        if graph.restoration_route(&plan)? != &self.route_tape {
+            return Err(TacticQCampaignError::InvalidState(
+                "current restoration route is detached from the graph",
+            ));
+        }
+        let receipt = graph.validate_restored_state(&plan, &self.current.snapshot)?;
+        Ok(TacticRestorationContract { plan, receipt })
+    }
+
     pub fn graph_scheduled_root_and_frontier(
         &self,
         seed: u64,

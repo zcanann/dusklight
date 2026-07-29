@@ -663,6 +663,7 @@ pub(super) fn reuse_promoted_tactic_macro(
         &frontier.snapshot,
         &frontier.route_tape,
         None,
+        None,
         false,
         &reuse_root,
     )?;
@@ -770,6 +771,7 @@ pub(super) fn evaluate_tactic_macro_validation_batch(
         blueprints,
         &frontier.snapshot,
         &frontier.route_tape,
+        None,
         None,
         false,
         output_root,

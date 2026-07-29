@@ -751,3 +751,40 @@ fn native_episode_observes_the_real_stop_and_next_fact_boundary() {
         before.tape_frame as usize + 1
     );
 }
+
+#[test]
+fn materialized_frontier_rejects_a_changed_typed_field_with_same_native_identity() {
+    let shard = NativeEpisodeShard::decode(include_bytes!(
+        "../../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+    ))
+    .unwrap();
+    let episode = &shard.episodes[0];
+    let last = episode.steps.last().unwrap();
+    let mut boundary = last.post_simulation.clone();
+    boundary.phase = NativeObservationPhase::PreInput;
+    boundary.simulation_tick += 1;
+    boundary.tape_frame += 1;
+    let mut prior = episode
+        .steps
+        .iter()
+        .rev()
+        .take(dusklight_learning::fact_snapshot::MAX_FACT_HISTORY)
+        .map(|step| step.pre_input.clone())
+        .collect::<Vec<_>>();
+    prior.reverse();
+    let expected = FactSnapshot::from_native_learning(&boundary, &prior, None, Vec::new()).unwrap();
+
+    assert_eq!(
+        validate_materialized_frontier_state(&expected, episode).unwrap(),
+        expected.content_sha256().unwrap()
+    );
+    let mut changed = expected;
+    changed.player.position_f32_bits[0] ^= 1;
+    assert_eq!(changed.state_identity, boundary.state_identity);
+    assert!(matches!(
+        validate_materialized_frontier_state(&changed, episode),
+        Err(NativeTacticWorkerError::DetachedResult(
+            "frontier materialization typed state"
+        ))
+    ));
+}

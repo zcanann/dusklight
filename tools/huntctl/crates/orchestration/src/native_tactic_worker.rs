@@ -106,6 +106,7 @@ pub struct NativeTacticCheckpointSource {
 pub struct MaterializedNativeTacticFrontier {
     pub source: NativeTacticCheckpointSource,
     pub episode_shard_sha256: Digest,
+    pub observed_state_sha256: Digest,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -297,6 +298,7 @@ pub fn materialize_tactic_frontier<W: PersistentTacticBatchWorker>(
             "frontier materialization state",
         ));
     }
+    let observed_state_sha256 = validate_materialized_frontier_state(expected, &shard.episodes[0])?;
     let retained = validated.candidates[0].retained_checkpoint.as_ref().ok_or(
         NativeTacticWorkerError::DetachedResult("frontier materialization checkpoint"),
     )?;
@@ -318,7 +320,64 @@ pub fn materialize_tactic_frontier<W: PersistentTacticBatchWorker>(
             storage: NativeTacticCheckpointStorage::PortableImage,
         },
         episode_shard_sha256: shard.content_sha256,
+        observed_state_sha256,
     })
+}
+
+fn validate_materialized_frontier_state(
+    expected: &FactSnapshot,
+    episode: &NativeEpisode,
+) -> Result<Digest, NativeTacticWorkerError> {
+    let last = episode
+        .steps
+        .last()
+        .ok_or(NativeTacticWorkerError::DetachedResult(
+            "frontier materialization state",
+        ))?;
+    let mut boundary = last.post_simulation.clone();
+    boundary.phase = NativeObservationPhase::PreInput;
+    boundary.simulation_tick =
+        boundary
+            .simulation_tick
+            .checked_add(1)
+            .ok_or(NativeTacticWorkerError::DetachedResult(
+                "frontier materialization state",
+            ))?;
+    boundary.tape_frame =
+        boundary
+            .tape_frame
+            .checked_add(1)
+            .ok_or(NativeTacticWorkerError::DetachedResult(
+                "frontier materialization state",
+            ))?;
+    let mut prior = episode
+        .steps
+        .iter()
+        .rev()
+        .take(expected.recent_history.len())
+        .map(|step| step.pre_input.clone())
+        .collect::<Vec<_>>();
+    prior.reverse();
+    prior.retain(|observation| observation.boundary_index < boundary.boundary_index);
+    let mut restored =
+        FactSnapshot::from_native_learning(&boundary, &prior, None, expected.conditions.clone())
+            .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
+    // These fields are derived from the graph-authenticated selected option
+    // and condition program rather than native restore state. The complete
+    // native observation and its bounded history above are reconstructed from
+    // the fresh replay before they are compared with the graph state.
+    restored.recent_option = expected.recent_option.clone();
+    restored
+        .validate()
+        .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
+    if &restored != expected {
+        return Err(NativeTacticWorkerError::DetachedResult(
+            "frontier materialization typed state",
+        ));
+    }
+    restored
+        .content_sha256()
+        .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))
 }
 
 #[allow(clippy::too_many_arguments)]

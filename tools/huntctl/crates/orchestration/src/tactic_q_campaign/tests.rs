@@ -1056,6 +1056,19 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert!(frontier_branch.restorable_native_checkpoint.is_none());
     assert_eq!(root_branch.logical_frontier.replayed_prefix_ticks, 0);
     assert!(frontier_branch.logical_frontier.replayed_prefix_ticks > 0);
+    let frontier_restoration = restored.current_restoration_contract().unwrap();
+    assert_eq!(
+        frontier_restoration.plan.node.state_sha256,
+        frontier_branch.logical_frontier.state_sha256
+    );
+    assert_eq!(
+        frontier_restoration.receipt.observed_state_sha256,
+        restored.current.snapshot_sha256
+    );
+    assert_eq!(
+        frontier_restoration.plan.route.tape_frames,
+        restored.route_tape.frames.len() as u64
+    );
     let [scheduled_root, scheduled_frontier] = restored
         .graph_scheduled_root_and_frontier(5, 0, usize::MAX)
         .unwrap();
@@ -1184,6 +1197,14 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         branched.current.snapshot_sha256,
         root_branch.logical_frontier.state_sha256
     );
+    let root_restoration = branched.current_restoration_contract().unwrap();
+    assert_eq!(
+        root_restoration.plan.node.route_checkpoint_sha256,
+        root_branch.logical_frontier.identity_sha256
+    );
+    branched.current.snapshot.player.position_f32_bits[0] ^= 1;
+    assert!(branched.current_restoration_contract().is_err());
+    branched.current.snapshot.player.position_f32_bits[0] ^= 1;
     assert!(branched.model().is_none());
     branched.checkpoint().unwrap();
     let mut detached_projection = checkpoint.clone();

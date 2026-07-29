@@ -535,6 +535,7 @@ pub(super) struct NativeTacticProposalJob {
     proposal_blueprints: Arc<Vec<TacticBlueprint>>,
     source_snapshot: FactSnapshot,
     source_route_tape: InputTape,
+    restoration: Option<TacticRestorationContract>,
     checkpoint_source: Option<NativeTacticCheckpointSource>,
     materialize_frontier: bool,
     primary_retention: NativeTacticCheckpointRetention,
@@ -573,6 +574,8 @@ pub(super) struct CachedTacticFrontier {
     pub(super) source: NativeTacticCheckpointSource,
     pub(super) state_sha256: Digest,
     pub(super) route_frames: usize,
+    pub(super) route_checkpoint_sha256: Digest,
+    pub(super) route_tape_sha256: Digest,
 }
 
 fn primary_checkpoint_retention(retain: bool) -> NativeTacticCheckpointRetention {
@@ -604,6 +607,43 @@ fn next_worker_excluding(
     }
 }
 
+fn requires_frontier_materialization(
+    has_restoration_contract: bool,
+    replayed_prefix: usize,
+    has_direct_source: bool,
+) -> bool {
+    has_restoration_contract && replayed_prefix != 0 && !has_direct_source
+}
+
+fn validate_restoration_contract(
+    restoration: &TacticRestorationContract,
+    source_snapshot: &FactSnapshot,
+    source_route_tape: &InputTape,
+) -> Result<(), NativeTacticRouteRunError> {
+    let snapshot_sha256 = source_snapshot.content_sha256().map_err(route_error)?;
+    let tape_sha256 =
+        Digest(Sha256::digest(source_route_tape.encode().map_err(route_error)?).into());
+    let tape_frames = u64::try_from(source_route_tape.frames.len())
+        .map_err(|_| route_message("restoration route is too long"))?;
+    if restoration.plan.expected_state_sha256 != snapshot_sha256
+        || restoration.plan.node.state_sha256 != snapshot_sha256
+        || restoration.receipt.restoration_plan_sha256 != restoration.plan.plan_sha256
+        || restoration.receipt.node != restoration.plan.node
+        || restoration.receipt.observed_state_sha256 != snapshot_sha256
+        || restoration.receipt.route_checkpoint_sha256
+            != restoration.plan.route.route_checkpoint_sha256
+        || restoration.plan.node.route_checkpoint_sha256
+            != restoration.plan.route.route_checkpoint_sha256
+        || restoration.plan.route.tape_sha256 != tape_sha256
+        || restoration.plan.route.tape_frames != tape_frames
+    {
+        return Err(route_message(
+            "native tactic restoration contract is detached from its typed source",
+        ));
+    }
+    Ok(())
+}
+
 impl NativeTacticProposalPool {
     pub(super) fn execute_batch(
         &self,
@@ -612,6 +652,7 @@ impl NativeTacticProposalPool {
         proposal_blueprints: Arc<Vec<TacticBlueprint>>,
         source_snapshot: &FactSnapshot,
         source_route_tape: &InputTape,
+        restoration: Option<&TacticRestorationContract>,
         cached_frontier: Option<&CachedTacticFrontier>,
         retain_primary_checkpoint: bool,
         paths_root: &Path,
@@ -622,20 +663,29 @@ impl NativeTacticProposalPool {
         if proposals.is_empty() {
             return Err(route_message("native tactic proposal batch is empty"));
         }
+        if let Some(restoration) = restoration {
+            validate_restoration_contract(restoration, source_snapshot, source_route_tape)?;
+        }
         let primary_retention = primary_checkpoint_retention(retain_primary_checkpoint);
         let replayed_prefix = source_route_tape
             .frames
             .len()
             .checked_sub(self.root_source_frame)
             .ok_or_else(|| route_message("tactic route precedes its authenticated root"))?;
-        let direct = (replayed_prefix != 0)
+        let direct = (replayed_prefix != 0 && restoration.is_some())
             .then(|| {
                 cached_frontier.filter(|frontier| {
                     direct_frontier_eligible(
                         self.direct_restore_enabled,
                         self.senders.len(),
                         frontier,
-                    )
+                    ) && restoration.is_some_and(|contract| {
+                        frontier.state_sha256 == contract.plan.expected_state_sha256
+                            && frontier.route_frames == source_route_tape.frames.len()
+                            && frontier.route_checkpoint_sha256
+                                == contract.plan.route.route_checkpoint_sha256
+                            && frontier.route_tape_sha256 == contract.plan.route.tape_sha256
+                    })
                 })
             })
             .flatten();
@@ -668,8 +718,13 @@ impl NativeTacticProposalPool {
                     proposal_blueprints: Arc::clone(&proposal_blueprints),
                     source_snapshot: source_snapshot.clone(),
                     source_route_tape: source_route_tape.clone(),
+                    restoration: restoration.cloned(),
                     checkpoint_source: primary_source.map(|frontier| frontier.source.clone()),
-                    materialize_frontier: false,
+                    materialize_frontier: requires_frontier_materialization(
+                        restoration.is_some(),
+                        replayed_prefix,
+                        primary_source.is_some(),
+                    ),
                     primary_retention: if proposal_index == 0 {
                         primary_retention
                     } else {
@@ -777,6 +832,7 @@ pub(super) fn capture_terminal_route_replay(
             Arc::new(Vec::new()),
             &before,
             &route,
+            None,
             None,
             false,
             &paths_root,
@@ -1343,113 +1399,19 @@ fn materialize_job_frontier<W: PersistentTacticBatchWorker>(
             result: materialization_root.join("result.json"),
         },
     )?;
+    let restoration = job
+        .restoration
+        .as_ref()
+        .ok_or(NativeTacticWorkerError::DetachedSelection)?;
+    if frontier.observed_state_sha256 != restoration.receipt.observed_state_sha256 {
+        return Err(NativeTacticWorkerError::DetachedResult(
+            "frontier materialization restoration receipt",
+        ));
+    }
     worker.record_prefix_materialization(job.source_route_tape.frames.len(), fallback)?;
     Ok(frontier.source)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::native_suffix_worker::NativeSuffixWorkerIdentity;
-
-    struct MissingCheckpointWorker {
-        identity: NativeSuffixWorkerIdentity,
-    }
-
-    impl PersistentTacticBatchWorker for MissingCheckpointWorker {
-        fn identity(&self) -> &NativeSuffixWorkerIdentity {
-            &self.identity
-        }
-
-        fn run_tactic_batch(
-            &mut self,
-            _request: &Path,
-            _result: &Path,
-        ) -> Result<ValidatedNativeSuffixBatch, NativeTacticWorkerError> {
-            Err(NativeTacticWorkerError::Worker(
-                NativeSuffixWorkerError::Rejected {
-                    code: "batch_rejected".into(),
-                    message: "requested process-local checkpoint is absent or invalid".into(),
-                },
-            ))
-        }
-    }
-
-    #[test]
-    fn missing_owner_checkpoint_is_counted_before_exact_replay_fallback() {
-        let mut worker = MissingCheckpointWorker {
-            identity: NativeSuffixWorkerIdentity {
-                executable_sha256: Digest([1; 32]),
-                game_data_sha256: Digest([2; 32]),
-                input_tape_sha256: Digest([3; 32]),
-                milestone_program_sha256: Digest([4; 32]),
-                card_fixture_sha256: Digest([5; 32]),
-                world_context_sha256: Digest([6; 32]),
-                source_frame: 506,
-                source_boundary_fingerprint: "7".repeat(32),
-                checkpoint_validation_kind: "recorded_replay_window".into(),
-                checkpoint_validation_ticks: 8,
-                maximum_ticks: 160,
-                terminal: NativeTerminalBinding {
-                    goal: "goal".into(),
-                    program_sha256: Digest([8; 32]),
-                    definition_sha256: Digest([9; 32]),
-                },
-            },
-        };
-        let mut timed = TimedTacticWorker::new(&mut worker);
-
-        let error = timed
-            .run_tactic_batch(Path::new("request"), Path::new("result"))
-            .unwrap_err();
-        assert!(error.is_missing_process_local_checkpoint());
-        timed.record_prefix_materialization(530, true).unwrap();
-        let accounting = timed.take_accounting();
-
-        assert_eq!(accounting.cache_misses, 1);
-        assert_eq!(accounting.prefix_materializations, 1);
-        assert_eq!(accounting.replayed_prefix_ticks, 24);
-        assert_eq!(accounting.direct_restore_fallback_replays, 1);
-    }
-
-    #[test]
-    fn every_selected_decision_retains_a_single_use_live_endpoint() {
-        assert_eq!(
-            primary_checkpoint_retention(true),
-            NativeTacticCheckpointRetention::LiveEndpoint
-        );
-        assert_eq!(
-            primary_checkpoint_retention(false),
-            NativeTacticCheckpointRetention::None
-        );
-    }
-
-    #[test]
-    fn selected_live_frontiers_remain_directly_eligible_for_wide_decisions() {
-        let frontier = CachedTacticFrontier {
-            worker_slot: 1,
-            source: NativeTacticCheckpointSource {
-                restore_identity: "a".repeat(32),
-                boundary_fingerprint: "b".repeat(32),
-                route_ticks: 40,
-                storage: NativeTacticCheckpointStorage::LiveEndpoint,
-            },
-            state_sha256: Digest([3; 32]),
-            route_frames: 546,
-        };
-        assert!(direct_frontier_eligible(true, 2, &frontier));
-
-        let mut portable = frontier;
-        portable.source.storage = NativeTacticCheckpointStorage::PortableImage;
-        assert!(direct_frontier_eligible(true, 2, &portable));
-    }
-
-    #[test]
-    fn counterfactual_replay_never_rearms_the_live_endpoint_owner_when_pool_is_wide() {
-        let next = AtomicUsize::new(0);
-        for _ in 0..8 {
-            assert_ne!(next_worker_excluding(&next, 4, Some(2)), 2);
-        }
-        assert_eq!(next_worker_excluding(&next, 1, Some(0)), 0);
-    }
-}
+#[path = "worker_pool_tests.rs"]
+mod tests;

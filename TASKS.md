@@ -43,6 +43,12 @@ The current implementation is not yet an accepted learning architecture.
   The graph rejects a worker completion unless the restored complete typed
   state validates against that plan; altered state or route evidence fails
   closed.
+- Every live graph expansion now carries that plan and its typed-state receipt
+  into native dispatch. Uncached non-root nodes run a replay-only
+  materialization request and compare the complete reconstructed
+  `FactSnapshot` before the selected action executes; cached live endpoints
+  remain usable only when their state, route checkpoint, tape digest, and
+  native boundary fingerprint all match.
 - The live decision loop now registers horizon-eligible actions and completes
   exact graph leases. Outside the explicit human-demonstration curriculum,
   the graph scheduler also chooses which exact node to restore by coverage in
@@ -226,7 +232,7 @@ Exit gate:
 
 ## P1 - Implement exact save-state graph search
 
-- [ ] Store enough route/checkpoint evidence to restore any expandable node;
+- [x] Store enough route/checkpoint evidence to restore any expandable node;
       validate the restored typed state before executing from it.
 Exit gate:
 

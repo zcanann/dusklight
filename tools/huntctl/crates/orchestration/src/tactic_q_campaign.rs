@@ -852,13 +852,13 @@ mod learner_snapshot;
 pub use learner_snapshot::{
     TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot, TacticQLearnerSnapshotKind,
 };
-
 mod decision;
 mod final_result;
 pub use final_result::TacticQFinalResult;
 mod frontier;
 mod graph_projection;
 mod graph_scheduling;
+pub use graph_scheduling::TacticRestorationContract;
 pub use graph_scheduling::{LeasedTacticQProposalBatch, TacticExpansionLease};
 mod persistence;
 mod value_treatment;
