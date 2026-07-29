@@ -873,9 +873,40 @@
           "p3_exit_gate_passed": false
         },
         "conclusion": "Global peer frontiers collapsed all four lanes onto a zero-terminal corridor. Keeping peer transitions in the shared critic while retaining lane-local frontier and visitation coverage raised authenticated terminal discovery to 3/4 under the identical full plan. Scratch discovery is now reliable, but the best tick-228 route remains far above the tick-131 demonstration."
+      },
+      "terminal_critic_128_decision_probe": {
+        "source_report_path": "build/campaigns/ordon-p3-q131-terminal-critic-seed155921-1x128-b4-w1-v2-20260728/report.json",
+        "source_report_sha256": "368dde1106f5d53da89ad3026a49e68dcd9cfb1b9accd0d2f078ea045d15a97c",
+        "execution_plan_sha256": "0a550efea3daa4dc4d0a89d33273bfbd4acfe76954ed3f181fdec4f5de25c0a7",
+        "seed": 155921,
+        "decisions": 128,
+        "proposals_per_decision": 4,
+        "demonstration_transitions": 0,
+        "terminal": true,
+        "previous_best_authenticated_tick": 206,
+        "best_authenticated_tick": 195,
+        "authenticated_improvement_ticks": 11,
+        "promotion_successful": false,
+        "terminal_supported_frontier_acquisitions": 21,
+        "terminal_supported_acquisitions_with_predicted_total_terminal_ticks": 21,
+        "minimum_predicted_total_terminal_ticks": 63.0,
+        "maximum_predicted_total_terminal_ticks": 207.0,
+        "native_ticks": 7093,
+        "useful_decisions": 93,
+        "useful_training_transitions": 308,
+        "training_replay_rows": 501,
+        "learner_updates": 66,
+        "visited_states": 50,
+        "best_terminal_tape_path": "build/campaigns/ordon-p3-q131-terminal-critic-seed155921-1x128-b4-w1-v2-20260728/seed-000-155921/best-terminal.tape",
+        "best_terminal_tape_sha256": "68835e2dbf26fd32e2296ce8e7fe95e0ac3c4e36e59834b65f3c6f0e718c4af1",
+        "best_terminal_result_path": "build/campaigns/ordon-p3-q131-terminal-critic-seed155921-1x128-b4-w1-v2-20260728/seed-000-155921/best-terminal-result.dtqz",
+        "best_terminal_result_sha256": "e7d2986a0393859c5b83ec974bab149ffe1443e024432e8a56a06651761edc9d",
+        "route_shortened": true,
+        "route_beats_demonstration": false,
+        "interpretation": "The native-terminal critic and retained counterfactuals shortened the learner's own authenticated scratch route by 11 ticks without demonstration or incumbent authority. Improvement occurred by decisions 30 and 31; no later decision improved tick 195. Native-terminal self-refinement is therefore operational but remains poorly calibrated and plateaus 64 ticks above the tick-131 demonstration."
       }
     },
-    "conclusion": "The learner reached the real terminal from scratch once route discovery received adequate time. Isolated learners reproduced terminals in 2/4 seeds, and separating global value evidence from lane-local frontier coverage raised the matched shared-replay result from 0/4 to 3/4. A separate native-terminal critic supplies total-tick predictions after genuine terminal support. Reliable scratch discovery is established; strict 131/125 authority still applies to shortening and promotion, and the best scratch route remains tick 228."
+    "conclusion": "The learner reached the real terminal from scratch once route discovery received adequate time. Isolated learners reproduced terminals in 2/4 seeds, and separating global value evidence from lane-local frontier coverage raised the matched shared-replay result from 0/4 to 3/4. A separate native-terminal critic supplies total-tick predictions after genuine terminal support and shortened an isolated authenticated route from tick 206 to tick 195. Reliable scratch discovery and self-refinement are established; strict 131/125 authority still applies to promotion, and the best scratch route remains far too slow."
   },
   "observations": {
     "ordinary_suboptimal_replay_improves_terminal_sample_efficiency": true,
@@ -905,6 +936,8 @@
     "shared_training_preserves_lane_local_exploration": true,
     "extra_decisions_improve_scratch_terminal_rate": false,
     "goal_relabel_critic_supplies_terminal_tick_predictions": true,
+    "native_terminal_critic_shortens_scratch_route": true,
+    "native_terminal_critic_beats_demonstration": false,
     "p3_task_complete": false
   }
 }

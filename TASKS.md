@@ -178,7 +178,13 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   its terminal, and all `9` later terminal-supported frontier acquisitions
   carried learned total-tick predictions instead of nulls. The best route
   remained tick `206`, and predictions ranged from `51` to `211`, so terminal
-  credit is now operational but not yet calibrated or route-improving.
+  credit became operational but was not yet calibrated. Under the stable
+  corrected binary, doubling that isolated seed to `128` decisions shortened
+  the authenticated route from tick `206` to tick `195`. All `21`
+  terminal-supported acquisitions carried learned total-tick predictions, and
+  later counterfactual proposals produced the improvement at decisions `30`
+  and `31`. The remaining `97` decisions found no further improvement, so
+  self-refinement is real but still plateaus far above tick `131`.
 - Shared replay had coupled training evidence to exploration coverage: every
   peer transition entered every lane's frontier archive and visited-state set.
   Under the full `4x64` plan this correlated all lanes onto the same failed
