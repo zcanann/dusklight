@@ -50,7 +50,9 @@ pub(super) fn run_seed(
     let seed_root = config
         .output_root
         .join(format!("seed-{seed_index:03}-{seed}"));
-    let resuming_seed = seed_root.exists();
+    let seed_root_preexisted = seed_root.exists();
+    let resuming_seed =
+        seed_root_preexisted && config.resume && has_tactic_recovery_point(&seed_root)?;
     let source_frame = config.optimization.route.source_boundary_index;
     let horizon = config.optimization.budgets.exploration_horizon_ticks;
     let maximum_tactic_ticks = goal_tactic_maximum_ticks(horizon)?;
@@ -62,11 +64,6 @@ pub(super) fn run_seed(
         mut episode,
         _initial_imported_training_replay_rows,
     ) = if resuming_seed {
-        if !config.resume {
-            return Err(route_message(
-                "unexpected pre-existing tactic seed evidence",
-            ));
-        }
         let resumed = resume_seed(
             config,
             &seed_root,
@@ -94,6 +91,11 @@ pub(super) fn run_seed(
             imported,
         )
     } else {
+        if seed_root_preexisted && !config.resume {
+            return Err(route_message(
+                "unexpected pre-existing tactic seed evidence",
+            ));
+        }
         fs::create_dir_all(&seed_root).map_err(route_error)?;
         let initial_proposals = parameterized_catalog_for_state_with_promoted(
             seed,
@@ -141,8 +143,6 @@ pub(super) fn run_seed(
         };
         (campaign, Vec::new(), BTreeMap::new(), 0, 0, imported)
     };
-    let has_performance =
-        resuming_seed && seed_performance_exists(&seed_root, campaign.decision_index)?;
     let performance = if resuming_seed {
         load_seed_performance(&seed_root, campaign.decision_index)?
     } else {
@@ -157,14 +157,16 @@ pub(super) fn run_seed(
     let mut timing = performance.timing;
     let mut native_restore_accounting = performance.native_restore_accounting;
     let prior_wall_micros = timing.wall_micros;
-    let mut useful_decisions = if has_performance {
-        performance.useful_decisions
-    } else {
-        trace
-            .iter()
-            .filter(|decision| decision_trace_is_useful(decision))
-            .count() as u64
-    };
+    let traced_useful_decisions = trace
+        .iter()
+        .filter(|decision| decision_trace_is_useful(decision))
+        .count() as u64;
+    if resuming_seed && performance.useful_decisions != traced_useful_decisions {
+        return Err(route_message(
+            "native tactic recovery performance is detached from its decision journal",
+        ));
+    }
+    let mut useful_decisions = traced_useful_decisions;
     let maximum_tactic_ticks = u64::from(maximum_tactic_ticks);
     let encode = |facts: &FactSnapshot| encoder.encode(facts);
     let demonstration_curriculum = lane.role == NativeTacticLaneRole::TerminalSupport
@@ -183,11 +185,9 @@ pub(super) fn run_seed(
         .filter_map(|decision| decision.branch_acquisition.as_ref())
         .filter(|acquisition| acquisition.expansion_count == 0)
         .count();
-    let checkpoint_root = seed_root.join("checkpoints");
     let checkpoint_content_root = tactic_content_store_path(&seed_root);
     let decision_content_store =
         TacticQContentStore::initialize(&checkpoint_content_root).map_err(route_error)?;
-    let mut rolling_checkpoint = None;
     // Process-local handles intentionally do not survive campaign resume.
     let mut cached_frontier: Option<CachedTacticFrontier> = None;
     let mut branch_acquisition: Option<TacticFrontierAcquisition> = None;
@@ -237,6 +237,22 @@ pub(super) fn run_seed(
             "native tactic lease journal is detached from the completed decision trace",
         ));
     }
+    if resuming_seed {
+        prune_tactic_recovery_points(&seed_root, campaign.decision_index)?;
+    } else {
+        persist_tactic_recovery_point(
+            &seed_root,
+            &campaign,
+            &checkpoint_content_root,
+            NativeTacticSeedPerformance {
+                schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2.into(),
+                decisions: campaign.decision_index,
+                useful_decisions,
+                native_restore_accounting: native_restore_accounting.clone(),
+                timing: timing.clone(),
+            },
+        )?;
+    }
 
     while campaign.decision_index < config.execution_plan.budgets.decisions_per_lane
         && native_ticks < config.optimization.budgets.simulated_tick_budget
@@ -252,16 +268,6 @@ pub(super) fn run_seed(
             .reached(prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed())))
     {
         if cancellation_requested(config) {
-            timing.wall_micros =
-                prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
-            persist_seed_performance(
-                &seed_root,
-                campaign.decision_index,
-                &timing,
-                useful_decisions,
-                &native_restore_accounting,
-            )?;
-            pause_tactic_campaign(&seed_root, &campaign)?;
             return Err(route_cancelled("native tactic route paused"));
         }
         if let Some(session) = replay_session.as_mut() {
@@ -1075,6 +1081,20 @@ pub(super) fn run_seed(
             .evidence_projection_and_persistence_micros
             .saturating_add(evidence_micros);
         let persistence_started = Instant::now();
+        timing.wall_micros =
+            prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
+        persist_tactic_recovery_point(
+            &seed_root,
+            &campaign,
+            &checkpoint_content_root,
+            NativeTacticSeedPerformance {
+                schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2.into(),
+                decisions: campaign.decision_index,
+                useful_decisions,
+                native_restore_accounting: native_restore_accounting.clone(),
+                timing: timing.clone(),
+            },
+        )?;
         append_tactic_decision_record(
             &seed_root,
             &decision_record(
@@ -1090,6 +1110,7 @@ pub(super) fn run_seed(
         )?;
         lease_ledger.resolve(lease_batch_sha256, NativeTacticLeaseOutcome::Completed)?;
         trace.push(decision_trace);
+        prune_tactic_recovery_points(&seed_root, campaign.decision_index)?;
         for candidate in terminal_candidates {
             if !campaign
                 .final_result_matches_graph_terminal(&candidate)
@@ -1105,46 +1126,7 @@ pub(super) fn run_seed(
             )?;
         }
         if cancellation_requested(config) {
-            let persistence_micros = elapsed_micros(persistence_started.elapsed());
-            timing.persistence_micros =
-                timing.persistence_micros.saturating_add(persistence_micros);
-            timing.evidence_projection_and_persistence_micros = timing
-                .evidence_projection_and_persistence_micros
-                .saturating_add(persistence_micros);
-            timing.wall_micros =
-                prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
-            persist_seed_performance(
-                &seed_root,
-                campaign.decision_index,
-                &timing,
-                useful_decisions,
-                &native_restore_accounting,
-            )?;
-            pause_tactic_campaign(&seed_root, &campaign)?;
             return Err(route_cancelled("native tactic route paused"));
-        }
-        let run_finished = campaign.decision_index
-            >= config.execution_plan.budgets.decisions_per_lane
-            || native_ticks >= config.optimization.budgets.simulated_tick_budget
-            || config
-                .execution_plan
-                .budgets
-                .native_ticks
-                .reached(native_ticks)
-            || config.execution_plan.budgets.wall_micros.reached(
-                prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed())),
-            );
-        if !run_finished
-            && tactic_checkpoint_due(
-                campaign.decision_index,
-                config.optimization.resume.checkpoint_every_candidates,
-                false,
-            )
-        {
-            let checkpoint = campaign
-                .write_checkpoint_with_store(&checkpoint_root, &checkpoint_content_root)
-                .map_err(route_error)?;
-            advance_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint, checkpoint)?;
         }
         let persistence_micros = elapsed_micros(persistence_started.elapsed());
         timing.persistence_micros = timing.persistence_micros.saturating_add(persistence_micros);
@@ -1222,7 +1204,6 @@ pub(super) fn run_seed(
     let imported_training_replay_rows = campaign
         .training_replay_len()
         .saturating_sub(generated_training.transitions.len());
-    remove_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint)?;
     let final_checkpoint_path = campaign
         .write_checkpoint_with_store(
             &seed_root.join("final-checkpoint"),
@@ -1291,13 +1272,6 @@ pub(super) fn run_seed(
             "in-memory tactic trace is detached from the completed campaign",
         ));
     }
-    persist_seed_performance(
-        &seed_root,
-        campaign.decision_index,
-        &timing,
-        useful_decisions,
-        &native_restore_accounting,
-    )?;
     let replay_sharing = replay_session
         .as_ref()
         .map(BoundedStalenessReplaySession::telemetry)

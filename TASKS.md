@@ -45,7 +45,7 @@ The incoming 2026-07-29 work made substantial, useful progress:
   suppression parity, phase timing, and checkpoint-owner locality are
   implemented. A short macOS fixed-work treatment reports a 15.54x steady-state
   speedup over relaunching the same topology.
-- The Rust source-quality gate has zero debt exemptions and all 538 production
+- The Rust source-quality gate has zero debt exemptions and all 539 production
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
@@ -93,6 +93,13 @@ The incoming 2026-07-29 work made substantial, useful progress:
   arithmetically detached accounting. Proposal dispatches, unique graph
   expansions, and observed interior segments are distinct metrics, and the
   portable evidence bundle carries the exact journal.
+- Every seed now owns an exact binary recovery transaction at each durable
+  decision boundary. Resume derives its transaction index from the decision
+  journal, loads only that exact content-bound campaign checkpoint, reconciles
+  the lease journal, and prunes partial, stale, or ahead recovery points.
+  Deterministic tests cover manifest integrity, real checkpoint round trip,
+  unsafe paths, counter agreement, and partial-work pruning. Native
+  process-loss injection remains open.
 - Native option summaries now retain same-tick wall-contact/commanded-motion
   overlap and the momentum loss measured on those ticks. The v5 tactic feature
   schema exposes the measured consequence with explicit legacy missingness;
@@ -271,9 +278,11 @@ Exit gate:
       to exercise graph growth, repeated restores, learner updates,
       persistence, and bounded checkpoint eviction. A one-decision warm-fleet
       microbenchmark is necessary but not sufficient.
-- [ ] Bound memory, learner staleness, replay fallbacks, process loss, and
-      checkpoint-owner skew during long campaigns. Prove crash recovery cannot
-      silently lose or duplicate graph work.
+- [ ] Bound memory, learner staleness, replay fallbacks, and checkpoint-owner
+      skew during long campaigns. Inject native process loss before dispatch,
+      during execution, after native completion, after recovery-point commit,
+      and after decision commit; retain evidence that exact recovery neither
+      loses nor duplicates graph work.
 - [ ] Remove the measured end-to-end saturation bottleneck until the reference
       workstation sustains enough useful evidence to meet the P4 wall-time
       gate. Prefer reducing restore/replay and idle time before adding capacity.

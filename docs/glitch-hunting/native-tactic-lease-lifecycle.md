@@ -41,7 +41,7 @@ requires every issued lease to be resolved and recomputes the accounting sum.
 The self-contained evidence bundle carries the exact binary lease journal and
 checks it against the reported digest.
 
-This journal makes lost dispatch attempts visible. It does not, by itself,
-prove full campaign crash recovery: durable campaign/checkpoint transaction
-ordering and replay of work interrupted after native completion remain a
-separate P3 requirement.
+This journal makes lost dispatch attempts visible. Its ordering with campaign
+checkpoints and the decision journal is specified in
+`native-tactic-crash-recovery.md`; native fault-injection evidence remains a P3
+requirement.

@@ -1,4 +1,3 @@
-use super::campaign_persistence::*;
 use super::candidate_retention::*;
 use super::goal_target::*;
 use super::journal::*;
@@ -1068,65 +1067,12 @@ fn evaluated_tick_accounting_includes_every_proposal() {
 }
 
 #[test]
-fn pause_performance_is_immutable_and_resume_bound() {
-    let directory = std::env::temp_dir().join(format!(
-        "dusklight-tactic-route-performance-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&directory);
-    let timing = NativeTacticRouteTiming {
-        wall_micros: 100,
-        tactic_execution_micros: 80,
-        native_simulation_micros: 70,
-        ..NativeTacticRouteTiming::default()
-    };
-    let mut native_restore_accounting = NativeTacticRestoreAccounting {
-        native_requests: 2,
-        restore_samples: 2,
-        restore_micros: 50,
-        ..NativeTacticRestoreAccounting::default()
-    };
-    native_restore_accounting.refresh_rates();
-
-    persist_seed_performance(&directory, 3, &timing, 2, &native_restore_accounting).unwrap();
-    let loaded = load_seed_performance(&directory, 3).unwrap();
-    assert_eq!(loaded.decisions, 3);
-    assert_eq!(loaded.useful_decisions, 2);
-    assert_eq!(loaded.timing, timing);
-    assert_eq!(loaded.native_restore_accounting, native_restore_accounting);
-    persist_seed_performance(&directory, 3, &timing, 2, &native_restore_accounting).unwrap();
-    persist_seed_performance(&directory, 3, &timing, 1, &native_restore_accounting).unwrap();
-    assert_eq!(
-        load_seed_performance(&directory, 3)
-            .unwrap()
-            .useful_decisions,
-        1
-    );
-    assert_eq!(
-        load_seed_performance(&directory, 2)
-            .unwrap()
-            .timing
-            .wall_micros,
-        0
-    );
-    fs::remove_dir_all(directory).unwrap();
-}
-
-#[test]
 fn root_episode_slots_do_not_skip_frontier_rotation_rounds() {
     let frontier_rounds = (1..=11)
         .filter(|episode| episode % 4 != 0)
         .map(frontier_sampling_round)
         .collect::<Vec<_>>();
     assert_eq!(frontier_rounds, (0..9).collect::<Vec<_>>());
-}
-
-#[test]
-fn tactic_checkpoints_follow_the_sealed_resume_interval_and_terminal() {
-    assert!(!tactic_checkpoint_due(1, 64, false));
-    assert!(!tactic_checkpoint_due(63, 64, false));
-    assert!(tactic_checkpoint_due(64, 64, false));
-    assert!(tactic_checkpoint_due(65, 64, true));
 }
 
 #[test]
@@ -1755,32 +1701,6 @@ fn real_f_sp104_authored_main_path_is_the_bootstrap_route_when_disc_is_present()
 }
 
 #[test]
-fn rolling_checkpoint_keeps_only_the_latest_complete_file() {
-    let directory = std::env::temp_dir().join(format!(
-        "dusklight-tactic-route-rolling-checkpoint-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&directory);
-    fs::create_dir_all(&directory).unwrap();
-    let first = directory.join("first.json");
-    let second = directory.join("second.json");
-    fs::write(&first, b"first").unwrap();
-    fs::write(&second, b"second").unwrap();
-    let mut current = None;
-
-    advance_rolling_checkpoint(&directory, &mut current, first.clone()).unwrap();
-    assert!(first.is_file());
-    advance_rolling_checkpoint(&directory, &mut current, second.clone()).unwrap();
-    assert!(!first.exists());
-    assert!(second.is_file());
-    remove_rolling_checkpoint(&directory, &mut current).unwrap();
-    assert!(!second.exists());
-    assert!(current.is_none());
-
-    fs::remove_dir_all(directory).unwrap();
-}
-
-#[test]
 fn route_attempts_are_append_only_across_resume_launches() {
     let directory = std::env::temp_dir().join(format!(
         "dusklight-tactic-route-attempts-{}",
@@ -1796,35 +1716,5 @@ fn route_attempts_are_append_only_across_resume_launches() {
     assert_eq!(second.file_name().unwrap(), "attempt-0001");
     assert!(first.is_dir());
     assert!(second.is_dir());
-    fs::remove_dir_all(directory).unwrap();
-}
-
-#[test]
-fn resume_selects_the_latest_single_immutable_pause_checkpoint() {
-    let directory = std::env::temp_dir().join(format!(
-        "dusklight-tactic-route-pause-checkpoint-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&directory);
-    for decision in [2_u64, 7] {
-        let checkpoint = directory
-            .join("pause-checkpoints")
-            .join(format!("decision-{decision:06}"));
-        fs::create_dir_all(&checkpoint).unwrap();
-        fs::write(
-            checkpoint.join(format!(
-                "tactic-q-{decision}.{TACTIC_Q_CHECKPOINT_EXTENSION}"
-            )),
-            b"checkpoint",
-        )
-        .unwrap();
-    }
-
-    let (decision, path) = latest_pause_checkpoint(&directory).unwrap();
-    assert_eq!(decision, 7);
-    assert_eq!(
-        path.file_name().unwrap(),
-        format!("tactic-q-7.{TACTIC_Q_CHECKPOINT_EXTENSION}").as_str()
-    );
     fs::remove_dir_all(directory).unwrap();
 }

@@ -6,130 +6,11 @@ pub(super) fn cancellation_requested(config: &NativeTacticRouteRunConfig<'_>) ->
         .is_some_and(|cancellation| cancellation.load(Ordering::Acquire))
 }
 
-pub(super) fn pause_tactic_campaign(
-    seed_root: &Path,
-    campaign: &TacticQCampaign,
-) -> Result<PathBuf, NativeTacticRouteRunError> {
-    campaign
-        .write_checkpoint_with_store(
-            &seed_root
-                .join("pause-checkpoints")
-                .join(format!("decision-{:06}", campaign.decision_index)),
-            &tactic_content_store_path(seed_root),
-        )
-        .map_err(route_error)
-}
-
-pub(super) fn seed_performance_root(seed_root: &Path) -> PathBuf {
-    seed_root.join("performance")
-}
-
-pub(super) fn seed_performance_prefix(decisions: u64) -> String {
-    format!("decision-{decisions:06}-attempt-")
-}
-
-pub(super) fn seed_performance_exists(
-    seed_root: &Path,
-    decisions: u64,
-) -> Result<bool, NativeTacticRouteRunError> {
-    let root = seed_performance_root(seed_root);
-    if !root.exists() {
-        return Ok(false);
-    }
-    let prefix = seed_performance_prefix(decisions);
-    Ok(fs::read_dir(root).map_err(route_error)?.any(|entry| {
-        entry.is_ok_and(|entry| {
-            entry
-                .file_type()
-                .is_ok_and(|kind| kind.is_file() && !kind.is_symlink())
-                && entry.file_name().to_string_lossy().starts_with(&prefix)
-                && entry
-                    .path()
-                    .extension()
-                    .is_some_and(|extension| extension == "json")
-        })
-    }))
-}
-
-pub(super) fn persist_seed_performance(
-    seed_root: &Path,
-    decisions: u64,
-    timing: &NativeTacticRouteTiming,
-    useful_decisions: u64,
-    native_restore_accounting: &NativeTacticRestoreAccounting,
-) -> Result<(), NativeTacticRouteRunError> {
-    let performance = NativeTacticSeedPerformance {
-        schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2.into(),
-        decisions,
-        useful_decisions,
-        native_restore_accounting: native_restore_accounting.clone(),
-        timing: timing.clone(),
-    };
-    let root = seed_performance_root(seed_root);
-    fs::create_dir_all(&root).map_err(route_error)?;
-    for attempt in 0..MAX_ROUTE_ATTEMPTS {
-        let path = root.join(format!(
-            "{}{attempt:04}.json",
-            seed_performance_prefix(decisions)
-        ));
-        if path.exists() {
-            let existing: NativeTacticSeedPerformance = read_bounded_json(&path)?;
-            if existing == performance {
-                return Ok(());
-            }
-            continue;
-        }
-        return write_new(
-            &path,
-            &serde_json::to_vec_pretty(&performance).map_err(route_error)?,
-        );
-    }
-    Err(route_message(
-        "immutable tactic performance checkpoint capacity is exhausted",
-    ))
-}
-
 pub(super) fn load_seed_performance(
     seed_root: &Path,
     decisions: u64,
 ) -> Result<NativeTacticSeedPerformance, NativeTacticRouteRunError> {
-    let root = seed_performance_root(seed_root);
-    if !root.exists() {
-        return Ok(NativeTacticSeedPerformance {
-            schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2.into(),
-            decisions,
-            useful_decisions: 0,
-            native_restore_accounting: NativeTacticRestoreAccounting::default(),
-            timing: NativeTacticRouteTiming::default(),
-        });
-    }
-    let prefix = seed_performance_prefix(decisions);
-    let mut paths = fs::read_dir(root)
-        .map_err(route_error)?
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            entry
-                .file_type()
-                .is_ok_and(|kind| kind.is_file() && !kind.is_symlink())
-                && entry.file_name().to_string_lossy().starts_with(&prefix)
-                && entry
-                    .path()
-                    .extension()
-                    .is_some_and(|extension| extension == "json")
-        })
-        .map(|entry| entry.path())
-        .collect::<Vec<_>>();
-    paths.sort();
-    let Some(path) = paths.last() else {
-        return Ok(NativeTacticSeedPerformance {
-            schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2.into(),
-            decisions,
-            useful_decisions: 0,
-            native_restore_accounting: NativeTacticRestoreAccounting::default(),
-            timing: NativeTacticRouteTiming::default(),
-        });
-    };
-    let performance: NativeTacticSeedPerformance = read_bounded_json(path)?;
+    let performance = load_tactic_recovery_point(seed_root, decisions)?.performance;
     if performance.schema != TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2
         || performance.decisions != decisions
         || performance.useful_decisions > decisions
@@ -163,7 +44,10 @@ pub(super) fn resume_seed(
         .get(seed_index)
         .filter(|lane| lane.seed == seed)
         .ok_or_else(|| route_message("tactic seed is detached from its execution-plan lane"))?;
-    let (checkpoint_decision, checkpoint_path) = latest_pause_checkpoint(seed_root)?;
+    let trace = read_tactic_decision_journal(seed_root)?;
+    let checkpoint_decision = trace.len() as u64;
+    let recovery = load_tactic_recovery_point(seed_root, checkpoint_decision)?;
+    let checkpoint_path = recovery.checkpoint_path;
     let checkpoint =
         TacticQCampaign::read_checkpoint_payload(&checkpoint_path).map_err(route_error)?;
     let expected_exploration = TacticExplorationConfig {
@@ -189,7 +73,11 @@ pub(super) fn resume_seed(
             "paused tactic checkpoint has a detached decision history",
         ));
     }
-    let trace = read_resumed_trace(seed_root, campaign.decision_index)?;
+    if trace.len() as u64 != campaign.decision_index {
+        return Err(route_message(
+            "native tactic recovery decision journal does not match its checkpoint",
+        ));
+    }
     let episode = trace.last().map_or(0, |decision| decision.episode);
     if campaign.episode_group != lane.episode_group(episode)?
         || trace
@@ -217,74 +105,6 @@ pub(super) fn resume_seed(
         ));
     }
     Ok((campaign, trace, selection_counts, native_ticks, episode))
-}
-
-pub(super) fn latest_pause_checkpoint(
-    seed_root: &Path,
-) -> Result<(u64, PathBuf), NativeTacticRouteRunError> {
-    let pause_root = seed_root.join("pause-checkpoints");
-    let mut checkpoints = Vec::new();
-    for entry in fs::read_dir(&pause_root).map_err(|error| {
-        route_message(format!(
-            "paused tactic checkpoint is unavailable at {}: {error}",
-            pause_root.display()
-        ))
-    })? {
-        let entry = entry.map_err(route_error)?;
-        let metadata = entry.file_type().map_err(route_error)?;
-        if !metadata.is_dir() || metadata.is_symlink() {
-            continue;
-        }
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        let Some(decision) = name
-            .strip_prefix("decision-")
-            .and_then(|value| value.parse::<u64>().ok())
-        else {
-            continue;
-        };
-        let mut files = fs::read_dir(entry.path())
-            .map_err(route_error)?
-            .filter_map(Result::ok)
-            .filter(|candidate| {
-                candidate
-                    .file_type()
-                    .is_ok_and(|kind| kind.is_file() && !kind.is_symlink())
-                    && candidate
-                        .file_name()
-                        .to_string_lossy()
-                        .starts_with("tactic-q-")
-                    && candidate
-                        .path()
-                        .extension()
-                        .is_some_and(|value| value == TACTIC_Q_CHECKPOINT_EXTENSION)
-            })
-            .map(|candidate| candidate.path())
-            .collect::<Vec<_>>();
-        if files.len() != 1 {
-            return Err(route_message(
-                "paused tactic checkpoint directory must contain exactly one checkpoint",
-            ));
-        }
-        checkpoints.push((decision, files.remove(0)));
-    }
-    checkpoints
-        .into_iter()
-        .max_by_key(|(decision, _)| *decision)
-        .ok_or_else(|| route_message("no resumable paused tactic checkpoint exists"))
-}
-
-pub(super) fn read_resumed_trace(
-    seed_root: &Path,
-    decision_count: u64,
-) -> Result<Vec<NativeTacticDecisionTrace>, NativeTacticRouteRunError> {
-    let trace = read_tactic_decision_journal(seed_root)?;
-    if trace.len() as u64 != decision_count {
-        return Err(route_message(
-            "paused tactic decision journal does not exactly match its checkpoint",
-        ));
-    }
-    Ok(trace)
 }
 
 pub(super) fn read_completed_seed_result(

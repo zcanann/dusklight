@@ -156,6 +156,11 @@ pub use report::{
 mod lease_journal;
 use lease_journal::NativeTacticLeaseLedger;
 pub use lease_journal::{NativeTacticLeaseAccounting, NativeTacticLeaseOutcome};
+mod recovery;
+use recovery::{
+    has_tactic_recovery_point, load_tactic_recovery_point, persist_tactic_recovery_point,
+    prune_tactic_recovery_points,
+};
 
 mod execution_plan;
 pub use execution_plan::{
@@ -838,8 +843,7 @@ use candidate_retention::{
 };
 mod campaign_persistence;
 use campaign_persistence::{
-    cancellation_requested, load_seed_performance, pause_tactic_campaign, persist_seed_performance,
-    read_completed_seed_result, resume_seed, seed_performance_exists,
+    cancellation_requested, load_seed_performance, read_completed_seed_result, resume_seed,
 };
 mod journal;
 use journal::{
@@ -920,48 +924,6 @@ fn tactic_state_trace(
 
 fn frontier_sampling_round(episode: u64) -> u64 {
     episode.saturating_sub(1 + episode / 4)
-}
-
-fn tactic_checkpoint_due(decision_index: u64, interval: u64, terminal: bool) -> bool {
-    terminal || decision_index % interval == 0
-}
-
-fn advance_rolling_checkpoint(
-    directory: &Path,
-    current: &mut Option<PathBuf>,
-    next: PathBuf,
-) -> Result<(), NativeTacticRouteRunError> {
-    if next.parent() != Some(directory) || !next.is_file() {
-        return Err(route_message(
-            "rolling tactic checkpoint is outside its checkpoint directory",
-        ));
-    }
-    if let Some(previous) = current.replace(next.clone()) {
-        if previous != next {
-            if previous.parent() != Some(directory) {
-                return Err(route_message(
-                    "previous rolling tactic checkpoint is outside its checkpoint directory",
-                ));
-            }
-            fs::remove_file(previous).map_err(route_error)?;
-        }
-    }
-    Ok(())
-}
-
-fn remove_rolling_checkpoint(
-    directory: &Path,
-    current: &mut Option<PathBuf>,
-) -> Result<(), NativeTacticRouteRunError> {
-    let Some(previous) = current.take() else {
-        return Ok(());
-    };
-    if previous.parent() != Some(directory) {
-        return Err(route_message(
-            "rolling tactic checkpoint is outside its checkpoint directory",
-        ));
-    }
-    fs::remove_file(previous).map_err(route_error)
 }
 
 fn initial_probe_batch(
