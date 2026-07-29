@@ -763,6 +763,36 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert!(fresh_episode.model().is_some());
     assert!(fresh_episode.replay.is_empty());
     assert_eq!(fresh_episode.training_replay_len(), 1);
+    assert_eq!(fresh_episode.frontier_archive().unwrap().tactic_len(), 1);
+    let filtered_current =
+        LearnerState::build(before.clone(), &registry, &catalog, &[], |_| true).unwrap();
+    let mut filtered_episode = TacticQCampaign::new(
+        Digest([1; 32]),
+        Digest([2; 32]),
+        root_checkpoint_sha256,
+        199,
+        filtered_current,
+        tape_prefix(&campaign.replay_routes[0], before.tape_frame as usize),
+        OptionValueConfig::default(),
+        TacticExplorationConfig {
+            seed: 44,
+            epsilon_per_million: 0,
+        },
+    )
+    .unwrap();
+    filtered_episode
+        .bind_execution_authority(execution_authority_sha256)
+        .unwrap();
+    assert_eq!(
+        filtered_episode
+            .consume_learner_snapshot_with_exploration_filter(&immutable_snapshot, |_| false)
+            .unwrap(),
+        1
+    );
+    assert_eq!(filtered_episode.training_replay_len(), 1);
+    assert!(filtered_episode.model().is_some());
+    assert_eq!(filtered_episode.frontier_archive().unwrap().tactic_len(), 0);
+    assert_eq!(filtered_episode.visited_state_count(), 1);
     assert_eq!(
         fresh_episode
             .import_training_corpora(std::slice::from_ref(&corpus))

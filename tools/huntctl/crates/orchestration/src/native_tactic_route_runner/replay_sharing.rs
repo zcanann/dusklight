@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) struct BoundedStalenessReplaySession {
     learner: SharedTacticLearnerAuthority,
-    publisher_lane: u32,
+    lane: NativeTacticLanePlan,
     maximum_stale_replay_revisions: u64,
     consumed_revision: u64,
     telemetry: NativeTacticReplaySharingTelemetry,
@@ -11,13 +11,14 @@ pub(super) struct BoundedStalenessReplaySession {
 impl BoundedStalenessReplaySession {
     pub(super) fn new(
         learner: SharedTacticLearnerAuthority,
-        publisher_lane: usize,
+        lane: &NativeTacticLanePlan,
         maximum_stale_replay_revisions: u64,
         consumed_revision: u64,
     ) -> Result<Self, NativeTacticRouteRunError> {
+        u32::try_from(lane.lane_index).map_err(route_error)?;
         Ok(Self {
             learner,
-            publisher_lane: u32::try_from(publisher_lane).map_err(route_error)?,
+            lane: lane.clone(),
             maximum_stale_replay_revisions,
             consumed_revision,
             telemetry: NativeTacticReplaySharingTelemetry::default(),
@@ -43,7 +44,9 @@ impl BoundedStalenessReplaySession {
             snapshot
         };
         let admitted = campaign
-            .consume_learner_snapshot(&snapshot)
+            .consume_learner_snapshot_with_exploration_filter(&snapshot, |episode_group| {
+                self.lane.owns_episode_group(episode_group)
+            })
             .map_err(route_error)?;
         self.consumed_revision = snapshot.replay_revision;
         self.telemetry.refreshes = self.telemetry.refreshes.saturating_add(1);
@@ -69,7 +72,7 @@ impl BoundedStalenessReplaySession {
         for (proposal, episode_group) in evaluated.iter().zip(episode_groups) {
             match learner
                 .publish(
-                    self.publisher_lane,
+                    u32::try_from(self.lane.lane_index).map_err(route_error)?,
                     publisher_decision,
                     learner_snapshot_sha256,
                     &proposal.transition,
@@ -113,7 +116,7 @@ pub(super) fn build_replay_session(
             },
         ) => BoundedStalenessReplaySession::new(
             replay,
-            lane.lane_index,
+            lane,
             maximum_stale_replay_revisions,
             inherited_replay_revision,
         )

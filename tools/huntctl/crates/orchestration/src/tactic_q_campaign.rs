@@ -592,6 +592,24 @@ impl TacticQCampaign {
         &mut self,
         snapshot: &TacticQImmutableLearnerSnapshot,
     ) -> Result<usize, TacticQCampaignError> {
+        self.consume_learner_snapshot_with_exploration_filter(snapshot, |_| true)
+    }
+
+    /// Consume globally shared value evidence while retaining only selected
+    /// routes as this campaign's exploration frontier.
+    ///
+    /// Parallel lanes must learn from every authenticated transition without
+    /// treating peer visitation as their own coverage. Otherwise every lane
+    /// imports the same frontier archive and independent exploration collapses
+    /// into one correlated search.
+    pub(crate) fn consume_learner_snapshot_with_exploration_filter<F>(
+        &mut self,
+        snapshot: &TacticQImmutableLearnerSnapshot,
+        exploration_episode: F,
+    ) -> Result<usize, TacticQCampaignError>
+    where
+        F: Fn(u64) -> bool,
+    {
         snapshot.manifest.validate()?;
         if snapshot.sha256 != snapshot.manifest.content_sha256()?
             || snapshot.manifest.execution_authority_sha256 != self.execution_authority_sha256
@@ -609,9 +627,11 @@ impl TacticQCampaign {
                 "immutable learner snapshot belongs to another campaign",
             ));
         }
-        let admitted = self.import_training_corpora_without_refit(std::slice::from_ref(
-            snapshot.training_corpus(),
-        ))?;
+        let admitted = self.import_training_corpora_with_refit_and_exploration_filter(
+            std::slice::from_ref(snapshot.training_corpus()),
+            false,
+            &exploration_episode,
+        )?;
         self.model = snapshot.model.clone();
         self.model_revision = snapshot.manifest.model_revision;
         self.campaign_learner_authority_managed = true;
@@ -699,21 +719,25 @@ impl TacticQCampaign {
         &mut self,
         corpora: &[TacticQTrainingCorpus],
     ) -> Result<usize, TacticQCampaignError> {
-        self.import_training_corpora_with_refit(corpora, true)
+        self.import_training_corpora_with_refit_and_exploration_filter(corpora, true, &|_| true)
     }
 
     pub fn import_training_corpora_without_refit(
         &mut self,
         corpora: &[TacticQTrainingCorpus],
     ) -> Result<usize, TacticQCampaignError> {
-        self.import_training_corpora_with_refit(corpora, false)
+        self.import_training_corpora_with_refit_and_exploration_filter(corpora, false, &|_| true)
     }
 
-    fn import_training_corpora_with_refit(
+    fn import_training_corpora_with_refit_and_exploration_filter<F>(
         &mut self,
         corpora: &[TacticQTrainingCorpus],
         refit: bool,
-    ) -> Result<usize, TacticQCampaignError> {
+        exploration_episode: &F,
+    ) -> Result<usize, TacticQCampaignError>
+    where
+        F: Fn(u64) -> bool,
+    {
         let mut training_replay = self.training_replay.clone();
         let mut training_replay_routes = self.training_replay_routes.clone();
         let mut training_episode_groups = self.training_episode_groups.clone();
@@ -749,25 +773,27 @@ impl TacticQCampaign {
                 )?;
                 let identity = transition.replay_identity_sha256()?;
                 if identities.insert(identity) {
-                    consider_frontier_transition(
-                        &mut frontier_archive,
-                        self.root_checkpoint_sha256,
-                        transition,
-                        route,
-                        *episode_group,
-                        training_replay.len(),
-                    )?;
+                    if exploration_episode(*episode_group) {
+                        consider_frontier_transition(
+                            &mut frontier_archive,
+                            self.root_checkpoint_sha256,
+                            transition,
+                            route,
+                            *episode_group,
+                            training_replay.len(),
+                        )?;
+                        visited_states.insert(tactic_state_descriptor(
+                            &transition.before,
+                            transition.before.terminal.reached == Some(true),
+                        ));
+                        visited_states.insert(tactic_state_descriptor(
+                            &transition.after,
+                            transition.value_sample.terminal,
+                        ));
+                    }
                     training_replay.push(transition.clone());
                     training_replay_routes.push(route.clone());
                     training_episode_groups.push(*episode_group);
-                    visited_states.insert(tactic_state_descriptor(
-                        &transition.before,
-                        transition.before.terminal.reached == Some(true),
-                    ));
-                    visited_states.insert(tactic_state_descriptor(
-                        &transition.after,
-                        transition.value_sample.terminal,
-                    ));
                     admitted = admitted.saturating_add(1);
                 }
             }
