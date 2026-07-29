@@ -1,4 +1,5 @@
 use super::*;
+use crate::state_graph::{ActionExpansionStatus, ExpansionEvidenceAuthority};
 
 impl TacticQCampaign {
     pub fn checkpoint(&self) -> Result<TacticQCampaignCheckpoint, TacticQCampaignError> {
@@ -293,6 +294,64 @@ impl TacticQCampaign {
             replay_routes,
             outcome.next_facts.clone(),
         )
+    }
+
+    /// Project the exact graph-selected terminal route into a portable result.
+    ///
+    /// A graph route may branch from an interior native boundary, so its
+    /// selected-action replay is not necessarily a contiguous chain of whole
+    /// option transitions. The route tape is the complete executable witness;
+    /// the final expansion supplies the authenticated false-to-true terminal
+    /// boundary required by the result contract.
+    pub fn final_result_from_graph_best_terminal(
+        &self,
+    ) -> Result<Option<TacticQFinalResult>, TacticQCampaignError> {
+        let graph = self
+            .state_graph
+            .as_ref()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "terminal result projection requires a bound state graph",
+            ))?;
+        graph.validate()?;
+        let Some(best) = graph.best_terminal_path() else {
+            return Ok(None);
+        };
+        let route =
+            graph
+                .route(best.route_checkpoint_sha256)
+                .ok_or(TacticQCampaignError::InvalidState(
+                    "graph-selected terminal route is absent",
+                ))?;
+        let terminal = graph
+            .node(best.terminal)
+            .ok_or(TacticQCampaignError::InvalidState(
+                "graph-selected terminal node is absent",
+            ))?;
+        let transition = graph
+            .expansions()
+            .filter(|expansion| expansion.target == Some(best.terminal))
+            .filter_map(|expansion| match &expansion.status {
+                ActionExpansionStatus::Completed {
+                    authority: ExpansionEvidenceAuthority::Executable,
+                    evidence,
+                    ..
+                } => evidence
+                    .values()
+                    .find(|row| row.authority == ExpansionEvidenceAuthority::Executable)
+                    .map(|row| row.transition.as_ref()),
+                _ => None,
+            })
+            .next()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "graph-selected terminal has no executable completing expansion",
+            ))?;
+        self.build_final_result(
+            route.clone(),
+            vec![transition.clone()],
+            vec![route.clone()],
+            terminal.state.clone(),
+        )
+        .map(Some)
     }
 
     fn build_final_result(

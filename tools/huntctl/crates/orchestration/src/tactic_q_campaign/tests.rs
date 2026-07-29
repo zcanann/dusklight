@@ -1468,6 +1468,32 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             .final_result_matches_graph_terminal(&evaluated_terminal_result)
             .unwrap()
     );
+    let graph_terminal_result = uninterrupted
+        .final_result_from_graph_best_terminal()
+        .unwrap()
+        .unwrap();
+    validate_final_result(&graph_terminal_result).unwrap();
+    assert_eq!(
+        graph_terminal_result.route_tape,
+        evaluated_terminal_result.route_tape
+    );
+    assert_eq!(
+        graph_terminal_result.terminal,
+        evaluated_terminal_result.terminal
+    );
+    assert_eq!(
+        graph_terminal_result.replay,
+        vec![evaluated_terminal.transition.clone()]
+    );
+    assert_eq!(
+        graph_terminal_result.replay_routes,
+        vec![evaluated_terminal_result.route_tape.clone()]
+    );
+    assert!(
+        uninterrupted
+            .final_result_matches_graph_terminal(&graph_terminal_result)
+            .unwrap()
+    );
     assert_eq!(
         uninterrupted
             .best_graph_terminal_path()

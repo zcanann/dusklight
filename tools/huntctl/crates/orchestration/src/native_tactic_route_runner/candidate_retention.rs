@@ -12,13 +12,52 @@ pub(super) fn retain_successful_result(
     {
         return Ok(());
     }
+    write_retained_result(root, decision_index, candidate)?;
+    *best = Some(candidate.clone());
+    Ok(())
+}
+
+pub(super) fn synchronize_graph_terminal_result(
+    root: &Path,
+    decision_index: u64,
+    campaign: &TacticQCampaign,
+    best: &mut Option<TacticQFinalResult>,
+) -> Result<(), NativeTacticRouteRunError> {
+    if let Some(result) = best.as_ref() {
+        if campaign
+            .final_result_matches_graph_terminal(result)
+            .map_err(route_error)?
+        {
+            return Ok(());
+        }
+    }
+    let graph_result = campaign
+        .final_result_from_graph_best_terminal()
+        .map_err(route_error)?;
+    let Some(graph_result) = graph_result else {
+        if best.is_some() {
+            return Err(route_message(
+                "retained terminal artifact exists without graph terminal authority",
+            ));
+        }
+        return Ok(());
+    };
+    write_retained_result(root, decision_index, &graph_result)?;
+    *best = Some(graph_result);
+    Ok(())
+}
+
+fn write_retained_result(
+    root: &Path,
+    decision_index: u64,
+    candidate: &TacticQFinalResult,
+) -> Result<(), NativeTacticRouteRunError> {
     let path = root.join(format!(
         "success-{:06}-{decision_index:06}-{}.dtqz",
         candidate.route_tape.frames.len(),
         candidate.content_sha256
     ));
     candidate.write(&path).map_err(route_error)?;
-    *best = Some(candidate.clone());
     Ok(())
 }
 

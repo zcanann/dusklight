@@ -793,6 +793,7 @@ use timing_metrics::{
 mod candidate_retention;
 use candidate_retention::{
     authenticated_first_hit_tick, load_best_retained_success, retain_successful_result,
+    synchronize_graph_terminal_result,
 };
 mod campaign_persistence;
 use campaign_persistence::{

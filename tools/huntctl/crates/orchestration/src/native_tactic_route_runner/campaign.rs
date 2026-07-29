@@ -199,16 +199,12 @@ pub(super) fn run_seed(
         campaign.objective_sha256,
         campaign.root_checkpoint_sha256,
     )?;
-    if let Some(result) = best_success.as_ref() {
-        if !campaign
-            .final_result_matches_graph_terminal(result)
-            .map_err(route_error)?
-        {
-            return Err(route_message(
-                "retained terminal artifact is not the state graph best path",
-            ));
-        }
-    }
+    synchronize_graph_terminal_result(
+        &retained_success_root,
+        campaign.decision_index,
+        &campaign,
+        &mut best_success,
+    )?;
     let mut replay_session = build_replay_session(
         config.execution_plan,
         live_learner,
@@ -1066,6 +1062,12 @@ pub(super) fn run_seed(
                 .reached(native_ticks);
     let final_persistence_started = Instant::now();
     compact_tactic_decision_journal(&seed_root)?;
+    synchronize_graph_terminal_result(
+        &retained_success_root,
+        campaign.decision_index,
+        &campaign,
+        &mut best_success,
+    )?;
     let best_graph_terminal = campaign
         .best_graph_terminal_path()
         .map_err(route_error)?
