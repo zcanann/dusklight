@@ -7,6 +7,104 @@ use crate::scheduler::{
     LearnedExpansionPriority, SearchRegime, rank_schedulable_expansions, rank_schedulable_nodes,
 };
 
+pub const TACTIC_SCHEDULER_DECISION_SCHEMA_V1: &str = "dusklight-tactic-scheduler-decision/v1";
+
+/// Complete integer evidence for one expansion in the state-local action
+/// queue. The queue is retained before leasing mutates the graph.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticScheduledExpansionEvidence {
+    pub expansion_sha256: Digest,
+    pub source_root_ticks: u64,
+    pub source_exact_terminal_ticks_to_go: Option<u64>,
+    pub generalized_terminal_support_per_million: Option<u32>,
+    pub generalized_conditional_ticks_to_go: Option<u64>,
+    pub uncertainty_millionths: u64,
+    pub prediction_error_millionths: u64,
+    pub completed_visits: u64,
+    pub policy_rank: Option<u64>,
+    pub global_exploration_priority_rank: u64,
+    pub source_queue_rank: u64,
+}
+
+/// Durable provenance for the exact scheduler choice used by a native tactic
+/// decision. This is deliberately integer-valued so queue identity is stable
+/// across platforms.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticSchedulerDecisionTrace {
+    pub schema: String,
+    pub graph_sha256: Digest,
+    pub learner_model_sha256: Digest,
+    pub generation: u64,
+    pub regime: SearchRegime,
+    pub queue_sha256: Digest,
+    pub decision_sha256: Digest,
+    pub ranked_source_queue: Vec<TacticScheduledExpansionEvidence>,
+    pub evaluated_expansion_sha256: Vec<Digest>,
+    pub final_selected_expansion_sha256: Digest,
+}
+
+impl TacticSchedulerDecisionTrace {
+    pub fn validate(&self) -> Result<(), TacticQCampaignError> {
+        if self.schema != TACTIC_SCHEDULER_DECISION_SCHEMA_V1
+            || self.graph_sha256 == Digest::ZERO
+            || self.learner_model_sha256 == Digest::ZERO
+            || self.ranked_source_queue.is_empty()
+            || self.evaluated_expansion_sha256.is_empty()
+            || self.final_selected_expansion_sha256 != self.evaluated_expansion_sha256[0]
+            || self.queue_sha256
+                != tactic_scheduler_queue_sha256(
+                    self.graph_sha256,
+                    self.learner_model_sha256,
+                    self.generation,
+                    self.regime,
+                    &self.ranked_source_queue,
+                )
+            || self.decision_sha256
+                != tactic_scheduler_decision_sha256(
+                    self.queue_sha256,
+                    &self.evaluated_expansion_sha256,
+                    self.final_selected_expansion_sha256,
+                )
+        {
+            return Err(TacticQCampaignError::InvalidState(
+                "tactic scheduler decision trace is invalid",
+            ));
+        }
+        for (rank, candidate) in self.ranked_source_queue.iter().enumerate() {
+            if candidate.expansion_sha256 == Digest::ZERO
+                || candidate.source_queue_rank != rank as u64
+                || candidate
+                    .generalized_terminal_support_per_million
+                    .is_some_and(|support| support > 1_000_000)
+            {
+                return Err(TacticQCampaignError::InvalidState(
+                    "tactic scheduler source queue is invalid",
+                ));
+            }
+        }
+        let queue = self
+            .ranked_source_queue
+            .iter()
+            .map(|candidate| candidate.expansion_sha256)
+            .collect::<BTreeSet<_>>();
+        if queue.len() != self.ranked_source_queue.len()
+            || self.evaluated_expansion_sha256.len() > self.ranked_source_queue.len()
+            || self
+                .evaluated_expansion_sha256
+                .iter()
+                .zip(&self.ranked_source_queue)
+                .any(|(selected, candidate)| *selected != candidate.expansion_sha256)
+        {
+            return Err(TacticQCampaignError::InvalidState(
+                "tactic scheduler selection is detached from its queue",
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TacticExpansionLease {
     pub expansion_sha256: Digest,
@@ -18,6 +116,7 @@ pub struct TacticExpansionLease {
 pub struct LeasedTacticQProposalBatch {
     pub batch: TacticQProposalBatch,
     pub leases: Vec<TacticExpansionLease>,
+    pub scheduler_decision: TacticSchedulerDecisionTrace,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -131,9 +230,11 @@ impl TacticQCampaign {
         batch: TacticQProposalBatch,
         eligible: &[OptionActionDescriptor],
         maximum_proposals: usize,
+        learner_model_sha256: Digest,
     ) -> Result<LeasedTacticQProposalBatch, TacticQCampaignError> {
         if maximum_proposals == 0
             || eligible.is_empty()
+            || learner_model_sha256 == Digest::ZERO
             || batch.ranking.learner_snapshot_sha256 != self.current.snapshot_sha256
         {
             return Err(TacticQCampaignError::InvalidState(
@@ -286,12 +387,35 @@ impl TacticQCampaign {
         } else {
             SearchRegime::Discovery
         };
+        let graph_sha256 = graph.content_sha256()?;
         let ranked = rank_schedulable_expansions(&graph, regime, self.decision_index, &priorities)?;
-        let selected = ranked
+        let source_queue = ranked
             .into_iter()
             .filter(|entry| {
                 entry.source == source && descriptors.contains_key(&entry.expansion_sha256)
             })
+            .collect::<Vec<_>>();
+        let ranked_source_queue = source_queue
+            .iter()
+            .enumerate()
+            .map(|(source_rank, entry)| TacticScheduledExpansionEvidence {
+                expansion_sha256: entry.expansion_sha256,
+                source_root_ticks: entry.source_root_ticks,
+                source_exact_terminal_ticks_to_go: entry.source_exact_terminal_ticks_to_go,
+                generalized_terminal_support_per_million: entry
+                    .learned
+                    .terminal_support_per_million,
+                generalized_conditional_ticks_to_go: entry.generalized_conditional_ticks_to_go,
+                uncertainty_millionths: entry.uncertainty_millionths,
+                prediction_error_millionths: entry.learned.prediction_error_millionths,
+                completed_visits: entry.learned.completed_visits,
+                policy_rank: entry.learned.policy_rank,
+                global_exploration_priority_rank: entry.exploration_priority_rank,
+                source_queue_rank: source_rank as u64,
+            })
+            .collect::<Vec<_>>();
+        let selected = source_queue
+            .into_iter()
             .take(maximum_proposals)
             .collect::<Vec<_>>();
         if selected.is_empty() {
@@ -338,6 +462,34 @@ impl TacticQCampaign {
                 descriptor,
             });
         }
+        let evaluated_expansion_sha256 = leases
+            .iter()
+            .map(|lease| lease.expansion_sha256)
+            .collect::<Vec<_>>();
+        let queue_sha256 = tactic_scheduler_queue_sha256(
+            graph_sha256,
+            learner_model_sha256,
+            self.decision_index,
+            regime,
+            &ranked_source_queue,
+        );
+        let scheduler_decision = TacticSchedulerDecisionTrace {
+            schema: TACTIC_SCHEDULER_DECISION_SCHEMA_V1.into(),
+            graph_sha256,
+            learner_model_sha256,
+            generation: self.decision_index,
+            regime,
+            queue_sha256,
+            decision_sha256: tactic_scheduler_decision_sha256(
+                queue_sha256,
+                &evaluated_expansion_sha256,
+                evaluated_expansion_sha256[0],
+            ),
+            ranked_source_queue,
+            final_selected_expansion_sha256: evaluated_expansion_sha256[0],
+            evaluated_expansion_sha256,
+        };
+        scheduler_decision.validate()?;
         graph.validate()?;
         self.state_graph = Some(graph);
         Ok(LeasedTacticQProposalBatch {
@@ -347,7 +499,73 @@ impl TacticQCampaign {
                 goal_reachability_estimates: batch.goal_reachability_estimates,
             },
             leases,
+            scheduler_decision,
         })
+    }
+}
+
+fn tactic_scheduler_queue_sha256(
+    graph_sha256: Digest,
+    learner_model_sha256: Digest,
+    generation: u64,
+    regime: SearchRegime,
+    queue: &[TacticScheduledExpansionEvidence],
+) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(TACTIC_SCHEDULER_DECISION_SCHEMA_V1.as_bytes());
+    hasher.update(graph_sha256.0);
+    hasher.update(learner_model_sha256.0);
+    hasher.update(generation.to_le_bytes());
+    hasher.update([match regime {
+        SearchRegime::Discovery => 0,
+        SearchRegime::Optimization => 1,
+    }]);
+    hasher.update((queue.len() as u64).to_le_bytes());
+    for candidate in queue {
+        hasher.update(candidate.expansion_sha256.0);
+        hasher.update(candidate.source_root_ticks.to_le_bytes());
+        hash_optional_u64(&mut hasher, candidate.source_exact_terminal_ticks_to_go);
+        match candidate.generalized_terminal_support_per_million {
+            Some(value) => {
+                hasher.update([1]);
+                hasher.update(value.to_le_bytes());
+            }
+            None => hasher.update([0]),
+        }
+        hash_optional_u64(&mut hasher, candidate.generalized_conditional_ticks_to_go);
+        hasher.update(candidate.uncertainty_millionths.to_le_bytes());
+        hasher.update(candidate.prediction_error_millionths.to_le_bytes());
+        hasher.update(candidate.completed_visits.to_le_bytes());
+        hash_optional_u64(&mut hasher, candidate.policy_rank);
+        hasher.update(candidate.global_exploration_priority_rank.to_le_bytes());
+        hasher.update(candidate.source_queue_rank.to_le_bytes());
+    }
+    Digest(hasher.finalize().into())
+}
+
+fn tactic_scheduler_decision_sha256(
+    queue_sha256: Digest,
+    evaluated_expansion_sha256: &[Digest],
+    final_selected_expansion_sha256: Digest,
+) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(TACTIC_SCHEDULER_DECISION_SCHEMA_V1.as_bytes());
+    hasher.update(queue_sha256.0);
+    hasher.update((evaluated_expansion_sha256.len() as u64).to_le_bytes());
+    for identity in evaluated_expansion_sha256 {
+        hasher.update(identity.0);
+    }
+    hasher.update(final_selected_expansion_sha256.0);
+    Digest(hasher.finalize().into())
+}
+
+fn hash_optional_u64(hasher: &mut Sha256, value: Option<u64>) {
+    match value {
+        Some(value) => {
+            hasher.update([1]);
+            hasher.update(value.to_le_bytes());
+        }
+        None => hasher.update([0]),
     }
 }
 

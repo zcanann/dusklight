@@ -615,6 +615,10 @@ pub struct NativeTacticDecisionTrace {
     pub duplicate_training_transitions: u64,
     #[serde(default)]
     pub training_replay_rows: u64,
+    /// Exact pre-lease action queue and the expansion the policy committed to.
+    /// Legacy journals did not retain this scheduler provenance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduler_decision: Option<TacticSchedulerDecisionTrace>,
     #[serde(default)]
     pub branch_acquisition: Option<TacticFrontierAcquisition>,
     pub frontier_cells: usize,
@@ -783,6 +787,8 @@ pub(super) struct NativeTacticDecisionRecord {
     pub(super) duplicate_training_transitions: u64,
     #[serde(default)]
     pub(super) training_replay_rows: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scheduler_decision: Option<TacticSchedulerDecisionTrace>,
     #[serde(default)]
     pub(super) branch_acquisition: Option<TacticFrontierAcquisition>,
     pub(super) frontier_cells: usize,

@@ -534,10 +534,12 @@ pub(super) fn run_seed(
                 proposal_batch,
                 &eligible_descriptors,
                 config.execution_plan.proposal_width_per_decision,
+                consumed_learner_snapshot.sha256,
             )
             .map_err(route_error)?;
         let proposal_batch = leased_batch.batch;
         let proposal_leases = leased_batch.leases;
+        let scheduler_decision = leased_batch.scheduler_decision;
 
         let decision_index = campaign.decision_index;
         let decision_episode_group = campaign.episode_group;
@@ -974,6 +976,7 @@ pub(super) fn run_seed(
             newly_admitted_training_rows,
             duplicate_training_transitions,
             training_replay_rows: campaign.training_replay_len() as u64,
+            scheduler_decision: Some(scheduler_decision),
             branch_acquisition: branch_acquisition.take(),
             frontier_cells,
             logical_frontier_records: frontier_cells.saturating_add(1),

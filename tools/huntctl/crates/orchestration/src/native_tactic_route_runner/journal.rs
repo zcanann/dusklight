@@ -492,6 +492,7 @@ pub(super) fn decision_record(
         newly_admitted_training_rows: trace.newly_admitted_training_rows,
         duplicate_training_transitions: trace.duplicate_training_transitions,
         training_replay_rows: trace.training_replay_rows,
+        scheduler_decision: trace.scheduler_decision.clone(),
         branch_acquisition: trace.branch_acquisition.clone(),
         frontier_cells: trace.frontier_cells,
         logical_frontier_records: trace.logical_frontier_records,
@@ -634,6 +635,14 @@ pub(super) fn project_tactic_decision_record(
             "tactic proposal journal worker locality is inconsistent",
         ));
     }
+    if let Some(scheduler_decision) = &record.scheduler_decision {
+        scheduler_decision.validate().map_err(route_error)?;
+        if scheduler_decision.learner_model_sha256 != record.learner_snapshot_sha256 {
+            return Err(route_message(
+                "tactic scheduler decision is detached from its learner model",
+            ));
+        }
+    }
     Ok(NativeTacticDecisionTrace {
         execution_plan_sha256: record.execution_plan_sha256,
         decision_index: record.decision_index,
@@ -664,6 +673,7 @@ pub(super) fn project_tactic_decision_record(
         newly_admitted_training_rows: record.newly_admitted_training_rows,
         duplicate_training_transitions: record.duplicate_training_transitions,
         training_replay_rows: record.training_replay_rows,
+        scheduler_decision: record.scheduler_decision,
         branch_acquisition: record.branch_acquisition,
         frontier_cells: record.frontier_cells,
         logical_frontier_records: record.logical_frontier_records,

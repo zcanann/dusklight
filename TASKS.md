@@ -63,6 +63,12 @@ The incoming 2026-07-29 work made substantial, useful progress:
   audits and matched comparisons explicitly mark legacy or incomplete
   action-surface timelines, so absent roll/camera opportunities cannot be
   misreported as bad learned ranking.
+- Live native decisions now retain their complete state-local pre-lease
+  scheduler queue: exact return, generalized terminal support and conditional
+  ticks, uncertainty, prediction error, visits, policy rank, global/local
+  exploration ranks, consumed learner-model identity, evaluated subset, and
+  final committed expansion. The queue is content-bound, campaign audits mark
+  legacy gaps explicitly, and a binary-checkpoint restart must reproduce it.
 - Native option summaries now retain same-tick wall-contact/commanded-motion
   overlap and the momentum loss measured on those ticks. The v5 tactic feature
   schema exposes the measured consequence with explicit legacy missingness;
@@ -226,11 +232,6 @@ Exit gate:
       kinematic consequences such as lost speed must be available when
       supported by state; no derived signal may directly encode desired Ordon
       behavior.
-- [ ] Seal every scheduler decision with exact return, generalized terminal
-      support, conditional ticks, uncertainty, exploration priority, model
-      revision, queue, and final selection so a binary graph restart reproduces
-      it exactly.
-
 Exit gate:
 
 - Learning reduces native expansions to terminal and improves held-out

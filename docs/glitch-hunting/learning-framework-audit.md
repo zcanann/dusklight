@@ -36,8 +36,13 @@ path, and exact time/expansion point at which each shorter terminal route was
 first evaluated. New reports also retain every state-local applicable action,
 its fitted value and uncertainty when supported, and the selected action.
 Audits mark the action-surface timeline incomplete for legacy reports instead
-of reconstructing availability after the fact. A bundle can be copied away
-from its originating build tree and validated independently:
+of reconstructing availability after the fact. They also retain a
+content-bound pre-lease scheduler decision with the complete state-local
+expansion queue, exact and generalized return evidence, consumed model
+identity, evaluated subset, and final committed expansion. The
+`scheduler_timeline_complete` flag makes missing legacy provenance explicit. A
+bundle can be copied away from its originating build tree and validated
+independently:
 
 ```text
 huntctl learn validate-tactic-scratch-bundle --bundle BUNDLE-DIR

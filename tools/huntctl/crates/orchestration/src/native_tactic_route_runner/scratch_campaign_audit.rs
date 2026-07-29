@@ -61,6 +61,9 @@ pub struct NativeTacticScratchDecisionAudit {
     /// policy before native execution. Legacy reports omitted this evidence.
     #[serde(default)]
     pub applicable_tactics: Vec<NativeTacticValueTrace>,
+    /// Exact graph/model-bound action queue that produced this selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduler_decision: Option<TacticSchedulerDecisionTrace>,
     pub branch_acquisition: Option<TacticFrontierAcquisition>,
     pub proposal_count: u64,
     pub terminal_proposal_count: u64,
@@ -96,6 +99,10 @@ pub struct NativeTacticScratchSeedAudit {
     /// action surface containing exactly one selected action.
     #[serde(default)]
     pub action_surface_timeline_complete: bool,
+    /// True only when every decision retains a valid scheduler queue bound to
+    /// the same learner revision reported for the decision.
+    #[serde(default)]
+    pub scheduler_timeline_complete: bool,
     /// Number of decisions on which each action was applicable.
     #[serde(default)]
     pub action_availability_counts: BTreeMap<String, u64>,
@@ -219,6 +226,7 @@ fn seed_audit(
     let mut action_availability_counts = BTreeMap::<String, u64>::new();
     let mut unsupported_action_availability_counts = BTreeMap::<String, u64>::new();
     let mut action_surface_timeline_complete = true;
+    let mut scheduler_timeline_complete = true;
     let mut terminal_improvements = Vec::new();
     let mut terminal_improvement_timing_complete = true;
     let mut best_observed_terminal_tick = None;
@@ -241,6 +249,10 @@ fn seed_audit(
                 .applicable_tactics
                 .iter()
                 .any(|tactic| tactic.selected && tactic.option_id == trace.selected_option_id);
+        scheduler_timeline_complete &= trace.scheduler_decision.as_ref().is_some_and(|scheduler| {
+            scheduler.learner_model_sha256 == trace.learner_snapshot_sha256
+                && scheduler.validate().is_ok()
+        });
         for tactic in &trace.applicable_tactics {
             *action_availability_counts
                 .entry(tactic.option_id.clone())
@@ -305,6 +317,7 @@ fn seed_audit(
             selected_option_id: trace.selected_option_id.clone(),
             selection_reason: trace.selection_reason,
             applicable_tactics: trace.applicable_tactics.clone(),
+            scheduler_decision: trace.scheduler_decision.clone(),
             branch_acquisition: trace.branch_acquisition.clone(),
             proposal_count,
             terminal_proposal_count: trace
@@ -380,6 +393,7 @@ fn seed_audit(
         unique_useful_graph_expansions: seed.unique_useful_graph_expansions,
         graph_expansion_timeline_complete,
         action_surface_timeline_complete,
+        scheduler_timeline_complete,
         action_availability_counts,
         unsupported_action_availability_counts,
         completed_graph_leases: graph_metrics.completed_leases,
@@ -459,6 +473,16 @@ fn seed_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
                         == 1
                     && decision.applicable_tactics.iter().any(|tactic| {
                         tactic.selected && tactic.option_id == decision.selected_option_id
+                    })
+            }))
+        && (!seed.scheduler_timeline_complete
+            || seed.decisions.iter().all(|decision| {
+                decision
+                    .scheduler_decision
+                    .as_ref()
+                    .is_some_and(|scheduler| {
+                        scheduler.learner_model_sha256 == decision.learner_snapshot_sha256
+                            && scheduler.validate().is_ok()
                     })
             }))
         && first_terminal_valid

@@ -25,8 +25,8 @@ use crate::tactic_q_campaign::{
     TacticCampaignGraphProjectionEdge, TacticCampaignGraphProjectionNode,
     TacticFrontierAcquisition, TacticQCampaign, TacticQCampaignError, TacticQDecision,
     TacticQFinalResult, TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot,
-    TacticQTrainingCorpus, TacticRestorationContract, has_no_progress_loop, route_checkpoint,
-    validate_training_corpus,
+    TacticQTrainingCorpus, TacticRestorationContract, TacticSchedulerDecisionTrace,
+    has_no_progress_loop, route_checkpoint, validate_training_corpus,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use crate::tactic_replay_control_plane::{

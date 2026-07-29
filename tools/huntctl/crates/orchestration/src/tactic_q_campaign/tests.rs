@@ -618,7 +618,9 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     let evaluated = campaign
         .evaluate_rewarded_outcome(outcome.clone(), &encode, &reward_spec)
         .unwrap();
-    let mut scheduled = TacticQCampaign::resume(campaign.checkpoint().unwrap()).unwrap();
+    let pre_lease_checkpoint = campaign.checkpoint().unwrap();
+    let mut scheduled = TacticQCampaign::resume(pre_lease_checkpoint.clone()).unwrap();
+    let learner_model_sha256 = Digest([88; 32]);
     let leased = scheduled
         .lease_current_parameterized_batch(
             TacticQProposalBatch {
@@ -628,10 +630,37 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             },
             std::slice::from_ref(&decision.selected.descriptor),
             1,
+            learner_model_sha256,
         )
         .unwrap();
     assert_eq!(leased.batch.proposals, vec![decision.selected.clone()]);
     assert_eq!(leased.leases.len(), 1);
+    leased.scheduler_decision.validate().unwrap();
+    assert_eq!(
+        leased.scheduler_decision.learner_model_sha256,
+        learner_model_sha256
+    );
+    assert_eq!(
+        leased.scheduler_decision.final_selected_expansion_sha256,
+        leased.leases[0].expansion_sha256
+    );
+    let replayed_lease = TacticQCampaign::resume(pre_lease_checkpoint)
+        .unwrap()
+        .lease_current_parameterized_batch(
+            TacticQProposalBatch {
+                ranking: decision.ranking.clone(),
+                proposals: vec![decision.selected.clone()],
+                goal_reachability_estimates: Vec::new(),
+            },
+            std::slice::from_ref(&decision.selected.descriptor),
+            1,
+            learner_model_sha256,
+        )
+        .unwrap();
+    assert_eq!(replayed_lease.scheduler_decision, leased.scheduler_decision);
+    let mut tampered_scheduler_decision = leased.scheduler_decision.clone();
+    tampered_scheduler_decision.final_selected_expansion_sha256 = Digest([89; 32]);
+    assert!(tampered_scheduler_decision.validate().is_err());
     let leased_expansion = leased.leases[0].expansion_sha256;
     let mut restarted_scheduled = TacticQCampaign::resume(scheduled.checkpoint().unwrap()).unwrap();
     assert!(matches!(
@@ -654,6 +683,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
                 },
                 std::slice::from_ref(&decision.selected.descriptor),
                 1,
+                learner_model_sha256,
             )
             .is_err()
     );
