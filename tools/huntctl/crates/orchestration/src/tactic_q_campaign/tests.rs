@@ -1051,6 +1051,29 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert!(frontier_branch.restorable_native_checkpoint.is_none());
     assert_eq!(root_branch.logical_frontier.replayed_prefix_ticks, 0);
     assert!(frontier_branch.logical_frontier.replayed_prefix_ticks > 0);
+    let [scheduled_root, scheduled_frontier] = restored
+        .graph_scheduled_root_and_frontier(5, 0, usize::MAX)
+        .unwrap();
+    assert_eq!(scheduled_root, root_branch);
+    assert_eq!(
+        scheduled_frontier.logical_frontier.state_sha256,
+        campaign.current.snapshot_sha256
+    );
+    assert_eq!(
+        scheduled_frontier
+            .acquisition
+            .as_ref()
+            .unwrap()
+            .expansion_count,
+        0
+    );
+    let restarted_node_schedule = TacticQCampaign::resume(restored.checkpoint().unwrap()).unwrap();
+    assert_eq!(
+        restarted_node_schedule
+            .graph_scheduled_root_and_frontier(5, 0, usize::MAX)
+            .unwrap(),
+        [scheduled_root, scheduled_frontier]
+    );
     let [ranked_root, ranked_frontier] = restored
         .sample_root_and_ranked_frontier(
             5,

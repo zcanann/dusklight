@@ -1,5 +1,7 @@
 use super::*;
-use crate::scheduler::{LearnedExpansionPriority, SearchRegime, rank_schedulable_expansions};
+use crate::scheduler::{
+    LearnedExpansionPriority, SearchRegime, rank_schedulable_expansions, rank_schedulable_nodes,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TacticExpansionLease {
@@ -15,6 +17,74 @@ pub struct LeasedTacticQProposalBatch {
 }
 
 impl TacticQCampaign {
+    pub fn graph_scheduled_root_and_frontier(
+        &self,
+        seed: u64,
+        generation: u64,
+        maximum_route_frames: usize,
+    ) -> Result<[TacticCampaignBranch; 2], TacticQCampaignError> {
+        let graph = self
+            .state_graph
+            .as_ref()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "node scheduling requires a bound state graph",
+            ))?;
+        let root = graph_root_branch(graph)?;
+        let regime = if graph.best_terminal_path().is_some() {
+            SearchRegime::Optimization
+        } else {
+            SearchRegime::Discovery
+        };
+        let Some(selected) =
+            rank_schedulable_nodes(graph, regime, maximum_route_frames as u64, seed, generation)?
+                .into_iter()
+                .next()
+        else {
+            return Ok([root.clone(), root]);
+        };
+        let node = graph
+            .node(selected.node)
+            .ok_or(TacticQCampaignError::InvalidState(
+                "scheduled graph node disappeared",
+            ))?;
+        let route = graph.route(selected.node.route_checkpoint_sha256).ok_or(
+            TacticQCampaignError::InvalidState("scheduled graph node route disappeared"),
+        )?;
+        let acquisition = TacticFrontierAcquisition {
+            expansion_count: selected.completed_expansions,
+            terminal: false,
+            terminal_value_supported: selected.exact_terminal_ticks_to_go.is_some(),
+            achieved_goal_value_supported: false,
+            reward: 0.0,
+            best_mean_q: None,
+            predicted_terminal_ticks_to_go: None,
+            predicted_total_terminal_ticks: None,
+            exact_terminal_ticks_to_go: selected.exact_terminal_ticks_to_go,
+            exact_total_terminal_ticks: selected
+                .exact_terminal_ticks_to_go
+                .map(|ticks| selected.root_ticks.saturating_add(ticks)),
+            maximum_ensemble_variance: None,
+            generalized_nearest_distance: None,
+            novelty_rank: 0,
+            replayed_prefix_ticks: selected.root_ticks,
+        };
+        let frontier = TacticCampaignBranch {
+            kind: TacticBranchKind::RetainedFrontier,
+            logical_frontier: LogicalTacticFrontierRecord {
+                identity_sha256: selected.node.route_checkpoint_sha256,
+                state_sha256: selected.node.state_sha256,
+                route_frames: route.frames.len() as u64,
+                replayed_prefix_ticks: selected.root_ticks,
+            },
+            restorable_native_checkpoint: None,
+            acquisition: Some(acquisition),
+            state: node.state.clone(),
+            route_tape: route.clone(),
+            descriptor: None,
+        };
+        Ok([root, frontier])
+    }
+
     /// Register every currently eligible action in the authoritative graph,
     /// rank the resulting untried expansions, and lease the exact batch that
     /// may be sent to native workers.

@@ -6,6 +6,7 @@
 use crate::state_graph::{ExactStateId, StateGraph, StateGraphError};
 use dusklight_automation_contracts::artifact::Digest;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -53,6 +54,83 @@ pub struct ScheduledExpansion {
     pub source: ExactStateId,
     pub source_root_ticks: u64,
     pub learned: LearnedExpansionPriority,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScheduledNode {
+    pub node: ExactStateId,
+    pub root_ticks: u64,
+    pub registered_expansions: u64,
+    pub completed_expansions: u64,
+    pub exact_terminal_ticks_to_go: Option<u64>,
+    pub tie_rank: Digest,
+}
+
+pub fn rank_schedulable_nodes(
+    graph: &StateGraph,
+    regime: SearchRegime,
+    maximum_route_frames: u64,
+    seed: u64,
+    generation: u64,
+) -> Result<Vec<ScheduledNode>, SchedulerError> {
+    graph.validate()?;
+    if regime == SearchRegime::Optimization && graph.best_terminal_path().is_none() {
+        return Err(SchedulerError::Invalid(
+            "optimization scheduling requires a terminal path",
+        ));
+    }
+    let best_terminal_route = graph
+        .best_terminal_path()
+        .and_then(|path| graph.route(path.route_checkpoint_sha256));
+    let best_terminal_ticks = graph
+        .best_terminal_path()
+        .map(|path| path.root_to_terminal_ticks);
+    let mut ranked = graph
+        .nodes()
+        .filter(|node| {
+            node.id != graph.root()
+                && node.restoration.executable
+                && !node.terminal
+                && node.restoration.route.tape_frames <= maximum_route_frames
+        })
+        .map(|node| {
+            let registered_expansions = node.outgoing_expansions.len() as u64;
+            let completed_expansions = node
+                .outgoing_expansions
+                .iter()
+                .filter(|identity| {
+                    graph.expansion(**identity).is_some_and(|expansion| {
+                        matches!(
+                            expansion.status,
+                            crate::state_graph::ActionExpansionStatus::Completed { .. }
+                        )
+                    })
+                })
+                .count() as u64;
+            let route = graph.route(node.id.route_checkpoint_sha256);
+            let exact_terminal_ticks_to_go = match (route, best_terminal_route, best_terminal_ticks)
+            {
+                (Some(route), Some(best), Some(total))
+                    if same_tape_origin(route, best)
+                        && best.frames.starts_with(&route.frames)
+                        && total >= node.root_ticks =>
+                {
+                    Some(total - node.root_ticks)
+                }
+                _ => None,
+            };
+            ScheduledNode {
+                node: node.id,
+                root_ticks: node.root_ticks,
+                registered_expansions,
+                completed_expansions,
+                exact_terminal_ticks_to_go,
+                tie_rank: node_tie_rank(seed, generation, node.id),
+            }
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| compare_scheduled_node(regime, left, right));
+    Ok(ranked)
 }
 
 pub fn rank_schedulable_expansions(
@@ -175,6 +253,49 @@ fn compare_scheduled(
         .then_with(|| left.expansion_sha256.cmp(&right.expansion_sha256))
 }
 
+fn compare_scheduled_node(
+    regime: SearchRegime,
+    left: &ScheduledNode,
+    right: &ScheduledNode,
+) -> Ordering {
+    let coverage = || {
+        left.completed_expansions
+            .cmp(&right.completed_expansions)
+            .then_with(|| left.registered_expansions.cmp(&right.registered_expansions))
+            .then_with(|| left.root_ticks.cmp(&right.root_ticks))
+    };
+    let ordering = match regime {
+        SearchRegime::Discovery => coverage(),
+        SearchRegime::Optimization => left
+            .exact_terminal_ticks_to_go
+            .is_none()
+            .cmp(&right.exact_terminal_ticks_to_go.is_none())
+            .then_with(coverage),
+    };
+    ordering
+        .then_with(|| left.tie_rank.cmp(&right.tie_rank))
+        .then_with(|| left.node.cmp(&right.node))
+}
+
+fn same_tape_origin(
+    left: &dusklight_automation_contracts::tape::InputTape,
+    right: &dusklight_automation_contracts::tape::InputTape,
+) -> bool {
+    left.boot == right.boot
+        && left.tick_rate_numerator == right.tick_rate_numerator
+        && left.tick_rate_denominator == right.tick_rate_denominator
+}
+
+fn node_tie_rank(seed: u64, generation: u64, node: ExactStateId) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-scheduled-node-tie/v1");
+    hasher.update(seed.to_le_bytes());
+    hasher.update(generation.to_le_bytes());
+    hasher.update(node.route_checkpoint_sha256.0);
+    hasher.update(node.state_sha256.0);
+    Digest(hasher.finalize().into())
+}
+
 #[derive(Debug)]
 pub enum SchedulerError {
     Invalid(&'static str),
@@ -222,6 +343,24 @@ mod tests {
             },
             source_root_ticks: root_ticks,
             learned,
+        }
+    }
+
+    fn node_entry(
+        identity: u8,
+        completed_expansions: u64,
+        exact_terminal_ticks_to_go: Option<u64>,
+    ) -> ScheduledNode {
+        ScheduledNode {
+            node: ExactStateId {
+                route_checkpoint_sha256: Digest([identity; 32]),
+                state_sha256: Digest([identity.saturating_add(1); 32]),
+            },
+            root_ticks: identity as u64,
+            registered_expansions: completed_expansions,
+            completed_expansions,
+            exact_terminal_ticks_to_go,
+            tie_rank: Digest([identity; 32]),
         }
     }
 
@@ -298,6 +437,26 @@ mod tests {
         );
         assert_eq!(
             compare_scheduled(SearchRegime::Optimization, &short, &long),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn node_discovery_prefers_the_least_expanded_boundary() {
+        let fresh = node_entry(2, 0, None);
+        let visited = node_entry(1, 1, None);
+        assert_eq!(
+            compare_scheduled_node(SearchRegime::Discovery, &fresh, &visited),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn node_optimization_prefers_boundaries_on_the_exact_terminal_path() {
+        let path = node_entry(2, 2, Some(20));
+        let broad = node_entry(1, 0, None);
+        assert_eq!(
+            compare_scheduled_node(SearchRegime::Optimization, &path, &broad),
             Ordering::Less
         );
     }

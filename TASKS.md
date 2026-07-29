@@ -34,9 +34,11 @@ The current implementation is not yet an accepted learning architecture.
   frontiers, retained terminal artifacts, and completed-seed reports are
   validated projections of that graph.
 - The live decision loop now registers horizon-eligible actions and completes
-  exact graph leases, but legacy frontier policy still chooses which node to
-  restore. Scheduler ranking also falls back to the existing policy order
-  until terminal-support and conditional-tick learner heads exist.
+  exact graph leases. Outside the explicit human-demonstration curriculum,
+  the graph scheduler also chooses which exact node to restore by coverage in
+  discovery and exact successful-path membership in optimization. Action
+  ranking still falls back to the existing policy order until terminal-support
+  and conditional-tick learner heads exist.
 - Long options historically exposed only their endpoints. Four-tick native
   interior boundaries now exist, but they do not by themselves turn the
   system into coherent graph search.

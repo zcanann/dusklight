@@ -247,8 +247,10 @@ pub(super) fn run_seed(
                 source_frame.saturating_add(horizon.saturating_sub(maximum_tactic_ticks)),
             )
             .map_err(route_error)?;
-            let [root, frontier] = match config.execution_plan.proposal_policy {
-                TacticProposalPolicy::Learned => campaign.sample_root_and_ranked_frontier(
+            let [root, frontier] = if demonstration_coverage_pending
+                && config.execution_plan.proposal_policy == TacticProposalPolicy::Learned
+            {
+                campaign.sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
                     &[],
@@ -268,15 +270,13 @@ pub(super) fn run_seed(
                             action_schema_sha256,
                         )
                     },
-                ),
-                TacticProposalPolicy::RandomValid | TacticProposalPolicy::StructuredNonLearning => {
-                    campaign.sample_root_and_frontier(
-                        seed,
-                        frontier_sampling_round(episode),
-                        &[],
-                        maximum_frontier_frames,
-                    )
-                }
+                )
+            } else {
+                campaign.graph_scheduled_root_and_frontier(
+                    seed,
+                    frontier_sampling_round(episode),
+                    maximum_frontier_frames,
+                )
             }
             .map_err(route_error)?;
             let prefer_root = terminal_restart
@@ -420,8 +420,10 @@ pub(super) fn run_seed(
                     .saturating_add(horizon.saturating_sub(u64::from(selected_maximum_ticks))),
             )
             .map_err(route_error)?;
-            let [root, frontier] = match config.execution_plan.proposal_policy {
-                TacticProposalPolicy::Learned => campaign.sample_root_and_ranked_frontier(
+            let [root, frontier] = if demonstration_coverage_pending
+                && config.execution_plan.proposal_policy == TacticProposalPolicy::Learned
+            {
+                campaign.sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
                     &[],
@@ -441,15 +443,13 @@ pub(super) fn run_seed(
                             action_schema_sha256,
                         )
                     },
-                ),
-                TacticProposalPolicy::RandomValid | TacticProposalPolicy::StructuredNonLearning => {
-                    campaign.sample_root_and_frontier(
-                        seed,
-                        frontier_sampling_round(episode),
-                        &[],
-                        maximum_frontier_frames,
-                    )
-                }
+                )
+            } else {
+                campaign.graph_scheduled_root_and_frontier(
+                    seed,
+                    frontier_sampling_round(episode),
+                    maximum_frontier_frames,
+                )
             }
             .map_err(route_error)?;
             let prefer_root =
