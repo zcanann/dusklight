@@ -293,12 +293,14 @@ impl GeneralizedTacticValueModel {
     /// Fits a universal goal-conditioned acquisition model from goals that
     /// native exploration actually reached.
     ///
-    /// A bounded set of exact replay endpoints becomes temporary coordinate
-    /// goals. Every observed transition is re-encoded relative to those goals
-    /// to supervise target-relative physical reachability; exact predecessor
-    /// edges additionally receive the negative native ticks required to reach
-    /// the endpoint. Neither signal carries terminal-support authority for the
-    /// authored objective.
+    /// Direct outcomes relative to the authored target remain the
+    /// highest-locality reachability evidence. A bounded set of exact replay
+    /// endpoints additionally becomes temporary coordinate goals, and every
+    /// observed transition is re-encoded relative to those goals to supervise
+    /// transferable target-relative physics. Exact predecessor edges also
+    /// receive the negative native ticks required to reach the endpoint.
+    /// Neither signal carries terminal-support authority for the authored
+    /// objective.
     pub fn fit_achieved_goal_returns(
         transitions: &[OptionTransitionSample],
         goal_distance_feature: usize,

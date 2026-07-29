@@ -143,6 +143,33 @@ fn an_untrained_catalog_bootstraps_without_fabricating_q() {
 }
 
 #[test]
+fn epsilon_remains_behaviorally_authoritative_without_exact_q_support() {
+    let wait = descriptor("wait", OptionType::Neutral);
+    let move_forward = descriptor("move", OptionType::Move);
+    let ranking = LiveTacticRanking {
+        learner_snapshot_sha256: Digest([1; 32]),
+        action_universe_sha256: Digest([2; 32]),
+        choices: vec![choice(move_forward.clone()), choice(wait.clone())],
+        values: AvailableOptionRanking {
+            ranked: Vec::new(),
+            unsupported: vec![wait, move_forward],
+        },
+    };
+
+    let selected = choose_tactic(
+        &ranking,
+        0,
+        TacticExplorationConfig {
+            seed: 7,
+            epsilon_per_million: 1_000_000,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(selected.reason, TacticSelectionReason::Epsilon);
+}
+
+#[test]
 fn nonpositive_known_values_bootstrap_an_unsupported_tactic() {
     let wait = descriptor("wait", OptionType::Neutral);
     let move_forward = descriptor("move", OptionType::Move);
@@ -1427,6 +1454,31 @@ fn goal_reachability_is_an_explicit_preterminal_primary() {
     assert_eq!(proposals[0].descriptor, reachable);
     assert_eq!(proposals[0].reason, TacticSelectionReason::GoalReachability);
     assert_eq!(proposals[1].descriptor, control);
+}
+
+#[test]
+fn goal_reachability_keeps_the_top_prediction_across_worker_partitions() {
+    let control = descriptor("known/control", OptionType::Neutral);
+    let best = descriptor("predicted/best", OptionType::Move);
+    let second_same_type = descriptor("predicted/second", OptionType::Move);
+    let third_other_type = descriptor("predicted/third", OptionType::Roll);
+    let proposal = || SelectedTactic {
+        schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+        learner_snapshot_sha256: Digest([31; 32]),
+        decision_index: 7,
+        descriptor: control.clone(),
+        reason: TacticSelectionReason::UnsupportedBootstrap,
+        exploration_draw: 0,
+    };
+    let ranked = [best.clone(), second_same_type, third_other_type];
+
+    for partition in [0, 1, 12, 127] {
+        let mut proposals = vec![proposal()];
+        ensure_goal_reachability_acquisition(&ranked, partition, 2, &mut proposals).unwrap();
+        retain_goal_reachability_acquisition(&mut proposals).unwrap();
+        assert_eq!(proposals[0].descriptor, best);
+        assert_eq!(proposals[0].reason, TacticSelectionReason::GoalReachability);
+    }
 }
 
 #[test]

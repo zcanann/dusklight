@@ -166,7 +166,7 @@ fn achieved_goal_relabeling_generalizes_reachability_beyond_observed_goals() {
     assert!(reachability_ranked.iter().all(|estimate| {
         estimate.terminal_support_distance.is_none()
             && estimate.outcome.reward.is_finite()
-            && estimate.outcome.reward < 0.0
+            && estimate.outcome.reward == 0.0
     }));
 }
 

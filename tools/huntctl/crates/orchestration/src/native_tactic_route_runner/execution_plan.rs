@@ -309,11 +309,11 @@ impl NativeTacticExecutionPlan {
                         NativeTacticLaneRole::RankedExploration
                     },
                     acquisition,
-                    epsilon_per_million: if support {
-                        0
-                    } else {
-                        request.epsilon_per_million
-                    },
+                    // Discovery is exploratory in every lane. The decision
+                    // policy suppresses epsilon for the rank-zero support
+                    // acquisition only after authenticated terminal evidence
+                    // exists.
+                    epsilon_per_million: request.epsilon_per_million,
                     intervention,
                     root_refresh_phase: generation_lane_index as u32 % request.root_refresh_cadence,
                     episode_group_base: (lane_index as u64)
@@ -488,7 +488,7 @@ mod tests {
                 ))
                 .collect::<Vec<_>>(),
             vec![
-                (NativeTacticLaneRole::TerminalSupport, 0, 0, 0),
+                (NativeTacticLaneRole::TerminalSupport, 0, 350_000, 0),
                 (NativeTacticLaneRole::RankedExploration, 1, 350_000, 1,),
                 (NativeTacticLaneRole::RankedExploration, 2, 350_000, 2,),
                 (NativeTacticLaneRole::RankedExploration, 3, 350_000, 3,),

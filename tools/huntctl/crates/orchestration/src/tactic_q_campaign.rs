@@ -102,6 +102,15 @@ pub struct TacticQDecision {
 pub struct TacticQProposalBatch {
     pub ranking: LiveTacticRanking,
     pub proposals: Vec<SelectedTactic>,
+    pub goal_reachability_estimates: Vec<TacticQGoalReachabilityEstimate>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticQGoalReachabilityEstimate {
+    pub descriptor: OptionActionDescriptor,
+    pub predicted_goal_progress_per_tick: f32,
+    pub nearest_distance: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

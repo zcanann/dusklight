@@ -76,7 +76,11 @@ impl TacticQCampaign {
             maximum_proposals,
         )?;
         ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
-        Ok(TacticQProposalBatch { ranking, proposals })
+        Ok(TacticQProposalBatch {
+            ranking,
+            proposals,
+            goal_reachability_estimates: Vec::new(),
+        })
     }
 
     /// Rank an ephemeral set of bounded instances under a stable tactic-family
@@ -194,14 +198,20 @@ impl TacticQCampaign {
             .map(|transition| transition.value_sample.action.option_id.as_str())
             .collect::<BTreeSet<_>>();
         let state_untried = applicable_untried_descriptors(&ranking.choices, &tried_here);
-        let exploration = if force_exploration {
-            TacticExplorationConfig {
-                seed: self.exploration.seed,
-                epsilon_per_million: 1_000_000,
-            }
-        } else {
-            self.exploration
-        };
+        let native_terminal_supported = self
+            .training_replay
+            .iter()
+            .any(|transition| transition.value_sample.terminal);
+        // Partition zero is the terminal-support acquisition only after the
+        // graph has terminal evidence. Before that, every lane belongs to the
+        // discovery regime and must retain its configured epsilon.
+        let terminal_support_acquisition = acquisition_partition == 0 || force_exploration;
+        let exploration = proposal_exploration_config(
+            self.exploration,
+            force_exploration,
+            native_terminal_supported,
+            terminal_support_acquisition,
+        );
         let mut proposals = choose_tactic_batch_for_policy(
             &ranking,
             self.decision_index,
@@ -232,6 +242,7 @@ impl TacticQCampaign {
         if policy != TacticProposalPolicy::RandomValid {
             ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
         }
+        let mut goal_reachability_estimates = Vec::new();
         if policy == TacticProposalPolicy::Learned {
             let context = GeneralizedTacticContext::from_facts(&self.current.snapshot)?;
             let applicable_descriptors = ranking
@@ -246,11 +257,6 @@ impl TacticQCampaign {
             // intervention must also select terminal support explicitly rather
             // than silently becoming an ordinary rank-N acquisition. Remaining
             // boundaries stay Q-ranked, preserving independent improvement.
-            let terminal_support_acquisition = acquisition_partition == 0 || force_exploration;
-            let native_terminal_supported = self
-                .training_replay
-                .iter()
-                .any(|transition| transition.value_sample.terminal);
             let goal_reachability_acquisition = self.value_treatment
                 == TacticValueTreatment::GoalRelabeledFittedQKnnV2
                 && !native_terminal_supported;
@@ -300,6 +306,16 @@ impl TacticQCampaign {
                                 })
                                 .transpose()?
                                 .map(|estimates| {
+                                    goal_reachability_estimates = estimates
+                                        .iter()
+                                        .map(|estimate| TacticQGoalReachabilityEstimate {
+                                            descriptor: estimate.descriptor.clone(),
+                                            predicted_goal_progress_per_tick: estimate
+                                                .outcome
+                                                .goal_progress_per_tick,
+                                            nearest_distance: estimate.nearest_distance,
+                                        })
+                                        .collect();
                                     estimates
                                         .into_iter()
                                         .map(|estimate| estimate.descriptor)
@@ -379,7 +395,11 @@ impl TacticQCampaign {
                 "parameterized proposal batch contains an inapplicable tactic".into(),
             ));
         }
-        Ok(TacticQProposalBatch { ranking, proposals })
+        Ok(TacticQProposalBatch {
+            ranking,
+            proposals,
+            goal_reachability_estimates,
+        })
     }
 
     /// Score and capture a native proposal without mutating the retained
@@ -876,5 +896,67 @@ impl TacticQCampaign {
             replay_rows: self.replay.len(),
             transition,
         })
+    }
+}
+
+fn proposal_exploration_config(
+    configured: TacticExplorationConfig,
+    force_exploration: bool,
+    native_terminal_supported: bool,
+    terminal_support_acquisition: bool,
+) -> TacticExplorationConfig {
+    let epsilon_per_million = if force_exploration {
+        1_000_000
+    } else if native_terminal_supported && terminal_support_acquisition {
+        0
+    } else {
+        configured.epsilon_per_million
+    };
+    TacticExplorationConfig {
+        seed: configured.seed,
+        epsilon_per_million,
+    }
+}
+
+#[cfg(test)]
+mod proposal_exploration_tests {
+    use super::*;
+
+    #[test]
+    fn discovery_epsilon_applies_to_support_and_ranked_acquisitions() {
+        let configured = TacticExplorationConfig {
+            seed: 17,
+            epsilon_per_million: 350_000,
+        };
+
+        assert_eq!(
+            proposal_exploration_config(configured, false, false, true),
+            configured
+        );
+        assert_eq!(
+            proposal_exploration_config(configured, false, false, false),
+            configured
+        );
+    }
+
+    #[test]
+    fn authenticated_terminal_suppresses_only_the_support_acquisition() {
+        let configured = TacticExplorationConfig {
+            seed: 17,
+            epsilon_per_million: 350_000,
+        };
+
+        assert_eq!(
+            proposal_exploration_config(configured, false, true, true).epsilon_per_million,
+            0
+        );
+        assert_eq!(
+            proposal_exploration_config(configured, false, true, false),
+            configured
+        );
+        assert_eq!(
+            proposal_exploration_config(configured, true, true, true).epsilon_per_million,
+            1_000_000
+        );
     }
 }

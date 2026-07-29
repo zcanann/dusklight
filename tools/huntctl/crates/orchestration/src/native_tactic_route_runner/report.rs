@@ -672,6 +672,13 @@ pub struct NativeTacticProposalTrace {
     pub execution_plan_sha256: Digest,
     pub option_id: String,
     pub selection_reason: TacticSelectionReason,
+    /// Exploration-only prediction made before native execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predicted_goal_progress_per_tick: Option<f32>,
+    /// Distance to the nearest relabeled training evidence used by the
+    /// reachability critic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reachability_nearest_distance: Option<f32>,
     pub reward: f32,
     pub reward_components: TacticRewardBreakdown,
     pub realized_ticks: u32,

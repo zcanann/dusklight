@@ -157,19 +157,7 @@ pub fn choose_tactic_with_state_untried(
         || (ranked[0].mean_q <= 0.0
             && !unsupported.is_empty()
             && exploration_draw >= config.epsilon_per_million);
-    let (descriptor, reason) = if bootstrap_unsupported {
-        let unsupported = canonical_candidates(&unsupported);
-        (
-            deterministic_factorized_candidate(
-                &unsupported,
-                config.seed,
-                decision_index,
-                ranking.learner_snapshot_sha256,
-            )
-            .clone(),
-            TacticSelectionReason::UnsupportedBootstrap,
-        )
-    } else if exploration_draw < config.epsilon_per_million {
+    let (descriptor, reason) = if exploration_draw < config.epsilon_per_million {
         // Finite tactic catalogs should spend exploratory decisions on choices
         // not yet tried in the current coarse state cell before resampling a
         // locally known action. If the caller has no state-local history, fall
@@ -198,6 +186,18 @@ pub fn choose_tactic_with_state_untried(
             )
             .clone(),
             TacticSelectionReason::Epsilon,
+        )
+    } else if bootstrap_unsupported {
+        let unsupported = canonical_candidates(&unsupported);
+        (
+            deterministic_factorized_candidate(
+                &unsupported,
+                config.seed,
+                decision_index,
+                ranking.learner_snapshot_sha256,
+            )
+            .clone(),
+            TacticSelectionReason::UnsupportedBootstrap,
         )
     } else {
         (ranked[0].descriptor.clone(), TacticSelectionReason::Greedy)
@@ -860,19 +860,35 @@ pub fn ensure_generalized_value_acquisition(
     )
 }
 
+/// Reserve the authoritative pre-terminal policy slot for the critic's best
+/// learned reachability prediction.
+///
+/// Native siblings and graph leases already provide diverse exploration
+/// evidence. A worker/lane partition must not silently turn rank N into the
+/// retained policy action at a different state.
 pub fn ensure_goal_reachability_acquisition(
     ranked_applicable: &[OptionActionDescriptor],
-    acquisition_partition: u64,
+    _acquisition_partition: u64,
     maximum_proposals: usize,
     proposals: &mut Vec<SelectedTactic>,
 ) -> Result<(), TacticExplorationError> {
-    ensure_ranked_model_acquisition(
-        ranked_applicable,
-        acquisition_partition,
+    if maximum_proposals <= 1 || proposals.is_empty() || proposals.len() > maximum_proposals {
+        return if !proposals.is_empty() && proposals.len() <= maximum_proposals {
+            Ok(())
+        } else {
+            Err(TacticExplorationError::InvalidInput)
+        };
+    }
+    let Some(descriptor) = ranked_applicable.first() else {
+        return Ok(());
+    };
+    ensure_model_acquisition(
+        descriptor,
         maximum_proposals,
         TacticSelectionReason::GoalReachability,
         proposals,
-    )
+    );
+    Ok(())
 }
 
 fn ensure_ranked_model_acquisition(
@@ -897,6 +913,16 @@ fn ensure_ranked_model_acquisition(
         return Ok(());
     }
     let descriptor = candidates[(acquisition_partition % candidates.len() as u64) as usize];
+    ensure_model_acquisition(descriptor, maximum_proposals, reason, proposals);
+    Ok(())
+}
+
+fn ensure_model_acquisition(
+    descriptor: &OptionActionDescriptor,
+    maximum_proposals: usize,
+    reason: TacticSelectionReason,
+    proposals: &mut Vec<SelectedTactic>,
+) {
     if let Some(existing) = proposals
         .iter_mut()
         .find(|proposal| proposal.descriptor == *descriptor)
@@ -904,14 +930,13 @@ fn ensure_ranked_model_acquisition(
         if existing.reason != TacticSelectionReason::Epsilon {
             existing.reason = reason;
         }
-        return Ok(());
+        return;
     }
     let mut acquisition = proposals[0].clone();
-    acquisition.descriptor = (*descriptor).clone();
+    acquisition.descriptor = descriptor.clone();
     acquisition.reason = reason;
     proposals.insert(1, acquisition);
     proposals.truncate(maximum_proposals);
-    Ok(())
 }
 
 fn interleave_ranked_action_types(

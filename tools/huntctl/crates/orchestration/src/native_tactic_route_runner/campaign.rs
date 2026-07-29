@@ -881,10 +881,18 @@ pub(super) fn run_seed(
                 let after_features = encoder
                     .encode(&proposal.transition.after)
                     .map_err(route_error)?;
+                let reachability = proposal_batch
+                    .goal_reachability_estimates
+                    .iter()
+                    .find(|estimate| estimate.descriptor == proposal.outcome.selected.descriptor);
                 Ok(NativeTacticProposalTrace {
                     execution_plan_sha256,
                     option_id: proposal.outcome.selected.descriptor.option_id.clone(),
                     selection_reason: proposal.outcome.selected.reason,
+                    predicted_goal_progress_per_tick: reachability
+                        .map(|estimate| estimate.predicted_goal_progress_per_tick),
+                    reachability_nearest_distance: reachability
+                        .map(|estimate| estimate.nearest_distance),
                     reward: proposal.reward.training_reward,
                     reward_components: proposal.reward.clone(),
                     realized_ticks: proposal.outcome.execution.duration.realized_ticks,

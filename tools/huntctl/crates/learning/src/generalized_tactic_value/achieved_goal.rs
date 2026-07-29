@@ -53,16 +53,39 @@ pub(super) fn fit(
         })
         .collect::<Vec<_>>();
     let incoming = incoming_edges(&edges);
+    // Preserve every directly observed outcome relative to the authored
+    // target encoded in the replay row. These are the highest-locality
+    // reachability labels at obstacle contacts and repeated exact states. They
+    // remain exploration-only: sparse reward and terminal authority are
+    // explicitly removed.
+    let mut samples = transitions
+        .iter()
+        .map(|transition| {
+            let mut outcome =
+                GeneralizedTacticOutcome::from_transition(transition, goal_distance_feature)?;
+            outcome.reward = 0.0;
+            outcome.terminal = 0.0;
+            Ok(GeneralizedTacticTrainingSample {
+                state_features: transition.value_sample.state.clone(),
+                context: GeneralizedTacticContext::from_facts(&transition.before)?,
+                action: transition.value_sample.action.clone(),
+                outcome,
+            })
+        })
+        .collect::<Result<Vec<_>, GeneralizedTacticValueError>>()?;
     // Cross-relabel every observed physical transition against a bounded set
     // of achieved targets. Reverse-path rows alone only show what an action
     // did relative to a goal it eventually reached; they omit the
     // counterexamples needed to distinguish target-directed motion from raw
     // speed. Bound the target count further for very large corpora so fitting
     // remains within the model's deterministic sample budget.
-    let maximum_targets =
-        (MAX_GENERALIZED_TACTIC_SAMPLES / transitions.len()).clamp(1, MAX_ACHIEVED_GOAL_TARGETS);
-    let targets = sampled_targets(transitions, maximum_targets);
-    let mut samples = Vec::new();
+    let remaining_samples = MAX_GENERALIZED_TACTIC_SAMPLES.saturating_sub(samples.len());
+    let maximum_targets = (remaining_samples / transitions.len()).min(MAX_ACHIEVED_GOAL_TARGETS);
+    let targets = if maximum_targets == 0 {
+        Vec::new()
+    } else {
+        sampled_targets(transitions, maximum_targets)
+    };
     'targets: for target_index in targets {
         let target_transition = &transitions[target_index];
         let target = target_transition

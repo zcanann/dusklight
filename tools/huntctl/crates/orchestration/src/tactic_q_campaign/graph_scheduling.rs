@@ -343,6 +343,7 @@ impl TacticQCampaign {
             batch: TacticQProposalBatch {
                 ranking: batch.ranking,
                 proposals,
+                goal_reachability_estimates: batch.goal_reachability_estimates,
             },
             leases,
         })

@@ -616,6 +616,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             TacticQProposalBatch {
                 ranking: decision.ranking.clone(),
                 proposals: vec![decision.selected.clone()],
+                goal_reachability_estimates: Vec::new(),
             },
             std::slice::from_ref(&decision.selected.descriptor),
             1,
@@ -641,6 +642,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
                 TacticQProposalBatch {
                     ranking: decision.ranking.clone(),
                     proposals: vec![decision.selected.clone()],
+                    goal_reachability_estimates: Vec::new(),
                 },
                 std::slice::from_ref(&decision.selected.descriptor),
                 1,
