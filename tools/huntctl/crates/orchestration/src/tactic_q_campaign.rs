@@ -1,7 +1,10 @@
 //! Online option-Q campaign over authenticated learner states and native tactic
 //! boundaries.
 
-use self::graph_projection::{graph_training_projection, validate_training_projection};
+use self::graph_projection::{
+    graph_frontier_entries, graph_root_branch, graph_training_projection,
+    validate_training_projection,
+};
 use crate::native_tactic_worker::{
     NativeTacticWorkerError, NativeTacticWorkerOutcome, NativeTacticWorkerPaths,
     PersistentTacticBatchWorker, execute_selected_tactic,
@@ -47,8 +50,7 @@ use dusklight_learning::tactic_value_treatment::{
 };
 use dusklight_proposals::behavior_archive::{
     BehaviorArchive, MAX_BEHAVIOR_ARCHIVE_ENTRIES, TacticEndpointDescriptor, TacticFrontierEntry,
-    TacticStateDescriptor, tactic_endpoint_descriptor, tactic_endpoint_descriptor_for_state,
-    tactic_state_descriptor,
+    TacticStateDescriptor, tactic_endpoint_descriptor_for_state, tactic_state_descriptor,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};

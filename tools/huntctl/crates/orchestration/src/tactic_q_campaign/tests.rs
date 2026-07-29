@@ -647,7 +647,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         campaign.route_tape.frames.len() as u64,
         campaign.current.snapshot.tape_frame
     );
-    assert_eq!(campaign.visited_state_count(), 1);
+    assert_eq!(campaign.visited_state_count(), 2);
 
     let expected_fitted_snapshot = campaign.learner_snapshot().unwrap();
     let checkpoint = campaign.checkpoint().unwrap();
@@ -683,33 +683,6 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         corpus.execution_authority_sha256,
         execution_authority_sha256
     );
-    let exact_terminal_ticks = BTreeMap::from([(corpus.transitions[0].after_state_sha256, 7_u64)]);
-    let mut exact_frontiers = Vec::new();
-    frontier::append_exact_terminal_frontiers(
-        &mut exact_frontiers,
-        corpus.root_checkpoint_sha256,
-        &corpus.transitions,
-        &corpus.routes,
-        &corpus.episode_groups,
-        &exact_terminal_ticks,
-        usize::MAX,
-    )
-    .unwrap();
-    assert_eq!(exact_frontiers.len(), 1);
-    let mut model_only_groups = corpus.episode_groups.clone();
-    model_only_groups.fill(TACTIC_Q_MODEL_ONLY_EPISODE_GROUP);
-    exact_frontiers.clear();
-    frontier::append_exact_terminal_frontiers(
-        &mut exact_frontiers,
-        corpus.root_checkpoint_sha256,
-        &corpus.transitions,
-        &corpus.routes,
-        &model_only_groups,
-        &exact_terminal_ticks,
-        usize::MAX,
-    )
-    .unwrap();
-    assert!(exact_frontiers.is_empty());
     let immutable_snapshot = TacticQImmutableLearnerSnapshot::fit(
         corpus.clone(),
         corpus.transitions.len() as u64,
@@ -871,7 +844,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert_eq!(filtered_episode.training_replay_len(), 1);
     assert!(filtered_episode.model().is_some());
     assert_eq!(filtered_episode.frontier_archive().unwrap().tactic_len(), 0);
-    assert_eq!(filtered_episode.visited_state_count(), 1);
+    assert_eq!(filtered_episode.visited_state_count(), 2);
     assert_eq!(
         fresh_episode
             .import_training_corpora(std::slice::from_ref(&corpus))
@@ -972,7 +945,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         .push(campaign.replay_routes[0].clone());
     equivalent_graph.episode_groups.push(77);
     let graph = equivalent_graph.graph().unwrap();
-    assert_eq!(graph.nodes.len(), 3);
+    assert_eq!(graph.nodes.len(), 2);
     assert!(graph.root_connected);
     assert_eq!(
         graph
@@ -980,7 +953,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             .iter()
             .filter(|node| { node.checkpoint_sha256 == campaign.replay[0].next_checkpoint_sha256 })
             .count(),
-        2
+        1
     );
     let diagnostics = restored.diagnostics().unwrap();
     assert_eq!(diagnostics.unique_selected_actions, 1);
@@ -1060,7 +1033,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     )
     .unwrap();
     assert_eq!(model_only.frontier_archive().unwrap().tactic_len(), 0);
-    assert_eq!(model_only.frontier_cell_count(), 0);
+    assert_eq!(model_only.frontier_cell_count(), 1);
     assert_eq!(model_only.demonstration_frontier_count(), 0);
     let mut demonstration = TacticQCampaign::resume(restored.checkpoint().unwrap()).unwrap();
     demonstration
@@ -1089,7 +1062,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     )
     .unwrap();
     assert_eq!(terminal_leaf.frontier_archive().unwrap().tactic_len(), 0);
-    assert_eq!(terminal_leaf.frontier_cell_count(), 0);
+    assert_eq!(terminal_leaf.frontier_cell_count(), 1);
     assert_eq!(terminal_leaf.demonstration_frontier_count(), 0);
     let mut forged_native_frontier = frontier_branch.clone();
     forged_native_frontier.restorable_native_checkpoint = Some(RestorableNativeTacticCheckpoint {

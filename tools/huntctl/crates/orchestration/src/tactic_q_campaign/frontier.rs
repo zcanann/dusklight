@@ -2,7 +2,7 @@ use super::*;
 
 impl TacticQCampaign {
     pub fn visited_state_count(&self) -> usize {
-        self.visited_states.len()
+        self.state_graph.as_ref().map_or(0, StateGraph::node_count)
     }
 
     pub fn hindsight_replay(&self) -> &HindsightOptionReplay {
@@ -22,17 +22,14 @@ impl TacticQCampaign {
     /// archive owns one elite per state descriptor, so the count can be
     /// derived directly and capped by the same archive bound.
     pub fn frontier_cell_count(&self) -> usize {
-        self.training_replay
-            .iter()
-            .zip(&self.training_episode_groups)
-            .filter(|(transition, episode_group)| {
-                **episode_group != TACTIC_Q_MODEL_ONLY_EPISODE_GROUP
-                    && !transition.value_sample.terminal
-            })
-            .map(|(transition, _)| tactic_state_descriptor(&transition.after, false))
-            .collect::<BTreeSet<_>>()
-            .len()
-            .min(MAX_BEHAVIOR_ARCHIVE_ENTRIES)
+        self.state_graph.as_ref().map_or(0, |graph| {
+            graph
+                .nodes()
+                .filter(|node| {
+                    node.id != graph.root() && node.restoration.executable && !node.terminal
+                })
+                .count()
+        })
     }
 
     pub fn demonstration_frontier_count(&self) -> usize {
@@ -50,43 +47,37 @@ impl TacticQCampaign {
     }
 
     pub fn graph(&self) -> Result<TacticCampaignGraph, TacticQCampaignError> {
-        let root = self
-            .replay
-            .first()
+        let graph = self
+            .state_graph
+            .as_ref()
             .ok_or(TacticQCampaignError::InvalidState(
-                "campaign graph requires replay",
+                "campaign graph requires bound graph state",
             ))?;
-        let root_checkpoint_sha256 = root.source_checkpoint_sha256;
-        // One realized PAD checkpoint can legitimately have multiple
-        // learner-facing snapshots when distinct tactic labels compile to the
-        // same input. `recent_option` records that provenance, so graph nodes
-        // are identified by both the restorable checkpoint and fact snapshot.
+        graph.validate()?;
+        let root = graph.root();
+        let root_checkpoint_sha256 = root.route_checkpoint_sha256;
+        let root_state_sha256 = root.state_sha256;
         let mut nodes = BTreeMap::<(Digest, Digest), TacticCampaignGraphNode>::new();
-        let mut edges = Vec::with_capacity(self.replay.len());
-        for ((transition, route), episode_group) in self
-            .replay
-            .iter()
-            .zip(&self.replay_routes)
-            .zip(&self.episode_groups)
-        {
-            let start = usize::try_from(transition.execution.realized_tape_range.start_frame)
-                .map_err(|_| TacticQCampaignError::InvalidState("graph tape range overflows"))?;
-            let before_node = TacticCampaignGraphNode {
-                checkpoint_sha256: transition.source_checkpoint_sha256,
-                state_sha256: transition.before_state_sha256,
-                state: transition.before.clone(),
-                route_tape: tape_prefix(route, start),
-            };
-            let after_node = TacticCampaignGraphNode {
-                checkpoint_sha256: transition.next_checkpoint_sha256,
-                state_sha256: transition.after_state_sha256,
-                state: transition.after.clone(),
-                route_tape: route.clone(),
-            };
-            insert_graph_node(&mut nodes, before_node)?;
-            insert_graph_node(&mut nodes, after_node)?;
+        for node in graph.nodes() {
+            insert_graph_node(
+                &mut nodes,
+                TacticCampaignGraphNode {
+                    checkpoint_sha256: node.id.route_checkpoint_sha256,
+                    state_sha256: node.id.state_sha256,
+                    state: node.state.clone(),
+                    route_tape: graph
+                        .route(node.id.route_checkpoint_sha256)
+                        .ok_or(TacticQCampaignError::InvalidState(
+                            "graph node route is absent",
+                        ))?
+                        .clone(),
+                },
+            )?;
+        }
+        let mut edges = Vec::with_capacity(graph.expansion_count());
+        for (transition, route, episode_group) in graph.completed_evidence() {
             edges.push(TacticCampaignGraphEdge {
-                episode_group: *episode_group,
+                episode_group,
                 before_state_sha256: transition.before_state_sha256,
                 after_state_sha256: transition.after_state_sha256,
                 source_checkpoint_sha256: transition.source_checkpoint_sha256,
@@ -98,8 +89,7 @@ impl TacticQCampaign {
                 route_tape: route.clone(),
             });
         }
-        let root_state_sha256 = root.before_state_sha256;
-        let mut reachable = BTreeSet::from([(root_checkpoint_sha256, root.before_state_sha256)]);
+        let mut reachable = BTreeSet::from([(root_checkpoint_sha256, root_state_sha256)]);
         loop {
             let before = reachable.len();
             for edge in &edges {
@@ -122,91 +112,63 @@ impl TacticQCampaign {
     }
 
     pub fn graph_projection(&self) -> Result<TacticCampaignGraphProjection, TacticQCampaignError> {
-        let root = self
-            .replay
-            .first()
+        let state_graph = self
+            .state_graph
+            .as_ref()
             .ok_or(TacticQCampaignError::InvalidState(
-                "campaign graph requires replay",
+                "campaign graph projection requires bound graph state",
             ))?;
-        let root_checkpoint_sha256 = root.source_checkpoint_sha256;
-        let root_state_sha256 = root.before_state_sha256;
+        let graph = self.graph()?;
+        let root_checkpoint_sha256 = graph.root_checkpoint_sha256;
+        let root_state_sha256 = graph.root_state_sha256;
         let current_checkpoint_sha256 =
             route_checkpoint(self.root_checkpoint_sha256, &self.route_tape)?;
-        let retained = self
-            .frontier_archive()?
-            .tactic_route_checkpoints()
+        let retained = state_graph
+            .nodes()
+            .filter(|node| {
+                node.id != state_graph.root() && node.restoration.executable && !node.terminal
+            })
+            .map(|node| node.id.route_checkpoint_sha256)
             .collect::<BTreeSet<_>>();
         let mut nodes = BTreeMap::<(Digest, Digest), TacticCampaignGraphProjectionNode>::new();
-        let mut edges = Vec::with_capacity(self.replay.len());
-        for (edge_index, (transition, episode_group)) in
-            self.replay.iter().zip(&self.episode_groups).enumerate()
-        {
-            for (checkpoint_sha256, state_sha256, state) in [
-                (
-                    transition.source_checkpoint_sha256,
-                    transition.before_state_sha256,
-                    &transition.before,
-                ),
-                (
-                    transition.next_checkpoint_sha256,
-                    transition.after_state_sha256,
-                    &transition.after,
-                ),
-            ] {
-                let node = TacticCampaignGraphProjectionNode {
-                    checkpoint_sha256,
-                    state_sha256,
-                    stage: state.world.stage.clone(),
-                    room: state.world.room,
-                    player_position: state.player.position_f32_bits.map(f32::from_bits),
-                    terminal: state.terminal.reached == Some(true),
-                    retained_frontier: retained.contains(&checkpoint_sha256),
-                    current: checkpoint_sha256 == current_checkpoint_sha256
-                        && state_sha256 == self.current.snapshot_sha256,
-                };
-                let identity = (checkpoint_sha256, state_sha256);
-                if nodes
-                    .get(&identity)
-                    .is_some_and(|existing| existing != &node)
-                {
-                    return Err(TacticQCampaignError::InvalidState(
-                        "one checkpoint-state identity has conflicting projected graph nodes",
-                    ));
-                }
-                nodes.entry(identity).or_insert(node);
-            }
+        for node in &graph.nodes {
+            nodes.insert(
+                (node.checkpoint_sha256, node.state_sha256),
+                TacticCampaignGraphProjectionNode {
+                    checkpoint_sha256: node.checkpoint_sha256,
+                    state_sha256: node.state_sha256,
+                    stage: node.state.world.stage.clone(),
+                    room: node.state.world.room,
+                    player_position: node.state.player.position_f32_bits.map(f32::from_bits),
+                    terminal: node.state.terminal.reached == Some(true),
+                    retained_frontier: retained.contains(&node.checkpoint_sha256),
+                    current: node.checkpoint_sha256 == current_checkpoint_sha256
+                        && node.state_sha256 == self.current.snapshot_sha256,
+                },
+            );
+        }
+        let mut edges = Vec::with_capacity(graph.edges.len());
+        for (edge_index, edge) in graph.edges.iter().enumerate() {
             edges.push(TacticCampaignGraphProjectionEdge {
                 edge_index: edge_index as u64,
-                episode_group: *episode_group,
-                before_state_sha256: transition.before_state_sha256,
-                after_state_sha256: transition.after_state_sha256,
-                source_checkpoint_sha256: transition.source_checkpoint_sha256,
-                next_checkpoint_sha256: transition.next_checkpoint_sha256,
-                option_id: transition.value_sample.action.option_id.clone(),
-                reward: transition.value_sample.reward,
-                duration_ticks: transition.execution.duration.realized_ticks,
-                terminal: transition.value_sample.terminal,
-                start_frame: transition.execution.realized_tape_range.start_frame,
-                end_frame_exclusive: transition.execution.realized_tape_range.end_frame_exclusive,
+                episode_group: edge.episode_group,
+                before_state_sha256: edge.before_state_sha256,
+                after_state_sha256: edge.after_state_sha256,
+                source_checkpoint_sha256: edge.source_checkpoint_sha256,
+                next_checkpoint_sha256: edge.next_checkpoint_sha256,
+                option_id: edge.action.option_id.clone(),
+                reward: edge.reward,
+                duration_ticks: edge.execution.duration.realized_ticks,
+                terminal: edge.terminal,
+                start_frame: edge.execution.realized_tape_range.start_frame,
+                end_frame_exclusive: edge.execution.realized_tape_range.end_frame_exclusive,
             });
-        }
-        let mut reachable = BTreeSet::from([(root_checkpoint_sha256, root_state_sha256)]);
-        loop {
-            let before = reachable.len();
-            for edge in &edges {
-                if reachable.contains(&(edge.source_checkpoint_sha256, edge.before_state_sha256)) {
-                    reachable.insert((edge.next_checkpoint_sha256, edge.after_state_sha256));
-                }
-            }
-            if reachable.len() == before {
-                break;
-            }
         }
         Ok(TacticCampaignGraphProjection {
             schema: "dusklight-tactic-campaign-graph-projection/v1".into(),
             root_checkpoint_sha256,
             root_state_sha256,
-            root_connected: reachable.len() == nodes.len(),
+            root_connected: graph.root_connected,
             frontier_cells: retained.len(),
             nodes: nodes.into_values().collect(),
             edges,
@@ -214,8 +176,23 @@ impl TacticQCampaign {
     }
 
     pub fn diagnostics(&self) -> Result<TacticCampaignDiagnostics, TacticQCampaignError> {
-        let archive = self.frontier_archive()?;
         let graph = self.graph_projection()?;
+        let state_graph = self
+            .state_graph
+            .as_ref()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "campaign diagnostics require bound graph state",
+            ))?;
+        let frontiers = state_graph
+            .nodes()
+            .filter(|node| {
+                node.id != state_graph.root() && node.restoration.executable && !node.terminal
+            })
+            .collect::<Vec<_>>();
+        let directly_restorable_native_frontiers = frontiers
+            .iter()
+            .filter(|node| node.restoration.native_boundary.is_some())
+            .count();
         let mut compositions = BTreeMap::<u64, Vec<Digest>>::new();
         let mut selected_actions = BTreeSet::new();
         for (transition, episode_group) in self.replay.iter().zip(&self.episode_groups) {
@@ -229,10 +206,12 @@ impl TacticQCampaign {
         }
         Ok(TacticCampaignDiagnostics {
             replay_rows: self.replay.len(),
-            frontier_cells: archive.tactic_len(),
+            frontier_cells: frontiers.len(),
             logical_frontier_records: graph.nodes.len(),
-            directly_restorable_native_frontiers: 0,
-            replay_only_frontiers: archive.tactic_len(),
+            directly_restorable_native_frontiers,
+            replay_only_frontiers: frontiers
+                .len()
+                .saturating_sub(directly_restorable_native_frontiers),
             unique_selected_actions: selected_actions.len(),
             zero_diversity_selection: self.replay.len() >= 2 && selected_actions.len() <= 1,
             repeated_identical_compositions: composition_counts.values().any(|count| *count > 1),
@@ -252,59 +231,35 @@ impl TacticQCampaign {
         _reference: &[TacticEndpointDescriptor],
         maximum_route_frames: usize,
     ) -> Result<[TacticCampaignBranch; 2], TacticQCampaignError> {
-        let first = self
-            .replay
-            .first()
+        let graph = self
+            .state_graph
+            .as_ref()
             .ok_or(TacticQCampaignError::InvalidState(
-                "frontier sampling requires replay",
+                "frontier sampling requires a bound state graph",
             ))?;
-        let first_route = &self.replay_routes[0];
-        let root_frames = usize::try_from(first.execution.realized_tape_range.start_frame)
-            .map_err(|_| TacticQCampaignError::InvalidState("root tape range overflows"))?;
-        let root_route = tape_prefix(first_route, root_frames);
-        let root_identity = route_checkpoint(self.root_checkpoint_sha256, &root_route)?;
-        let root = TacticCampaignBranch {
-            kind: TacticBranchKind::Root,
-            logical_frontier: LogicalTacticFrontierRecord {
-                identity_sha256: root_identity,
-                state_sha256: first.before_state_sha256,
-                route_frames: root_route.frames.len() as u64,
-                replayed_prefix_ticks: 0,
-            },
-            restorable_native_checkpoint: None,
-            acquisition: None,
-            state: first.before.clone(),
-            route_tape: root_route,
-            descriptor: None,
-        };
-        let archive = self.frontier_archive()?;
-        let choices = archive
-            .tactic_frontiers()
-            .into_iter()
-            .filter(|entry| entry.route_tape.frames.len() <= maximum_route_frames)
-            .collect::<Vec<_>>();
+        let root = graph_root_branch(graph)?;
+        let choices = graph_frontier_entries(graph, maximum_route_frames)?;
         if choices.is_empty() {
             return Err(TacticQCampaignError::InvalidState(
-                "frontier archive has no eligible restorable endpoint",
+                "state graph has no eligible executable frontier",
             ));
         }
         let index = seeded_frontier_index(seed, round, choices.len());
         let selected = &choices[index];
-        let replayed_prefix_ticks = selected
-            .route_tape
-            .frames
-            .len()
-            .checked_sub(root_frames)
-            .ok_or(TacticQCampaignError::InvalidState(
-                "frontier route precedes its native root",
-            ))? as u64;
         let frontier = TacticCampaignBranch {
             kind: TacticBranchKind::RetainedFrontier,
             logical_frontier: LogicalTacticFrontierRecord {
                 identity_sha256: selected.route_checkpoint_sha256,
                 state_sha256: selected.frontier_state_sha256,
                 route_frames: selected.route_tape.frames.len() as u64,
-                replayed_prefix_ticks,
+                replayed_prefix_ticks: selected
+                    .route_tape
+                    .frames
+                    .len()
+                    .checked_sub(root.route_tape.frames.len())
+                    .ok_or(TacticQCampaignError::InvalidState(
+                        "frontier route precedes its native root",
+                    ))? as u64,
             },
             restorable_native_checkpoint: None,
             acquisition: None,
@@ -346,12 +301,18 @@ impl TacticQCampaign {
             self.sample_root_and_frontier(seed, round, reference, maximum_route_frames)?;
         let root_frames = root.route_tape.frames.len();
         let archive = self.frontier_archive()?;
+        let graph = self
+            .state_graph
+            .as_ref()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "frontier ranking requires a bound state graph",
+            ))?;
         let terminal_value_supported = self
             .training_replay
             .iter()
             .any(|transition| transition.value_sample.terminal);
         let exact_terminal_ticks = exact_terminal_ticks_to_go_by_state(&self.training_replay);
-        let mut choices = if !demonstration_curriculum && !terminal_value_supported {
+        let preferred = if !demonstration_curriculum && !terminal_value_supported {
             archive.select_tactic_reachability_frontier_within_route_frames(
                 reference,
                 archive.tactic_len(),
@@ -364,16 +325,33 @@ impl TacticQCampaign {
                 maximum_route_frames,
             )
         };
+        let mut graph_choices = graph_frontier_entries(graph, maximum_route_frames)?
+            .into_iter()
+            .map(|entry| {
+                (
+                    (entry.route_checkpoint_sha256, entry.frontier_state_sha256),
+                    entry,
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut choices = preferred
+            .into_iter()
+            .filter_map(|entry| {
+                graph_choices.remove(&(entry.route_checkpoint_sha256, entry.frontier_state_sha256))
+            })
+            .collect::<Vec<_>>();
+        choices.extend(graph_choices.into_values());
         if terminal_value_supported && !demonstration_curriculum {
-            append_exact_terminal_frontiers(
-                &mut choices,
-                self.root_checkpoint_sha256,
-                &self.training_replay,
-                &self.training_replay_routes,
-                &self.training_episode_groups,
-                &exact_terminal_ticks,
-                maximum_route_frames,
-            )?;
+            choices.sort_by_key(|entry| {
+                (
+                    exact_terminal_ticks
+                        .get(&entry.frontier_state_sha256)
+                        .is_none(),
+                    entry.first_seen_generation,
+                    entry.route_checkpoint_sha256,
+                    entry.frontier_state_sha256,
+                )
+            });
         }
         if demonstration_curriculum {
             let demonstration_endpoints = self
@@ -617,14 +595,19 @@ impl TacticQCampaign {
             .route_tape
             .validate()
             .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
-        let frontier = self.frontier_archive()?;
-        let native_root_frames = self
-            .replay
-            .first()
-            .and_then(|first| usize::try_from(first.execution.realized_tape_range.start_frame).ok())
+        let graph = self
+            .state_graph
+            .as_ref()
             .ok_or(TacticQCampaignError::InvalidState(
-                "campaign has no native root boundary",
+                "branch restore requires a bound state graph",
             ))?;
+        let root = graph
+            .node(graph.root())
+            .ok_or(TacticQCampaignError::InvalidState(
+                "state graph root is absent",
+            ))?;
+        let native_root_frames = usize::try_from(root.restoration.route.tape_frames)
+            .map_err(|_| TacticQCampaignError::InvalidState("root route frames overflow"))?;
         let expected_replayed_prefix_ticks = branch
             .route_tape
             .frames
@@ -633,56 +616,19 @@ impl TacticQCampaign {
             .ok_or(TacticQCampaignError::InvalidState(
                 "frontier route precedes its native root",
             ))? as u64;
-        let admitted = match branch.kind {
-            TacticBranchKind::Root => self.replay.first().is_some_and(|first| {
-                first.before_state_sha256 == branch.logical_frontier.state_sha256
-                    && first.source_checkpoint_sha256 == branch.logical_frontier.identity_sha256
-            }),
-            TacticBranchKind::RetainedFrontier => {
-                frontier.contains_tactic_frontier(
-                    branch.logical_frontier.identity_sha256,
-                    branch.logical_frontier.state_sha256,
-                ) || self
-                    .training_replay
-                    .iter()
-                    .zip(&self.training_replay_routes)
-                    .zip(&self.training_episode_groups)
-                    .any(|((transition, route), episode_group)| {
-                        if *episode_group == TACTIC_Q_MODEL_ONLY_EPISODE_GROUP {
-                            return false;
-                        }
-                        let exact_endpoint = transition.after_state_sha256
-                            == branch.logical_frontier.state_sha256
-                            && transition.next_checkpoint_sha256
-                                == branch.logical_frontier.identity_sha256
-                            && route == &branch.route_tape;
-                        exact_endpoint
-                            || transition.intermediate_boundaries.iter().any(|boundary| {
-                                let Ok(offset) = usize::try_from(boundary.offset_ticks) else {
-                                    return false;
-                                };
-                                let Ok(start) = usize::try_from(
-                                    transition.execution.realized_tape_range.start_frame,
-                                ) else {
-                                    return false;
-                                };
-                                let Some(end) = start.checked_add(offset) else {
-                                    return false;
-                                };
-                                boundary.state_sha256 == branch.logical_frontier.state_sha256
-                                    && route.frames.get(..end)
-                                        == Some(branch.route_tape.frames.as_slice())
-                                    && branch.logical_frontier.identity_sha256
-                                        == route_checkpoint(
-                                            self.root_checkpoint_sha256,
-                                            &branch.route_tape,
-                                        )
-                                        .ok()
-                                        .unwrap_or(Digest::ZERO)
-                            })
-                    })
-            }
+        let branch_id = crate::state_graph::ExactStateId {
+            route_checkpoint_sha256: branch.logical_frontier.identity_sha256,
+            state_sha256: branch.logical_frontier.state_sha256,
         };
+        let graph_node = graph.node(branch_id);
+        let admitted = graph_node.is_some_and(|node| {
+            node.restoration.executable
+                && graph.route(node.id.route_checkpoint_sha256) == Some(&branch.route_tape)
+                && match branch.kind {
+                    TacticBranchKind::Root => node.id == graph.root(),
+                    TacticBranchKind::RetainedFrontier => node.id != graph.root() && !node.terminal,
+                }
+        });
         if !admitted
             || self.episode_groups.contains(&episode_group)
             || branch.restorable_native_checkpoint.is_some()
@@ -744,97 +690,6 @@ fn limit_ranked_frontier_candidates(
     exploratory.truncate(remaining);
     exact.extend(exploratory);
     exact
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn append_exact_terminal_frontiers(
-    choices: &mut Vec<TacticFrontierEntry>,
-    root_checkpoint_sha256: Digest,
-    transitions: &[OptionTransitionSample],
-    routes: &[InputTape],
-    episode_groups: &[u64],
-    exact_terminal_ticks: &BTreeMap<Digest, u64>,
-    maximum_route_frames: usize,
-) -> Result<(), TacticQCampaignError> {
-    if transitions.len() != routes.len() || transitions.len() != episode_groups.len() {
-        return Err(TacticQCampaignError::InvalidState(
-            "terminal frontier replay shape is invalid",
-        ));
-    }
-    let mut identities = choices
-        .iter()
-        .map(|entry| (entry.route_checkpoint_sha256, entry.frontier_state_sha256))
-        .collect::<BTreeSet<_>>();
-    for (generation, ((transition, route), episode_group)) in transitions
-        .iter()
-        .zip(routes)
-        .zip(episode_groups)
-        .enumerate()
-    {
-        if *episode_group == TACTIC_Q_MODEL_ONLY_EPISODE_GROUP {
-            continue;
-        }
-        if !transition.value_sample.terminal
-            && route.frames.len() <= maximum_route_frames
-            && exact_terminal_ticks.contains_key(&transition.after_state_sha256)
-        {
-            let identity = (
-                transition.next_checkpoint_sha256,
-                transition.after_state_sha256,
-            );
-            if identities.insert(identity) {
-                choices.push(TacticFrontierEntry {
-                    descriptor: tactic_endpoint_descriptor(transition)
-                        .map_err(|error| TacticQCampaignError::Frontier(error.to_string()))?,
-                    root_checkpoint_sha256,
-                    route_checkpoint_sha256: transition.next_checkpoint_sha256,
-                    frontier_state_sha256: transition.after_state_sha256,
-                    frontier_state: transition.after.clone(),
-                    transition: transition.clone(),
-                    route_tape: route.clone(),
-                    first_seen_generation: generation as u64,
-                });
-            }
-        }
-        let start = usize::try_from(transition.execution.realized_tape_range.start_frame)
-            .map_err(|_| TacticQCampaignError::InvalidState("dense frontier tape overflows"))?;
-        for boundary in &transition.intermediate_boundaries {
-            if !exact_terminal_ticks.contains_key(&boundary.state_sha256) {
-                continue;
-            }
-            let end = start
-                .checked_add(usize::try_from(boundary.offset_ticks).map_err(|_| {
-                    TacticQCampaignError::InvalidState("dense frontier offset overflows")
-                })?)
-                .ok_or(TacticQCampaignError::InvalidState(
-                    "dense frontier route overflows",
-                ))?;
-            if end > route.frames.len() || end > maximum_route_frames {
-                continue;
-            }
-            let route_tape = tape_prefix(route, end);
-            let route_checkpoint_sha256 = route_checkpoint(root_checkpoint_sha256, &route_tape)?;
-            if !identities.insert((route_checkpoint_sha256, boundary.state_sha256)) {
-                continue;
-            }
-            choices.push(TacticFrontierEntry {
-                descriptor: tactic_endpoint_descriptor_for_state(
-                    &boundary.state,
-                    false,
-                    &transition.value_sample.action,
-                )
-                .map_err(|error| TacticQCampaignError::Frontier(error.to_string()))?,
-                root_checkpoint_sha256,
-                route_checkpoint_sha256,
-                frontier_state_sha256: boundary.state_sha256,
-                frontier_state: boundary.state.clone(),
-                transition: transition.clone(),
-                route_tape,
-                first_seen_generation: generation as u64,
-            });
-        }
-    }
-    Ok(())
 }
 
 fn exact_terminal_ticks_to_go_by_state(

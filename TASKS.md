@@ -149,8 +149,6 @@ journals, or learned tactics.
       files by responsibility before adding more policy variants.
 - [ ] Make the state graph the only mutable owner of discovered states,
       executed expansions, route costs, and terminal paths.
-- [ ] Remove or demote coarse frontier archives and linear replay fields that
-      duplicate graph authority. Compatibility projections must be read-only.
 - [ ] Add invariant tests proving that graph, learner corpus, restored state,
       terminal path, and exported report all name the same content identities.
 
