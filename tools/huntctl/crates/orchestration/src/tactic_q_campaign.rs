@@ -41,7 +41,7 @@ use dusklight_learning::tactic_exploration::{
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_learning::tactic_value_treatment::{
-    ContinuousTacticValueModel, TacticValueTreatment,
+    ContinuousTacticDoubleQModel, ContinuousTacticValueModel, TacticValueTreatment,
 };
 use dusklight_proposals::behavior_archive::{
     BehaviorArchive, MAX_BEHAVIOR_ARCHIVE_ENTRIES, TacticEndpointDescriptor, TacticStateDescriptor,
@@ -395,6 +395,7 @@ pub struct TacticQCampaign {
     value_treatment: TacticValueTreatment,
     generalized_model: RefCell<Option<CachedGeneralizedTacticValueModel>>,
     native_terminal_model: RefCell<Option<CachedGeneralizedTacticValueModel>>,
+    native_terminal_action_model: RefCell<Option<CachedContinuousTacticDoubleQModel>>,
     continuous_model: RefCell<Option<CachedContinuousTacticValueModel>>,
     visited_states: BTreeSet<TacticStateDescriptor>,
     hindsight: HindsightOptionReplay,
@@ -549,6 +550,7 @@ impl TacticQCampaign {
             value_treatment: TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
             generalized_model: RefCell::new(None),
             native_terminal_model: RefCell::new(None),
+            native_terminal_action_model: RefCell::new(None),
             continuous_model: RefCell::new(None),
             visited_states,
             hindsight,
@@ -660,6 +662,14 @@ impl TacticQCampaign {
                     model_revision: snapshot.manifest.model_revision,
                     model: Arc::clone(model),
                 }
+            });
+        *self.native_terminal_action_model.borrow_mut() = snapshot
+            .native_terminal_action_model
+            .as_ref()
+            .map(|model| CachedContinuousTacticDoubleQModel {
+                goal_distance_feature: snapshot.goal_distance_feature,
+                model_revision: snapshot.manifest.model_revision,
+                model: Arc::clone(model),
             });
         *self.continuous_model.borrow_mut() =
             snapshot
@@ -845,7 +855,10 @@ mod decision;
 mod frontier;
 mod persistence;
 mod value_treatment;
-use value_treatment::{CachedContinuousTacticValueModel, CachedGeneralizedTacticValueModel};
+use value_treatment::{
+    CachedContinuousTacticDoubleQModel, CachedContinuousTacticValueModel,
+    CachedGeneralizedTacticValueModel,
+};
 
 fn applicable_untried_descriptors(
     choices: &[LearnerActionMaskEntry],

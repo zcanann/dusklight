@@ -109,6 +109,7 @@ pub struct TacticQImmutableLearnerSnapshot {
     pub(super) model: Option<Arc<OptionValueModel>>,
     pub(super) generalized_model: Option<Arc<GeneralizedTacticValueModel>>,
     pub(super) native_terminal_model: Option<Arc<GeneralizedTacticValueModel>>,
+    pub(super) native_terminal_action_model: Option<Arc<ContinuousTacticDoubleQModel>>,
     pub(super) continuous_model: Option<Arc<ContinuousTacticValueModel>>,
     pub(super) goal_distance_feature: usize,
 }
@@ -175,6 +176,16 @@ impl TacticQImmutableLearnerSnapshot {
         } else {
             None
         };
+        let native_terminal_action_model = if native_terminal_model.is_some() {
+            Some(Arc::new(ContinuousTacticDoubleQModel::fit(
+                &corpus.transitions,
+                goal_distance_feature,
+                model_config.fitted_q.iterations,
+                model_config.fitted_q.discount,
+            )?))
+        } else {
+            None
+        };
         let continuous_model = if corpus.transitions.len() >= 2
             && value_treatment == TacticValueTreatment::ContinuousFittedQForestV1
         {
@@ -221,6 +232,7 @@ impl TacticQImmutableLearnerSnapshot {
             model,
             generalized_model,
             native_terminal_model,
+            native_terminal_action_model,
             continuous_model,
             goal_distance_feature,
         })

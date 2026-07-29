@@ -274,21 +274,31 @@ impl TacticQCampaign {
                                 .collect::<Vec<_>>()
                         }),
                     TacticValueTreatment::GoalRelabeledFittedQKnnV2 => {
-                        let model = self.active_goal_relabel_model(goal_distance_feature)?;
-                        model
-                            // Achieved-goal and native-terminal scratch critics
-                            // order actions only by learned return. Behavior
-                            // transfer is reserved for the optional
-                            // demonstration treatment; repeating the first
-                            // slow scratch success cannot optimize it.
-                            .map(|model| model.rank(&features, &context, &applicable_descriptors))
-                            .transpose()?
-                            .map(|estimates| {
-                                estimates
-                                    .into_iter()
-                                    .map(|estimate| estimate.descriptor)
-                                    .collect::<Vec<_>>()
-                            })
+                        if native_terminal_supported {
+                            self.native_terminal_action_model(goal_distance_feature)?
+                                .map(|model| {
+                                    model.rank(&features, &context, &applicable_descriptors)
+                                })
+                                .transpose()?
+                                .map(|estimates| {
+                                    estimates
+                                        .into_iter()
+                                        .map(|estimate| estimate.descriptor)
+                                        .collect::<Vec<_>>()
+                                })
+                        } else {
+                            self.active_goal_relabel_model(goal_distance_feature)?
+                                .map(|model| {
+                                    model.rank(&features, &context, &applicable_descriptors)
+                                })
+                                .transpose()?
+                                .map(|estimates| {
+                                    estimates
+                                        .into_iter()
+                                        .map(|estimate| estimate.descriptor)
+                                        .collect::<Vec<_>>()
+                                })
+                        }
                     }
                     TacticValueTreatment::ContinuousFittedQForestV1 => self
                         .continuous_model(goal_distance_feature)?

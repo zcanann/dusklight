@@ -1,6 +1,6 @@
 use super::*;
 use crate::fact_snapshot::{FactSnapshot, FactTerminalReason};
-use crate::tactic_value_treatment::ContinuousTacticValueModel;
+use crate::tactic_value_treatment::{ContinuousTacticDoubleQModel, ContinuousTacticValueModel};
 use crate::tape::{InputFrame, InputTape};
 use dusklight_control::option_execution::{
     OptionCondition, OptionEndReason, OptionExecution, OptionParameter, OptionType, TapeRange,
@@ -110,6 +110,29 @@ fn corpus() -> Vec<OptionTransitionSample> {
         .enumerate()
         .map(|(index, (state, action))| transition(index, state, action))
         .collect()
+}
+
+#[test]
+fn continuous_double_q_ranks_supported_parameterized_actions() {
+    let corpus = corpus();
+    let model = ContinuousTacticDoubleQModel::fit(&corpus, 0, 16, 1.0).unwrap();
+    let source = &corpus[0];
+    let context = GeneralizedTacticContext::from_facts(&source.before).unwrap();
+    let descriptors = corpus
+        .iter()
+        .take(5)
+        .map(|transition| transition.value_sample.action.clone())
+        .collect::<Vec<_>>();
+    let ranked = model
+        .rank(&source.value_sample.state, &context, &descriptors)
+        .unwrap();
+
+    assert_eq!(ranked.len(), descriptors.len());
+    assert!(ranked.iter().all(|estimate| {
+        estimate.mean_q.is_finite()
+            && estimate.ensemble_variance.is_finite()
+            && estimate.ensemble_variance >= 0.0
+    }));
 }
 
 #[test]
