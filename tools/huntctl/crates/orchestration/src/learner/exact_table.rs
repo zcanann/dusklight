@@ -83,11 +83,34 @@ impl ExactGraphTableSnapshot {
             return None;
         }
         Some(GraphAuxiliaryPrediction {
-            next_state_feature_f32_bits: source
-                .iter()
-                .zip(&model.mean_delta_f32_bits)
-                .map(|(source, delta)| (f32::from_bits(*source) + f32::from_bits(*delta)).to_bits())
-                .collect(),
+            next_state_feature_f32_bits: predict_next_features(source, model),
+            realized_duration_ticks: model.duration_ticks,
+            action_acceptance_per_million: model.acceptance_per_million,
+            prompted_action_status: model.prompted_action_status,
+            immediate_terminal_per_million: model.immediate_terminal_per_million,
+            support_rows: model.support_rows,
+            prediction_error_millionths: model.prediction_error_millionths,
+            generalized: true,
+        })
+    }
+
+    pub fn generalized_auxiliary_prediction(
+        &self,
+        source_features: &[f32],
+        action_sha256: Digest,
+    ) -> Option<GraphAuxiliaryPrediction> {
+        let model = self.action_auxiliary.get(&action_sha256)?;
+        if source_features.len() != model.mean_delta_f32_bits.len()
+            || source_features.iter().any(|value| !value.is_finite())
+        {
+            return None;
+        }
+        let source = source_features
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>();
+        Some(GraphAuxiliaryPrediction {
+            next_state_feature_f32_bits: predict_next_features(&source, model),
             realized_duration_ticks: model.duration_ticks,
             action_acceptance_per_million: model.acceptance_per_million,
             prompted_action_status: model.prompted_action_status,
@@ -302,6 +325,14 @@ fn insert_node_features(
         ));
     }
     Ok(())
+}
+
+fn predict_next_features(source: &[u32], model: &ActionAuxiliaryModel) -> Vec<u32> {
+    source
+        .iter()
+        .zip(&model.mean_delta_f32_bits)
+        .map(|(source, delta)| (f32::from_bits(*source) + f32::from_bits(*delta)).to_bits())
+        .collect()
 }
 
 fn finalize_auxiliary(aggregate: ActionAuxiliaryAccumulator) -> ActionAuxiliaryModel {

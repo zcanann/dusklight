@@ -267,6 +267,22 @@ fn learner_targets_keep_exact_success_separate_from_censored_continuation() {
         vec![(mixed_batch.rows[1].target_features[0] + 6.0).to_bits()]
     );
     assert!(mixed_prediction.prediction_error_millionths > 0);
+    let calibration = crate::learner::HeldOutGraphCalibrationReport::build(
+        &crate::learner::GraphLearnerContract::default(),
+        &mixed_batch,
+    )
+    .unwrap();
+    assert_eq!(calibration.training_rows, 1);
+    assert_eq!(calibration.held_out_rows, 1);
+    assert_eq!(calibration.held_out_state_groups, 1);
+    assert_eq!(calibration.independently_realized_action_rows, 1);
+    assert_eq!(calibration.auxiliary_predictions, 1);
+    assert!(calibration.auxiliary_mean_error_millionths > 0);
+    assert_eq!(calibration.objective_predictions, 0);
+    calibration.validate().unwrap();
+    let mut detached_calibration = calibration;
+    detached_calibration.auxiliary_predictions = 0;
+    assert!(detached_calibration.validate().is_err());
 
     let (mut terminal_graph, mut terminal, terminal_route) = graph_and_transition();
     terminalize(&mut terminal);

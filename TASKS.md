@@ -52,6 +52,11 @@ The current implementation is not yet an accepted learning architecture.
   status, and immediate terminal outcome. The exact table retains exact
   predictions and fits an action-shared delta/rate baseline whose numeric
   prediction error is published to the scheduler as exploration evidence.
+- A content-bound calibration report now withholds whole exact-state groups,
+  distinguishes independently realized from unseen actions, measures
+  auxiliary error, and reports objective/ranking coverage as zero when the
+  learner is unsupported. It is a gate, not evidence that generalization is
+  already good.
 - Long options historically exposed only their endpoints. Four-tick native
   interior boundaries now exist, but they do not by themselves turn the
   system into coherent graph search.
@@ -200,8 +205,10 @@ Exit gate:
 
 ## P2 - Make learning a serious expansion policy
 
-- [ ] Use held-out state groups and independently realized actions to measure
-      value calibration and ranking quality. In-sample fit is not evidence.
+- [ ] Populate the held-out graph calibration gate with generalized objective
+      predictions and pairwise action rankings; require calibrated tick error
+      and ranking gains on independently realized actions. In-sample fit and
+      zero prediction coverage are not evidence.
 - [ ] Implement prioritized replay over surprising, rare, terminal-connected,
       and policy-relevant graph edges without starving ordinary evidence.
 - [ ] Compare at least one stable discrete/action-factor baseline against the
