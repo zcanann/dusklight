@@ -500,6 +500,35 @@ fn held_out_objective_gate_requires_state_conditioned_ranking_gain() {
     let mut detached_replay = replay;
     detached_replay.rows[0].prioritized_draws += 1;
     assert!(detached_replay.validate(&contract, &batch).is_err());
+
+    let comparison =
+        crate::learner::GraphTreatmentComparisonReport::build(&contract, &batch).unwrap();
+    assert_eq!(comparison.metrics.len(), 3);
+    assert!(
+        !comparison
+            .metrics
+            .iter()
+            .find(|metrics| {
+                metrics.treatment == crate::learner::GraphObjectiveTreatment::DiscreteActionMean
+            })
+            .unwrap()
+            .passed_gate
+    );
+    assert!(
+        comparison
+            .metrics
+            .iter()
+            .find(|metrics| {
+                metrics.treatment == crate::learner::GraphObjectiveTreatment::StateKnn
+            })
+            .unwrap()
+            .passed_gate
+    );
+    assert_eq!(
+        comparison.selected_treatment,
+        Some(crate::learner::GraphObjectiveTreatment::StateKnn)
+    );
+    comparison.validate().unwrap();
 }
 
 #[test]

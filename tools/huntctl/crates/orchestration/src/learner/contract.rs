@@ -409,6 +409,7 @@ pub enum GraphLearnerError {
     Invalid(&'static str),
     Facts(String),
     Action(String),
+    Model(String),
     Serialization(String),
     Graph(StateGraphError),
 }
@@ -421,6 +422,7 @@ impl fmt::Display for GraphLearnerError {
             }
             Self::Facts(message) => write!(formatter, "graph learner facts failed: {message}"),
             Self::Action(message) => write!(formatter, "graph learner action failed: {message}"),
+            Self::Model(message) => write!(formatter, "graph learner model failed: {message}"),
             Self::Serialization(message) => {
                 write!(formatter, "graph learner serialization failed: {message}")
             }
