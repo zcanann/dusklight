@@ -53,6 +53,7 @@ pub struct NativeTacticScratchSeedEvidence {
     pub best_terminal_state_sha256: Option<Digest>,
     pub best_terminal_route_checkpoint_sha256: Option<Digest>,
     pub seed_result: NativeTacticScratchBundleArtifact,
+    pub lease_journal: NativeTacticScratchBundleArtifact,
     pub checkpoint_envelope: NativeTacticScratchBundleArtifact,
     pub checkpoint_snapshot: NativeTacticScratchBundleArtifact,
     pub best_terminal_tape: Option<NativeTacticScratchBundleArtifact>,
@@ -368,6 +369,7 @@ impl NativeTacticScratchEvidenceBundle {
         for seed in &self.seeds {
             artifacts.extend([
                 &seed.seed_result,
+                &seed.lease_journal,
                 &seed.checkpoint_envelope,
                 &seed.checkpoint_snapshot,
             ]);
@@ -409,6 +411,25 @@ fn bundle_seed(
         ContentKind::DatasetManifest,
         seed_result_identity,
     )?;
+    let graph_metrics = seed
+        .graph_metrics
+        .as_ref()
+        .ok_or_else(|| route_message("scratch seed has no graph metrics"))?;
+    let lease_journal_path = confined_source(
+        repository_root,
+        &seed_root.join(NATIVE_TACTIC_LEASE_JOURNAL_FILE),
+    )?;
+    let lease_journal = bundle_file(
+        store,
+        &lease_journal_path,
+        ContentKind::CrashArtifact,
+        graph_metrics.lease_accounting.journal_sha256,
+    )?;
+    if lease_journal.blob.sha256 != graph_metrics.lease_accounting.journal_sha256 {
+        return Err(route_message(
+            "scratch seed lease journal differs from reported accounting",
+        ));
+    }
     let checkpoint =
         TacticQCampaign::read_checkpoint_payload(&checkpoint_path).map_err(route_error)?;
     validate_checkpoint(&checkpoint).map_err(route_error)?;
@@ -491,6 +512,7 @@ fn bundle_seed(
         best_terminal_state_sha256: seed.best_terminal_state_sha256,
         best_terminal_route_checkpoint_sha256: seed.best_terminal_route_checkpoint_sha256,
         seed_result,
+        lease_journal,
         checkpoint_envelope,
         checkpoint_snapshot,
         best_terminal_tape,
@@ -507,6 +529,9 @@ fn validate_seed(
 ) -> Result<(), NativeTacticRouteRunError> {
     let stored: NativeTacticSeedResult = read_json_blob(bundle_root, &bundled.seed_result)?;
     let snapshot_bytes = read_blob(bundle_root, &bundled.checkpoint_snapshot)?;
+    let lease_journal_bytes = read_blob(bundle_root, &bundled.lease_journal)?;
+    let bundled_lease_accounting =
+        NativeTacticLeaseLedger::accounting_from_bytes(&lease_journal_bytes)?;
     let checkpoint: TacticQCampaignCheckpoint =
         serde_cbor::from_slice(&snapshot_bytes).map_err(route_error)?;
     validate_checkpoint(&checkpoint).map_err(route_error)?;
@@ -528,6 +553,16 @@ fn validate_seed(
         || bundled.best_terminal_state_sha256 != stored.best_terminal_state_sha256
         || bundled.best_terminal_route_checkpoint_sha256
             != stored.best_terminal_route_checkpoint_sha256
+        || stored.graph_metrics.as_ref().is_none_or(|metrics| {
+            bundled.lease_journal.logical_identity_sha256 != metrics.lease_accounting.journal_sha256
+                || bundled_lease_accounting != metrics.lease_accounting
+                || audited.proposal_dispatches != metrics.lease_accounting.proposal_dispatches
+                || audited.completed_graph_leases != metrics.lease_accounting.completed_leases
+                || audited.retryable_graph_leases != metrics.lease_accounting.retryable_leases
+                || audited.cancelled_graph_leases != metrics.lease_accounting.cancelled_leases
+                || audited.failed_graph_leases != metrics.lease_accounting.failed_leases
+                || audited.unresolved_graph_leases != metrics.lease_accounting.unresolved_leases
+        })
         || checkpoint.content_sha256 != bundled.checkpoint_snapshot.logical_identity_sha256
         || checkpoint.content_sha256 != bundled.checkpoint_envelope.logical_identity_sha256
         || checkpoint

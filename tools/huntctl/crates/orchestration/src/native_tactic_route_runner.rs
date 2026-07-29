@@ -22,7 +22,7 @@ use crate::tactic_macro_store::{
 use crate::tactic_q_campaign::{
     EvaluatedRewardedTacticOutcome, TACTIC_Q_CHECKPOINT_EXTENSION,
     TACTIC_Q_DEMONSTRATION_EPISODE_GROUP, TacticCampaignDiagnostics, TacticCampaignGraphProjection,
-    TacticCampaignGraphProjectionEdge, TacticCampaignGraphProjectionNode,
+    TacticCampaignGraphProjectionEdge, TacticCampaignGraphProjectionNode, TacticExpansionLease,
     TacticFrontierAcquisition, TacticQCampaign, TacticQCampaignError, TacticQDecision,
     TacticQFinalResult, TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot,
     TacticQTrainingCorpus, TacticRestorationContract, TacticSchedulerDecisionTrace,
@@ -93,9 +93,11 @@ use std::time::{Duration, Instant};
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V32: &str = "dusklight-native-tactic-route-report/v32";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V33: &str = "dusklight-native-tactic-route-report/v33";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V34: &str = "dusklight-native-tactic-route-report/v34";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V35: &str = "dusklight-native-tactic-route-report/v35";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
+const NATIVE_TACTIC_LEASE_JOURNAL_FILE: &str = "leases.dtql";
 pub const NATIVE_TACTIC_REPLAY_CONTROL_PLANE_FILE: &str = "campaign-replay.dtrp";
 pub const NATIVE_TACTIC_CONTENT_STORE_DIRECTORY: &str = "objects";
 const NATIVE_TACTIC_DEMONSTRATION_CORPUS_FILE: &str = "demonstration-training.dtqc";
@@ -151,6 +153,9 @@ pub use report::{
     NativeTacticRouteTiming, NativeTacticSeedResult, NativeTacticSeedStopReason,
     NativeTacticStateTrace, NativeTacticValueTrace,
 };
+mod lease_journal;
+use lease_journal::NativeTacticLeaseLedger;
+pub use lease_journal::{NativeTacticLeaseAccounting, NativeTacticLeaseOutcome};
 
 mod execution_plan;
 pub use execution_plan::{
@@ -683,7 +688,7 @@ fn run_native_tactic_route_with_optional_fleet(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let mut report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V34.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V35.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,

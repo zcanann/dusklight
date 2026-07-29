@@ -383,8 +383,22 @@ pub(super) fn read_completed_seed_result(
         .state_graph
         .content_sha256()
         .map_err(route_error)?;
-    let expected_graph_metrics =
-        tactic_graph_metrics(&checkpoint.state_graph, graph_sha256, &result.trace)?;
+    let seed_root = Path::new(&result.final_checkpoint)
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| route_message("completed tactic seed checkpoint has no seed root"))?;
+    if !seed_root.join(NATIVE_TACTIC_LEASE_JOURNAL_FILE).is_file() {
+        return Err(route_message(
+            "completed tactic seed has no durable lease journal",
+        ));
+    }
+    let lease_accounting = NativeTacticLeaseLedger::open(seed_root)?.accounting()?;
+    let expected_graph_metrics = tactic_graph_metrics(
+        &checkpoint.state_graph,
+        graph_sha256,
+        &result.trace,
+        lease_accounting,
+    )?;
     let best_graph_terminal = checkpoint.state_graph.best_terminal_path();
     if checkpoint.execution_authority_sha256 != execution_plan_sha256
         || checkpoint.decision_index != result.decisions

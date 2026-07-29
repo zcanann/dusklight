@@ -45,11 +45,11 @@ The incoming 2026-07-29 work made substantial, useful progress:
   suppression parity, phase timing, and checkpoint-owner locality are
   implemented. A short macOS fixed-work treatment reports a 15.54x steady-state
   speedup over relaunching the same topology.
-- The Rust source-quality gate has zero debt exemptions and all 534 production
+- The Rust source-quality gate has zero debt exemptions and all 538 production
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 262 tests.
+  orchestration suite is hermetic and passes all 272 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
   tape/result, source-authority evidence, and a content-bound campaign audit.
@@ -87,6 +87,12 @@ The incoming 2026-07-29 work made substantial, useful progress:
   ticks with least-visited and random-valid ordering. It withholds the
   exhaustive-local oracle claim unless every queued action has an authenticated
   terminal continuation. Retained native evidence is still required.
+- Native route report v35 now owns a checksummed binary lease-lifecycle
+  journal. Every issued native proposal is classified as completed, retryable,
+  cancelled, failed, or unresolved; scratch audits reject unresolved or
+  arithmetically detached accounting. Proposal dispatches, unique graph
+  expansions, and observed interior segments are distinct metrics, and the
+  portable evidence bundle carries the exact journal.
 - Native option summaries now retain same-tick wall-contact/commanded-motion
   overlap and the momentum loss measured on those ticks. The v5 tactic feature
   schema exposes the measured consequence with explicit legacy missingness;
@@ -265,9 +271,6 @@ Exit gate:
       to exercise graph growth, repeated restores, learner updates,
       persistence, and bounded checkpoint eviction. A one-decision warm-fleet
       microbenchmark is necessary but not sufficient.
-- [ ] Account for every scheduled lease as completed, retryable, cancelled, or
-      failed. Report proposal dispatches separately from graph expansions and
-      observed interior segments so throughput denominators cannot be inflated.
 - [ ] Bound memory, learner staleness, replay fallbacks, process loss, and
       checkpoint-owner skew during long campaigns. Prove crash recovery cannot
       silently lose or duplicate graph work.

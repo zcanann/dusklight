@@ -41,7 +41,13 @@ pub struct NativeTacticScratchEfficiencyMetrics {
     /// one decision, so policy-quality differences are not fully auditable.
     #[serde(default)]
     pub action_surface_timeline_complete: bool,
+    pub total_proposal_dispatches: u64,
+    pub completed_lease_attempts: u64,
+    pub retryable_lease_attempts: u64,
+    pub cancelled_lease_attempts: u64,
+    pub failed_lease_attempts: u64,
     pub total_useful_graph_expansions: u64,
+    pub total_observed_interior_segments: u64,
     pub useful_graph_expansions_per_second_millionths: u64,
     pub search_native_ticks: u64,
     pub non_search_native_ticks: u64,
@@ -377,6 +383,45 @@ fn efficiency_metrics(
         .iter()
         .all(|seed| seed.action_surface_timeline_complete);
     let timing = &route.timing;
+    let lease_accounting = route.seeds.iter().try_fold(
+        NativeTacticLeaseAccounting::default(),
+        |mut total, seed| {
+            let metrics = seed
+                .graph_metrics
+                .as_ref()
+                .ok_or_else(|| route_message("scratch comparison seed has no graph metrics"))?;
+            total.proposal_dispatches = total
+                .proposal_dispatches
+                .saturating_add(metrics.lease_accounting.proposal_dispatches);
+            total.completed_leases = total
+                .completed_leases
+                .saturating_add(metrics.lease_accounting.completed_leases);
+            total.retryable_leases = total
+                .retryable_leases
+                .saturating_add(metrics.lease_accounting.retryable_leases);
+            total.cancelled_leases = total
+                .cancelled_leases
+                .saturating_add(metrics.lease_accounting.cancelled_leases);
+            total.failed_leases = total
+                .failed_leases
+                .saturating_add(metrics.lease_accounting.failed_leases);
+            total.unresolved_leases = total
+                .unresolved_leases
+                .saturating_add(metrics.lease_accounting.unresolved_leases);
+            Ok::<_, NativeTacticRouteRunError>(total)
+        },
+    )?;
+    if lease_accounting.unresolved_leases != 0 {
+        return Err(route_message(
+            "scratch comparison contains unresolved native proposal leases",
+        ));
+    }
+    let total_observed_interior_segments = route
+        .seeds
+        .iter()
+        .filter_map(|seed| seed.graph_metrics.as_ref())
+        .map(|metrics| metrics.graph.observed_segments)
+        .sum();
     let accounted = timing
         .tactic_execution_micros
         .saturating_add(timing.model_update_micros)
@@ -397,7 +442,13 @@ fn efficiency_metrics(
         sample_efficiency_timeline_complete,
         terminal_improvement_timing_complete,
         action_surface_timeline_complete,
+        total_proposal_dispatches: lease_accounting.proposal_dispatches,
+        completed_lease_attempts: lease_accounting.completed_leases,
+        retryable_lease_attempts: lease_accounting.retryable_leases,
+        cancelled_lease_attempts: lease_accounting.cancelled_leases,
+        failed_lease_attempts: lease_accounting.failed_leases,
         total_useful_graph_expansions: route.unique_useful_graph_expansions,
+        total_observed_interior_segments,
         useful_graph_expansions_per_second_millionths: timing
             .unique_useful_graph_expansions_per_second_millionths,
         search_native_ticks,
@@ -440,6 +491,14 @@ fn metrics_valid(metrics: &NativeTacticScratchEfficiencyMetrics, workers: usize)
         && metrics.terminal_seed_count <= metrics.seed_count
         && metrics.terminal_rate_per_million
             == ratio_per_million(metrics.terminal_seed_count, metrics.seed_count)
+        && metrics.total_proposal_dispatches
+            == metrics
+                .completed_lease_attempts
+                .checked_add(metrics.retryable_lease_attempts)
+                .and_then(|total| total.checked_add(metrics.cancelled_lease_attempts))
+                .and_then(|total| total.checked_add(metrics.failed_lease_attempts))
+                .unwrap_or(u64::MAX)
+        && metrics.total_useful_graph_expansions <= metrics.completed_lease_attempts
         && metrics.simulated_ticks_per_useful_expansion_millionths
             == ratio_per_million(
                 metrics.search_native_ticks,

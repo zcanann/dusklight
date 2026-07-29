@@ -109,7 +109,12 @@ pub struct NativeTacticScratchSeedAudit {
     /// Applicable decisions for which the learner had no fitted estimate.
     #[serde(default)]
     pub unsupported_action_availability_counts: BTreeMap<String, u64>,
+    pub proposal_dispatches: u64,
     pub completed_graph_leases: u64,
+    pub retryable_graph_leases: u64,
+    pub cancelled_graph_leases: u64,
+    pub failed_graph_leases: u64,
+    pub unresolved_graph_leases: u64,
     pub terminal_path_ticks: Vec<u64>,
     pub selection_counts: BTreeMap<String, u64>,
     pub proposal_selection_counts: BTreeMap<String, u64>,
@@ -396,7 +401,12 @@ fn seed_audit(
         scheduler_timeline_complete,
         action_availability_counts,
         unsupported_action_availability_counts,
-        completed_graph_leases: graph_metrics.completed_leases,
+        proposal_dispatches: graph_metrics.lease_accounting.proposal_dispatches,
+        completed_graph_leases: graph_metrics.lease_accounting.completed_leases,
+        retryable_graph_leases: graph_metrics.lease_accounting.retryable_leases,
+        cancelled_graph_leases: graph_metrics.lease_accounting.cancelled_leases,
+        failed_graph_leases: graph_metrics.lease_accounting.failed_leases,
+        unresolved_graph_leases: graph_metrics.lease_accounting.unresolved_leases,
         terminal_path_ticks,
         selection_counts: seed.selection_counts.clone(),
         proposal_selection_counts,
@@ -462,6 +472,15 @@ fn seed_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
         .all(|pair| pair[0].decision_index < pair[1].decision_index)
         && !seed.stop_reasons.is_empty()
         && total_proposals == seed.total_proposal_expansions
+        && seed.completed_graph_leases == total_proposals
+        && seed.proposal_dispatches
+            == seed
+                .completed_graph_leases
+                .saturating_add(seed.retryable_graph_leases)
+                .saturating_add(seed.cancelled_graph_leases)
+                .saturating_add(seed.failed_graph_leases)
+                .saturating_add(seed.unresolved_graph_leases)
+        && seed.unresolved_graph_leases == 0
         && (!seed.action_surface_timeline_complete
             || seed.decisions.iter().all(|decision| {
                 !decision.applicable_tactics.is_empty()

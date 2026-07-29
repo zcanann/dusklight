@@ -29,12 +29,13 @@ huntctl learn validate-tactic-scratch-discovery \
 ```
 
 The bundle retains content-addressed request, execution, plan, route, campaign
-audit, seed, checkpoint, terminal tape/result, and small source-authority
-artifacts. The campaign audit includes every decision, proposal count,
-selection reason, learner snapshot, restore source, exhausted budget, terminal
-path, and exact time/expansion point at which each shorter terminal route was
-first evaluated. New reports also retain every state-local applicable action,
-its fitted value and uncertainty when supported, and the selected action.
+audit, seed, binary lease journal, checkpoint, terminal tape/result, and small
+source-authority artifacts. The campaign audit includes every decision,
+proposal dispatch and terminal lease outcome, proposal count, selection
+reason, learner snapshot, restore source, exhausted budget, terminal path, and
+exact time/expansion point at which each shorter terminal route was first
+evaluated. New reports also retain every state-local applicable action, its
+fitted value and uncertainty when supported, and the selected action.
 Audits mark the action-surface timeline incomplete for legacy reports instead
 of reconstructing availability after the fact. They also retain a
 content-bound pre-lease scheduler decision with the complete state-local

@@ -543,10 +543,10 @@ pub struct NativeTacticSeedResult {
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticGraphMetrics {
     pub graph: GraphSearchReport,
-    /// Leases issued and completed by native proposal evaluation over the
-    /// lifetime of this seed. Active leases remain separately visible in
-    /// `graph.leased_expansions`.
-    pub completed_leases: u64,
+    /// Durable lifetime accounting for every native proposal dispatch. These
+    /// are attempts, while `graph.completed_expansions` is unique admitted
+    /// graph work and `graph.observed_segments` is interior state evidence.
+    pub lease_accounting: NativeTacticLeaseAccounting,
     /// Observed graph edges beyond the spanning tree required to introduce
     /// every exact state. These are exact-state convergence/transposition
     /// events, including cycles back to an existing state.

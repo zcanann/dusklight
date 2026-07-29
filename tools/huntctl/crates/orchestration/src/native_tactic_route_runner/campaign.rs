@@ -212,6 +212,31 @@ pub(super) fn run_seed(
         inherited_learner_snapshot.replay_revision,
     )?;
     let mut consumed_learner_snapshot = inherited_learner_snapshot;
+    let mut lease_ledger = NativeTacticLeaseLedger::open(&seed_root)?;
+    if resuming_seed {
+        let completed_expansions_by_decision = trace
+            .iter()
+            .filter_map(|decision| {
+                decision.scheduler_decision.as_ref().map(|scheduler| {
+                    (
+                        decision.decision_index,
+                        scheduler.evaluated_expansion_sha256.clone(),
+                    )
+                })
+            })
+            .collect::<BTreeMap<_, _>>();
+        lease_ledger.reconcile_unresolved(&completed_expansions_by_decision)?;
+    }
+    let completed_trace_dispatches = trace.iter().try_fold(0_u64, |total, decision| {
+        total
+            .checked_add(u64::try_from(decision.proposal_batch.len()).map_err(route_error)?)
+            .ok_or_else(|| route_message("completed tactic dispatch count overflowed"))
+    })?;
+    if lease_ledger.accounting()?.completed_leases != completed_trace_dispatches {
+        return Err(route_message(
+            "native tactic lease journal is detached from the completed decision trace",
+        ));
+    }
 
     while campaign.decision_index < config.execution_plan.budgets.decisions_per_lane
         && native_ticks < config.optimization.budgets.simulated_tick_budget
@@ -540,6 +565,11 @@ pub(super) fn run_seed(
         let proposal_batch = leased_batch.batch;
         let proposal_leases = leased_batch.leases;
         let scheduler_decision = leased_batch.scheduler_decision;
+        let lease_batch_sha256 = lease_ledger.issue(
+            execution_plan_sha256,
+            campaign.decision_index,
+            &proposal_leases,
+        )?;
 
         let decision_index = campaign.decision_index;
         let decision_episode_group = campaign.episode_group;
@@ -588,7 +618,7 @@ pub(super) fn run_seed(
             NativeTacticRestoreSource::AuthenticatedRoot
         };
         let execution_started = Instant::now();
-        let proposal_work = pool.execute_batch(
+        let proposal_work = match pool.execute_batch(
             &proposal_batch.proposals,
             Arc::clone(&proposal_catalog),
             Arc::clone(&proposal_blueprints),
@@ -598,13 +628,27 @@ pub(super) fn run_seed(
             usable_cached_frontier,
             true,
             &paths_root,
-        )?;
+        ) {
+            Ok(work) => work,
+            Err(error) => {
+                lease_ledger.resolve(
+                    lease_batch_sha256,
+                    if error.is_cancelled() {
+                        NativeTacticLeaseOutcome::Cancelled
+                    } else {
+                        NativeTacticLeaseOutcome::Retryable
+                    },
+                )?;
+                return Err(error);
+            }
+        };
         let execution_elapsed = execution_started.elapsed();
         let post_execution_orchestration_started = Instant::now();
         if proposal_work
             .iter()
             .any(|work| work.execution_plan_sha256 != execution_plan_sha256)
         {
+            lease_ledger.resolve(lease_batch_sha256, NativeTacticLeaseOutcome::Failed)?;
             return Err(route_message(
                 "native tactic proposal result is detached from its execution plan",
             ));
@@ -643,7 +687,14 @@ pub(super) fn run_seed(
                     .evaluate_rewarded_outcome(work.outcome, &encode, reward_spec)
                     .map_err(route_error)
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>();
+        let evaluated = match evaluated {
+            Ok(evaluated) => evaluated,
+            Err(error) => {
+                lease_ledger.resolve(lease_batch_sha256, NativeTacticLeaseOutcome::Failed)?;
+                return Err(error);
+            }
+        };
         let evaluated_episode_groups = evaluated
             .iter()
             .enumerate()
@@ -732,11 +783,17 @@ pub(super) fn run_seed(
                 proposal.outcome.execution.duration.realized_ticks,
             ))
         });
-        let newly_admitted_training_rows = campaign.admit_leased_evaluated_replay(
+        let newly_admitted_training_rows = match campaign.admit_leased_evaluated_replay(
             &evaluated,
             &evaluated_episode_groups,
             &proposal_leases,
-        )? as u64;
+        ) {
+            Ok(rows) => rows as u64,
+            Err(error) => {
+                lease_ledger.resolve(lease_batch_sha256, NativeTacticLeaseOutcome::Failed)?;
+                return Err(error.into());
+            }
+        };
         let duplicate_training_transitions = evaluated
             .len()
             .saturating_sub(newly_admitted_training_rows as usize)
@@ -1031,6 +1088,7 @@ pub(super) fn run_seed(
                 proposal_records,
             ),
         )?;
+        lease_ledger.resolve(lease_batch_sha256, NativeTacticLeaseOutcome::Completed)?;
         trace.push(decision_trace);
         for candidate in terminal_candidates {
             if !campaign
@@ -1189,6 +1247,7 @@ pub(super) fn run_seed(
         &final_campaign_checkpoint.state_graph,
         state_graph_sha256,
         &trace,
+        lease_ledger.accounting()?,
     )?;
     let terminal_discovered = best_graph_terminal.is_some();
     let (best_terminal_tape, best_terminal_result) = if let Some(result) = best_success.as_ref() {
@@ -1307,14 +1366,23 @@ pub(super) fn tactic_graph_metrics(
     graph: &crate::state_graph::StateGraph,
     graph_sha256: Digest,
     trace: &[NativeTacticDecisionTrace],
+    lease_accounting: NativeTacticLeaseAccounting,
 ) -> Result<NativeTacticGraphMetrics, NativeTacticRouteRunError> {
     let graph_report =
         GraphSearchReport::from_validated_graph(graph, graph_sha256).map_err(route_error)?;
-    let completed_leases = trace.iter().try_fold(0_u64, |total, decision| {
+    let completed_trace_dispatches = trace.iter().try_fold(0_u64, |total, decision| {
         total
             .checked_add(u64::try_from(decision.proposal_batch.len()).map_err(route_error)?)
             .ok_or_else(|| route_message("completed tactic lease count overflowed"))
     })?;
+    lease_accounting.validate()?;
+    if lease_accounting.completed_leases != completed_trace_dispatches
+        || lease_accounting.unresolved_leases != 0
+    {
+        return Err(route_message(
+            "native tactic lease accounting is detached from durable completed decisions",
+        ));
+    }
     let duplicate_transpositions = graph_report
         .observed_segments
         .saturating_add(1)
@@ -1330,7 +1398,7 @@ pub(super) fn tactic_graph_metrics(
     }
     Ok(NativeTacticGraphMetrics {
         graph: graph_report,
-        completed_leases,
+        lease_accounting,
         duplicate_transpositions,
         terminal_paths,
     })

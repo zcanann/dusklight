@@ -21,7 +21,12 @@ pub struct NativeTacticScratchTotals {
     pub graph_nodes: u64,
     pub graph_edges: u64,
     pub duplicate_transpositions: u64,
+    pub proposal_dispatches: u64,
     pub completed_leases: u64,
+    pub retryable_leases: u64,
+    pub cancelled_leases: u64,
+    pub failed_leases: u64,
+    pub unresolved_leases: u64,
     pub completed_graph_expansions: u64,
     pub active_leases: u64,
     pub restore_samples: u64,
@@ -59,7 +64,7 @@ impl NativeTacticScratchDiscoveryReport {
         route: &NativeTacticRouteReport,
     ) -> Result<Self, NativeTacticRouteRunError> {
         request.validate().map_err(route_error)?;
-        if route.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V34
+        if route.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V35
             || route.optimization_request_sha256 != request.content_sha256
         {
             return Err(route_message(
@@ -163,6 +168,16 @@ impl NativeTacticScratchDiscoveryReport {
                     && totals.completed_graph_expansions == route.unique_useful_graph_expansions
                     && totals.simulated_ticks == route.total_native_ticks,
             ),
+            condition(
+                "all_dispatched_leases_resolved",
+                totals.unresolved_leases == 0
+                    && totals.proposal_dispatches
+                        == totals
+                            .completed_leases
+                            .saturating_add(totals.retryable_leases)
+                            .saturating_add(totals.cancelled_leases)
+                            .saturating_add(totals.failed_leases),
+            ),
         ];
         let passed = conditions.iter().all(|condition| condition.passed);
         let mut report = Self {
@@ -205,6 +220,16 @@ impl NativeTacticScratchDiscoveryReport {
                 .is_none_or(|minimum| self.exploration_horizon_ticks < minimum)
             || self.maximum_graph_expansions == 0
             || self.wall_budget_micros == 0
+            || self.totals.unresolved_leases != 0
+            || self.totals.proposal_dispatches
+                != self
+                    .totals
+                    .completed_leases
+                    .checked_add(self.totals.retryable_leases)
+                    .and_then(|total| total.checked_add(self.totals.cancelled_leases))
+                    .and_then(|total| total.checked_add(self.totals.failed_leases))
+                    .unwrap_or(u64::MAX)
+            || self.totals.completed_graph_expansions > self.totals.completed_leases
             || ids.len() != self.conditions.len()
             || self.passed != self.conditions.iter().all(|condition| condition.passed)
             || self.compute_content_sha256()? != self.content_sha256
@@ -290,7 +315,12 @@ fn scratch_totals(
         graph_nodes: 0,
         graph_edges: 0,
         duplicate_transpositions: 0,
+        proposal_dispatches: 0,
         completed_leases: 0,
+        retryable_leases: 0,
+        cancelled_leases: 0,
+        failed_leases: 0,
+        unresolved_leases: 0,
         completed_graph_expansions: 0,
         active_leases: 0,
         restore_samples: route.native_restore_accounting.restore_samples,
@@ -312,9 +342,24 @@ fn scratch_totals(
         totals.duplicate_transpositions = totals
             .duplicate_transpositions
             .saturating_add(metrics.duplicate_transpositions);
+        totals.proposal_dispatches = totals
+            .proposal_dispatches
+            .saturating_add(metrics.lease_accounting.proposal_dispatches);
         totals.completed_leases = totals
             .completed_leases
-            .saturating_add(metrics.completed_leases);
+            .saturating_add(metrics.lease_accounting.completed_leases);
+        totals.retryable_leases = totals
+            .retryable_leases
+            .saturating_add(metrics.lease_accounting.retryable_leases);
+        totals.cancelled_leases = totals
+            .cancelled_leases
+            .saturating_add(metrics.lease_accounting.cancelled_leases);
+        totals.failed_leases = totals
+            .failed_leases
+            .saturating_add(metrics.lease_accounting.failed_leases);
+        totals.unresolved_leases = totals
+            .unresolved_leases
+            .saturating_add(metrics.lease_accounting.unresolved_leases);
         totals.completed_graph_expansions = totals
             .completed_graph_expansions
             .saturating_add(metrics.graph.completed_expansions);
@@ -349,7 +394,12 @@ mod tests {
                 graph_nodes: 8,
                 graph_edges: 4,
                 duplicate_transpositions: 0,
+                proposal_dispatches: 8,
                 completed_leases: 8,
+                retryable_leases: 0,
+                cancelled_leases: 0,
+                failed_leases: 0,
+                unresolved_leases: 0,
                 completed_graph_expansions: 4,
                 active_leases: 0,
                 restore_samples: 4,
@@ -375,6 +425,12 @@ mod tests {
         let mut tampered = report.clone();
         tampered.totals.completed_leases += 1;
         assert!(tampered.validate().is_err());
+
+        let mut resealed_lifecycle_drift = report.clone();
+        resealed_lifecycle_drift.totals.proposal_dispatches += 1;
+        resealed_lifecycle_drift.content_sha256 =
+            resealed_lifecycle_drift.compute_content_sha256().unwrap();
+        assert!(resealed_lifecycle_drift.validate().is_err());
 
         let mut failed = report;
         failed.conditions[0].passed = false;
