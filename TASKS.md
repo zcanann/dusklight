@@ -33,6 +33,11 @@ The current implementation is not yet an accepted learning architecture.
   expansions, routes, and the best terminal path. Learner replay, executable
   frontiers, retained terminal artifacts, and completed-seed reports are
   validated projections of that graph.
+- The graph admits content-canonical future-equivalence proofs only from its
+  configured native validator. It retains every route-specific exact node and
+  incoming segment, chooses the fastest authenticated member for restoration,
+  and propagates relaxed costs through descendants for scheduling; binary
+  restart reproduces the proof classes and relaxed costs.
 - The live decision loop now registers horizon-eligible actions and completes
   exact graph leases. Outside the explicit human-demonstration curriculum,
   the graph scheduler also chooses which exact node to restore by coverage in
@@ -210,11 +215,6 @@ Exit gate:
 
 - [ ] Store enough route/checkpoint evidence to restore any expandable node;
       validate the restored typed state before executing from it.
-- [ ] Implement conservative transposition detection from validated
-      future-equivalence evidence and fastest-route relaxation. Semantic state
-      similarity may share learning but must not merge restorable nodes. Route
-      improvement to an equivalent node must propagate to descendant total
-      costs without deleting alternate incoming evidence.
 Exit gate:
 
 - A terminal trajectory containing a 40-tick option exposes all configured
