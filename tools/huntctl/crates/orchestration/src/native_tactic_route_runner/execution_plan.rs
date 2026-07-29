@@ -56,24 +56,6 @@ impl NativeTacticAcquisitionPlan {
     }
 }
 
-fn greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
-    while right != 0 {
-        (left, right) = (right, left % right);
-    }
-    left
-}
-
-fn independent_cycle_width(
-    lanes_per_generation: usize,
-    branch_every_decisions: u64,
-) -> Option<u32> {
-    let mut width = u64::try_from(lanes_per_generation.max(4)).ok()?;
-    while greatest_common_divisor(width, branch_every_decisions) != 1 {
-        width = width.checked_add(1)?;
-    }
-    u32::try_from(width).ok()
-}
-
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NativeTacticInterventionPlan {
@@ -289,14 +271,9 @@ impl NativeTacticExecutionPlan {
                 let acquisition = if request.proposal_policy == TacticProposalPolicy::Learned
                     && request.seeds.len() == 1
                 {
-                    let cycle_width = independent_cycle_width(
-                        request.lanes_per_generation,
-                        request.branch_every_decisions,
-                    )
-                    .ok_or_else(|| route_message("native tactic acquisition cycle overflowed"))?;
                     NativeTacticAcquisitionPlan::CyclicSupportAndRanks {
-                        cycle_width,
-                        ranked_lanes_per_cycle: cycle_width - 1,
+                        cycle_width: request.lanes_per_generation.max(4) as u32,
+                        ranked_lanes_per_cycle: request.lanes_per_generation.max(4) as u32 - 1,
                     }
                 } else {
                     let rank = if support {
@@ -500,29 +477,6 @@ mod tests {
                 (NativeTacticLaneRole::RankedExploration, 2, 350_000, 2,),
                 (NativeTacticLaneRole::RankedExploration, 3, 350_000, 3,),
             ]
-        );
-    }
-
-    #[test]
-    fn single_seed_branch_schedule_does_not_alias_the_support_lane() {
-        let mut single = request();
-        single.seeds = vec![11];
-        single.lanes_per_generation = 1;
-        single.branch_every_decisions = 4;
-        single.demonstration_chunk_ticks = None;
-        let plan = NativeTacticExecutionPlan::build(single).unwrap();
-        let acquisition = plan.lanes[0].acquisition;
-
-        assert_eq!(
-            acquisition,
-            NativeTacticAcquisitionPlan::CyclicSupportAndRanks {
-                cycle_width: 5,
-                ranked_lanes_per_cycle: 4,
-            }
-        );
-        assert_eq!(
-            [4, 8, 12, 16, 20].map(|decision| acquisition.rank(decision)),
-            [4, 7, 10, 13, 0]
         );
     }
 

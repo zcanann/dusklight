@@ -424,6 +424,8 @@ impl TacticQCampaign {
             None
         };
         let exact_terminal_ticks = exact_terminal_ticks_to_go_by_state(&self.training_replay);
+        let ranked_terminal_refinement =
+            terminal_value_supported && !demonstration_curriculum && acquisition_rank != 0;
         let mut ranked = choices
             .into_iter()
             .enumerate()
@@ -563,18 +565,18 @@ impl TacticQCampaign {
                 compare_frontier_acquisition_with_exact_authority(
                     &left.1,
                     &right.1,
-                    acquisition_rank == 0,
+                    !ranked_terminal_refinement,
                 )
                 .then_with(|| left.2.cmp(&right.2))
             }
             .then_with(|| left.1.novelty_rank.cmp(&right.1.novelty_rank))
             .then_with(|| left.0.descriptor.cmp(&right.0.descriptor))
         });
-        let selection_index = if demonstration_curriculum || acquisition_rank == 0 {
-            0
-        } else {
+        let selection_index = if ranked_terminal_refinement {
             usize::try_from(acquisition_rank % ranked.len() as u64)
                 .expect("frontier acquisition rank is bounded by the candidate count")
+        } else {
+            0
         };
         let (selected, acquisition, _) = ranked.remove(selection_index);
         let frontier = TacticCampaignBranch {
