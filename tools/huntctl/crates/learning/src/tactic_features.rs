@@ -15,9 +15,9 @@ use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
-pub const TACTIC_FEATURE_SCHEMA_V4: &str = "dusklight-tactic-features/v4";
-pub const GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V4: &str =
-    "dusklight-goal-conditioned-tactic-features/v4";
+pub const TACTIC_FEATURE_SCHEMA_V5: &str = "dusklight-tactic-features/v5";
+pub const GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V5: &str =
+    "dusklight-goal-conditioned-tactic-features/v5";
 // `BUTTON_STATUS_UNK_121` in the native player action path: A dispatches
 // `procFrontRollInit`. `BUTTON_STATUS_ROLL` (0x47) instead rolls a world object.
 const FRONT_ROLL_DO_STATUS: u8 = 0x79;
@@ -186,6 +186,9 @@ const FEATURE_NAMES: &[&str] = &[
     "recent_option_trajectory_available",
     "recent_option_wall_contact_fraction",
     "recent_option_momentum_loss_per_tick",
+    "recent_option_contact_slowdown_available",
+    "recent_option_contact_commanded_fraction",
+    "recent_option_contact_momentum_loss_per_command_tick",
     "recent_option_collision_correction_per_tick",
     "condition_true_count",
     "condition_false_count",
@@ -215,7 +218,7 @@ impl TacticFeatureEncoder {
         let feature_names = FEATURE_NAMES.iter().map(|name| (*name).into()).collect();
         let schema_sha256 = feature_schema_digest(FEATURE_NAMES);
         Self {
-            schema: TACTIC_FEATURE_SCHEMA_V4.into(),
+            schema: TACTIC_FEATURE_SCHEMA_V5.into(),
             schema_sha256,
             feature_names,
         }
@@ -227,7 +230,7 @@ impl TacticFeatureEncoder {
 
     pub fn encode(&self, facts: &FactSnapshot) -> Result<Vec<f32>, TacticFeatureError> {
         facts.validate().map_err(TacticFeatureError::Facts)?;
-        if self.schema != TACTIC_FEATURE_SCHEMA_V4
+        if self.schema != TACTIC_FEATURE_SCHEMA_V5
             || self.schema_sha256 != feature_schema_digest(FEATURE_NAMES)
             || self.feature_names.len() != FEATURE_NAMES.len()
             || self
@@ -325,13 +328,28 @@ impl TacticFeatureEncoder {
                             1.0,
                             trajectory.wall_contact_ticks as f32 / ticks,
                             finite_f32(trajectory.commanded_momentum_loss_f32_bits)? / ticks,
-                            finite_f32(trajectory.collision_correction_total_f32_bits)? / ticks,
                         ]);
+                        match (
+                            trajectory.wall_contact_commanded_motion_ticks,
+                            trajectory.wall_contact_commanded_momentum_loss_f32_bits,
+                        ) {
+                            (Some(contact_ticks), Some(contact_loss)) => output.extend([
+                                1.0,
+                                contact_ticks as f32
+                                    / trajectory.commanded_motion_ticks.max(1) as f32,
+                                finite_f32(contact_loss)? / contact_ticks.max(1) as f32,
+                            ]),
+                            (None, None) => output.extend([0.0; 3]),
+                            _ => return Err(TacticFeatureError::InvalidOutput),
+                        }
+                        output.extend([finite_f32(
+                            trajectory.collision_correction_total_f32_bits,
+                        )? / ticks]);
                     }
-                    None => output.extend([0.0; 4]),
+                    None => output.extend([0.0; 7]),
                 }
             }
-            None => output.extend([0.0; 6]),
+            None => output.extend([0.0; 9]),
         }
         let mut condition_counts = [0_u32; 3];
         for condition in &facts.conditions {
@@ -375,7 +393,7 @@ impl GoalConditionedTacticFeatureEncoder {
         let mut feature_names = base.feature_names.clone();
         feature_names.extend(GOAL_FEATURE_NAMES.iter().map(|name| (*name).into()));
         Ok(Self {
-            schema: GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V4.into(),
+            schema: GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V5.into(),
             schema_sha256: goal_conditioned_feature_schema_digest(base.schema_sha256),
             feature_names,
             target_coordinate_f32_bits: target.map(f32::to_bits),
@@ -411,7 +429,7 @@ impl GoalConditionedTacticFeatureEncoder {
     }
 
     pub fn encode(&self, facts: &FactSnapshot) -> Result<Vec<f32>, TacticFeatureError> {
-        if self.schema != GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V4
+        if self.schema != GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V5
             || self.schema_sha256 != goal_conditioned_feature_schema_digest(self.base.schema_sha256)
             || self.feature_names.len() != self.base.feature_width() + GOAL_FEATURE_NAMES.len()
         {
@@ -690,7 +708,7 @@ fn planar_distance(left: [f32; 3], right: [f32; 3]) -> f32 {
 
 fn goal_conditioned_feature_schema_digest(base: Digest) -> Digest {
     let bytes = serde_json::to_vec(&(
-        GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V4,
+        GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V5,
         base,
         GOAL_FEATURE_NAMES,
     ))
@@ -959,7 +977,7 @@ fn symbol_feature(value: &str) -> f32 {
 
 fn feature_schema_digest(names: &[&str]) -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(TACTIC_FEATURE_SCHEMA_V4.as_bytes());
+    hasher.update(TACTIC_FEATURE_SCHEMA_V5.as_bytes());
     for name in names {
         hasher.update((name.len() as u64).to_le_bytes());
         hasher.update(name.as_bytes());
@@ -1211,6 +1229,30 @@ mod tests {
                 previous_pad: commanded_pad,
             })
             .collect();
+        facts.recent_option = Some(crate::fact_snapshot::RecentOptionFactSnapshot {
+            option_id: "move".into(),
+            end_reason: dusklight_control::option_execution::OptionEndReason::Completed,
+            realized_ticks: 4,
+            tape_start: 0,
+            tape_end_exclusive: 4,
+            trajectory: Some(crate::fact_snapshot::OptionTrajectoryFactSnapshot {
+                observed_ticks: 4,
+                commanded_motion_ticks: 4,
+                commanded_stall_ticks: 1,
+                wall_contact_ticks: 2,
+                collision_correction_ticks: 0,
+                world_transition_ticks: 0,
+                planar_path_length_f32_bits: 30.0_f32.to_bits(),
+                planar_displacement_f32_bits: 30.0_f32.to_bits(),
+                mean_planar_speed_f32_bits: 7.5_f32.to_bits(),
+                final_planar_velocity_f32_bits: 8.0_f32.to_bits(),
+                maximum_planar_velocity_f32_bits: 10.0_f32.to_bits(),
+                commanded_momentum_loss_f32_bits: 4.0_f32.to_bits(),
+                wall_contact_commanded_motion_ticks: Some(2),
+                wall_contact_commanded_momentum_loss_f32_bits: Some(3.0_f32.to_bits()),
+                collision_correction_total_f32_bits: 0.0_f32.to_bits(),
+            }),
+        });
         let encoder = TacticFeatureEncoder::new();
         let encoded = encoder.encode(&facts).unwrap();
         let feature = |name: &str| {
@@ -1231,5 +1273,11 @@ mod tests {
         assert_eq!(feature("trajectory_commanded_fraction"), 1.0);
         assert_eq!(feature("trajectory_stalled_command_fraction"), 0.0);
         assert_eq!(feature("trajectory_speed_retention"), 1.0);
+        assert_eq!(feature("recent_option_contact_slowdown_available"), 1.0);
+        assert_eq!(feature("recent_option_contact_commanded_fraction"), 0.5);
+        assert_eq!(
+            feature("recent_option_contact_momentum_loss_per_command_tick"),
+            1.5
+        );
     }
 }

@@ -894,6 +894,8 @@ mod tests {
             final_planar_velocity_f32_bits: 4.0_f32.to_bits(),
             maximum_planar_velocity_f32_bits: 8.0_f32.to_bits(),
             commanded_momentum_loss_f32_bits: 2.0_f32.to_bits(),
+            wall_contact_commanded_motion_ticks: None,
+            wall_contact_commanded_momentum_loss_f32_bits: None,
             collision_correction_total_f32_bits: 1.0_f32.to_bits(),
         };
         let reward = spec

@@ -433,6 +433,8 @@ fn motion(
         final_planar_velocity_f32_bits: final_speed.to_bits(),
         maximum_planar_velocity_f32_bits: maximum_speed.to_bits(),
         commanded_momentum_loss_f32_bits: momentum_loss.to_bits(),
+        wall_contact_commanded_motion_ticks: None,
+        wall_contact_commanded_momentum_loss_f32_bits: None,
         collision_correction_total_f32_bits: 0.0_f32.to_bits(),
     }
 }

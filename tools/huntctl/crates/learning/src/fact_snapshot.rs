@@ -277,6 +277,15 @@ pub struct OptionTrajectoryFactSnapshot {
     pub final_planar_velocity_f32_bits: u32,
     pub maximum_planar_velocity_f32_bits: u32,
     pub commanded_momentum_loss_f32_bits: u32,
+    /// Commanded-motion ticks that also had native wall-contact evidence.
+    /// Absent in legacy snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wall_contact_commanded_motion_ticks: Option<u32>,
+    /// Momentum loss measured only on commanded-motion ticks with wall
+    /// contact. This distinguishes harmless clipping from contact-correlated
+    /// slowdown without assigning either a reward.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wall_contact_commanded_momentum_loss_f32_bits: Option<u32>,
     pub collision_correction_total_f32_bits: u32,
 }
 
@@ -815,6 +824,8 @@ impl OptionTrajectoryFactSnapshot {
         let mut world_transition_ticks = 0_u32;
         let mut maximum_planar_velocity = planar_velocity(first.player_velocity);
         let mut commanded_momentum_loss = 0.0_f64;
+        let mut wall_contact_commanded_motion_ticks = 0_u32;
+        let mut wall_contact_commanded_momentum_loss = 0.0_f64;
         let mut collision_correction_total = 0.0_f64;
         for step in steps {
             validate_motion_observation(&step.pre_input)?;
@@ -834,21 +845,24 @@ impl OptionTrajectoryFactSnapshot {
             let commanded = commanded_motion(step.consumed_pad);
             commanded_motion_ticks += u32::from(commanded);
             commanded_stall_ticks += u32::from(commanded && distance < 1.0);
-            wall_contact_ticks += u32::from(
-                step.post_simulation.player_contacts & (1 << 1) != 0
-                    || step
-                        .post_simulation
-                        .player_collision_solver
-                        .as_ref()
-                        .is_some_and(|solver| {
-                            solver.wall_circles.iter().any(|wall| wall.flags != 0)
-                        }),
-            );
+            let wall_contact = step.post_simulation.player_contacts & (1 << 1) != 0
+                || step
+                    .post_simulation
+                    .player_collision_solver
+                    .as_ref()
+                    .is_some_and(|solver| solver.wall_circles.iter().any(|wall| wall.flags != 0));
+            wall_contact_ticks += u32::from(wall_contact);
             let before_velocity = planar_velocity(step.pre_input.player_velocity);
             let after_velocity = planar_velocity(step.post_simulation.player_velocity);
             maximum_planar_velocity = maximum_planar_velocity.max(after_velocity);
             if commanded {
-                commanded_momentum_loss += (before_velocity - after_velocity).max(0.0);
+                let momentum_loss = (before_velocity - after_velocity).max(0.0);
+                commanded_momentum_loss += momentum_loss;
+                if wall_contact {
+                    wall_contact_commanded_motion_ticks =
+                        wall_contact_commanded_motion_ticks.saturating_add(1);
+                    wall_contact_commanded_momentum_loss += momentum_loss;
+                }
             }
             if let Some(correction) = step.post_simulation.collision_correction {
                 let magnitude = f64::from(correction[0]).hypot(f64::from(correction[1]));
@@ -875,6 +889,10 @@ impl OptionTrajectoryFactSnapshot {
             final_planar_velocity_f32_bits: finite_f64_bits(planar_velocity(last.player_velocity))?,
             maximum_planar_velocity_f32_bits: finite_f64_bits(maximum_planar_velocity)?,
             commanded_momentum_loss_f32_bits: finite_f64_bits(commanded_momentum_loss)?,
+            wall_contact_commanded_motion_ticks: Some(wall_contact_commanded_motion_ticks),
+            wall_contact_commanded_momentum_loss_f32_bits: Some(finite_f64_bits(
+                wall_contact_commanded_momentum_loss,
+            )?),
             collision_correction_total_f32_bits: finite_f64_bits(collision_correction_total)?,
         };
         if summary.is_valid(observed_ticks) {
@@ -895,11 +913,24 @@ impl OptionTrajectoryFactSnapshot {
             self.collision_correction_total_f32_bits,
         ]
         .map(f32::from_bits);
+        let contact_momentum_loss = self
+            .wall_contact_commanded_momentum_loss_f32_bits
+            .map(f32::from_bits);
         let tolerance = |value: f32| 8.0 * f32::EPSILON * value.max(1.0);
         self.observed_ticks == realized_ticks
             && self.commanded_motion_ticks <= self.observed_ticks
             && self.commanded_stall_ticks <= self.commanded_motion_ticks
             && self.wall_contact_ticks <= self.observed_ticks
+            && self
+                .wall_contact_commanded_motion_ticks
+                .is_none_or(|ticks| {
+                    ticks <= self.commanded_motion_ticks && ticks <= self.wall_contact_ticks
+                })
+            && (self.wall_contact_commanded_motion_ticks.is_some()
+                == contact_momentum_loss.is_some())
+            && contact_momentum_loss.is_none_or(|loss| {
+                loss.is_finite() && loss >= 0.0 && loss <= values[5] + tolerance(values[5])
+            })
             && self.collision_correction_ticks <= self.observed_ticks
             && self.world_transition_ticks <= self.observed_ticks
             && values
@@ -1249,6 +1280,13 @@ mod tests {
             f32::from_bits(straight.commanded_momentum_loss_f32_bits),
             0.0
         );
+        assert_eq!(straight.wall_contact_commanded_motion_ticks, Some(0));
+        assert_eq!(
+            straight
+                .wall_contact_commanded_momentum_loss_f32_bits
+                .map(f32::from_bits),
+            Some(0.0)
+        );
 
         second.post_simulation.player_position = [10.0, 0.0, 0.0];
         second.post_simulation.player_velocity = [0.0, 0.0, 0.0];
@@ -1262,6 +1300,13 @@ mod tests {
         assert_eq!(
             f32::from_bits(bumped.commanded_momentum_loss_f32_bits),
             10.0
+        );
+        assert_eq!(bumped.wall_contact_commanded_motion_ticks, Some(1));
+        assert_eq!(
+            bumped
+                .wall_contact_commanded_momentum_loss_f32_bits
+                .map(f32::from_bits),
+            Some(10.0)
         );
         assert_eq!(
             f32::from_bits(bumped.collision_correction_total_f32_bits),

@@ -63,6 +63,10 @@ The incoming 2026-07-29 work made substantial, useful progress:
   audits and matched comparisons explicitly mark legacy or incomplete
   action-surface timelines, so absent roll/camera opportunities cannot be
   misreported as bad learned ranking.
+- Native option summaries now retain same-tick wall-contact/commanded-motion
+  overlap and the momentum loss measured on those ticks. The v5 tactic feature
+  schema exposes the measured consequence with explicit legacy missingness;
+  contact itself still has no encoded desirability.
 - Matched scratch comparison now keeps graph-node acquisition schedules fixed
   across learned, scheduler-only, and random-valid action ranking. Its
   fail-closed comparator rejects source, horizon, topology, schema, budget, or
