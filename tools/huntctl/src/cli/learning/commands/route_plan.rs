@@ -4,7 +4,10 @@ use super::{
     OptimizationRequest, TacticProposalPolicy, option, u64_option, usize_option,
 };
 use dusklight_learning::tactic_value_treatment::TacticValueTreatment;
-use dusklight_orchestration::native_tactic_route_runner::NativeTacticReplaySharingPlan;
+use dusklight_orchestration::{
+    native_tactic_route_runner::NativeTacticReplaySharingPlan,
+    optimization_request::CampaignClass,
+};
 use std::error::Error;
 
 pub(super) fn native_tactic_execution_plan(
@@ -38,7 +41,10 @@ pub(super) fn native_tactic_execution_plan(
     NativeTacticExecutionPlan::build(NativeTacticExecutionPlanRequest {
         seeds: seeds.to_vec(),
         proposal_policy,
-        value_treatment: value_treatment(learn_args)?,
+        value_treatment: value_treatment(
+            learn_args,
+            default_value_treatment(request.campaign_class),
+        )?,
         execution_strategy,
         promoted_tactic_registry_sha256,
         lanes_per_generation: usize_option(
@@ -74,10 +80,14 @@ pub(super) fn native_tactic_execution_plan(
     .map_err(Into::into)
 }
 
-fn value_treatment(learn_args: &[String]) -> Result<TacticValueTreatment, Box<dyn Error>> {
+fn value_treatment(
+    learn_args: &[String],
+    default: TacticValueTreatment,
+) -> Result<TacticValueTreatment, Box<dyn Error>> {
     let value = option(learn_args, "--value-treatment");
     match value.as_deref() {
-        None | Some("local_generalized_fitted_q_knn") => {
+        None => Ok(default),
+        Some("local_generalized_fitted_q_knn") => {
             Ok(TacticValueTreatment::LocalGeneralizedFittedQKnnV1)
         }
         Some("goal_relabeled_fitted_q_knn") => {
@@ -90,6 +100,14 @@ fn value_treatment(learn_args: &[String]) -> Result<TacticValueTreatment, Box<dy
             "unsupported --value-treatment {value:?}; expected continuous_fitted_q_forest, goal_relabeled_fitted_q_knn, or local_generalized_fitted_q_knn"
         )
         .into()),
+    }
+}
+
+fn default_value_treatment(campaign_class: CampaignClass) -> TacticValueTreatment {
+    if campaign_class == CampaignClass::FromScratchDiscovery {
+        TacticValueTreatment::GoalRelabeledFittedQKnnV2
+    } else {
+        TacticValueTreatment::LocalGeneralizedFittedQKnnV1
     }
 }
 
@@ -113,8 +131,8 @@ fn default_replay_sharing(
 #[cfg(test)]
 mod tests {
     use super::{
-        NativeTacticReplaySharingPlan, TacticProposalPolicy, TacticValueTreatment,
-        default_replay_sharing, value_treatment,
+        CampaignClass, NativeTacticReplaySharingPlan, TacticProposalPolicy, TacticValueTreatment,
+        default_replay_sharing, default_value_treatment, value_treatment,
     };
 
     #[test]
@@ -132,16 +150,32 @@ mod tests {
     }
 
     #[test]
-    fn local_knn_is_default_and_alternate_treatments_are_explicit() {
+    fn scratch_defaults_to_achieved_goal_learning_and_overrides_remain_explicit() {
         assert_eq!(
-            value_treatment(&[]).unwrap(),
+            default_value_treatment(CampaignClass::FromScratchDiscovery),
+            TacticValueTreatment::GoalRelabeledFittedQKnnV2
+        );
+        assert_eq!(
+            default_value_treatment(CampaignClass::DemonstrationAssistedDiscovery),
             TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+        );
+        assert_eq!(
+            default_value_treatment(CampaignClass::LocalTasRefinement),
+            TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+        );
+        assert_eq!(
+            value_treatment(&[], TacticValueTreatment::LocalGeneralizedFittedQKnnV1).unwrap(),
+            TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+        );
+        assert_eq!(
+            value_treatment(&[], TacticValueTreatment::GoalRelabeledFittedQKnnV2).unwrap(),
+            TacticValueTreatment::GoalRelabeledFittedQKnnV2
         );
         assert_eq!(
             value_treatment(&[
                 "--value-treatment".into(),
                 "goal_relabeled_fitted_q_knn".into(),
-            ])
+            ], TacticValueTreatment::LocalGeneralizedFittedQKnnV1)
             .unwrap(),
             TacticValueTreatment::GoalRelabeledFittedQKnnV2
         );
@@ -149,10 +183,16 @@ mod tests {
             value_treatment(&[
                 "--value-treatment".into(),
                 "continuous_fitted_q_forest".into(),
-            ])
+            ], TacticValueTreatment::LocalGeneralizedFittedQKnnV1)
             .unwrap(),
             TacticValueTreatment::ContinuousFittedQForestV1
         );
-        assert!(value_treatment(&["--value-treatment".into(), "unknown".into()]).is_err());
+        assert!(
+            value_treatment(
+                &["--value-treatment".into(), "unknown".into()],
+                TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
+            )
+            .is_err()
+        );
     }
 }
