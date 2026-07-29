@@ -239,7 +239,7 @@ fn condition(id: &str, passed: bool) -> NativeTacticScratchCondition {
     }
 }
 
-fn route_report_sha256(
+pub(super) fn route_report_sha256(
     route: &NativeTacticRouteReport,
 ) -> Result<Digest, NativeTacticRouteRunError> {
     Ok(Digest(

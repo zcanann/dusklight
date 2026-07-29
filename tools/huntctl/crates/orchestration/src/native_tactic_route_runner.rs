@@ -169,6 +169,13 @@ pub use scratch_discovery::{
     ORDON_MEDIAN_TERMINAL_WALL_LIMIT_MICROS, ORDON_SCRATCH_DISCOVERY_GOAL,
     ORDON_SCRATCH_DISCOVERY_SEEDS, ORDON_WORST_TERMINAL_WALL_LIMIT_MICROS,
 };
+mod scratch_evidence_bundle;
+pub use scratch_evidence_bundle::{
+    NATIVE_TACTIC_SCRATCH_EVIDENCE_BUNDLE_SCHEMA_V1, NATIVE_TACTIC_SCRATCH_EVIDENCE_MANIFEST,
+    NativeTacticScratchAuthorityArtifact, NativeTacticScratchBundleArtifact,
+    NativeTacticScratchEvidenceBundle, NativeTacticScratchExecutionIdentity,
+    NativeTacticScratchSeedEvidence,
+};
 
 mod throughput_curve;
 pub use throughput_curve::{

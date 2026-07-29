@@ -45,11 +45,16 @@ The incoming 2026-07-29 work made substantial, useful progress:
   suppression parity, phase timing, and checkpoint-owner locality are
   implemented. A short macOS fixed-work treatment reports a 15.54x steady-state
   speedup over relaunching the same topology.
-- The Rust source-quality gate has zero debt exemptions and all 531 production
+- The Rust source-quality gate has zero debt exemptions and all 532 production
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 252 tests.
+  orchestration suite is hermetic and passes all 256 tests.
+- Scratch validation now publishes a movable content-addressed bundle carrying
+  request, execution, plan, route, per-seed, graph checkpoint, terminal
+  tape/result, and source-authority evidence. The clean-checkout audit command
+  validates source quality, formatting, the workspace, all orchestration tests,
+  and every committed bundle.
 - A bounded macOS scratch campaign reached the actual Ordon load-zone
   predicate in all four configured seeds without human replay. Its best route
   was `231` ticks, median time to first terminal was about `691.6` seconds, and
@@ -141,15 +146,11 @@ journals, or learned tactics.
 
 ## P0 - Restore a truthful, auditable baseline
 
-- [ ] Retain a self-contained, content-addressed native campaign evidence
-      bundle. It must include or resolve the request, execution plan, route
-      report, every per-seed result, graph/report identities, best tape and
-      native result, first-hit tick, terminal proof, game/source identity, and
-      phase timing. A committed summary containing only an unavailable child
-      report hash is insufficient.
-- [ ] Provide one repository command that runs source-quality checks, the
-      relevant Rust tests, and benchmark-artifact validation from a clean
-      checkout.
+- [ ] Recover the original `231`-tick macOS campaign artifacts or rerun its
+      sealed execution plan, then commit its self-contained scratch evidence
+      bundle. The existing summary contains only an unavailable child-report
+      hash and cannot be upgraded without the originating per-seed graph,
+      checkpoint, tape, and terminal-result artifacts.
 
 Exit gate:
 
