@@ -141,14 +141,18 @@ impl TacticQImmutableLearnerSnapshot {
             None
         } else {
             match value_treatment {
-                TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => Some(Arc::new(
-                    GeneralizedTacticValueModel::fit_fitted_q_transitions(
+                TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => {
+                    match GeneralizedTacticValueModel::fit_fitted_q_transitions(
                         &corpus.transitions,
                         goal_distance_feature,
                         model_config.fitted_q.iterations,
                         model_config.fitted_q.discount,
-                    )?,
-                )),
+                    ) {
+                        Ok(model) => Some(Arc::new(model)),
+                        Err(GeneralizedTacticValueError::SampleCount) => None,
+                        Err(error) => return Err(error.into()),
+                    }
+                }
                 TacticValueTreatment::GoalRelabeledFittedQKnnV2 => Some(Arc::new(
                     GeneralizedTacticValueModel::fit_achieved_goal_returns(
                         &corpus.transitions,
@@ -165,14 +169,16 @@ impl TacticQImmutableLearnerSnapshot {
                 .iter()
                 .any(|transition| transition.value_sample.terminal)
         {
-            Some(Arc::new(
-                GeneralizedTacticValueModel::fit_fitted_q_transitions(
-                    &corpus.transitions,
-                    goal_distance_feature,
-                    model_config.fitted_q.iterations,
-                    model_config.fitted_q.discount,
-                )?,
-            ))
+            match GeneralizedTacticValueModel::fit_fitted_q_transitions(
+                &corpus.transitions,
+                goal_distance_feature,
+                model_config.fitted_q.iterations,
+                model_config.fitted_q.discount,
+            ) {
+                Ok(model) => Some(Arc::new(model)),
+                Err(GeneralizedTacticValueError::SampleCount) => None,
+                Err(error) => return Err(error.into()),
+            }
         } else {
             None
         };
@@ -189,12 +195,16 @@ impl TacticQImmutableLearnerSnapshot {
         let continuous_model = if corpus.transitions.len() >= 2
             && value_treatment == TacticValueTreatment::ContinuousFittedQForestV1
         {
-            Some(Arc::new(ContinuousTacticValueModel::fit(
+            match ContinuousTacticValueModel::fit(
                 &corpus.transitions,
                 goal_distance_feature,
                 model_config.fitted_q.iterations,
                 model_config.fitted_q.discount,
-            )?))
+            ) {
+                Ok(model) => Some(Arc::new(model)),
+                Err(GeneralizedTacticValueError::SampleCount) => None,
+                Err(error) => return Err(error.into()),
+            }
         } else {
             None
         };

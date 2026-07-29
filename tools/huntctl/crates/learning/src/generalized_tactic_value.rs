@@ -331,11 +331,10 @@ impl GeneralizedTacticValueModel {
 
     /// Fits a shared semi-Markov action-value model.
     ///
-    /// Bellman backups use only the authenticated scalar reward and observed
-    /// successor actions. When exact hashes do not reconnect, typed-compatible
-    /// nearest observed states supply an approximate Bellman continuation.
-    /// This shares continuous-state value without claiming an exact replay edge:
-    /// terminal support and first-hit ticks remain exact-only evidence.
+    /// Objective targets exist only for rows with an authenticated exact
+    /// continuation to terminal. Their value is negative native
+    /// ticks-to-terminal, so scalar shaping rewards and truncated episode ends
+    /// cannot close or redefine the return.
     /// Auxiliary trajectory outcomes remain inspection evidence and cannot
     /// enter objective return or action ordering.
     pub fn fit_fitted_q_transitions(
@@ -352,7 +351,7 @@ impl GeneralizedTacticValueModel {
         {
             return Err(GeneralizedTacticValueError::InvalidConfig);
         }
-        let mut samples = transitions
+        let samples = transitions
             .iter()
             .map(|transition| {
                 Ok(GeneralizedTacticTrainingSample {
@@ -368,12 +367,21 @@ impl GeneralizedTacticValueModel {
             .collect::<Result<Vec<_>, GeneralizedTacticValueError>>()?;
         let fitted_q =
             fitted_q::fit_transition_returns(transitions, iterations, per_tick_discount)?;
-        for (index, (sample, value)) in samples.iter_mut().zip(fitted_q.values).enumerate() {
-            sample.outcome.reward = value;
-            sample.outcome.terminal = f32::from(fitted_q.exact_terminal_supported.contains(&index));
-            sample.outcome.duration_ticks =
-                fitted_q.exact_first_hit_ticks[index].unwrap_or(0) as f32;
-        }
+        let samples = samples
+            .into_iter()
+            .zip(fitted_q.values)
+            .enumerate()
+            .filter_map(|(index, (mut sample, value))| {
+                value.map(|value| {
+                    sample.outcome.reward = value;
+                    sample.outcome.terminal =
+                        f32::from(fitted_q.exact_terminal_supported.contains(&index));
+                    sample.outcome.duration_ticks =
+                        fitted_q.exact_first_hit_ticks[index].unwrap_or(0) as f32;
+                    sample
+                })
+            })
+            .collect::<Vec<_>>();
         let weights = transition_state_distance_weights(transitions, goal_distance_feature);
         let mut model = Self::fit_with_state_distance_weights(&samples, &weights)?;
         model.return_comparison_resolution = observed_return_resolution(transitions);
@@ -496,6 +504,17 @@ impl GeneralizedTacticValueModel {
         });
         Ok(estimates)
     }
+}
+
+/// Closed objective returns for the exact authenticated transition graph.
+///
+/// Each supported row is negative native ticks-to-terminal. `None` means the
+/// observed continuation is open/censored and must not become a numeric
+/// failure target in another value treatment.
+pub fn authenticated_terminal_conditional_returns(
+    transitions: &[OptionTransitionSample],
+) -> Result<Vec<Option<f32>>, GeneralizedTacticValueError> {
+    fitted_q::fit_transition_returns(transitions, 1, 1.0).map(|result| result.values)
 }
 
 fn observed_return_resolution(transitions: &[OptionTransitionSample]) -> f64 {

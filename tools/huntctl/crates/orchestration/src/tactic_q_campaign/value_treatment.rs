@@ -64,12 +64,16 @@ impl TacticQCampaign {
         if stale {
             let model = Arc::new(match self.value_treatment {
                 TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => {
-                    GeneralizedTacticValueModel::fit_fitted_q_transitions(
+                    match GeneralizedTacticValueModel::fit_fitted_q_transitions(
                         &self.training_replay,
                         goal_distance_feature,
                         self.model_config.fitted_q.iterations,
                         self.model_config.fitted_q.discount,
-                    )?
+                    ) {
+                        Ok(model) => model,
+                        Err(GeneralizedTacticValueError::SampleCount) => return Ok(None),
+                        Err(error) => return Err(error.into()),
+                    }
                 }
                 TacticValueTreatment::GoalRelabeledFittedQKnnV2 => {
                     GeneralizedTacticValueModel::fit_achieved_goal_returns(
@@ -132,12 +136,16 @@ impl TacticQCampaign {
                     || cached.model_revision != self.model_revision
             });
         if stale {
-            let model = Arc::new(GeneralizedTacticValueModel::fit_fitted_q_transitions(
+            let model = match GeneralizedTacticValueModel::fit_fitted_q_transitions(
                 &self.training_replay,
                 goal_distance_feature,
                 self.model_config.fitted_q.iterations,
                 self.model_config.fitted_q.discount,
-            )?);
+            ) {
+                Ok(model) => Arc::new(model),
+                Err(GeneralizedTacticValueError::SampleCount) => return Ok(None),
+                Err(error) => return Err(error.into()),
+            };
             *self.native_terminal_model.borrow_mut() = Some(CachedGeneralizedTacticValueModel {
                 goal_distance_feature,
                 model_revision: self.model_revision,
@@ -201,12 +209,16 @@ impl TacticQCampaign {
                     || cached.model_revision != self.model_revision
             });
         if stale {
-            let model = Arc::new(ContinuousTacticDoubleQModel::fit(
+            let model = match ContinuousTacticDoubleQModel::fit(
                 &self.training_replay,
                 goal_distance_feature,
                 self.model_config.fitted_q.iterations,
                 self.model_config.fitted_q.discount,
-            )?);
+            ) {
+                Ok(model) => Arc::new(model),
+                Err(GeneralizedTacticValueError::SampleCount) => return Ok(None),
+                Err(error) => return Err(error.into()),
+            };
             *self.native_terminal_action_model.borrow_mut() =
                 Some(CachedContinuousTacticDoubleQModel {
                     goal_distance_feature,
@@ -247,12 +259,16 @@ impl TacticQCampaign {
                     || cached.model_revision != self.model_revision
             });
         if stale {
-            let model = Arc::new(ContinuousTacticValueModel::fit(
+            let model = match ContinuousTacticValueModel::fit(
                 &self.training_replay,
                 goal_distance_feature,
                 self.model_config.fitted_q.iterations,
                 self.model_config.fitted_q.discount,
-            )?);
+            ) {
+                Ok(model) => Arc::new(model),
+                Err(GeneralizedTacticValueError::SampleCount) => return Ok(None),
+                Err(error) => return Err(error.into()),
+            };
             *self.continuous_model.borrow_mut() = Some(CachedContinuousTacticValueModel {
                 goal_distance_feature,
                 model_revision: self.model_revision,

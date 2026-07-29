@@ -698,7 +698,10 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert_eq!(campaign.replay.len(), 1);
     assert_eq!(campaign.training_replay_len(), 1);
     assert_eq!(campaign.episode_groups, vec![11]);
-    assert!(campaign.model().is_some());
+    assert!(
+        campaign.model().is_none(),
+        "an open first episode must not fit a closed option return"
+    );
     assert_eq!(campaign.current.snapshot.tape_frame, before.tape_frame + 1);
     assert_eq!(
         campaign.route_tape.frames.len() as u64,
@@ -726,11 +729,11 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert_eq!(restored.route_tape, campaign.route_tape);
     assert_eq!(restored.replay, campaign.replay);
     assert_eq!(restored.replay_routes, campaign.replay_routes);
-    assert!(restored.model().is_some());
+    assert!(restored.model().is_none());
     let fitted_snapshot = restored.learner_snapshot().unwrap();
     assert_eq!(fitted_snapshot, expected_fitted_snapshot);
     assert_eq!(fitted_snapshot.training_replay_rows, 1);
-    assert!(fitted_snapshot.model_sha256.is_some());
+    assert!(fitted_snapshot.model_sha256.is_none());
     assert_ne!(
         fitted_snapshot.content_sha256().unwrap(),
         cold_snapshot_sha256
@@ -786,10 +789,12 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         continuous_snapshot.manifest.value_treatment,
         TacticValueTreatment::ContinuousFittedQForestV1
     );
-    assert!(local_treatment_snapshot.generalized_model.is_some());
+    // These are two open nonterminal episode ends. They remain available as
+    // replay evidence, but neither value treatment may invent a closed return.
+    assert!(local_treatment_snapshot.generalized_model.is_none());
     assert!(local_treatment_snapshot.continuous_model.is_none());
     assert!(continuous_snapshot.generalized_model.is_none());
-    assert!(continuous_snapshot.continuous_model.is_some());
+    assert!(continuous_snapshot.continuous_model.is_none());
     assert_ne!(local_treatment_snapshot.sha256, continuous_snapshot.sha256);
     let mut snapshot_consumer = TacticQCampaign::resume_without_model(checkpoint.clone()).unwrap();
     assert!(snapshot_consumer.model().is_none());
@@ -799,7 +804,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             .unwrap(),
         0
     );
-    assert!(snapshot_consumer.model().is_some());
+    assert!(snapshot_consumer.model().is_none());
     assert_eq!(snapshot_consumer.model_revision(), 7);
     assert!(snapshot_consumer.campaign_learner_authority_managed);
     // A lane can admit local rows before the campaign-owned fitter publishes
@@ -869,7 +874,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             .unwrap(),
         1
     );
-    assert!(fresh_episode.model().is_some());
+    assert!(fresh_episode.model().is_none());
     assert!(fresh_episode.replay.is_empty());
     assert_eq!(fresh_episode.training_replay_len(), 1);
     assert_eq!(fresh_episode.frontier_archive().unwrap().tactic_len(), 1);
@@ -899,7 +904,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         1
     );
     assert_eq!(filtered_episode.training_replay_len(), 1);
-    assert!(filtered_episode.model().is_some());
+    assert!(filtered_episode.model().is_none());
     assert_eq!(filtered_episode.frontier_archive().unwrap().tactic_len(), 0);
     assert_eq!(filtered_episode.visited_state_count(), 2);
     assert_eq!(
@@ -1096,11 +1101,9 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         acquisition.replayed_prefix_ticks,
         ranked_frontier.logical_frontier.replayed_prefix_ticks
     );
-    assert!(acquisition.best_mean_q.is_some());
-    assert!(
-        acquisition.maximum_ensemble_variance.is_some()
-            || acquisition.generalized_nearest_distance.is_some()
-    );
+    assert!(acquisition.best_mean_q.is_none());
+    assert!(acquisition.maximum_ensemble_variance.is_none());
+    assert!(acquisition.generalized_nearest_distance.is_none());
     let mut model_only = TacticQCampaign::resume(restored.checkpoint().unwrap()).unwrap();
     model_only
         .training_episode_groups
@@ -1181,7 +1184,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         branched.current.snapshot_sha256,
         root_branch.logical_frontier.state_sha256
     );
-    assert!(branched.model().is_some());
+    assert!(branched.model().is_none());
     branched.checkpoint().unwrap();
     let mut detached_projection = checkpoint.clone();
     detached_projection
@@ -1260,9 +1263,12 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     }
 
     let next = restored.decide(&catalog, &[], &encode).unwrap();
-    assert_eq!(next.selected.reason, TacticSelectionReason::Greedy);
-    assert_eq!(next.ranking.values.ranked.len(), 1);
-    assert!(next.ranking.values.unsupported.is_empty());
+    assert_eq!(
+        next.selected.reason,
+        TacticSelectionReason::UnsupportedBootstrap
+    );
+    assert!(next.ranking.values.ranked.is_empty());
+    assert_eq!(next.ranking.values.unsupported.len(), 1);
 
     // Continue the original in-memory campaign and the campaign loaded
     // from the sealed checkpoint through the same terminal outcome. This

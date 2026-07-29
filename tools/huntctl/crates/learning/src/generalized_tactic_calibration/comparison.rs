@@ -133,20 +133,27 @@ pub fn compare_generalized_tactic_controls(
     let rows = transitions
         .iter()
         .zip(fitted.values)
-        .map(|(transition, target)| {
-            Ok(CalibrationRow {
-                transition,
-                target: f64::from(target),
-                state_region: state_region(transition, config.state_region_width)?,
-                action_realization: transition
-                    .value_sample
-                    .action
-                    .content_sha256()
-                    .map_err(|error| GeneralizedTacticCalibrationError::new(error.to_string()))?
-                    .to_string(),
+        .filter_map(|(transition, target)| {
+            target.map(|target| {
+                Ok(CalibrationRow {
+                    transition,
+                    target: f64::from(target),
+                    state_region: state_region(transition, config.state_region_width)?,
+                    action_realization: transition
+                        .value_sample
+                        .action
+                        .content_sha256()
+                        .map_err(|error| GeneralizedTacticCalibrationError::new(error.to_string()))?
+                        .to_string(),
+                })
             })
         })
         .collect::<Result<Vec<_>, GeneralizedTacticCalibrationError>>()?;
+    if rows.len() < 5 {
+        return Err(GeneralizedTacticCalibrationError::new(
+            "generalized tactic control comparison requires at least five terminal-connected transitions",
+        ));
+    }
     let state_region = compare_axis(
         &rows,
         goal_distance_feature,
@@ -230,7 +237,8 @@ fn compare_axis(
         test_groups,
         group_overlap_count: overlap_count,
         training_samples: training.len(),
-        target_kind: "training_subgraph_fitted_q_evaluated_against_full_graph_fitted_q".into(),
+        target_kind: "training_terminal_paths_evaluated_against_full_terminal_conditional_ticks"
+            .into(),
         models: model_metrics,
     })
 }
@@ -259,7 +267,9 @@ fn fit_controls(
     let regression = training
         .iter()
         .zip(targets)
-        .map(|(row, target)| regression_transition(row.transition, target))
+        .filter_map(|(row, target)| {
+            target.map(|target| regression_transition(row.transition, target))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let width = regression[0].state.len();
     let fitted_q = ContinuousTacticValueModel::fit(
@@ -491,7 +501,8 @@ fn comparison_axis_is_valid(axis: &GeneralizedTacticAxisControlComparison) -> bo
         && test.len() == axis.test_groups.len()
         && axis.group_overlap_count == group_overlap_count(&training, &validation, &test)
         && axis.group_overlap_count == 0
-        && axis.target_kind == "training_subgraph_fitted_q_evaluated_against_full_graph_fitted_q"
+        && axis.target_kind
+            == "training_terminal_paths_evaluated_against_full_terminal_conditional_ticks"
         && axis.models.len() == expected_models.len()
         && axis
             .models

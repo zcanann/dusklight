@@ -321,10 +321,6 @@ fn discrete_around_corner_replay(replay: &[OptionTransitionSample]) -> Vec<Trans
         .collect()
 }
 
-fn succeeds(option_id: &str) -> bool {
-    option_id == TURN
-}
-
 fn assert_beats_equal_budget_controls(
     learned: &str,
     structured: &str,
@@ -385,46 +381,23 @@ fn motion(
 }
 
 #[test]
-fn learned_policy_beats_greedy_and_balanced_random_on_around_corner_gate() {
+fn approximate_rejoin_cannot_close_a_censored_return() {
     let replay = around_corner_replay();
     assert_ne!(
         replay[1].after_state_sha256, replay[2].before_state_sha256,
         "the delayed-credit gate must require an approximate rejoin"
     );
-    let state = replay[0].value_sample.state.clone();
-    let context = GeneralizedTacticContext::from_facts(&replay[0].before).unwrap();
-    let actions = [
-        replay[0].value_sample.action.clone(),
-        replay[1].value_sample.action.clone(),
-    ];
-
-    let immediate_only = GeneralizedTacticValueModel::fit_transitions(&replay, 0)
-        .unwrap()
-        .rank(&state, &context, &actions)
-        .unwrap();
+    let targets = fitted_q::fit_transition_returns(&replay, 8, 0.99).unwrap();
+    assert_eq!(targets.values[0], None);
+    assert_eq!(targets.values[1], None);
     assert_eq!(
-        immediate_only[0].descriptor.option_id, STRAIGHT,
-        "greedy local evidence should select the apparent straight-line gain"
+        targets.values[2],
+        Some(-(replay[2].value_sample.duration_ticks as f32))
     );
-
-    let learned = GeneralizedTacticValueModel::fit_fitted_q_transitions(&replay, 0, 8, 0.99)
-        .unwrap()
-        .rank(&state, &context, &actions)
-        .unwrap();
-    assert_eq!(learned[0].descriptor.option_id, TURN);
-    assert!(learned[0].outcome.reward > learned[1].outcome.reward);
-    assert_eq!(
-        learned[0].outcome.terminal, 0.0,
-        "approximate credit must not fabricate exact terminal support"
-    );
-
-    assert!(succeeds(&learned[0].descriptor.option_id));
-    assert_beats_equal_budget_controls(
-        &learned[0].descriptor.option_id,
-        STRAIGHT,
-        &[STRAIGHT, TURN],
-        TURN,
-    );
+    assert!(matches!(
+        GeneralizedTacticValueModel::fit_fitted_q_transitions(&replay, 0, 8, 0.99),
+        Err(GeneralizedTacticValueError::SampleCount)
+    ));
 }
 
 #[test]
@@ -615,7 +588,7 @@ fn prompted_roll_gate_learns_available_timing_and_never_hallucinates_the_action(
 }
 
 #[test]
-fn demonstration_gate_improves_beyond_an_ordinary_suboptimal_sample() {
+fn demonstration_does_not_authenticate_an_unconnected_shortcut() {
     let demonstration = scheduled_transition(
         "human-demonstration",
         0.0,
@@ -654,40 +627,9 @@ fn demonstration_gate_improves_beyond_an_ordinary_suboptimal_sample() {
         shortcut_finish.before_state_sha256
     );
     let replay = [demonstration, shortcut_setup, shortcut_finish];
-    let assisted =
-        GeneralizedTacticValueModel::fit_fitted_q_transitions(&replay, 0, 8, 0.99).unwrap();
-    let context = GeneralizedTacticContext::from_facts(&replay[0].before).unwrap();
-    let candidates = [
-        replay[0].value_sample.action.clone(),
-        replay[1].value_sample.action.clone(),
-    ];
-    let ranked = assisted
-        .rank(&replay[0].value_sample.state, &context, &candidates)
-        .unwrap();
     let scratch_replay = [replay[1].clone(), replay[2].clone()];
-    let from_scratch =
-        GeneralizedTacticValueModel::fit_fitted_q_transitions(&scratch_replay, 0, 8, 0.99)
-            .unwrap()
-            .rank(&replay[0].value_sample.state, &context, &candidates)
-            .unwrap();
-
-    assert_eq!(
-        ranked[0].descriptor.option_id,
-        "learned-camera-lock-shortcut"
-    );
-    assert_eq!(
-        from_scratch[0].descriptor.option_id,
-        "learned-camera-lock-shortcut"
-    );
-    assert!(ranked[0].outcome.reward > ranked[1].outcome.reward);
-    assert_beats_equal_budget_controls(
-        &ranked[0].descriptor.option_id,
-        "human-demonstration",
-        &["human-demonstration", "learned-camera-lock-shortcut"],
-        "learned-camera-lock-shortcut",
-    );
-    assert!(
-        ranked[0].outcome.terminal < ranked[1].outcome.terminal,
-        "the learned return must beat demonstration cloning without borrowing its proof"
-    );
+    assert!(matches!(
+        GeneralizedTacticValueModel::fit_fitted_q_transitions(&scratch_replay, 0, 8, 0.99),
+        Err(GeneralizedTacticValueError::SampleCount)
+    ));
 }

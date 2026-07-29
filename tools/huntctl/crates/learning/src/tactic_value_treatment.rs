@@ -79,23 +79,28 @@ impl ContinuousTacticDoubleQModel {
         let rows = transitions
             .iter()
             .zip(targets)
-            .map(|(transition, target)| {
-                let context = GeneralizedTacticContext::from_facts(&transition.before)?;
-                let state = regression_features(
-                    &transition.value_sample.state,
-                    &context,
-                    &transition.value_sample.action,
-                )?;
-                Ok(FqiTransition {
-                    state: state.clone(),
-                    action: action_class(&transition.value_sample.action.option_type),
-                    duration: transition.value_sample.duration_ticks,
-                    reward: target,
-                    next_state: state,
-                    terminal: true,
+            .filter_map(|(transition, target)| {
+                target.map(|target| {
+                    let context = GeneralizedTacticContext::from_facts(&transition.before)?;
+                    let state = regression_features(
+                        &transition.value_sample.state,
+                        &context,
+                        &transition.value_sample.action,
+                    )?;
+                    Ok(FqiTransition {
+                        state: state.clone(),
+                        action: action_class(&transition.value_sample.action.option_type),
+                        duration: transition.value_sample.duration_ticks,
+                        reward: target,
+                        next_state: state,
+                        terminal: true,
+                    })
                 })
             })
             .collect::<Result<Vec<_>, GeneralizedTacticValueError>>()?;
+        if rows.len() < 2 {
+            return Err(GeneralizedTacticValueError::SampleCount);
+        }
         let supported_action_classes = rows.iter().map(|row| row.action).collect::<BTreeSet<_>>();
         let actions = supported_action_classes.iter().copied().collect::<Vec<_>>();
         let model = DoubleQ::fit(
@@ -190,26 +195,31 @@ impl ContinuousTacticValueModel {
         let rows = transitions
             .iter()
             .zip(targets)
-            .map(|(transition, target)| {
-                let context = GeneralizedTacticContext::from_facts(&transition.before)?;
-                let state = regression_features(
-                    &transition.value_sample.state,
-                    &context,
-                    &transition.value_sample.action,
-                )?;
-                Ok(FqiTransition {
-                    state: state.clone(),
-                    action: CONTINUOUS_FOREST_ACTION,
-                    duration: transition.value_sample.duration_ticks,
-                    reward: target,
-                    next_state: state,
-                    // Delayed credit is already present in `target`. Marking
-                    // these regression rows terminal prevents a second Bellman
-                    // backup inside the generic forest implementation.
-                    terminal: true,
+            .filter_map(|(transition, target)| {
+                target.map(|target| {
+                    let context = GeneralizedTacticContext::from_facts(&transition.before)?;
+                    let state = regression_features(
+                        &transition.value_sample.state,
+                        &context,
+                        &transition.value_sample.action,
+                    )?;
+                    Ok(FqiTransition {
+                        state: state.clone(),
+                        action: CONTINUOUS_FOREST_ACTION,
+                        duration: transition.value_sample.duration_ticks,
+                        reward: target,
+                        next_state: state,
+                        // Delayed credit is already present in `target`. Marking
+                        // these regression rows terminal prevents a second Bellman
+                        // backup inside the generic forest implementation.
+                        terminal: true,
+                    })
                 })
             })
             .collect::<Result<Vec<_>, GeneralizedTacticValueError>>()?;
+        if rows.len() < 2 {
+            return Err(GeneralizedTacticValueError::SampleCount);
+        }
         let feature_width = rows[0].state.len();
         let forest = FittedQ::fit(
             feature_width,

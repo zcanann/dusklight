@@ -128,7 +128,7 @@ impl GeneralizedTacticCalibrationReport {
         if self.schema != GENERALIZED_TACTIC_CALIBRATION_SCHEMA_V1
             || self.source_transition_sha256 == Digest::ZERO
             || self.source_transitions < 5
-            || self.target_kind != "full_authenticated_transition_graph_fitted_q"
+            || self.target_kind != "authenticated_terminal_conditional_ticks"
             || self.state_region.axis != GeneralizedTacticCalibrationAxis::StateRegion
             || self.action_realization.axis != GeneralizedTacticCalibrationAxis::ActionRealization
             || self.state_region.nominal_interval_coverage
@@ -232,20 +232,27 @@ pub fn calibrate_generalized_tactic_value(
     let rows = transitions
         .iter()
         .zip(fitted.values)
-        .map(|(transition, target)| {
-            Ok(CalibrationRow {
-                transition,
-                target: f64::from(target),
-                state_region: state_region(transition, config.state_region_width)?,
-                action_realization: transition
-                    .value_sample
-                    .action
-                    .content_sha256()
-                    .map_err(|error| GeneralizedTacticCalibrationError::new(error.to_string()))?
-                    .to_string(),
+        .filter_map(|(transition, target)| {
+            target.map(|target| {
+                Ok(CalibrationRow {
+                    transition,
+                    target: f64::from(target),
+                    state_region: state_region(transition, config.state_region_width)?,
+                    action_realization: transition
+                        .value_sample
+                        .action
+                        .content_sha256()
+                        .map_err(|error| GeneralizedTacticCalibrationError::new(error.to_string()))?
+                        .to_string(),
+                })
             })
         })
         .collect::<Result<Vec<_>, GeneralizedTacticCalibrationError>>()?;
+    if rows.len() < 5 {
+        return Err(GeneralizedTacticCalibrationError::new(
+            "generalized tactic calibration requires at least five terminal-connected transitions",
+        ));
+    }
     let state_region = calibrate_axis(
         &rows,
         goal_distance_feature,
@@ -263,7 +270,7 @@ pub fn calibrate_generalized_tactic_value(
         source_transition_sha256: transition_corpus_digest(transitions)?,
         source_transitions: transitions.len(),
         goal_distance_feature,
-        target_kind: "full_authenticated_transition_graph_fitted_q".into(),
+        target_kind: "authenticated_terminal_conditional_ticks".into(),
         config,
         state_region,
         action_realization,

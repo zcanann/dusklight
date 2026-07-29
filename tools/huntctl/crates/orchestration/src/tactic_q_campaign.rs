@@ -16,6 +16,7 @@ use dusklight_automation_contracts::tape::InputTape;
 use dusklight_control::option_execution::OptionExecution;
 use dusklight_learning::fact_registry::FactRegistry;
 use dusklight_learning::fact_snapshot::{FACT_SNAPSHOT_SCHEMA_V2, FactSnapshot};
+use dusklight_learning::generalized_tactic_value::authenticated_terminal_conditional_returns;
 use dusklight_learning::generalized_tactic_value::{
     GeneralizedTacticContext, GeneralizedTacticValueError, GeneralizedTacticValueModel,
 };
@@ -1301,12 +1302,34 @@ fn replay_model(
     episode_groups: &[u64],
     config: &OptionValueConfig,
 ) -> Result<Option<OptionValueModel>, TacticQCampaignError> {
-    let Some(first) = replay.first() else {
+    if replay.len() != episode_groups.len() {
+        return Err(TacticQCampaignError::InvalidState(
+            "replay model rows and episode groups differ",
+        ));
+    }
+    let returns = authenticated_terminal_conditional_returns(replay)?;
+    let supported = replay
+        .iter()
+        .zip(episode_groups)
+        .zip(returns)
+        .filter_map(|((transition, episode_group), objective_return)| {
+            objective_return.map(|objective_return| {
+                let mut sample = transition.value_sample.clone();
+                sample.reward = objective_return;
+                // This regression row already contains the complete closed
+                // return. Prevent the generic critic from bootstrapping it a
+                // second time.
+                sample.terminal = true;
+                (sample, *episode_group)
+            })
+        })
+        .collect::<Vec<_>>();
+    let Some((first, _)) = supported.first() else {
         return Ok(None);
     };
-    let exact_actions = replay
+    let exact_actions = supported
         .iter()
-        .map(|transition| transition.value_sample.action.content_sha256())
+        .map(|(sample, _)| sample.action.content_sha256())
         .collect::<Result<BTreeSet<_>, OptionValueError>>()?;
     if exact_actions.len() > MAX_OPTION_ACTIONS {
         return Ok(None);
@@ -1314,12 +1337,12 @@ fn replay_model(
     let batch = OptionValueBatch::new(
         feature_schema_sha256,
         objective_sha256,
-        first.value_sample.state.len(),
-        replay
+        first.state.len(),
+        supported.iter().map(|(sample, _)| sample.clone()).collect(),
+        supported
             .iter()
-            .map(|transition| transition.value_sample.clone())
+            .map(|(_, episode_group)| *episode_group)
             .collect(),
-        episode_groups.to_vec(),
     )?;
     Ok(Some(OptionValueModel::fit_batch(&batch, config)?))
 }

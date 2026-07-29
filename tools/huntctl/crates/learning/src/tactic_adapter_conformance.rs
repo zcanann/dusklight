@@ -1,7 +1,10 @@
 use crate::artifact::Digest;
 use crate::fact_snapshot::{FactSnapshot, FactTerminalReason};
 use crate::fqi::FqiConfig;
-use crate::generalized_tactic_value::{GeneralizedTacticContext, GeneralizedTacticValueModel};
+use crate::generalized_tactic_value::{
+    GeneralizedTacticContext, GeneralizedTacticValueModel,
+    authenticated_terminal_conditional_returns,
+};
 use crate::native_generic_tactic::{
     GenericTactic, NATIVE_GENERIC_TACTIC_SCHEMA_V1, NativeGenericTacticCandidate,
     NativeGenericTacticPlan, NativeTacticObservation, select_and_execute_generic,
@@ -250,8 +253,8 @@ fn composed_delayed_reward_fixture_learns_the_required_tactic_chain() {
     dead_end.tape_frame = 1;
     dead_end.state_identity = [4; 16];
     dead_end.player.position_f32_bits[0] = (-1.0_f32).to_bits();
-    dead_end.terminal.reason = FactTerminalReason::GoalReached;
-    dead_end.terminal.reached = Some(true);
+    dead_end.terminal.reason = FactTerminalReason::None;
+    dead_end.terminal.reached = Some(false);
 
     let catalog = TacticAssetCatalog::new(vec![
         TacticCatalogEntry::new(
@@ -343,13 +346,14 @@ fn composed_delayed_reward_fixture_learns_the_required_tactic_chain() {
         decoy_realization.execution,
         &decoy_realization.tape,
         -2.0,
-        true,
+        false,
         encode,
     )
     .unwrap();
 
-    // The first action has no immediate reward. It can outrank the terminal
-    // decoy only if fitted Q follows the same episode into the rewarded suffix.
+    // The first action has no immediate reward. It can outrank the censored
+    // decoy only if the learner follows the authenticated terminal suffix
+    // without treating the open decoy endpoint as a closed failure.
     assert_eq!(prime.value_sample.reward, 0.0);
     assert!(!prime.value_sample.terminal);
     let batch = OptionValueBatch::new(
@@ -398,6 +402,11 @@ fn composed_delayed_reward_fixture_learns_the_required_tactic_chain() {
                 .unwrap()
                 .mean_q
     );
+    assert_eq!(
+        authenticated_terminal_conditional_returns(&[prime.clone(), finish.clone(), decoy.clone()])
+            .unwrap(),
+        vec![Some(-3.0), Some(-2.0), None]
+    );
     let shared = GeneralizedTacticValueModel::fit_fitted_q_transitions(
         &[prime.clone(), finish.clone(), decoy.clone()],
         0,
@@ -416,15 +425,6 @@ fn composed_delayed_reward_fixture_learns_the_required_tactic_chain() {
         )
         .unwrap();
     assert_eq!(shared_start[0].descriptor.option_id, "prime");
-    assert!(
-        shared_start[0].outcome.reward
-            > shared_start
-                .iter()
-                .find(|estimate| estimate.descriptor.option_id == "decoy")
-                .unwrap()
-                .outcome
-                .reward
-    );
     let primed_ranking = model
         .rank_available_options(&[1.0], std::slice::from_ref(&finish.value_sample.action))
         .unwrap();

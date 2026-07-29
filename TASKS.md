@@ -42,9 +42,11 @@ The current implementation is not yet an accepted learning architecture.
 - Exact terminal returns now come from route-specific graph identities, and
   the learner contract distinguishes authenticated terminal reconnection from
   an open censored continuation. An exact state/action table consumes those
-  targets as a stable control and publishes separate scheduler heads. Existing
-  generalized fitted models still need to consume the contract instead of
-  deriving closure from scalar replay rewards.
+  targets as a stable control and publishes separate scheduler heads.
+  Generalized, continuous, and categorical value fits now train objective
+  return only on authenticated terminal-connected rows, using negative native
+  ticks-to-terminal. Horizon/cancellation tails remain unsupported rather than
+  becoming scalar-reward failures.
 - Long options historically exposed only their endpoints. Four-tick native
   interior boundaries now exist, but they do not by themselves turn the
   system into coherent graph search.
@@ -193,8 +195,6 @@ Exit gate:
 
 ## P2 - Make learning a serious expansion policy
 
-- [ ] Treat horizon exhaustion and cancellation as censored evidence. Only an
-      authenticated terminal or explicit terminal failure may close a return.
 - [ ] Train auxiliary predictions for next-state features, realized duration,
       action acceptance, prompted-action availability, and terminal
       probability. Use their errors/uncertainty for representation and
