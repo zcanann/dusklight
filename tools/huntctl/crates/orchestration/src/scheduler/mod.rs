@@ -57,6 +57,16 @@ pub struct ScheduledExpansion {
     pub expansion_sha256: Digest,
     pub source: ExactStateId,
     pub source_root_ticks: u64,
+    /// Exact authenticated cost from this source through the current best
+    /// terminal route. `None` is explicit absence of exact terminal support.
+    pub source_exact_terminal_ticks_to_go: Option<u64>,
+    /// Action-conditioned estimate learned across realized graph evidence.
+    /// This never substitutes for the exact source return above.
+    pub generalized_conditional_ticks_to_go: Option<u64>,
+    /// Separately published epistemic/exploration signal.
+    pub uncertainty_millionths: u64,
+    /// Zero-based position in the complete deterministic expansion queue.
+    pub exploration_priority_rank: u64,
     pub learned: LearnedExpansionPriority,
 }
 
@@ -378,6 +388,7 @@ fn rank_schedulable_expansions_with_seed(
         score.validate()?;
     }
     let relaxed_root_ticks = graph.relaxed_root_ticks()?;
+    let exact_terminal_returns = graph.exact_terminal_returns()?;
     let mut ranked = graph
         .expansions()
         .filter(|expansion| {
@@ -387,6 +398,10 @@ fn rank_schedulable_expansions_with_seed(
             let node = graph
                 .node(expansion.source)
                 .ok_or(SchedulerError::Invalid("expansion source is absent"))?;
+            let learned = learned
+                .get(&expansion.identity_sha256)
+                .copied()
+                .unwrap_or_default();
             Ok(ScheduledExpansion {
                 expansion_sha256: expansion.identity_sha256,
                 source: expansion.source,
@@ -394,10 +409,11 @@ fn rank_schedulable_expansions_with_seed(
                     .get(&node.id)
                     .copied()
                     .unwrap_or(node.root_ticks),
-                learned: learned
-                    .get(&expansion.identity_sha256)
-                    .copied()
-                    .unwrap_or_default(),
+                source_exact_terminal_ticks_to_go: exact_terminal_returns.get(&node.id).copied(),
+                generalized_conditional_ticks_to_go: learned.conditional_ticks_to_go,
+                uncertainty_millionths: learned.uncertainty_millionths,
+                exploration_priority_rank: 0,
+                learned,
             })
         })
         .collect::<Result<Vec<_>, SchedulerError>>()?;
@@ -408,6 +424,9 @@ fn rank_schedulable_expansions_with_seed(
             )
         })
     });
+    for (rank, expansion) in ranked.iter_mut().enumerate() {
+        expansion.exploration_priority_rank = rank as u64;
+    }
     Ok(ranked)
 }
 
@@ -619,9 +638,12 @@ impl From<StateGraphError> for SchedulerError {
 mod tests {
     use super::*;
     use dusklight_automation_contracts::tape::{InputFrame, InputTape};
-    use dusklight_control::option_execution::OptionType;
+    use dusklight_control::option_execution::{
+        OptionCondition, OptionEndReason, OptionExecution, OptionType, TapeRange,
+    };
     use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
-    use dusklight_learning::fact_snapshot::FactSnapshot;
+    use dusklight_learning::fact_snapshot::{FactPhase, FactSnapshot, FactTerminalReason};
+    use dusklight_learning::option_transition::OptionTransitionSample;
     use dusklight_learning::option_values::OptionActionDescriptor;
     use std::collections::BTreeMap;
 
@@ -637,6 +659,10 @@ mod tests {
                 state_sha256: Digest([identity.saturating_add(1); 32]),
             },
             source_root_ticks: root_ticks,
+            source_exact_terminal_ticks_to_go: None,
+            generalized_conditional_ticks_to_go: learned.conditional_ticks_to_go,
+            uncertainty_millionths: learned.uncertainty_millionths,
+            exploration_priority_rank: 0,
             learned,
         }
     }
@@ -708,6 +734,72 @@ mod tests {
             )
             .unwrap();
         (graph, first, second)
+    }
+
+    fn terminal_replay_graph() -> (StateGraph, Digest) {
+        let (mut graph, _, pending) = replay_graph();
+        let before = graph.node(graph.root()).unwrap().state.clone();
+        let mut route = graph
+            .route(graph.root().route_checkpoint_sha256)
+            .unwrap()
+            .clone();
+        route.frames.extend(vec![InputFrame::default(); 8]);
+        let execution = OptionExecution::capture(
+            "move".into(),
+            OptionType::Move,
+            BTreeMap::new(),
+            8,
+            8,
+            OptionCondition::DurationElapsed,
+            Vec::new(),
+            OptionEndReason::Completed,
+            &route,
+            TapeRange {
+                start_frame: before.tape_frame,
+                end_frame_exclusive: before.tape_frame + 8,
+            },
+        )
+        .unwrap();
+        let mut after = before.clone();
+        after.phase = FactPhase::PreInput;
+        after.boundary_index += 8;
+        after.simulation_tick += 8;
+        after.tape_frame += 8;
+        after.recent_history.clear();
+        after.recent_option = None;
+        after.terminal.reached = Some(true);
+        after.terminal.reason = FactTerminalReason::GoalReached;
+        after.terminal.first_hit_tick = Some(after.simulation_tick);
+        after.validate().unwrap();
+        let next_checkpoint_sha256 = crate::state_graph::route_checkpoint_sha256(
+            graph.identity.root_checkpoint_sha256,
+            &route,
+        )
+        .unwrap();
+        let mut transition = OptionTransitionSample::capture(
+            graph.identity.feature_schema_sha256,
+            graph.root().route_checkpoint_sha256,
+            next_checkpoint_sha256,
+            before,
+            after,
+            execution,
+            &route,
+            -8.0,
+            true,
+            |state| Ok::<_, &'static str>(vec![state.tape_frame as f32]),
+        )
+        .unwrap();
+        transition.execution_authority_sha256 = graph.identity.execution_authority_sha256;
+        transition.validate().unwrap();
+        graph
+            .admit_completed_expansion(
+                transition,
+                route,
+                1,
+                crate::state_graph::ExpansionEvidenceAuthority::Executable,
+            )
+            .unwrap();
+        (graph, pending)
     }
 
     #[test]
@@ -788,6 +880,29 @@ mod tests {
     }
 
     #[test]
+    fn scheduled_expansion_exposes_exact_generalized_uncertainty_and_queue_rank() {
+        let (graph, pending) = terminal_replay_graph();
+        let learned = BTreeMap::from([(
+            pending,
+            LearnedExpansionPriority {
+                terminal_support_per_million: Some(750_000),
+                conditional_ticks_to_go: Some(7),
+                uncertainty_millionths: 125_000,
+                ..Default::default()
+            },
+        )]);
+
+        let scheduled =
+            rank_schedulable_expansions(&graph, SearchRegime::Optimization, 2, &learned).unwrap();
+
+        assert_eq!(scheduled.len(), 1);
+        assert_eq!(scheduled[0].source_exact_terminal_ticks_to_go, Some(8));
+        assert_eq!(scheduled[0].generalized_conditional_ticks_to_go, Some(7));
+        assert_eq!(scheduled[0].uncertainty_millionths, 125_000);
+        assert_eq!(scheduled[0].exploration_priority_rank, 0);
+    }
+
+    #[test]
     fn node_discovery_prefers_the_least_expanded_boundary() {
         let fresh = node_entry(2, 0, None);
         let visited = node_entry(1, 1, None);
@@ -826,6 +941,8 @@ mod tests {
                     second,
                     LearnedExpansionPriority {
                         policy_rank: Some(0),
+                        conditional_ticks_to_go: Some(9),
+                        uncertainty_millionths: 42,
                         ..Default::default()
                     },
                 ),
@@ -842,10 +959,23 @@ mod tests {
         let before = replay_expansion_queue(&graph, &config, &learned).unwrap();
         let restored = StateGraph::decode(&graph.encode().unwrap()).unwrap();
         let after = replay_expansion_queue(&restored, &config, &learned).unwrap();
+        let inspected = rank_schedulable_expansions_with_seed(
+            &graph,
+            config.regime,
+            config.generation,
+            config.seed,
+            &learned.estimates,
+        )
+        .unwrap();
 
         assert_eq!(before, after);
         assert_eq!(before.selected_expansion_sha256, Some(second));
         assert_eq!(before.ranked_expansions, vec![second, first]);
+        assert_eq!(inspected[0].exploration_priority_rank, 0);
+        assert_eq!(inspected[1].exploration_priority_rank, 1);
+        assert_eq!(inspected[0].source_exact_terminal_ticks_to_go, None);
+        assert_eq!(inspected[0].generalized_conditional_ticks_to_go, Some(9));
+        assert_eq!(inspected[0].uncertainty_millionths, 42);
         before.validate().unwrap();
     }
 

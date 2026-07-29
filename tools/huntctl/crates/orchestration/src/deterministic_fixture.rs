@@ -8,8 +8,10 @@ use dusklight_automation_contracts::artifact::Digest;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::time::Instant;
 
 const AROUND_CORNER_FIXTURE_SCHEMA_V1: &[u8] = b"dusklight-around-corner-fixture/v1";
+pub const FIXTURE_POLICY_BENCHMARK_SCHEMA_V1: &str = "dusklight-fixture-policy-benchmark/v1";
 
 /// A coordinate is the complete future-affecting state of this fixture.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -261,7 +263,15 @@ pub struct FixtureLearningState {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FixtureLearnerSnapshot {
-    conditional_ticks_to_terminal: BTreeMap<(FixtureLearningState, FixtureAction), u64>,
+    conditional_ticks_to_terminal:
+        BTreeMap<(FixtureLearningState, FixtureAction), FixtureReturnEstimate>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct FixtureReturnEstimate {
+    ticks: u64,
+    support_rows: u64,
 }
 
 impl FixtureLearnerSnapshot {
@@ -273,7 +283,18 @@ impl FixtureLearnerSnapshot {
     ) -> Option<u64> {
         self.conditional_ticks_to_terminal
             .get(&(fixture.learning_state(state), action))
-            .copied()
+            .map(|estimate| estimate.ticks)
+    }
+
+    pub fn uncertainty_millionths(
+        &self,
+        fixture: &AroundCornerFixture,
+        state: FixtureState,
+        action: FixtureAction,
+    ) -> Option<u64> {
+        self.conditional_ticks_to_terminal
+            .get(&(fixture.learning_state(state), action))
+            .map(|estimate| 1_000_000_u64.div_ceil(estimate.support_rows))
     }
 
     pub fn supported_expansions(&self) -> usize {
@@ -335,7 +356,10 @@ pub fn learn_fixture_returns(fixture: &AroundCornerFixture) -> FixtureLearnerSna
             let target_ticks = ticks_to_terminal.get(&transition.target)?;
             Some((
                 (fixture.learning_state(transition.source), transition.action),
-                transition.native_ticks + *target_ticks,
+                FixtureReturnEstimate {
+                    ticks: transition.native_ticks + *target_ticks,
+                    support_rows: 1,
+                },
             ))
         })
         .collect();
@@ -363,16 +387,21 @@ pub struct FixtureExpansionTrace {
     pub exact_terminal_ticks_to_go: Option<u64>,
     /// Generalized learner output used to rank this expansion.
     pub generalized_conditional_ticks_to_go: Option<u64>,
-    /// This exact-return learner does not claim an uncertainty estimate.
+    /// Inverse support for the generalized estimate. `None` means the learner
+    /// made no claim for this expansion.
     pub uncertainty_millionths: Option<u64>,
-    /// Complete deterministic queue key apart from the content tie rank.
+    /// Predicted root-to-terminal ticks used as the primary queue key.
     pub exploration_priority: u64,
+    /// Actual zero-based execution order after the complete deterministic
+    /// priority tuple and content tie rank are applied.
+    pub exploration_priority_rank: u64,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct ExpansionPriority {
     predicted_total_ticks: u64,
     unsupported: bool,
+    uncertainty_millionths: u64,
     tie_rank: [u8; 32],
     source: FixtureState,
     action: FixtureAction,
@@ -429,8 +458,10 @@ pub fn schedule_around_corner(
             exact_terminal_ticks_to_go: None,
             generalized_conditional_ticks_to_go: (!priority.unsupported)
                 .then_some(priority.predicted_total_ticks - candidate.source_ticks),
-            uncertainty_millionths: None,
+            uncertainty_millionths: (!priority.unsupported)
+                .then_some(priority.uncertainty_millionths),
             exploration_priority: priority.predicted_total_ticks,
+            exploration_priority_rank: trace.len() as u64,
         });
         let transition = fixture.execute(priority.source, priority.action)?;
         let target_ticks = candidate.source_ticks + transition.native_ticks;
@@ -505,9 +536,13 @@ fn register_fixture_expansions(
     for action in fixture.applicable_actions(source) {
         let learned_ticks = learner
             .and_then(|snapshot| snapshot.conditional_ticks_to_terminal(fixture, source, action));
+        let uncertainty_millionths = learner
+            .and_then(|snapshot| snapshot.uncertainty_millionths(fixture, source, action))
+            .unwrap_or(u64::MAX);
         let priority = ExpansionPriority {
             predicted_total_ticks: source_ticks + learned_ticks.unwrap_or(1),
             unsupported: learned_ticks.is_none(),
+            uncertainty_millionths,
             tie_rank: fixture_tie_rank(seed, fixture.state_sha256(source), action),
             source,
             action,
@@ -529,6 +564,148 @@ fn fixture_tie_rank(seed: u64, state: Digest, action: FixtureAction) -> [u8; 32]
     hasher.update(state.0);
     hasher.update([action as u8]);
     hasher.finalize().into()
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FixturePolicyBenchmarkReport {
+    pub schema: String,
+    pub training_seed: u64,
+    pub held_out_seeds: Vec<u64>,
+    pub repetitions: u64,
+    pub learned_unique_expansions: u64,
+    pub control_unique_expansions: u64,
+    pub learned_wall_nanos: u64,
+    pub control_wall_nanos: u64,
+}
+
+impl FixturePolicyBenchmarkReport {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let unique_seeds = self.held_out_seeds.iter().copied().collect::<BTreeSet<_>>();
+        if self.schema != FIXTURE_POLICY_BENCHMARK_SCHEMA_V1
+            || self.held_out_seeds.is_empty()
+            || unique_seeds.len() != self.held_out_seeds.len()
+            || unique_seeds.contains(&self.training_seed)
+            || self.repetitions == 0
+            || self.learned_unique_expansions == 0
+            || self.control_unique_expansions == 0
+            || self.learned_wall_nanos == 0
+            || self.control_wall_nanos == 0
+            || self.learned_unique_expansions >= self.control_unique_expansions
+            || self.learned_wall_nanos >= self.control_wall_nanos
+        {
+            return Err("held-out fixture learner did not beat its control");
+        }
+        Ok(())
+    }
+}
+
+/// Repeated, order-balanced wall-time comparison on exact-state-disjoint
+/// translated fixtures. Model fitting is outside both treatment timings; each
+/// timed region contains the same scheduler and differs only by the learned
+/// expansion estimates supplied to it.
+pub fn benchmark_held_out_fixture_policy(
+    training_seed: u64,
+    held_out_seeds: &[u64],
+    repetitions: u64,
+    maximum_expansions: u64,
+) -> Result<FixturePolicyBenchmarkReport, &'static str> {
+    if held_out_seeds.is_empty() || repetitions == 0 || maximum_expansions == 0 {
+        return Err("held-out fixture benchmark configuration is empty");
+    }
+    let training = AroundCornerFixture::seeded(training_seed);
+    let learner = learn_fixture_returns(&training);
+    let fixtures = held_out_seeds
+        .iter()
+        .map(|seed| (*seed, AroundCornerFixture::seeded(*seed)))
+        .collect::<Vec<_>>();
+    if fixtures.iter().any(|(_, fixture)| {
+        fixture.state_sha256(fixture.start()) == training.state_sha256(training.start())
+    }) {
+        return Err("held-out fixture shares its exact training identity");
+    }
+
+    // Warm both paths once so lazy code/data setup is outside the comparison.
+    for (seed, fixture) in &fixtures {
+        std::hint::black_box(schedule_around_corner(
+            fixture,
+            Some(&learner),
+            *seed,
+            maximum_expansions,
+        ))
+        .ok_or("learned fixture warmup exhausted its expansion budget")?;
+        std::hint::black_box(schedule_around_corner(
+            fixture,
+            None,
+            *seed,
+            maximum_expansions,
+        ))
+        .ok_or("control fixture warmup exhausted its expansion budget")?;
+    }
+
+    let mut learned_unique_expansions = None;
+    let mut control_unique_expansions = None;
+    let mut learned_wall_nanos = 0_u64;
+    let mut control_wall_nanos = 0_u64;
+    for repetition in 0..repetitions {
+        let mut learned_expansions = 0_u64;
+        let mut control_expansions = 0_u64;
+        for (seed, fixture) in &fixtures {
+            let learned_first = (repetition ^ seed) & 1 == 0;
+            let mut run = |learned: bool| -> Result<FixtureSchedulerResult, &'static str> {
+                let started = Instant::now();
+                let result = std::hint::black_box(schedule_around_corner(
+                    fixture,
+                    learned.then_some(&learner),
+                    *seed,
+                    maximum_expansions,
+                ))
+                .ok_or("fixture policy exhausted its expansion budget")?;
+                let elapsed = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+                if learned {
+                    learned_wall_nanos = learned_wall_nanos.saturating_add(elapsed);
+                } else {
+                    control_wall_nanos = control_wall_nanos.saturating_add(elapsed);
+                }
+                Ok(result)
+            };
+            let (learned, control) = if learned_first {
+                (run(true)?, run(false)?)
+            } else {
+                let control = run(false)?;
+                (run(true)?, control)
+            };
+            if learned.native_ticks != AroundCornerFixture::KNOWN_SHORTEST_TICKS
+                || control.native_ticks != AroundCornerFixture::KNOWN_SHORTEST_TICKS
+            {
+                return Err("fixture policy did not preserve the known optimum");
+            }
+            learned_expansions = learned_expansions.saturating_add(learned.unique_expansions);
+            control_expansions = control_expansions.saturating_add(control.unique_expansions);
+        }
+        match (learned_unique_expansions, control_unique_expansions) {
+            (None, None) => {
+                learned_unique_expansions = Some(learned_expansions);
+                control_unique_expansions = Some(control_expansions);
+            }
+            (Some(expected_learned), Some(expected_control))
+                if expected_learned == learned_expansions
+                    && expected_control == control_expansions => {}
+            _ => return Err("fixture policy expansion counts are nondeterministic"),
+        }
+    }
+    let report = FixturePolicyBenchmarkReport {
+        schema: FIXTURE_POLICY_BENCHMARK_SCHEMA_V1.into(),
+        training_seed,
+        held_out_seeds: held_out_seeds.to_vec(),
+        repetitions,
+        learned_unique_expansions: learned_unique_expansions.unwrap_or_default(),
+        control_unique_expansions: control_unique_expansions.unwrap_or_default(),
+        learned_wall_nanos,
+        control_wall_nanos,
+    };
+    report.validate()?;
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -630,10 +807,29 @@ mod tests {
             );
             assert!(learned.trace.iter().all(|row| {
                 row.generalized_conditional_ticks_to_go.is_some()
-                    && row.uncertainty_millionths.is_none()
+                    && row.uncertainty_millionths.is_some()
             }));
+            assert!(
+                learned
+                    .trace
+                    .iter()
+                    .enumerate()
+                    .all(|(rank, row)| row.exploration_priority_rank == rank as u64)
+            );
             assert!(learned.unique_expansions < exhaustive.unique_expansions);
             assert!(learned.unique_expansions < non_learning.unique_expansions);
         }
+    }
+
+    #[test]
+    fn learned_scheduler_reduces_held_out_expansions_and_wall_time() {
+        let report =
+            benchmark_held_out_fixture_policy(0, &[0x11, 0x22, 0x33, 0x44], 128, 1_000).unwrap();
+
+        assert_eq!(report.learned_unique_expansions, 40);
+        assert_eq!(report.control_unique_expansions, 101);
+        assert!(report.learned_unique_expansions < report.control_unique_expansions);
+        assert!(report.learned_wall_nanos < report.control_wall_nanos);
+        report.validate().unwrap();
     }
 }

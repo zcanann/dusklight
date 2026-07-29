@@ -106,9 +106,15 @@ The current implementation is not yet an accepted learning architecture.
   optimum and content-addressed exact states. Exhaustive search proves the
   optimum, exact transpositions reduce duplicate expansions, and a
   return learner trained only from realized transitions ranks the optimum in
-  fewer expansions than exhaustive and seeded non-learning controls across
-  four graph-disjoint translated fixture seeds without pruning unsupported
-  work.
+  `40` rather than `101` unique expansions across four graph-disjoint
+  translated fixture seeds without pruning unsupported work. An
+  order-balanced 128-repetition comparison also requires lower measured wall
+  time from the learned treatment.
+- Every returned scheduled expansion now exposes the exact authenticated
+  terminal return of its source, its separately generalized
+  action-conditioned tick estimate, uncertainty, and its final deterministic
+  queue rank. Unsupported exact or generalized heads remain explicit `None`
+  rather than being inferred from queue position.
 - Long options historically exposed only their endpoints. A graph invariant
   now admits a 40-tick realization as ten observed segments with nine ordinary
   four-tick interior nodes, then independently executes a counterfactual
@@ -242,6 +248,10 @@ Exit gate:
   number of unique expansions.
 
 ## P2 - Make learning a serious expansion policy
+
+- [x] Use held-out-generalizing action-conditioned return and uncertainty to
+      rank graph-owned expansion work, with complete per-expansion decision
+      evidence.
 
 Exit gate:
 
