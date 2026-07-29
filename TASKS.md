@@ -51,6 +51,12 @@ The current implementation is not yet an accepted learning architecture.
   expansion into one replayable decision. Binary graph restart reproduces the
   same queue exactly, and leasing consumes the graph-owned expansion rather
   than mutating scheduler-local work.
+- The coherent planner now has explicit `state_graph`, `scheduler`, `learner`,
+  `worker_pool`, `tactics`, `persistence`, and `reporting` ownership modules.
+  One invariant audit traces a compact leased job through typed restored-state
+  validation, graph completion, exact terminal selection, learner publication,
+  durable binary restart, and JSON report using the same graph and expansion
+  content identities.
 - Exact terminal returns now come from route-specific graph identities, and
   the learner contract distinguishes authenticated terminal reconnection from
   an open censored continuation. An exact state/action table consumes those
@@ -194,14 +200,9 @@ journals, or learned tactics.
 
 ## P0 - Replace the accidental architecture with explicit ownership
 
-- [ ] Create named modules with single ownership:
-      `state_graph/`, `scheduler/`, `learner/`, `worker_pool/`, `tactics/`,
-      `persistence/`, and `reporting/`.
 - [ ] Keep production Rust files below 1,500 physical lines, with a normal
       target below 1,000. Split existing oversized route-runner and campaign
       files by responsibility before adding more policy variants.
-- [ ] Add invariant tests proving that graph, learner corpus, restored state,
-      terminal path, and exported report all name the same content identities.
 
 Exit gate:
 
