@@ -20,6 +20,7 @@ pub enum TacticQCampaignError {
     Native(NativeTacticWorkerError),
     GeneralizedValue(GeneralizedTacticValueError),
     StateGraph(StateGraphError),
+    Scheduler(crate::scheduler::SchedulerError),
 }
 
 impl fmt::Display for TacticQCampaignError {
@@ -48,6 +49,7 @@ impl fmt::Display for TacticQCampaignError {
                 write!(formatter, "tactic-Q generalized value failed: {error}")
             }
             Self::StateGraph(error) => write!(formatter, "tactic-Q state graph failed: {error}"),
+            Self::Scheduler(error) => write!(formatter, "tactic-Q scheduling failed: {error}"),
         }
     }
 }
@@ -66,6 +68,7 @@ impl Error for TacticQCampaignError {
             Self::Native(error) => Some(error),
             Self::GeneralizedValue(error) => Some(error),
             Self::StateGraph(error) => Some(error),
+            Self::Scheduler(error) => Some(error),
             _ => None,
         }
     }
@@ -74,6 +77,12 @@ impl Error for TacticQCampaignError {
 impl From<StateGraphError> for TacticQCampaignError {
     fn from(value: StateGraphError) -> Self {
         Self::StateGraph(value)
+    }
+}
+
+impl From<crate::scheduler::SchedulerError> for TacticQCampaignError {
+    fn from(value: crate::scheduler::SchedulerError) -> Self {
+        Self::Scheduler(value)
     }
 }
 

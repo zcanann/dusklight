@@ -593,6 +593,63 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     let evaluated = campaign
         .evaluate_rewarded_outcome(outcome.clone(), &encode, &reward_spec)
         .unwrap();
+    let mut scheduled = TacticQCampaign::resume(campaign.checkpoint().unwrap()).unwrap();
+    let leased = scheduled
+        .lease_current_parameterized_batch(
+            TacticQProposalBatch {
+                ranking: decision.ranking.clone(),
+                proposals: vec![decision.selected.clone()],
+            },
+            std::slice::from_ref(&decision.selected.descriptor),
+            1,
+        )
+        .unwrap();
+    assert_eq!(leased.batch.proposals, vec![decision.selected.clone()]);
+    assert_eq!(leased.leases.len(), 1);
+    let leased_expansion = leased.leases[0].expansion_sha256;
+    let mut restarted_scheduled = TacticQCampaign::resume(scheduled.checkpoint().unwrap()).unwrap();
+    assert!(matches!(
+        restarted_scheduled
+            .state_graph
+            .as_ref()
+            .unwrap()
+            .expansion(leased_expansion)
+            .unwrap()
+            .status,
+        crate::state_graph::ActionExpansionStatus::Leased { .. }
+    ));
+    assert!(
+        restarted_scheduled
+            .lease_current_parameterized_batch(
+                TacticQProposalBatch {
+                    ranking: decision.ranking.clone(),
+                    proposals: vec![decision.selected.clone()],
+                },
+                std::slice::from_ref(&decision.selected.descriptor),
+                1,
+            )
+            .is_err()
+    );
+    assert_eq!(
+        restarted_scheduled
+            .admit_leased_evaluated_replay(
+                std::slice::from_ref(&evaluated),
+                &[restarted_scheduled.episode_group],
+                &leased.leases,
+            )
+            .unwrap(),
+        1
+    );
+    assert!(matches!(
+        restarted_scheduled
+            .state_graph
+            .as_ref()
+            .unwrap()
+            .expansion(leased_expansion)
+            .unwrap()
+            .status,
+        crate::state_graph::ActionExpansionStatus::Completed { .. }
+    ));
     assert_eq!(campaign.decision_index, 0);
     assert!(campaign.replay.is_empty());
     let episode_group = campaign.episode_group;

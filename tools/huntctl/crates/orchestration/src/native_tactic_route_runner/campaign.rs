@@ -496,6 +496,34 @@ pub(super) fn run_seed(
             timing.orchestration_micros = timing.orchestration_micros.saturating_add(branch_micros);
         };
         demonstration_intervention_pending = false;
+        let suffix_ticks = campaign
+            .route_tape
+            .frames
+            .len()
+            .saturating_sub(source_frame as usize) as u64;
+        let eligible_descriptors = proposal_batch
+            .ranking
+            .choices
+            .iter()
+            .filter(|choice| {
+                choice.applicable
+                    && selected_tactic_fits_horizon(
+                        suffix_ticks,
+                        choice.duration.maximum_ticks,
+                        horizon,
+                    )
+            })
+            .map(|choice| choice.descriptor.clone())
+            .collect::<Vec<_>>();
+        let leased_batch = campaign
+            .lease_current_parameterized_batch(
+                proposal_batch,
+                &eligible_descriptors,
+                config.execution_plan.proposal_width_per_decision,
+            )
+            .map_err(route_error)?;
+        let proposal_batch = leased_batch.batch;
+        let proposal_leases = leased_batch.leases;
 
         let decision_index = campaign.decision_index;
         let decision_episode_group = campaign.episode_group;
@@ -653,8 +681,11 @@ pub(super) fn run_seed(
                 proposal.outcome.execution.duration.realized_ticks,
             ))
         });
-        let newly_admitted_training_rows =
-            campaign.admit_evaluated_replay(&evaluated, &evaluated_episode_groups)? as u64;
+        let newly_admitted_training_rows = campaign.admit_leased_evaluated_replay(
+            &evaluated,
+            &evaluated_episode_groups,
+            &proposal_leases,
+        )? as u64;
         let duplicate_training_transitions = evaluated
             .len()
             .saturating_sub(newly_admitted_training_rows as usize)

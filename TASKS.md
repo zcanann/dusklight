@@ -33,10 +33,10 @@ The current implementation is not yet an accepted learning architecture.
   expansions, routes, and the best terminal path. Learner replay, executable
   frontiers, retained terminal artifacts, and completed-seed reports are
   validated projections of that graph.
-- The live decision loop still selects work through legacy campaign/frontier
-  policy instead of leasing registered node/action expansions from the graph
-  scheduler. Until that is replaced, graph ownership does not yet produce
-  coherent distributed graph search.
+- The live decision loop now registers horizon-eligible actions and completes
+  exact graph leases, but legacy frontier policy still chooses which node to
+  restore. Scheduler ranking also falls back to the existing policy order
+  until terminal-support and conditional-tick learner heads exist.
 - Long options historically exposed only their endpoints. Four-tick native
   interior boundaries now exist, but they do not by themselves turn the
   system into coherent graph search.
@@ -170,8 +170,6 @@ Exit gate:
       similarity may share learning but must not merge restorable nodes. Route
       improvement to an equivalent node must propagate to descendant total
       costs without deleting alternate incoming evidence.
-- [ ] Use bounded leases or virtual loss so workers do not duplicate the same
-      expansion while independent exploration remains diverse.
 - [ ] Implement a deterministic priority queue whose decision can be replayed
       from graph state, learner snapshot, seed, and sealed scheduler config.
 - [ ] Add a small deterministic around-the-corner environment with a known

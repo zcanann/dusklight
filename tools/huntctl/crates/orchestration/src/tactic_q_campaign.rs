@@ -39,10 +39,11 @@ use dusklight_learning::tactic_blueprint::{
     ApplicableTacticChoices, ConcreteTacticChoiceKind, TacticBlueprint,
 };
 use dusklight_learning::tactic_exploration::{
-    SelectedTactic, TacticExplorationConfig, TacticExplorationError, TacticProposalPolicy,
-    TacticSelectionReason, choose_tactic_batch_for_policy, choose_tactic_batch_with_state_untried,
-    ensure_action_factor_coverage, ensure_generalized_value_acquisition,
-    ensure_terminal_support_factor_acquisitions, retain_generalized_value_acquisition,
+    SelectedTactic, TACTIC_EXPLORATION_SCHEMA_V1, TacticExplorationConfig, TacticExplorationError,
+    TacticProposalPolicy, TacticSelectionReason, choose_tactic_batch_for_policy,
+    choose_tactic_batch_with_state_untried, ensure_action_factor_coverage,
+    ensure_generalized_value_acquisition, ensure_terminal_support_factor_acquisitions,
+    retain_generalized_value_acquisition,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_learning::tactic_value_treatment::{
@@ -65,7 +66,6 @@ pub const TACTIC_Q_CHECKPOINT_SCHEMA_V5: &str = "dusklight-tactic-q-checkpoint/v
 pub const TACTIC_Q_CHECKPOINT_EXTENSION: &str = "dtqz";
 pub const TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1: &str =
     "dusklight-tactic-q-checkpoint-serialization-benchmark/v1";
-pub const TACTIC_Q_FINAL_RESULT_SCHEMA_V1: &str = "dusklight-tactic-q-final-result/v1";
 pub const TACTIC_Q_FINAL_RESULT_SCHEMA_V2: &str = "dusklight-tactic-q-final-result/v2";
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1: &str = "dusklight-tactic-q-learner-snapshot/v1";
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V2: &str = "dusklight-tactic-q-learner-snapshot/v2";
@@ -156,34 +156,6 @@ pub struct TacticQCampaignCheckpoint {
     pub model_revision: u64,
     pub model_config: OptionValueConfig,
     pub exploration: TacticExplorationConfig,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct TacticQFinalResult {
-    pub schema: String,
-    pub content_sha256: Digest,
-    #[serde(default, skip_serializing_if = "digest_is_zero")]
-    pub execution_authority_sha256: Digest,
-    pub objective_sha256: Digest,
-    pub root_checkpoint_sha256: Digest,
-    pub route_tape_sha256: Digest,
-    pub replay_sha256: Digest,
-    pub terminal_state_sha256: Digest,
-    pub route_tape: InputTape,
-    pub replay: Vec<OptionTransitionSample>,
-    pub replay_routes: Vec<InputTape>,
-    pub terminal: FactSnapshot,
-}
-
-impl TacticQFinalResult {
-    pub fn write(&self, path: &Path) -> Result<(), TacticQCampaignError> {
-        tactic_q_checkpoint_store::write_final_result(self, path)
-    }
-
-    pub fn read(path: &Path) -> Result<Self, TacticQCampaignError> {
-        tactic_q_checkpoint_store::read_final_result(path)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -880,8 +852,12 @@ pub use learner_snapshot::{
 };
 
 mod decision;
+mod final_result;
+pub use final_result::TacticQFinalResult;
 mod frontier;
 mod graph_projection;
+mod graph_scheduling;
+pub use graph_scheduling::{LeasedTacticQProposalBatch, TacticExpansionLease};
 mod persistence;
 mod value_treatment;
 use value_treatment::{

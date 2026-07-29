@@ -22,6 +22,10 @@ pub enum SearchRegime {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LearnedExpansionPriority {
+    /// Stable order supplied by the active exploration/value policy. This is
+    /// a fallback while terminal-support and conditional-return heads are
+    /// unavailable, not an alternative source of expansion ownership.
+    pub policy_rank: Option<u64>,
     pub terminal_support_per_million: Option<u32>,
     pub conditional_ticks_to_go: Option<u64>,
     pub uncertainty_millionths: u64,
@@ -121,8 +125,15 @@ fn compare_scheduled(
 ) -> Ordering {
     let discovery = || {
         left.learned
-            .completed_visits
-            .cmp(&right.learned.completed_visits)
+            .policy_rank
+            .is_none()
+            .cmp(&right.learned.policy_rank.is_none())
+            .then_with(|| left.learned.policy_rank.cmp(&right.learned.policy_rank))
+            .then_with(|| {
+                left.learned
+                    .completed_visits
+                    .cmp(&right.learned.completed_visits)
+            })
             .then_with(|| {
                 right
                     .learned
@@ -235,6 +246,32 @@ mod tests {
         );
         assert_eq!(
             compare_scheduled(SearchRegime::Discovery, &uncertain, &visited),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn active_policy_rank_is_a_deterministic_fallback_before_uncertainty() {
+        let primary = entry(
+            1,
+            20,
+            LearnedExpansionPriority {
+                policy_rank: Some(0),
+                uncertainty_millionths: 10,
+                ..Default::default()
+            },
+        );
+        let secondary = entry(
+            2,
+            10,
+            LearnedExpansionPriority {
+                policy_rank: Some(1),
+                uncertainty_millionths: 1_000,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            compare_scheduled(SearchRegime::Discovery, &primary, &secondary),
             Ordering::Less
         );
     }

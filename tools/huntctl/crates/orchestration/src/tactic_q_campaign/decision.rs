@@ -437,8 +437,29 @@ impl TacticQCampaign {
         evaluated: &[EvaluatedRewardedTacticOutcome],
         episode_groups: &[u64],
     ) -> Result<usize, TacticQCampaignError> {
+        self.admit_evaluated_replay_with_leases(evaluated, episode_groups, None)
+    }
+
+    /// Complete graph-leased native work atomically. Every outcome must name
+    /// the descriptor and lease selected before worker execution.
+    pub fn admit_leased_evaluated_replay(
+        &mut self,
+        evaluated: &[EvaluatedRewardedTacticOutcome],
+        episode_groups: &[u64],
+        leases: &[TacticExpansionLease],
+    ) -> Result<usize, TacticQCampaignError> {
+        self.admit_evaluated_replay_with_leases(evaluated, episode_groups, Some(leases))
+    }
+
+    fn admit_evaluated_replay_with_leases(
+        &mut self,
+        evaluated: &[EvaluatedRewardedTacticOutcome],
+        episode_groups: &[u64],
+        leases: Option<&[TacticExpansionLease]>,
+    ) -> Result<usize, TacticQCampaignError> {
         if evaluated.is_empty()
             || evaluated.len() != episode_groups.len()
+            || leases.is_some_and(|leases| leases.len() != evaluated.len())
             || episode_groups[0] != self.episode_group
             || episode_groups[1..].contains(&self.episode_group)
             || episode_groups
@@ -462,7 +483,8 @@ impl TacticQCampaign {
                 ))?;
         let mut frontier_archive = self.frontier_archive.clone();
         let mut admitted = 0;
-        for (evaluated, episode_group) in evaluated.iter().zip(episode_groups) {
+        for (index, (evaluated, episode_group)) in evaluated.iter().zip(episode_groups).enumerate()
+        {
             evaluated.transition.validate()?;
             if evaluated.outcome.selected.decision_index != self.decision_index
                 || evaluated.outcome.selected.learner_snapshot_sha256
@@ -487,16 +509,39 @@ impl TacticQCampaign {
                     "evaluated tactic replay is detached from its shared frontier",
                 ));
             }
-            let admission = state_graph.admit_completed_expansion(
-                evaluated.transition.clone(),
-                evaluated.outcome.route_tape.clone(),
-                *episode_group,
-                if *episode_group == TACTIC_Q_MODEL_ONLY_EPISODE_GROUP {
-                    crate::state_graph::ExpansionEvidenceAuthority::LearnerEvidenceOnly
-                } else {
-                    crate::state_graph::ExpansionEvidenceAuthority::Executable
-                },
-            )?;
+            let authority = if *episode_group == TACTIC_Q_MODEL_ONLY_EPISODE_GROUP {
+                crate::state_graph::ExpansionEvidenceAuthority::LearnerEvidenceOnly
+            } else {
+                crate::state_graph::ExpansionEvidenceAuthority::Executable
+            };
+            let admission = if let Some(leases) = leases {
+                let lease = &leases[index];
+                if lease.descriptor != evaluated.transition.value_sample.action {
+                    return Err(TacticQCampaignError::InvalidState(
+                        "evaluated tactic replay is detached from its graph lease",
+                    ));
+                }
+                let admission = state_graph.admit_leased_completed_expansion(
+                    evaluated.transition.clone(),
+                    evaluated.outcome.route_tape.clone(),
+                    *episode_group,
+                    authority,
+                    lease.lease_sha256,
+                )?;
+                if admission.expansion_sha256 != lease.expansion_sha256 {
+                    return Err(TacticQCampaignError::InvalidState(
+                        "completed graph lease names a different expansion",
+                    ));
+                }
+                admission
+            } else {
+                state_graph.admit_completed_expansion(
+                    evaluated.transition.clone(),
+                    evaluated.outcome.route_tape.clone(),
+                    *episode_group,
+                    authority,
+                )?
+            };
             if !admission.duplicate || admission.authority_promoted {
                 consider_frontier_transition(
                     &mut frontier_archive,

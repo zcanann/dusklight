@@ -61,6 +61,8 @@ pub enum TacticSelectionReason {
     /// Re-evaluate an untried nearby parameterization of a terminal action so
     /// route cost can improve after the first successful completion.
     TerminalCostRefinement,
+    /// The graph scheduler leased this registered node/action expansion.
+    GraphScheduler,
     RandomBaseline,
     StructuredBaseline,
     /// Compatibility label used by older checkpoints and callers that inject
