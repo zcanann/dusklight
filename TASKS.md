@@ -120,8 +120,10 @@ The incoming 2026-07-29 work made substantial, useful progress:
   bundle. It retains the native build/capability hello, initial cached-root
   request/result, compact proposal envelope/result, binary plan and lease
   journal, graph checkpoint, resource audit, and source authorities. The
-  clean-checkout gate discovers every committed smoke manifest. No clean-build
-  Windows or macOS bundle is committed yet.
+  clean-checkout gate discovers every committed smoke manifest. The retained
+  `win32-x86_64` cell passes from clean native revision `dc374771b1` with
+  bundle identity `651b486d54d108e3a214bd6da91dcd22bf3094d8aa536dee030f60f49b1c5a9c`.
+  The matching macOS cell remains open.
 - Native option summaries now retain same-tick wall-contact/commanded-motion
   overlap and the momentum loss measured on those ticks. The v5 tactic feature
   schema exposes the measured consequence with explicit legacy missingness;

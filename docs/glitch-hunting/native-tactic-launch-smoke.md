@@ -45,6 +45,9 @@ binary lease journal, graph checkpoint snapshot, and all small source
 authorities. Executable, runtime-library, and game-image bytes are identified
 by digest rather than copied into Git.
 
+Retained platform evidence must come from a clean native build. A dirty worker
+hello is useful for local diagnosis but is rejected by the smoke contract.
+
 Validate a copied bundle without its originating build directory:
 
 ```text

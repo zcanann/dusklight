@@ -1,0 +1,253 @@
+{
+  "schema": "dusklight-native-tactic-launch-smoke-bundle/v1",
+  "content_sha256": "651b486d54d108e3a214bd6da91dcd22bf3094d8aa536dee030f60f49b1c5a9c",
+  "optimization_request": {
+    "logical_identity_sha256": "8b6a9ba9bd5e307fb8443fe39f2ea6233bc798b3e5a81abf3824c264d8ac2d9b",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "dataset_manifest",
+      "sha256": "ef2f740a5e1244aab0ca89d91afc830d53384ecf1894243b232401d2447d25e5",
+      "size": 3298,
+      "media_type": "application/vnd.dusklight.dataset-manifest+json",
+      "relative_path": "blobs\\sha256\\ef\\2f740a5e1244aab0ca89d91afc830d53384ecf1894243b232401d2447d25e5"
+    }
+  },
+  "execution_binding": {
+    "logical_identity_sha256": "a8f410ad3d2269efcc8de5de9937235350daf0dd19dd53caca6ad92a1bf6ab2a",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "dataset_manifest",
+      "sha256": "8788ee8e0ea963fadcfa4dcf4630e717f5c2673bebe5ddaba04786d61d745a6f",
+      "size": 2741,
+      "media_type": "application/vnd.dusklight.dataset-manifest+json",
+      "relative_path": "blobs\\sha256\\87\\88ee8e0ea963fadcfa4dcf4630e717f5c2673bebe5ddaba04786d61d745a6f"
+    }
+  },
+  "execution_plan": {
+    "logical_identity_sha256": "73fd2d46ec43c5aed724564803923f999bfdcbd2ad6bd720efb095d3a296c31a",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "dataset_manifest",
+      "sha256": "1a58ccf978389da54b186f2fef830a8ba6c54e3114497d9fe8905a34c13b366c",
+      "size": 1004,
+      "media_type": "application/vnd.dusklight.dataset-manifest+json",
+      "relative_path": "blobs\\sha256\\1a\\58ccf978389da54b186f2fef830a8ba6c54e3114497d9fe8905a34c13b366c"
+    }
+  },
+  "route_report": {
+    "logical_identity_sha256": "ec49d2ca46787f89573d49e5c1e6a47eb9cd4e4c2a739b98bbcb0f2017d1d276",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "dataset_manifest",
+      "sha256": "1028023d0c0abe4d83dd6b3851719f2cae7fcf635dd21e841480b3aedae95f96",
+      "size": 385290,
+      "media_type": "application/vnd.dusklight.dataset-manifest+json",
+      "relative_path": "blobs\\sha256\\10\\28023d0c0abe4d83dd6b3851719f2cae7fcf635dd21e841480b3aedae95f96"
+    }
+  },
+  "campaign_audit": {
+    "logical_identity_sha256": "37f763c5bce36a5e041802cfc00301060d727f00f74478c8f96f4da101c289c9",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "dataset_manifest",
+      "sha256": "b9ec733a0585ea0c056f621532ef36908536c75325b30f5760db85261292e277",
+      "size": 392333,
+      "media_type": "application/vnd.dusklight.dataset-manifest+json",
+      "relative_path": "blobs\\sha256\\b9\\ec733a0585ea0c056f621532ef36908536c75325b30f5760db85261292e277"
+    }
+  },
+  "worker_hello": {
+    "logical_identity_sha256": "a8e3b87001d3a47921e288dea502da5148cbb5201dfbfcd932a276774437498f",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "dataset_manifest",
+      "sha256": "a8e3b87001d3a47921e288dea502da5148cbb5201dfbfcd932a276774437498f",
+      "size": 1156,
+      "media_type": "application/vnd.dusklight.dataset-manifest+json",
+      "relative_path": "blobs\\sha256\\a8\\e3b87001d3a47921e288dea502da5148cbb5201dfbfcd932a276774437498f"
+    }
+  },
+  "initial_request": {
+    "logical_identity_sha256": "51beaff028100a7a697c5e97f894f0f12f38805c7b2e9dc5ba1fd114b939c2ad",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "dataset_manifest",
+      "sha256": "51beaff028100a7a697c5e97f894f0f12f38805c7b2e9dc5ba1fd114b939c2ad",
+      "size": 1004,
+      "media_type": "application/vnd.dusklight.dataset-manifest+json",
+      "relative_path": "blobs\\sha256\\51\\beaff028100a7a697c5e97f894f0f12f38805c7b2e9dc5ba1fd114b939c2ad"
+    }
+  },
+  "initial_result": {
+    "logical_identity_sha256": "cbaa07e355c342269f75646cee8c77d79ae3726be7800ced0aad5d3cfb742b05",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "dataset_manifest",
+      "sha256": "cbaa07e355c342269f75646cee8c77d79ae3726be7800ced0aad5d3cfb742b05",
+      "size": 8064,
+      "media_type": "application/vnd.dusklight.dataset-manifest+json",
+      "relative_path": "blobs\\sha256\\cb\\aa07e355c342269f75646cee8c77d79ae3726be7800ced0aad5d3cfb742b05"
+    }
+  },
+  "compact_proposal_request": {
+    "logical_identity_sha256": "c25e07976ad063b36155fddc7e18fefde1531b715ac61e3730ab1bf9934b7397",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "crash_artifact",
+      "sha256": "c25e07976ad063b36155fddc7e18fefde1531b715ac61e3730ab1bf9934b7397",
+      "size": 234,
+      "media_type": "application/octet-stream",
+      "relative_path": "blobs\\sha256\\c2\\5e07976ad063b36155fddc7e18fefde1531b715ac61e3730ab1bf9934b7397"
+    }
+  },
+  "proposal_result": {
+    "logical_identity_sha256": "f6d7cd903ce1e85eac6d6d1bc1963dd6ae240d5a8c259b95501e8ee3243c84fc",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "dataset_manifest",
+      "sha256": "f6d7cd903ce1e85eac6d6d1bc1963dd6ae240d5a8c259b95501e8ee3243c84fc",
+      "size": 8613,
+      "media_type": "application/vnd.dusklight.dataset-manifest+json",
+      "relative_path": "blobs\\sha256\\f6\\d7cd903ce1e85eac6d6d1bc1963dd6ae240d5a8c259b95501e8ee3243c84fc"
+    }
+  },
+  "lease_journal": {
+    "logical_identity_sha256": "02197ef355eceaf2bc7148e177b8f90b48a973b2c168f4fdb430fd84426ea30b",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "crash_artifact",
+      "sha256": "02197ef355eceaf2bc7148e177b8f90b48a973b2c168f4fdb430fd84426ea30b",
+      "size": 603,
+      "media_type": "application/octet-stream",
+      "relative_path": "blobs\\sha256\\02\\197ef355eceaf2bc7148e177b8f90b48a973b2c168f4fdb430fd84426ea30b"
+    }
+  },
+  "checkpoint_snapshot": {
+    "logical_identity_sha256": "77589090d60d81c16f13470bb4fab47b8ebb87cad7bb2e4568eff62cd78a9919",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "crash_artifact",
+      "sha256": "146d8084eb292c92258e0f51f6e047f660c1c301da6b2185090b20b74e705135",
+      "size": 33068,
+      "media_type": "application/octet-stream",
+      "relative_path": "blobs\\sha256\\14\\6d8084eb292c92258e0f51f6e047f660c1c301da6b2185090b20b74e705135"
+    }
+  },
+  "checkpoint_snapshot_uncompressed_bytes": 2954989,
+  "execution_identity": {
+    "execution_binding_sha256": "a8f410ad3d2269efcc8de5de9937235350daf0dd19dd53caca6ad92a1bf6ab2a",
+    "executable_sha256": "f8d6319e3e15269be0f4262d1e19f97a0476eb5bd4810f16138e239c5f0e85fd",
+    "runtime_dependency_sha256s": [
+      "38c9583844842c7a78cb4d0893c36eae332c43554077eff38482f9936e20f767",
+      "4ab3d55530a44380a64cfc93679d53a8fc69a1f4da635119db1e1289e75274a4",
+      "fda4dde92222ddb8564c3173ce48faa56f7e1c7b46b0b67dada1182ee07a4123",
+      "35e65caf9ee04cfa4e40a5b4d5b1eb564f1158820eac1278d4cc04ffb6263b7d",
+      "1186486bc236e16d7cdf114bcee9e998aeb89f83b9560078c5edc42eafbcd22b",
+      "9b09c3667f41d27c984440cb49dd102bef389c8ba72cfc287c202c9bd3fef0dc",
+      "232e66ae1827edc7176b2c601543ffca760afbdb3be775b37a72ce7e6e31375a"
+    ],
+    "game_data_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814",
+    "process_boot_tape_sha256": "827cb999dfaa0038c30764e971e0bae2f0ba0d18c99f7be9285825bc650d55f8",
+    "milestone_program_sha256": "b5ef3a1440ca5a50b563b7afb7b0d9230f815d359998b3a2c403a68b5c76f653",
+    "world_context_sha256": "5417f084d4aec9812ab96f0bee6dbcbce37843be669d4f3a5e20cf771bf70dcf",
+    "card_fixture_manifest_sha256": "4781b1f1c223290af7ed25b827bc1a7199419a607246cb9d8136f1707a4f1225"
+  },
+  "authorities": [
+    {
+      "role": "card_fixture_manifest",
+      "declared_path": "routes/Glitch Exhibition/ordon-degraded-canary/benchmarks/process_boot.89e1737.fixture.json",
+      "declared_sha256": "4781b1f1c223290af7ed25b827bc1a7199419a607246cb9d8136f1707a4f1225",
+      "blob": {
+        "schema": "dusklight-content-blob/v1",
+        "kind": "dataset_manifest",
+        "sha256": "4781b1f1c223290af7ed25b827bc1a7199419a607246cb9d8136f1707a4f1225",
+        "size": 471,
+        "media_type": "application/vnd.dusklight.dataset-manifest+json",
+        "relative_path": "blobs\\sha256\\47\\81b1f1c223290af7ed25b827bc1a7199419a607246cb9d8136f1707a4f1225"
+      }
+    },
+    {
+      "role": "milestone_program",
+      "declared_path": "build/diagnostics/current-native/execution-current-v3/terminal.dmsp",
+      "declared_sha256": "b5ef3a1440ca5a50b563b7afb7b0d9230f815d359998b3a2c403a68b5c76f653",
+      "blob": {
+        "schema": "dusklight-content-blob/v1",
+        "kind": "dataset_manifest",
+        "sha256": "b5ef3a1440ca5a50b563b7afb7b0d9230f815d359998b3a2c403a68b5c76f653",
+        "size": 179,
+        "media_type": "application/vnd.dusklight.dataset-manifest+json",
+        "relative_path": "blobs\\sha256\\b5\\ef3a1440ca5a50b563b7afb7b0d9230f815d359998b3a2c403a68b5c76f653"
+      }
+    },
+    {
+      "role": "process_boot_tape",
+      "declared_path": "build/diagnostics/current-native/execution-current-v3/process-route.tape",
+      "declared_sha256": "827cb999dfaa0038c30764e971e0bae2f0ba0d18c99f7be9285825bc650d55f8",
+      "blob": {
+        "schema": "dusklight-content-blob/v1",
+        "kind": "input_tape",
+        "sha256": "827cb999dfaa0038c30764e971e0bae2f0ba0d18c99f7be9285825bc650d55f8",
+        "size": 465,
+        "media_type": "application/x-dusktape",
+        "relative_path": "blobs\\sha256\\82\\7cb999dfaa0038c30764e971e0bae2f0ba0d18c99f7be9285825bc650d55f8"
+      }
+    },
+    {
+      "role": "route_timeline",
+      "declared_path": "routes/Glitch Exhibition/ordon-degraded-canary.timeline",
+      "declared_sha256": "8dc1158912ddfdb41965d2efe4771e4961db603c6f71c745c49c4f5b33d03e23",
+      "blob": {
+        "schema": "dusklight-content-blob/v1",
+        "kind": "dataset_manifest",
+        "sha256": "8dc1158912ddfdb41965d2efe4771e4961db603c6f71c745c49c4f5b33d03e23",
+        "size": 4742,
+        "media_type": "application/vnd.dusklight.dataset-manifest+json",
+        "relative_path": "blobs\\sha256\\8d\\c1158912ddfdb41965d2efe4771e4961db603c6f71c745c49c4f5b33d03e23"
+      }
+    },
+    {
+      "role": "terminal_predicate_source",
+      "declared_path": "routes/Glitch Exhibition/intro/predicates/ordon_spring_load_committed.milestones",
+      "declared_sha256": "65e395951ce6c46f6728e3daa91ece77410f85806f9a7a83942ffcd5737770ba",
+      "blob": {
+        "schema": "dusklight-content-blob/v1",
+        "kind": "dataset_manifest",
+        "sha256": "65e395951ce6c46f6728e3daa91ece77410f85806f9a7a83942ffcd5737770ba",
+        "size": 342,
+        "media_type": "application/vnd.dusklight.dataset-manifest+json",
+        "relative_path": "blobs\\sha256\\65\\e395951ce6c46f6728e3daa91ece77410f85806f9a7a83942ffcd5737770ba"
+      }
+    },
+    {
+      "role": "world_context",
+      "declared_path": "build/world/ordon-context-current.json",
+      "declared_sha256": "5417f084d4aec9812ab96f0bee6dbcbce37843be669d4f3a5e20cf771bf70dcf",
+      "blob": {
+        "schema": "dusklight-content-blob/v1",
+        "kind": "world_context",
+        "sha256": "5417f084d4aec9812ab96f0bee6dbcbce37843be669d4f3a5e20cf771bf70dcf",
+        "size": 529,
+        "media_type": "application/vnd.dusklight.world-context+json",
+        "relative_path": "blobs\\sha256\\54\\17f084d4aec9812ab96f0bee6dbcbce37843be669d4f3a5e20cf771bf70dcf"
+      }
+    }
+  ],
+  "summary": {
+    "platform": "win32",
+    "architecture": "x86_64",
+    "worker_revision": "dc374771b12402e622aa9f97e3ae6d094d221683",
+    "worker_aurora_revision": "5d0b6fe11554cbcbdb5dc2555574c4d557984e39",
+    "clean_build": true,
+    "executable_sha256": "f8d6319e3e15269be0f4262d1e19f97a0476eb5bd4810f16138e239c5f0e85fd",
+    "game_data_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814",
+    "root_checkpoint_identity": "ff3e68617588749271e5baf2fa70bed3",
+    "source_boundary_index": 506,
+    "proposal_ticks": 16,
+    "checkpoint_cache_capacity_bytes": 671088640,
+    "completed_graph_leases": 1,
+    "unresolved_graph_leases": 0,
+    "compact_persistent_control": true,
+    "resource_audit_passed": true
+  },
+  "passed": true
+}

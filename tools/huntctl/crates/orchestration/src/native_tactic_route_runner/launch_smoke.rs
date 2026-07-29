@@ -11,6 +11,8 @@ use dusklight_worker_protocol::client::HelloResponse;
 pub const NATIVE_TACTIC_LAUNCH_SMOKE_BUNDLE_SCHEMA_V1: &str =
     "dusklight-native-tactic-launch-smoke-bundle/v1";
 pub const NATIVE_TACTIC_LAUNCH_SMOKE_MANIFEST: &str = "manifest.json";
+const MAXIMUM_SMOKE_CHECKPOINT_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
+const SMOKE_CHECKPOINT_COMPRESSION_LEVEL: i32 = 3;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -19,6 +21,7 @@ pub struct NativeTacticLaunchSmokeSummary {
     pub architecture: String,
     pub worker_revision: String,
     pub worker_aurora_revision: String,
+    pub clean_build: bool,
     pub executable_sha256: Digest,
     pub game_data_sha256: Digest,
     pub root_checkpoint_identity: String,
@@ -48,6 +51,7 @@ pub struct NativeTacticLaunchSmokeBundle {
     pub proposal_result: NativeTacticScratchBundleArtifact,
     pub lease_journal: NativeTacticScratchBundleArtifact,
     pub checkpoint_snapshot: NativeTacticScratchBundleArtifact,
+    pub checkpoint_snapshot_uncompressed_bytes: u64,
     pub execution_identity: NativeTacticScratchExecutionIdentity,
     pub authorities: Vec<NativeTacticScratchAuthorityArtifact>,
     pub summary: NativeTacticLaunchSmokeSummary,
@@ -187,10 +191,23 @@ impl NativeTacticLaunchSmokeBundle {
                 .lease_accounting
                 .journal_sha256,
         )?;
+        let checkpoint_snapshot_bytes = serde_cbor::to_vec(&checkpoint).map_err(route_error)?;
+        if checkpoint_snapshot_bytes.len() > MAXIMUM_SMOKE_CHECKPOINT_SNAPSHOT_BYTES {
+            return Err(route_message(
+                "native tactic launch smoke checkpoint snapshot is too large",
+            ));
+        }
+        let compressed_checkpoint = zstd::bulk::compress(
+            &checkpoint_snapshot_bytes,
+            SMOKE_CHECKPOINT_COMPRESSION_LEVEL,
+        )
+        .map_err(route_error)?;
+        let checkpoint_snapshot_uncompressed_bytes =
+            u64::try_from(checkpoint_snapshot_bytes.len()).map_err(route_error)?;
         let checkpoint_snapshot = bundle_bytes(
             &store,
-            &serde_cbor::to_vec(&checkpoint).map_err(route_error)?,
-            ContentKind::StateGraph,
+            &compressed_checkpoint,
+            ContentKind::CrashArtifact,
             checkpoint.content_sha256,
         )?;
         let mut authorities = smoke_authorities(&store, &repository_root, &request, &execution)?;
@@ -210,6 +227,7 @@ impl NativeTacticLaunchSmokeBundle {
             proposal_result,
             lease_journal,
             checkpoint_snapshot,
+            checkpoint_snapshot_uncompressed_bytes,
             execution_identity: execution_identity(&execution),
             authorities,
             summary,
@@ -272,12 +290,25 @@ impl NativeTacticLaunchSmokeBundle {
         let initial_request: NativeSuffixBatch = read_json(&store, &self.initial_request)?;
         let initial_result: NativeSuffixBatchResult = read_json(&store, &self.initial_result)?;
         let proposal_result: NativeSuffixBatchResult = read_json(&store, &self.proposal_result)?;
-        let checkpoint: TacticQCampaignCheckpoint = serde_cbor::from_slice(
-            &store
-                .read_bytes(&self.checkpoint_snapshot.blob)
-                .map_err(route_error)?,
-        )
-        .map_err(route_error)?;
+        let snapshot_len =
+            usize::try_from(self.checkpoint_snapshot_uncompressed_bytes).map_err(route_error)?;
+        if snapshot_len == 0 || snapshot_len > MAXIMUM_SMOKE_CHECKPOINT_SNAPSHOT_BYTES {
+            return Err(route_message(
+                "native tactic launch smoke checkpoint size is invalid",
+            ));
+        }
+        let compressed_checkpoint = store
+            .read_bytes(&self.checkpoint_snapshot.blob)
+            .map_err(route_error)?;
+        let checkpoint_bytes =
+            zstd::bulk::decompress(&compressed_checkpoint, snapshot_len).map_err(route_error)?;
+        if checkpoint_bytes.len() != snapshot_len {
+            return Err(route_message(
+                "native tactic launch smoke checkpoint size differs",
+            ));
+        }
+        let checkpoint: TacticQCampaignCheckpoint =
+            serde_cbor::from_slice(&checkpoint_bytes).map_err(route_error)?;
         let lease_bytes = store
             .read_bytes(&self.lease_journal.blob)
             .map_err(route_error)?;
@@ -473,6 +504,7 @@ fn validate_smoke_sources(
         || !hello.capabilities.persistent_control
         || !hello.capabilities.batch_run
         || !hello.capabilities.compact_batch_run
+        || hello.build.dirty
         || !audit.resources.passed
         || audit.resources.completed_decisions != 1
     {
@@ -485,6 +517,7 @@ fn validate_smoke_sources(
         architecture: hello.build.architecture.clone(),
         worker_revision: hello.build.revision.clone(),
         worker_aurora_revision: hello.build.aurora_revision.clone(),
+        clean_build: true,
         executable_sha256: execution.executable.sha256,
         game_data_sha256: execution.game_data.sha256,
         root_checkpoint_identity: initial.restore_identity,

@@ -1,0 +1,35 @@
+{
+  "build": {
+    "version": "1.4.1.1785",
+    "describe": "v1.4.1-1785",
+    "revision": "dc374771b12402e622aa9f97e3ae6d094d221683",
+    "dirty_digest": "",
+    "branch": "main",
+    "source_date": "Wed Jul 29 16:41:34 2026 -0700",
+    "aurora_revision": "5d0b6fe11554cbcbdb5dc2555574c4d557984e39",
+    "compiler": "Clang-19.1.0-MSVC",
+    "compiler_target": "AMD64-win32",
+    "build_type": "Debug",
+    "feature_switches": "asan=OFF;selected_opt=OFF;movie=ON;update_checker=ON;sentry=OFF;gfx_debug_groups=ON;code_mods=OFF;automation_observers=ON;automation_fidelity_models=ON;experimental_interventions=OFF;discord=ON",
+    "feature_digest": "e2747154aca9684fec308a5e7bac05062cd7763f05539d1491fe46d617764511",
+    "fidelity_profile": "cursor_breakout_shadow",
+    "platform": "win32",
+    "architecture": "x86_64",
+    "pointer_bits": 64,
+    "dirty": false
+  },
+  "capabilities": {
+    "persistent_control": true,
+    "engine_session": false,
+    "headless": true,
+    "scenario_load": false,
+    "input_tape": true,
+    "batch_run": true,
+    "compact_batch_run": true,
+    "commands": [
+      "hello",
+      "run_batch",
+      "shutdown"
+    ]
+  }
+}
