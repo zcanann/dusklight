@@ -867,7 +867,7 @@ fn novelty(
         .unwrap_or(u128::MAX)
 }
 
-fn tactic_endpoint_descriptor(
+pub fn tactic_endpoint_descriptor(
     transition: &OptionTransitionSample,
 ) -> Result<TacticEndpointDescriptor, BehaviorArchiveError> {
     let state = tactic_state_descriptor(&transition.after, transition.value_sample.terminal);

@@ -350,6 +350,7 @@ impl TacticQCampaign {
             .training_replay
             .iter()
             .any(|transition| transition.value_sample.terminal);
+        let exact_terminal_ticks = exact_terminal_ticks_to_go_by_state(&self.training_replay);
         let mut choices = if !demonstration_curriculum && !terminal_value_supported {
             archive.select_tactic_reachability_frontier_within_route_frames(
                 reference,
@@ -363,6 +364,17 @@ impl TacticQCampaign {
                 maximum_route_frames,
             )
         };
+        if terminal_value_supported && !demonstration_curriculum {
+            append_exact_terminal_frontiers(
+                &mut choices,
+                self.root_checkpoint_sha256,
+                &self.training_replay,
+                &self.training_replay_routes,
+                &self.training_episode_groups,
+                &exact_terminal_ticks,
+                maximum_route_frames,
+            )?;
+        }
         if demonstration_curriculum {
             let demonstration_endpoints = self
                 .training_replay
@@ -396,9 +408,13 @@ impl TacticQCampaign {
             ));
         }
         if !demonstration_curriculum && choices.len() > MAX_RANKED_FRONTIER_CANDIDATES {
-            let offset = seeded_frontier_index(seed, round, choices.len());
-            choices.rotate_left(offset);
-            choices.truncate(MAX_RANKED_FRONTIER_CANDIDATES);
+            choices = limit_ranked_frontier_candidates(
+                seed,
+                round,
+                root_frames,
+                choices,
+                &exact_terminal_ticks,
+            );
         }
         let tie_offset = seeded_frontier_index(seed, round, choices.len());
         let choice_count = choices.len();
@@ -422,7 +438,6 @@ impl TacticQCampaign {
         } else {
             None
         };
-        let exact_terminal_ticks = exact_terminal_ticks_to_go_by_state(&self.training_replay);
         let mut ranked = choices
             .into_iter()
             .enumerate()
@@ -661,6 +676,93 @@ impl TacticQCampaign {
         self.episode_group = episode_group;
         Ok(())
     }
+}
+
+fn limit_ranked_frontier_candidates(
+    seed: u64,
+    round: u64,
+    root_frames: usize,
+    choices: Vec<TacticFrontierEntry>,
+    exact_terminal_ticks: &BTreeMap<Digest, u64>,
+) -> Vec<TacticFrontierEntry> {
+    let (mut exact, mut exploratory): (Vec<_>, Vec<_>) = choices
+        .into_iter()
+        .partition(|entry| exact_terminal_ticks.contains_key(&entry.transition.after_state_sha256));
+    exact.sort_by(|left, right| {
+        let total = |entry: &TacticFrontierEntry| {
+            (entry.route_tape.frames.len().saturating_sub(root_frames) as u64)
+                .saturating_add(exact_terminal_ticks[&entry.transition.after_state_sha256])
+        };
+        total(left)
+            .cmp(&total(right))
+            .then_with(|| left.first_seen_generation.cmp(&right.first_seen_generation))
+            .then_with(|| left.descriptor.cmp(&right.descriptor))
+    });
+    if exact.len() >= MAX_RANKED_FRONTIER_CANDIDATES {
+        exact.truncate(MAX_RANKED_FRONTIER_CANDIDATES);
+        return exact;
+    }
+    let remaining = MAX_RANKED_FRONTIER_CANDIDATES - exact.len();
+    let offset = seeded_frontier_index(seed, round, exploratory.len());
+    exploratory.rotate_left(offset);
+    exploratory.truncate(remaining);
+    exact.extend(exploratory);
+    exact
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn append_exact_terminal_frontiers(
+    choices: &mut Vec<TacticFrontierEntry>,
+    root_checkpoint_sha256: Digest,
+    transitions: &[OptionTransitionSample],
+    routes: &[InputTape],
+    episode_groups: &[u64],
+    exact_terminal_ticks: &BTreeMap<Digest, u64>,
+    maximum_route_frames: usize,
+) -> Result<(), TacticQCampaignError> {
+    if transitions.len() != routes.len() || transitions.len() != episode_groups.len() {
+        return Err(TacticQCampaignError::InvalidState(
+            "terminal frontier replay shape is invalid",
+        ));
+    }
+    let mut identities = choices
+        .iter()
+        .map(|entry| {
+            (
+                entry.route_checkpoint_sha256,
+                entry.transition.after_state_sha256,
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    for (generation, ((transition, route), episode_group)) in transitions
+        .iter()
+        .zip(routes)
+        .zip(episode_groups)
+        .enumerate()
+    {
+        let identity = (
+            transition.next_checkpoint_sha256,
+            transition.after_state_sha256,
+        );
+        if *episode_group == TACTIC_Q_MODEL_ONLY_EPISODE_GROUP
+            || transition.value_sample.terminal
+            || route.frames.len() > maximum_route_frames
+            || !exact_terminal_ticks.contains_key(&transition.after_state_sha256)
+            || !identities.insert(identity)
+        {
+            continue;
+        }
+        choices.push(TacticFrontierEntry {
+            descriptor: tactic_endpoint_descriptor(transition)
+                .map_err(|error| TacticQCampaignError::Frontier(error.to_string()))?,
+            root_checkpoint_sha256,
+            route_checkpoint_sha256: transition.next_checkpoint_sha256,
+            transition: transition.clone(),
+            route_tape: route.clone(),
+            first_seen_generation: generation as u64,
+        });
+    }
+    Ok(())
 }
 
 fn exact_terminal_ticks_to_go_by_state(

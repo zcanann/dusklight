@@ -680,6 +680,33 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         corpus.execution_authority_sha256,
         execution_authority_sha256
     );
+    let exact_terminal_ticks = BTreeMap::from([(corpus.transitions[0].after_state_sha256, 7_u64)]);
+    let mut exact_frontiers = Vec::new();
+    frontier::append_exact_terminal_frontiers(
+        &mut exact_frontiers,
+        corpus.root_checkpoint_sha256,
+        &corpus.transitions,
+        &corpus.routes,
+        &corpus.episode_groups,
+        &exact_terminal_ticks,
+        usize::MAX,
+    )
+    .unwrap();
+    assert_eq!(exact_frontiers.len(), 1);
+    let mut model_only_groups = corpus.episode_groups.clone();
+    model_only_groups.fill(TACTIC_Q_MODEL_ONLY_EPISODE_GROUP);
+    exact_frontiers.clear();
+    frontier::append_exact_terminal_frontiers(
+        &mut exact_frontiers,
+        corpus.root_checkpoint_sha256,
+        &corpus.transitions,
+        &corpus.routes,
+        &model_only_groups,
+        &exact_terminal_ticks,
+        usize::MAX,
+    )
+    .unwrap();
+    assert!(exact_frontiers.is_empty());
     let immutable_snapshot = TacticQImmutableLearnerSnapshot::fit(
         corpus.clone(),
         corpus.transitions.len() as u64,
