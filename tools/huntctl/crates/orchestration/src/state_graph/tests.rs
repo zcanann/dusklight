@@ -911,6 +911,90 @@ fn durable_graph_and_exported_report_share_one_content_identity() {
 }
 
 #[test]
+fn one_expansion_identity_flows_from_lease_through_worker_learner_and_report() {
+    let (mut graph, mut transition, route) = graph_and_transition();
+    terminalize(&mut transition);
+    let primitive = transition.value_sample.action.clone();
+    let primitive_sha256 = primitive.content_sha256().unwrap();
+    let mut tactics = crate::tactics::GraphTacticCatalog::new([primitive.clone()]).unwrap();
+    tactics
+        .promote(crate::tactics::PromotedGraphTactic {
+            descriptor: OptionActionDescriptor {
+                option_id: "learned/move-twice".into(),
+                option_type: OptionType::Custom("composition".into()),
+                parameters: BTreeMap::new(),
+            },
+            primitive_components: vec![primitive_sha256],
+            held_out_evidence_sha256: Digest([12; 32]),
+        })
+        .unwrap();
+    assert_eq!(tactics.primitive_count(), 1);
+    assert_eq!(tactics.promoted_count(), 1);
+    assert_eq!(tactics.actions().count(), 2);
+    let root = graph.root();
+    let registered = tactics
+        .register_applicable(&mut graph, root, |action| {
+            action.option_id == primitive.option_id
+        })
+        .unwrap();
+    assert_eq!(registered.len(), 1);
+
+    let priorities = crate::scheduler::GraphPrioritySnapshot::cold_start(&graph).unwrap();
+    let config = crate::scheduler::ExpansionSchedulerConfig {
+        schema: crate::scheduler::EXPANSION_SCHEDULER_CONFIG_SCHEMA_V1.into(),
+        regime: crate::scheduler::SearchRegime::Discovery,
+        seed: 41,
+        generation: 3,
+        lease_generations: 2,
+    };
+    let lease_sha256 = Digest([13; 32]);
+    let queue =
+        crate::scheduler::lease_replayed_expansion(&mut graph, &config, &priorities, lease_sha256)
+            .unwrap();
+    let job =
+        crate::worker_pool::GraphExpansionJob::from_leased_graph(&graph, &queue, lease_sha256)
+            .unwrap();
+    assert!(serde_cbor::to_vec(&job).unwrap().len() < 1_024);
+    let admission = crate::worker_pool::admit_graph_expansion_completion(
+        &mut graph,
+        &job,
+        crate::worker_pool::GraphExpansionCompletion {
+            job_sha256: job.job_sha256,
+            transition,
+            route,
+            episode_group: 17,
+            authority: ExpansionEvidenceAuthority::Executable,
+        },
+    )
+    .unwrap();
+    let learner = crate::learner::GraphLearningBatch::from_graph(&graph).unwrap();
+    let report = crate::reporting::GraphSearchReport::from_graph(&graph).unwrap();
+    let directory = std::env::temp_dir().join(format!(
+        "dusklight-expansion-identity-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let stored = crate::persistence::persist_state_graph(&directory, &graph).unwrap();
+
+    assert_eq!(admission.expansion_sha256, job.expansion_sha256);
+    assert_eq!(learner.rows.len(), 1);
+    assert_eq!(learner.rows[0].expansion_sha256, job.expansion_sha256);
+    assert_eq!(learner.graph_sha256, report.graph_sha256);
+    assert_eq!(report.graph_sha256, stored.graph_sha256);
+    assert_eq!(report.completed_expansions, 1);
+    assert_eq!(report.untried_expansions, 0);
+    assert_eq!(
+        report.best_terminal.as_ref().map(|path| path.terminal),
+        Some(admission.target)
+    );
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn detached_evidence_is_rejected_before_mutating_the_graph() {
     let (mut graph, mut transition, route) = graph_and_transition();
     transition.source_checkpoint_sha256 = Digest([9; 32]);

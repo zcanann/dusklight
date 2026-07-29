@@ -44,6 +44,8 @@ mod tactic_macro_store;
 pub mod tactic_q_campaign;
 mod tactic_q_checkpoint_store;
 pub mod tactic_replay_control_plane;
+pub mod tactics;
+pub mod worker_pool;
 
 pub use anchored_search::{
     ANCHORED_RUN_SCHEMA, AnchoredSearchRunConfig, AnchoredSearchRunSummary, run_anchored_search,
