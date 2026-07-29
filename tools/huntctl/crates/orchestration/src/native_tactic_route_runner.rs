@@ -90,6 +90,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V32: &str = "dusklight-native-tactic-route-report/v32";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V33: &str = "dusklight-native-tactic-route-report/v33";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -526,6 +527,15 @@ fn run_native_tactic_route_with_optional_fleet(
         native_restore_accounting.merge(&demonstration.restore_accounting);
     }
     native_restore_accounting.merge(&tactic_macro_discovery.validation_restore_accounting);
+    let mut time_to_first_terminal_micros = seed_results
+        .iter()
+        .filter_map(|seed| seed.time_to_first_terminal_micros)
+        .map(|seed_wall| seed_wall.saturating_add(process_launch_micros))
+        .collect::<Vec<_>>();
+    time_to_first_terminal_micros.sort_unstable();
+    let median_time_to_first_terminal_micros =
+        median_sorted_wall_micros(&time_to_first_terminal_micros);
+    let worst_time_to_first_terminal_micros = time_to_first_terminal_micros.last().copied();
     let mut timing = aggregate_route_timing(&seed_results);
     timing.process_launch_micros = process_launch_micros;
     if let Some(demonstration) = &demonstration {
@@ -628,7 +638,7 @@ fn run_native_tactic_route_with_optional_fleet(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let mut report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V32.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V33.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
@@ -655,6 +665,7 @@ fn run_native_tactic_route_with_optional_fleet(
         execution_strategy: config.execution_plan.execution_strategy,
         workers: worker_count,
         decisions_per_seed: config.execution_plan.budgets.decisions_per_lane,
+        resource_budgets: config.execution_plan.budgets,
         refit_every_decisions: config.execution_plan.refit_every_decisions,
         terminal_seeds: seed_results
             .iter()
@@ -666,6 +677,8 @@ fn run_native_tactic_route_with_optional_fleet(
             .min(),
         promotion_successful_seeds: seed_results.iter().filter(|seed| seed.success).count() as u64,
         successful_seeds: seed_results.iter().filter(|seed| seed.success).count() as u64,
+        median_time_to_first_terminal_micros,
+        worst_time_to_first_terminal_micros,
         total_native_ticks: seed_results
             .iter()
             .map(|seed| seed.native_ticks)
@@ -727,6 +740,17 @@ fn run_native_tactic_route_with_optional_fleet(
         fleet.shutdown()?;
     }
     Ok(report)
+}
+
+fn median_sorted_wall_micros(sorted: &[u64]) -> Option<u64> {
+    let midpoint = sorted.len() / 2;
+    if sorted.len() % 2 == 1 {
+        sorted.get(midpoint).copied()
+    } else {
+        let upper = sorted.get(midpoint).copied()?;
+        let lower = sorted.get(midpoint.checked_sub(1)?).copied()?;
+        Some(lower / 2 + upper / 2 + (lower % 2 + upper % 2) / 2)
+    }
 }
 
 mod macro_discovery;
@@ -1052,8 +1076,11 @@ fn validate_config(
                     || ticks > maximum_demonstration_chunk_ticks
                     || config.execution_plan.proposal_policy != TacticProposalPolicy::Learned
             })
-        || config.execution_plan.budgets.decisions_per_lane
-            > config.optimization.budgets.candidate_budget
+        || !planned_decisions_fit_candidate_budget(
+            config.execution_plan.budgets.decisions_per_lane,
+            config.execution_plan.seeds.len(),
+            config.optimization.budgets.candidate_budget,
+        )
         || config
             .execution_plan
             .promoted_tactic_registry_sha256
@@ -1065,6 +1092,17 @@ fn validate_config(
         ));
     }
     Ok(())
+}
+
+fn planned_decisions_fit_candidate_budget(
+    decisions_per_lane: u64,
+    lane_count: usize,
+    candidate_budget: u64,
+) -> bool {
+    u64::try_from(lane_count)
+        .ok()
+        .and_then(|lanes| decisions_per_lane.checked_mul(lanes))
+        .is_some_and(|total| total <= candidate_budget)
 }
 
 fn validate_unassisted_discovery_horizon(

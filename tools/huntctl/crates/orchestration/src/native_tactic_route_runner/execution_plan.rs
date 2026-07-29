@@ -171,6 +171,16 @@ pub enum NativeTacticResourceLimit {
     Unbounded,
 }
 
+impl NativeTacticResourceLimit {
+    pub(super) fn is_valid(self) -> bool {
+        !matches!(self, Self::Bounded(0))
+    }
+
+    pub(super) fn reached(self, consumed: u64) -> bool {
+        matches!(self, Self::Bounded(limit) if consumed >= limit)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticPlanBudgets {
@@ -236,6 +246,9 @@ impl NativeTacticExecutionPlan {
             || request.branch_every_decisions > request.budgets.decisions_per_lane
             || request.refit_every_decisions > request.budgets.decisions_per_lane
             || request.budgets.decisions_per_lane == 0
+            || !request.budgets.native_ticks.is_valid()
+            || !request.budgets.memory_bytes.is_valid()
+            || !request.budgets.wall_micros.is_valid()
             || request
                 .budgets
                 .decisions_per_lane
@@ -395,6 +408,9 @@ impl NativeTacticExecutionPlan {
             || self.promoted_tactic_registry_sha256 == Some(Digest::ZERO)
             || self.seeds.len() != self.lanes.len()
             || self.generations.is_empty()
+            || !self.budgets.native_ticks.is_valid()
+            || !self.budgets.memory_bytes.is_valid()
+            || !self.budgets.wall_micros.is_valid()
             || self
                 .budgets
                 .decisions_per_lane
@@ -552,6 +568,28 @@ mod tests {
         let mut oversized = request();
         oversized.budgets.decisions_per_lane = EPISODE_GROUP_STRIDE / 4 + 1;
         assert!(NativeTacticExecutionPlan::build(oversized).is_err());
+    }
+
+    #[test]
+    fn zero_is_not_a_bounded_resource_budget() {
+        for mutate in [
+            |budgets: &mut NativeTacticPlanBudgets| {
+                budgets.native_ticks = NativeTacticResourceLimit::Bounded(0);
+            },
+            |budgets: &mut NativeTacticPlanBudgets| {
+                budgets.memory_bytes = NativeTacticResourceLimit::Bounded(0);
+            },
+            |budgets: &mut NativeTacticPlanBudgets| {
+                budgets.wall_micros = NativeTacticResourceLimit::Bounded(0);
+            },
+        ] {
+            let mut invalid = request();
+            mutate(&mut invalid.budgets);
+            assert!(NativeTacticExecutionPlan::build(invalid).is_err());
+        }
+        assert!(!NativeTacticResourceLimit::Unbounded.reached(u64::MAX));
+        assert!(!NativeTacticResourceLimit::Bounded(10).reached(9));
+        assert!(NativeTacticResourceLimit::Bounded(10).reached(10));
     }
 
     #[test]

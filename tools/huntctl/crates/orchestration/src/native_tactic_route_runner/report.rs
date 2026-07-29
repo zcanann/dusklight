@@ -43,6 +43,7 @@ pub struct NativeTacticRouteReport {
     pub execution_strategy: NativeGenericExecutionStrategy,
     pub workers: usize,
     pub decisions_per_seed: u64,
+    pub resource_budgets: NativeTacticPlanBudgets,
     pub refit_every_decisions: u64,
     /// Seeds that retained at least one authenticated terminal candidate,
     /// regardless of whether it cleared the promotion threshold.
@@ -53,6 +54,12 @@ pub struct NativeTacticRouteReport {
     pub promotion_successful_seeds: u64,
     /// Legacy alias for `promotion_successful_seeds`.
     pub successful_seeds: u64,
+    /// Median active wall time through first authenticated terminal proposal,
+    /// including the campaign's shared process launch.
+    pub median_time_to_first_terminal_micros: Option<u64>,
+    /// Worst active wall time through first authenticated terminal proposal,
+    /// including the campaign's shared process launch.
+    pub worst_time_to_first_terminal_micros: Option<u64>,
     pub total_native_ticks: u64,
     pub total_decisions: u64,
     pub useful_decisions: u64,
@@ -453,6 +460,19 @@ pub struct NativeTacticSeedResult {
     /// Best zero-based terminal first-hit tick relative to the source.
     #[serde(default)]
     pub best_authenticated_tick: Option<u64>,
+    /// First decision whose evaluated proposal batch contained an authenticated
+    /// terminal, whether or not that proposal won the decision.
+    #[serde(default)]
+    pub first_terminal_decision_index: Option<u64>,
+    /// Seed-coordinator wall time through the first terminal proposal batch.
+    /// This includes native execution and admission but excludes shared fleet
+    /// launch, which remains separately reported at campaign scope.
+    #[serde(default)]
+    pub time_to_first_terminal_micros: Option<u64>,
+    /// The seed stopped issuing new decisions because its sealed wall budget
+    /// was reached. One already-issued decision may complete across the bound.
+    #[serde(default)]
+    pub wall_budget_reached: bool,
     pub success: bool,
     pub decisions: u64,
     pub episodes: u64,
@@ -511,6 +531,10 @@ pub struct NativeTacticDecisionTrace {
     #[serde(default)]
     pub execution_plan_sha256: Digest,
     pub decision_index: u64,
+    /// Cumulative seed-coordinator wall time through native result admission
+    /// for this decision. Durable across pause/resume.
+    #[serde(default)]
+    pub cumulative_wall_micros: u64,
     #[serde(default)]
     pub learner_snapshot_sha256: Digest,
     #[serde(default)]
@@ -659,6 +683,8 @@ pub(super) struct NativeTacticDecisionRecord {
     #[serde(default)]
     pub(super) execution_plan_sha256: Digest,
     pub(super) decision_index: u64,
+    #[serde(default)]
+    pub(super) cumulative_wall_micros: u64,
     #[serde(default)]
     pub(super) learner_snapshot_sha256: Digest,
     #[serde(default)]

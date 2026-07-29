@@ -211,6 +211,16 @@ pub(super) fn run_seed(
 
     while campaign.decision_index < config.execution_plan.budgets.decisions_per_lane
         && native_ticks < config.optimization.budgets.simulated_tick_budget
+        && !config
+            .execution_plan
+            .budgets
+            .native_ticks
+            .reached(native_ticks)
+        && !config
+            .execution_plan
+            .budgets
+            .wall_micros
+            .reached(prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed())))
     {
         if cancellation_requested(config) {
             timing.wall_micros =
@@ -883,6 +893,8 @@ pub(super) fn run_seed(
         let decision_trace = NativeTacticDecisionTrace {
             execution_plan_sha256,
             decision_index,
+            cumulative_wall_micros: prior_wall_micros
+                .saturating_add(elapsed_micros(invocation_started.elapsed())),
             learner_snapshot_sha256,
             replay_rows_at_decision,
             replay_generation: lane.generation_index as u64,
@@ -998,7 +1010,15 @@ pub(super) fn run_seed(
         }
         let run_finished = campaign.decision_index
             >= config.execution_plan.budgets.decisions_per_lane
-            || native_ticks >= config.optimization.budgets.simulated_tick_budget;
+            || native_ticks >= config.optimization.budgets.simulated_tick_budget
+            || config
+                .execution_plan
+                .budgets
+                .native_ticks
+                .reached(native_ticks)
+            || config.execution_plan.budgets.wall_micros.reached(
+                prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed())),
+            );
         if !run_finished
             && tactic_checkpoint_due(
                 campaign.decision_index,
@@ -1018,6 +1038,16 @@ pub(super) fn run_seed(
             .saturating_add(persistence_micros);
     }
 
+    let wall_budget_reached =
+        config.execution_plan.budgets.wall_micros.reached(
+            prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed())),
+        ) && campaign.decision_index < config.execution_plan.budgets.decisions_per_lane
+            && native_ticks < config.optimization.budgets.simulated_tick_budget
+            && !config
+                .execution_plan
+                .budgets
+                .native_ticks
+                .reached(native_ticks);
     let final_persistence_started = Instant::now();
     compact_tactic_decision_journal(&seed_root)?;
     let best_graph_terminal = campaign
@@ -1122,12 +1152,22 @@ pub(super) fn run_seed(
         .proposal_transitions
         .saturating_sub(generated_training_rows);
     let censored_training_transitions = censored_training_transitions(&generated_training);
+    let first_terminal = trace.iter().find(|decision| {
+        decision
+            .proposal_batch
+            .iter()
+            .any(|proposal| proposal.terminal)
+    });
     Ok(CompletedNativeTacticSeed {
         result: NativeTacticSeedResult {
             execution_plan_sha256,
             seed,
             terminal_discovered,
             best_authenticated_tick,
+            first_terminal_decision_index: first_terminal.map(|decision| decision.decision_index),
+            time_to_first_terminal_micros: first_terminal
+                .map(|decision| decision.cumulative_wall_micros),
+            wall_budget_reached,
             success,
             decisions: campaign.decision_index,
             episodes: episode + 1,

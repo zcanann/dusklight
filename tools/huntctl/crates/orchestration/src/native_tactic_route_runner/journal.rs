@@ -465,6 +465,7 @@ pub(super) fn decision_record(
     NativeTacticDecisionRecord {
         execution_plan_sha256: trace.execution_plan_sha256,
         decision_index: trace.decision_index,
+        cumulative_wall_micros: trace.cumulative_wall_micros,
         learner_snapshot_sha256: trace.learner_snapshot_sha256,
         replay_rows_at_decision: trace.replay_rows_at_decision,
         replay_generation: trace.replay_generation,
@@ -633,6 +634,7 @@ pub(super) fn project_tactic_decision_record(
     Ok(NativeTacticDecisionTrace {
         execution_plan_sha256: record.execution_plan_sha256,
         decision_index: record.decision_index,
+        cumulative_wall_micros: record.cumulative_wall_micros,
         learner_snapshot_sha256: record.learner_snapshot_sha256,
         replay_rows_at_decision: record.replay_rows_at_decision,
         replay_generation: record.replay_generation,

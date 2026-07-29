@@ -303,6 +303,7 @@ fn macro_validation_keeps_distinct_tapes_that_converge_on_one_fact_snapshot() {
 fn journal_trace(decision_index: u64) -> NativeTacticDecisionTrace {
     serde_json::from_value(serde_json::json!({
         "decision_index": decision_index,
+        "cumulative_wall_micros": (decision_index + 1) * 1_000,
         "episode": 2,
         "route_suffix_ticks": decision_index + 4,
         "selected_option_id": format!("move.{decision_index}"),
@@ -630,6 +631,10 @@ fn journal_projects_graph_and_materializes_routes_from_content_objects() {
 
     let projected_trace = read_tactic_decision_journal(&root).unwrap();
     assert_eq!(projected_trace[0].proposal_batch, trace.proposal_batch);
+    assert_eq!(
+        projected_trace[0].cumulative_wall_micros,
+        trace.cumulative_wall_micros
+    );
     let graph = project_tactic_decision_graph(&root).unwrap().unwrap();
     assert!(graph.root_connected);
     assert_eq!(graph.nodes.len(), 2);
@@ -801,6 +806,29 @@ fn root_probe_uses_the_full_declared_horizon() {
 }
 
 #[test]
+fn terminal_wall_median_is_overflow_safe_for_even_and_odd_seed_counts() {
+    assert_eq!(median_sorted_wall_micros(&[]), None);
+    assert_eq!(median_sorted_wall_micros(&[10]), Some(10));
+    assert_eq!(median_sorted_wall_micros(&[10, 20, 30]), Some(20));
+    assert_eq!(median_sorted_wall_micros(&[10, 21]), Some(15));
+    assert_eq!(
+        median_sorted_wall_micros(&[u64::MAX - 1, u64::MAX]),
+        Some(u64::MAX - 1)
+    );
+}
+
+#[test]
+fn candidate_budget_caps_total_decisions_across_all_seed_lanes() {
+    assert!(planned_decisions_fit_candidate_budget(256, 4, 1_024));
+    assert!(!planned_decisions_fit_candidate_budget(257, 4, 1_024));
+    assert!(!planned_decisions_fit_candidate_budget(
+        u64::MAX,
+        2,
+        u64::MAX
+    ));
+}
+
+#[test]
 fn horizon_fit_uses_the_selected_tactic_duration() {
     assert!(selected_tactic_fits_horizon(88, 8, 160));
     assert!(selected_tactic_fits_horizon(152, 8, 160));
@@ -815,6 +843,9 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
         seed: 7,
         terminal_discovered: false,
         best_authenticated_tick: None,
+        first_terminal_decision_index: None,
+        time_to_first_terminal_micros: None,
+        wall_budget_reached: false,
         success: false,
         decisions: 4,
         episodes: 2,

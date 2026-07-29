@@ -527,7 +527,7 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .map(|seed| seed.parse::<u64>())
                 .collect::<Result<Vec<_>, _>>()?;
             if seeds.is_empty() {
-                seeds = vec![1, 2, 3];
+                seeds = request.execution.deterministic_seeds.clone();
             }
             seeds.sort_unstable();
             seeds.dedup();
@@ -606,6 +606,10 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "execution_strategy": report.execution_strategy,
                     "total_decisions": report.total_decisions,
                     "total_native_ticks": report.total_native_ticks,
+                    "median_time_to_first_terminal_micros":
+                        report.median_time_to_first_terminal_micros,
+                    "worst_time_to_first_terminal_micros":
+                        report.worst_time_to_first_terminal_micros,
                     "demonstration_transitions": report.demonstration_transitions,
                 }))?
             );

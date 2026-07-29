@@ -295,6 +295,18 @@ pub(super) fn read_completed_seed_result(
     lane: &NativeTacticLanePlan,
 ) -> Result<NativeTacticSeedResult, NativeTacticRouteRunError> {
     let result: NativeTacticSeedResult = read_bounded_json(path)?;
+    let first_terminal = result.trace.iter().find(|decision| {
+        decision
+            .proposal_batch
+            .iter()
+            .any(|proposal| proposal.terminal)
+    });
+    let has_durable_wall_timing = result
+        .trace
+        .iter()
+        .any(|decision| decision.cumulative_wall_micros != 0)
+        || result.first_terminal_decision_index.is_some()
+        || result.time_to_first_terminal_micros.is_some();
     if result.execution_plan_sha256 != execution_plan_sha256
         || result.seed != seed
         || result.decisions > decisions_per_seed
@@ -311,6 +323,15 @@ pub(super) fn read_completed_seed_result(
         || result.state_graph_sha256 == Digest::ZERO
         || (!result.terminal_discovered && result.timing.retained_candidate_artifact_micros != 0)
         || result.trace.len() as u64 != result.decisions
+        || (has_durable_wall_timing
+            && (result.first_terminal_decision_index
+                != first_terminal.map(|decision| decision.decision_index)
+                || result.time_to_first_terminal_micros
+                    != first_terminal.map(|decision| decision.cumulative_wall_micros)
+                || result
+                    .trace
+                    .windows(2)
+                    .any(|pair| pair[0].cumulative_wall_micros > pair[1].cumulative_wall_micros)))
         || result.trace.iter().enumerate().any(|(index, decision)| {
             decision.execution_plan_sha256 != execution_plan_sha256
                 || decision.decision_index != index as u64
