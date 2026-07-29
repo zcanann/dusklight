@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::identity::{
     ContentFingerprint, ContentIdentity, ContextSelector, GamePlatform, GameRegion,

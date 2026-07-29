@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::identity::RUNTIME_CONFIGURATION_SCHEMA;
 

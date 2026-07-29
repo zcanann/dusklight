@@ -1,4 +1,3 @@
-
 use super::*;
 use dusklight_route_planner::authorization::AuthorizationGraph;
 use dusklight_route_planner::identity::RUNTIME_CONFIGURATION_SCHEMA;

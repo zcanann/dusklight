@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::service::PlannerServiceRequest;
 use dusklight_route_planner::logic::{FACT_CATALOG_SCHEMA, FactCatalog};

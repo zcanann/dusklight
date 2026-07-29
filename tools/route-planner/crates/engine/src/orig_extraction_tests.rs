@@ -1,4 +1,3 @@
-
 use super::*;
 
 fn event_list_fixture() -> Vec<u8> {

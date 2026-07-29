@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::identity::{ContextSelector, ExactContext, RUNTIME_CONFIGURATION_SCHEMA};
 use crate::logic::{EvidenceKind, EvidenceRecord};
