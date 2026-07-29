@@ -168,6 +168,14 @@ pub use throughput_curve::{
     NativeTacticThroughputCurveSample, run_native_tactic_throughput_curve,
 };
 
+mod restore_locality;
+pub use restore_locality::{
+    NATIVE_TACTIC_RESTORE_LOCALITY_SCHEMA_V1, NativeTacticRestoreLocalityConfig,
+    NativeTacticRestoreLocalityPair, NativeTacticRestoreLocalityReport,
+    NativeTacticRestoreLocalitySample, NativeTacticRestoreLocalityTreatment,
+    run_native_tactic_restore_locality,
+};
+
 mod learner_authority;
 use learner_authority::{
     CampaignLearnerPublishResult, CampaignTacticLearnerAuthority, SharedTacticLearnerAuthority,

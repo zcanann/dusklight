@@ -96,8 +96,10 @@ use huntctl::search_evaluator::native_tactic_policy_runner::{
 };
 use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest, NativeTacticPlanBudgets,
-    NativeTacticResourceLimit, NativeTacticRouteRunConfig, NativeTacticThroughputCurveConfig,
-    run_native_tactic_route, run_native_tactic_throughput_curve, tactic_macro_registry_identity,
+    NativeTacticResourceLimit, NativeTacticRestoreLocalityConfig,
+    NativeTacticRestoreLocalityReport, NativeTacticRouteRunConfig,
+    NativeTacticThroughputCurveConfig, run_native_tactic_restore_locality, run_native_tactic_route,
+    run_native_tactic_throughput_curve, tactic_macro_registry_identity,
 };
 use huntctl::search_evaluator::native_tactic_worker::NativeGenericExecutionStrategy;
 use huntctl::search_evaluator::optimization_request::OptimizationRequest;
@@ -409,7 +411,9 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             | "execute-tactic-policy"
             | "prove-generalized-tactics"
             | "tactic-route"
-            | "tactic-throughput-curve",
+            | "tactic-throughput-curve"
+            | "tactic-restore-locality"
+            | "validate-tactic-restore-locality",
         ) => frozen_and_tactics::command(args),
         Some(
             "diff-episodes"

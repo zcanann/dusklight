@@ -525,6 +525,13 @@ pub struct NativeTacticDecisionTrace {
     pub acquisition_rank: u64,
     #[serde(default)]
     pub frontier_identity: Digest,
+    /// Worker that owns the matching process-local source checkpoint, even
+    /// when this treatment deliberately chooses authenticated replay.
+    #[serde(default)]
+    pub checkpoint_owner_worker_slot: Option<usize>,
+    /// Worker slot used by each proposal in proposal-batch order.
+    #[serde(default)]
+    pub proposal_worker_slots: Vec<usize>,
     #[serde(default)]
     pub restore_source: Option<NativeTacticRestoreSource>,
     #[serde(default)]
@@ -666,6 +673,10 @@ pub(super) struct NativeTacticDecisionRecord {
     pub(super) acquisition_rank: u64,
     #[serde(default)]
     pub(super) frontier_identity: Digest,
+    #[serde(default)]
+    pub(super) checkpoint_owner_worker_slot: Option<usize>,
+    #[serde(default)]
+    pub(super) proposal_worker_slots: Vec<usize>,
     #[serde(default)]
     pub(super) restore_source: Option<NativeTacticRestoreSource>,
     #[serde(default)]

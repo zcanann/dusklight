@@ -1278,8 +1278,25 @@ pub(super) fn run_tactic_proposal_worker(
         let ipc_before_batch = timed_worker.ipc_elapsed;
         let observation_before_batch = timed_worker.observation_capture_elapsed;
         let corpus_before_batch = timed_worker.corpus_encoding_elapsed;
+        let Some(first_proposal_index) = job
+            .proposals
+            .first()
+            .map(|proposal| proposal.proposal_index)
+        else {
+            let _ = job
+                .response
+                .send(Err(route_message("native tactic proposal job is empty")));
+            continue;
+        };
         let checkpoint_source = if job.materialize_frontier {
-            materialize_job_frontier(&mut timed_worker, &job, "frontier-source", false).map(Some)
+            materialize_job_frontier(
+                &mut timed_worker,
+                &job,
+                first_proposal_index,
+                "frontier-source",
+                false,
+            )
+            .map(Some)
         } else {
             Ok(job.checkpoint_source.clone())
         };
@@ -1295,9 +1312,7 @@ pub(super) fn run_tactic_proposal_worker(
         let mut failed = None;
         let proposals = std::mem::take(&mut job.proposals);
         for (batch_index, proposal) in proposals.into_iter().enumerate() {
-            let proposal_root = job
-                .paths_root
-                .join(format!("proposal-{:03}", proposal.proposal_index));
+            let proposal_root = proposal_artifact_root(&job.paths_root, proposal.proposal_index);
             if let Err(error) = fs::create_dir_all(&proposal_root).map_err(route_error) {
                 failed = Some(error);
                 break;
@@ -1360,6 +1375,7 @@ pub(super) fn run_tactic_proposal_worker(
                 checkpoint_source = match materialize_job_frontier(
                     &mut timed_worker,
                     &job,
+                    proposal.proposal_index,
                     "frontier-replay-fallback",
                     true,
                 ) {
@@ -1369,10 +1385,7 @@ pub(super) fn run_tactic_proposal_worker(
                         break;
                     }
                 };
-                let fallback_root = job.paths_root.join(format!(
-                    "proposal-{:03}-after-replay",
-                    proposal.proposal_index
-                ));
+                let fallback_root = proposal_root.join("after-replay");
                 if let Err(error) = fs::create_dir_all(&fallback_root).map_err(route_error) {
                     failed = Some(error);
                     break;
@@ -1455,11 +1468,13 @@ pub(super) fn run_tactic_proposal_worker(
 fn materialize_job_frontier<W: PersistentTacticBatchWorker>(
     worker: &mut TimedTacticWorker<'_, W>,
     job: &NativeTacticProposalJob,
+    proposal_index: usize,
     directory: &str,
     fallback: bool,
 ) -> Result<NativeTacticCheckpointSource, NativeTacticWorkerError> {
     let native_batch_before = worker.native_batch_elapsed;
-    let materialization_root = job.paths_root.join(directory);
+    let materialization_root =
+        proposal_artifact_root(&job.paths_root, proposal_index).join(directory);
     fs::create_dir_all(&materialization_root)
         .map_err(|error| NativeTacticWorkerError::Io(error.to_string()))?;
     let frontier = materialize_tactic_frontier(
@@ -1489,6 +1504,10 @@ fn materialize_job_frontier<W: PersistentTacticBatchWorker>(
         replay_elapsed,
     )?;
     Ok(frontier.source)
+}
+
+fn proposal_artifact_root(paths_root: &Path, proposal_index: usize) -> PathBuf {
+    paths_root.join(format!("proposal-{proposal_index:03}"))
 }
 
 #[cfg(test)]

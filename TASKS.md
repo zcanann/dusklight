@@ -294,7 +294,7 @@ Exit gate:
       and terminal evidence; every proof-enabled condition also passed its
       process-local full-state validation. Report content SHA-256:
       `69ef05bc1d62b3704e057fa3fc848260f684ea79bf0ac0762ddeb1548d42acb8`.
-- [ ] Profile restore locality and schedule leases to checkpoint owners when it
+- [x] Profile restore locality and schedule leases to checkpoint owners when it
       reduces replay without collapsing exploration diversity.
 - [x] Deliver a 10x reduction in wall time to a fixed useful-evidence target
       against the recorded baseline, or identify and remove the measured
@@ -323,6 +323,19 @@ faster. Including the one fleet boot, the complete ten-cell treatment took
 reported rather than hidden. All cells retained the same expansion/evidence
 digest with zero staleness. The sealed v2 report content SHA-256 is
 `1499e563b4fb308b005e88c0fb7ff60df283edce4bfe9c47c37d0755cf656aaa`.
+
+The 2026-07-29 macOS restore-locality comparison held both treatments to four
+decisions, sixteen useful graph expansions, and sixteen proposal dispatches on
+one persistent four-worker fleet. In both order-balanced repetitions, the
+owner-local treatment routed all three available retained checkpoints to their
+exact process owners; the replay control routed none. Every decision still
+used four distinct workers, and all four samples produced the same semantic
+exploration-evidence digest. Owner locality reduced prefix materializations
+from 12 to 9 and replayed prefix ticks from 240 to 180 in each pair, saving
+16.475 and 24.438 seconds of measured replay work. Concurrent replay artifacts
+are proposal-scoped so sibling materializations cannot collide. The sealed
+report content SHA-256 is
+`2d52ba8feee77d9c0ed5351a0c11e86118a1cafc07d01ec4ac3e5a5f136aac4c`.
 
 Exit gate:
 

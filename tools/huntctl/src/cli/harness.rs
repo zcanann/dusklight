@@ -2,10 +2,8 @@
 
 use crate::{flag, option, repeated_option, required_path, u32_option, u64_option, usize_option};
 use huntctl::harness::execution::execute_request;
-use huntctl::harness::inspection::inspect_objective;
-use huntctl::harness::objective_suite::ArtifactReference;
 use huntctl::harness::objective_suite::ObjectiveSuite;
-use huntctl::harness::run_contract::{HarnessRunRequest, HarnessRunResult};
+use huntctl::harness::run_contract::HarnessRunRequest;
 use huntctl::learning::native_goal_frozen_policy::NativeGoalFrozenPolicyConfig;
 use huntctl::learning::native_goal_reachability::NativeGoalReachabilityConfig;
 use huntctl::learning::native_goal_trajectory::NativeGoalTrajectoryConfig;
@@ -15,15 +13,17 @@ use huntctl::optimization_resume::{
     load_optimization_resume,
 };
 use huntctl::search_evaluator::TournamentDefinition;
-use sha2::{Digest as _, Sha256};
-use std::env;
 use std::error::Error;
 use std::fs;
-use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 mod helpers;
-use helpers::*;
+use helpers::{
+    inspect, is_runtime_dependency_path, learning_value_cell_draft_from_directory,
+    pin_curriculum_source_checkpoint, refuse_existing_output, repository_artifact,
+    repository_build_output, repository_file, repository_game_data, repository_root,
+    validate_or_seal_result, write_new_file,
+};
 
 pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
     if args.first().map(String::as_str) == Some("materialize-learning-value-refinement-cell") {

@@ -552,14 +552,17 @@ pub(super) fn run_seed(
             .evidence_projection_and_persistence_micros
             .saturating_add(source_tape_persistence_micros);
         let source_snapshot_sha256 = source_snapshot.content_sha256().map_err(route_error)?;
-        let usable_cached_frontier = cached_frontier.as_ref().filter(|frontier| {
-            pool.direct_restore_enabled
-                && frontier.state_sha256 == source_snapshot_sha256
+        let matching_cached_frontier = cached_frontier.as_ref().filter(|frontier| {
+            frontier.state_sha256 == source_snapshot_sha256
                 && frontier.route_frames == source_route_tape.frames.len()
                 && frontier.route_checkpoint_sha256
                     == restoration.plan.route.route_checkpoint_sha256
                 && frontier.route_tape_sha256 == restoration.plan.route.tape_sha256
         });
+        let checkpoint_owner_worker_slot =
+            matching_cached_frontier.map(|frontier| frontier.worker_slot);
+        let usable_cached_frontier =
+            matching_cached_frontier.filter(|_| pool.direct_restore_enabled);
         let directly_restored_frontier = usable_cached_frontier.is_some();
         let restore_source = if directly_restored_frontier {
             NativeTacticRestoreSource::ProcessLocalCheckpoint
@@ -887,6 +890,8 @@ pub(super) fn run_seed(
             lane_role: Some(lane.role),
             acquisition_rank,
             frontier_identity: source_snapshot_sha256,
+            checkpoint_owner_worker_slot,
+            proposal_worker_slots,
             restore_source: Some(restore_source),
             result_admission_schema: NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1.into(),
             episode,

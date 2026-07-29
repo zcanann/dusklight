@@ -5,11 +5,13 @@ use super::{
     MAX_LEARN_INPUT_CORPORA, NativeEpisodeShard, NativeFactorizedPolicyBatchConfig,
     NativeFactorizedPolicySuffixBatch, NativeFrozenPolicyReinferenceReport,
     NativeFrozenPolicySuffixBatch, NativeGenericExecutionStrategy, NativeResidualExecutionBinding,
-    NativeTacticPolicyRunConfig, NativeTacticRouteRunConfig, NativeTacticThroughputCurveConfig,
-    OptimizationRequest, Sha256, TacticFrozenPolicy, TacticProposalPolicy, TacticQCampaign,
-    TacticQTrainingCorpus, cli, command_conservative_q, flag, native_frozen_policy_probe_model,
-    native_tactic_execution_plan, option, prove_generalized_tactic_held_out_value,
-    realize_native_frozen_policy_tape, repeated_option, required_path, run_native_tactic_policy,
+    NativeTacticPolicyRunConfig, NativeTacticRestoreLocalityConfig,
+    NativeTacticRestoreLocalityReport, NativeTacticRouteRunConfig,
+    NativeTacticThroughputCurveConfig, OptimizationRequest, Sha256, TacticFrozenPolicy,
+    TacticProposalPolicy, TacticQCampaign, TacticQTrainingCorpus, cli, command_conservative_q,
+    flag, native_frozen_policy_probe_model, native_tactic_execution_plan, option,
+    prove_generalized_tactic_held_out_value, realize_native_frozen_policy_tape, repeated_option,
+    required_path, run_native_tactic_policy, run_native_tactic_restore_locality,
     run_native_tactic_route, run_native_tactic_throughput_curve, tactic_macro_registry_identity,
     u64_option, usage_error, usize_option, verify_native_frozen_policy_cold_replay,
     verify_native_frozen_policy_reinference,
@@ -677,6 +679,88 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             if !report.passed {
                 return Err("native tactic fixed-work throughput curve did not pass".into());
             }
+            Ok(())
+        }
+        Some("tactic-restore-locality") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let request: OptimizationRequest =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--request")?)?)?;
+            let execution: NativeResidualExecutionBinding =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--execution")?)?)?;
+            let output_argument = required_path(learn_args, "--output")?;
+            let output = if output_argument.is_absolute() {
+                output_argument
+            } else {
+                repository_root.join(output_argument)
+            };
+            let mut seeds = repeated_option(learn_args, "--seed")
+                .into_iter()
+                .map(|seed| seed.parse::<u64>())
+                .collect::<Result<Vec<_>, _>>()?;
+            if seeds.is_empty() {
+                seeds.push(
+                    request
+                        .execution
+                        .deterministic_seeds
+                        .first()
+                        .copied()
+                        .ok_or("optimization request has no deterministic seed")?,
+                );
+            }
+            seeds.sort_unstable();
+            seeds.dedup();
+            if seeds.len() != 1 {
+                return Err(
+                    "tactic restore locality requires exactly one deterministic seed".into(),
+                );
+            }
+            let execution_plan = native_tactic_execution_plan(
+                learn_args,
+                &request,
+                &seeds,
+                TacticProposalPolicy::Learned,
+                NativeGenericExecutionStrategy::NativeController,
+                None,
+            )?;
+            let report = run_native_tactic_restore_locality(&NativeTacticRestoreLocalityConfig {
+                repository_root: &repository_root,
+                optimization: &request,
+                execution: &execution,
+                execution_plan: &execution_plan,
+                output_root: &output,
+                workers: usize_option(
+                    learn_args,
+                    "--workers",
+                    usize::from(request.execution.workers),
+                )?,
+                repetitions: usize_option(learn_args, "--repetitions", 2)?.try_into()?,
+            })?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": report.schema,
+                    "report": output.join("restore-locality.json"),
+                    "fixed_unique_useful_graph_expansions":
+                        report.fixed_unique_useful_graph_expansions,
+                    "pairs": report.pairs,
+                    "passed": report.passed,
+                }))?
+            );
+            if !report.passed {
+                return Err("native tactic restore locality benchmark did not pass".into());
+            }
+            Ok(())
+        }
+        Some("validate-tactic-restore-locality") => {
+            let report: NativeTacticRestoreLocalityReport =
+                serde_json::from_slice(&fs::read(required_path(&args[1..], "--report")?)?)?;
+            report.validate()?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
         _ => usage_error(),

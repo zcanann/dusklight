@@ -472,6 +472,8 @@ pub(super) fn decision_record(
         lane_role: trace.lane_role,
         acquisition_rank: trace.acquisition_rank,
         frontier_identity: trace.frontier_identity,
+        checkpoint_owner_worker_slot: trace.checkpoint_owner_worker_slot,
+        proposal_worker_slots: trace.proposal_worker_slots.clone(),
         restore_source: trace.restore_source,
         result_admission_schema: trace.result_admission_schema.clone(),
         episode: trace.episode,
@@ -618,6 +620,16 @@ pub(super) fn project_tactic_decision_record(
             "tactic proposal journal is detached from its execution plan",
         ));
     }
+    if !record.proposal_worker_slots.is_empty()
+        && (record.proposal_worker_slots.len() != proposal_batch.len()
+            || (record.restore_source == Some(NativeTacticRestoreSource::ProcessLocalCheckpoint)
+                && record.proposal_worker_slots.first().copied()
+                    != record.checkpoint_owner_worker_slot))
+    {
+        return Err(route_message(
+            "tactic proposal journal worker locality is inconsistent",
+        ));
+    }
     Ok(NativeTacticDecisionTrace {
         execution_plan_sha256: record.execution_plan_sha256,
         decision_index: record.decision_index,
@@ -628,6 +640,8 @@ pub(super) fn project_tactic_decision_record(
         lane_role: record.lane_role,
         acquisition_rank: record.acquisition_rank,
         frontier_identity: record.frontier_identity,
+        checkpoint_owner_worker_slot: record.checkpoint_owner_worker_slot,
+        proposal_worker_slots: record.proposal_worker_slots,
         restore_source: record.restore_source,
         result_admission_schema: record.result_admission_schema,
         episode: record.episode,

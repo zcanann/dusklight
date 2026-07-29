@@ -1,4 +1,13 @@
-use super::*;
+use crate::{option, required_path};
+use huntctl::harness::inspection::inspect_objective;
+use huntctl::harness::objective_suite::ArtifactReference;
+use huntctl::harness::run_contract::{HarnessRunRequest, HarnessRunResult};
+use sha2::{Digest as _, Sha256};
+use std::env;
+use std::error::Error;
+use std::fs;
+use std::io::Write;
+use std::path::{Component, Path, PathBuf};
 
 pub(super) fn inspect(args: &[String]) -> Result<(), Box<dyn Error>> {
     let command_args = &args[1..];

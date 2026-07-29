@@ -1,4 +1,16 @@
-use super::*;
+use super::{
+    AnchoredInputGolfConfig, AnchoredObjectiveConfig, AnchoredRouteMinimizeConfig,
+    BayesianSearchRunConfig, BeamSearchConfig, BootGolfConfig, BootMinimizeConfig, Candidate,
+    CandidateEnvelope, CandidateEnvelopeSet, ContinuousAxes, ContinuousMethod,
+    ContinuousSearchRunConfig, Error, InputTape, MotionPathGolfSteps, MotionPathPlan,
+    OptionExecution, PathBuf, PathCancellationHit, ProposerTournamentConfig, QBeamPriorTable,
+    RollCancellationHit, RollGolfSteps, RollOptionPlan, SearchRunConfig, SegmentProfile,
+    TournamentDefinition, Value, bind_route_origin_card_fixture, flag, fs, golf_anchored_inputs,
+    golf_boot, golf_motion_path, golf_roll_option, json, milestone_dsl, minimize_anchored_route,
+    minimize_boot, option, required_path, run_bayesian_search, run_beam_search,
+    run_continuous_search, run_proposer_tournament, run_search, search_execution_config,
+    u32_option, u64_option, usage_error, usize_option, write_explicit_population_with_seed,
+};
 
 pub(super) fn command_optimization(command: &str, args: &[String]) -> Result<(), Box<dyn Error>> {
     match command {

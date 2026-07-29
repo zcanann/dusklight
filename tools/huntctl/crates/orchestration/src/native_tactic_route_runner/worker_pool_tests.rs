@@ -134,3 +134,21 @@ fn uncached_non_root_graph_expansion_materializes_before_its_action() {
     assert!(!requires_frontier_materialization(true, 40, true));
     assert!(!requires_frontier_materialization(false, 40, false));
 }
+
+#[test]
+fn concurrent_proposals_have_disjoint_execution_and_replay_artifact_roots() {
+    let decision_root = Path::new("decision-000001");
+    let first = proposal_artifact_root(decision_root, 0);
+    let sibling = proposal_artifact_root(decision_root, 2);
+
+    assert_eq!(first, decision_root.join("proposal-000"));
+    assert_eq!(sibling, decision_root.join("proposal-002"));
+    assert_ne!(
+        first.join("frontier-source"),
+        sibling.join("frontier-source")
+    );
+    assert_ne!(
+        first.join("frontier-replay-fallback"),
+        sibling.join("frontier-replay-fallback")
+    );
+}
