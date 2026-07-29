@@ -35,6 +35,24 @@ impl StateGraph {
                 ));
             }
         }
+        for (identity, proof) in &self.future_equivalence_proofs {
+            proof.validate().map_err(StateGraphError::Invalid)?;
+            if *identity != proof.proof_sha256
+                || !self
+                    .nodes
+                    .get(&proof.left)
+                    .is_some_and(|node| node.restoration.executable)
+                || !self
+                    .nodes
+                    .get(&proof.right)
+                    .is_some_and(|node| node.restoration.executable)
+                || self.nodes[&proof.left].terminal != self.nodes[&proof.right].terminal
+            {
+                return Err(StateGraphError::Invariant(
+                    "future-equivalence proof is detached from executable exact nodes",
+                ));
+            }
+        }
         for (id, node) in &self.nodes {
             node.state.validate()?;
             if node.id != *id
@@ -142,6 +160,7 @@ impl StateGraph {
                 "best terminal path is not derived from graph nodes",
             ));
         }
+        self.relaxed_root_ticks()?;
         Ok(())
     }
 

@@ -38,6 +38,7 @@ fn graph_and_transition() -> (StateGraph, OptionTransitionSample, InputTape) {
     };
     let identity = StateGraphIdentity {
         execution_authority_sha256: Digest([1; 32]),
+        future_equivalence_validator_sha256: Digest([1; 32]),
         feature_schema_sha256: Digest([2; 32]),
         objective_sha256: Digest([3; 32]),
         root_checkpoint_sha256: Digest([4; 32]),
@@ -703,6 +704,167 @@ fn learner_only_evidence_requires_explicit_executable_promotion() {
         }
     ));
     graph.validate().unwrap();
+}
+
+#[test]
+fn validated_transposition_relaxes_descendants_without_deleting_evidence() {
+    let (mut graph, transition, mut route) = graph_and_transition();
+    let first = graph
+        .admit_completed_expansion(
+            transition,
+            route.clone(),
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+    let interior = graph.nodes().find(|node| node.root_ticks == 4).unwrap().id;
+    let slower_equivalent = first.target;
+    let before = graph.node(slower_equivalent).unwrap().state.clone();
+    route.frames.extend(vec![InputFrame::default(); 4]);
+    let execution = OptionExecution::capture(
+        "continue".into(),
+        OptionType::Move,
+        BTreeMap::new(),
+        4,
+        4,
+        OptionCondition::DurationElapsed,
+        Vec::new(),
+        OptionEndReason::Completed,
+        &route,
+        TapeRange {
+            start_frame: before.tape_frame,
+            end_frame_exclusive: before.tape_frame + 4,
+        },
+    )
+    .unwrap();
+    let after = advanced_state(&before, 4);
+    let mut descendant = OptionTransitionSample::capture(
+        graph.identity.feature_schema_sha256,
+        slower_equivalent.route_checkpoint_sha256,
+        route_checkpoint_sha256(graph.identity.root_checkpoint_sha256, &route).unwrap(),
+        before,
+        after,
+        execution,
+        &route,
+        -4.0,
+        false,
+        |state| Ok::<_, &'static str>(vec![state.tape_frame as f32]),
+    )
+    .unwrap();
+    descendant.execution_authority_sha256 = graph.identity.execution_authority_sha256;
+    descendant.validate().unwrap();
+    let descendant = graph
+        .admit_completed_expansion(
+            descendant,
+            route,
+            18,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap()
+        .target;
+    let nodes_before = graph.node_count();
+    let segments_before = graph.segment_count();
+    let slower_incoming = graph
+        .node(slower_equivalent)
+        .unwrap()
+        .incoming_segments
+        .clone();
+
+    let proof = FutureEquivalenceProof::new(
+        interior,
+        slower_equivalent,
+        graph.identity.future_equivalence_validator_sha256,
+        Digest([9; 32]),
+    )
+    .unwrap();
+    assert!(graph.admit_future_equivalence_proof(proof.clone()).unwrap());
+    assert!(!graph.admit_future_equivalence_proof(proof).unwrap());
+
+    assert_eq!(
+        graph.canonical_restoration_node(slower_equivalent).unwrap(),
+        interior
+    );
+    assert_eq!(graph.relaxed_root_ticks_to(slower_equivalent).unwrap(), 4);
+    assert_eq!(graph.relaxed_root_ticks_to(descendant).unwrap(), 8);
+    assert_eq!(graph.node(descendant).unwrap().root_ticks, 12);
+    assert_eq!(graph.node_count(), nodes_before);
+    assert_eq!(graph.segment_count(), segments_before);
+    assert_eq!(
+        graph.node(slower_equivalent).unwrap().incoming_segments,
+        slower_incoming
+    );
+    let scheduled = crate::scheduler::rank_schedulable_nodes(
+        &graph,
+        crate::scheduler::SearchRegime::Discovery,
+        u64::MAX,
+        31,
+        0,
+    )
+    .unwrap();
+    assert!(
+        scheduled
+            .iter()
+            .any(|entry| entry.node == interior && entry.root_ticks == 4)
+    );
+    assert!(
+        scheduled
+            .iter()
+            .any(|entry| entry.node == descendant && entry.root_ticks == 8)
+    );
+    assert!(
+        scheduled
+            .iter()
+            .all(|entry| entry.node != slower_equivalent)
+    );
+
+    let restored = StateGraph::decode(&graph.encode().unwrap()).unwrap();
+    assert_eq!(restored, graph);
+    assert_eq!(restored.future_equivalence_proof_count(), 1);
+    assert_eq!(restored.relaxed_root_ticks_to(descendant).unwrap(), 8);
+}
+
+#[test]
+fn transposition_proof_rejects_tampering_and_absent_nodes() {
+    let (mut graph, transition, route) = graph_and_transition();
+    let admitted = graph
+        .admit_completed_expansion(
+            transition,
+            route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+    let mut tampered = FutureEquivalenceProof::new(
+        graph.root(),
+        admitted.target,
+        graph.identity.future_equivalence_validator_sha256,
+        Digest([9; 32]),
+    )
+    .unwrap();
+    let unauthorized = FutureEquivalenceProof::new(
+        graph.root(),
+        admitted.target,
+        Digest([8; 32]),
+        Digest([9; 32]),
+    )
+    .unwrap();
+    assert!(graph.admit_future_equivalence_proof(unauthorized).is_err());
+    tampered.native_evidence_sha256 = Digest([7; 32]);
+    assert!(graph.admit_future_equivalence_proof(tampered).is_err());
+    assert_eq!(graph.future_equivalence_proof_count(), 0);
+
+    let absent = FutureEquivalenceProof::new(
+        admitted.target,
+        ExactStateId {
+            route_checkpoint_sha256: Digest([10; 32]),
+            state_sha256: Digest([11; 32]),
+        },
+        graph.identity.future_equivalence_validator_sha256,
+        Digest([9; 32]),
+    )
+    .unwrap();
+    assert!(graph.admit_future_equivalence_proof(absent).is_err());
+    assert_eq!(graph.future_equivalence_proof_count(), 0);
 }
 
 #[test]

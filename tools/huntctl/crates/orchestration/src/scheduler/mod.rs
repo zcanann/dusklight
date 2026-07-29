@@ -295,10 +295,16 @@ pub fn rank_schedulable_nodes(
     let best_terminal_ticks = graph
         .best_terminal_path()
         .map(|path| path.root_to_terminal_ticks);
+    let relaxed_root_ticks = graph.relaxed_root_ticks()?;
+    let canonical_nodes = graph
+        .nodes()
+        .map(|node| Ok((node.id, graph.canonical_restoration_node(node.id)?)))
+        .collect::<Result<BTreeMap<_, _>, SchedulerError>>()?;
     let mut ranked = graph
         .nodes()
         .filter(|node| {
             node.id != graph.root()
+                && canonical_nodes.get(&node.id) == Some(&node.id)
                 && node.restoration.executable
                 && !node.terminal
                 && node.restoration.route.tape_frames <= maximum_route_frames
@@ -331,7 +337,10 @@ pub fn rank_schedulable_nodes(
             };
             ScheduledNode {
                 node: node.id,
-                root_ticks: node.root_ticks,
+                root_ticks: relaxed_root_ticks
+                    .get(&node.id)
+                    .copied()
+                    .unwrap_or(node.root_ticks),
                 registered_expansions,
                 completed_expansions,
                 exact_terminal_ticks_to_go,
@@ -368,6 +377,7 @@ fn rank_schedulable_expansions_with_seed(
     for score in learned.values() {
         score.validate()?;
     }
+    let relaxed_root_ticks = graph.relaxed_root_ticks()?;
     let mut ranked = graph
         .expansions()
         .filter(|expansion| {
@@ -380,7 +390,10 @@ fn rank_schedulable_expansions_with_seed(
             Ok(ScheduledExpansion {
                 expansion_sha256: expansion.identity_sha256,
                 source: expansion.source,
-                source_root_ticks: node.root_ticks,
+                source_root_ticks: relaxed_root_ticks
+                    .get(&node.id)
+                    .copied()
+                    .unwrap_or(node.root_ticks),
                 learned: learned
                     .get(&expansion.identity_sha256)
                     .copied()
@@ -665,6 +678,7 @@ mod tests {
         let mut graph = StateGraph::new(
             crate::state_graph::StateGraphIdentity {
                 execution_authority_sha256: Digest([1; 32]),
+                future_equivalence_validator_sha256: Digest([1; 32]),
                 feature_schema_sha256: Digest([2; 32]),
                 objective_sha256: Digest([3; 32]),
                 root_checkpoint_sha256: Digest([4; 32]),

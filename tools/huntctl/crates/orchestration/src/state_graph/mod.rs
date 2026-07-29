@@ -7,6 +7,7 @@
 mod admission;
 mod lifecycle;
 mod returns;
+mod transpositions;
 mod types;
 mod validation;
 
@@ -42,6 +43,8 @@ pub struct StateGraph {
     expansions: BTreeMap<Digest, ActionExpansion>,
     segments: BTreeMap<Digest, ObservedSegment>,
     routes: BTreeMap<Digest, InputTape>,
+    #[serde(default)]
+    future_equivalence_proofs: BTreeMap<Digest, FutureEquivalenceProof>,
     best_terminal: Option<TerminalPath>,
 }
 
@@ -100,6 +103,7 @@ impl StateGraph {
             expansions: BTreeMap::new(),
             segments: BTreeMap::new(),
             routes: BTreeMap::from([(root_route_checkpoint, root_route)]),
+            future_equivalence_proofs: BTreeMap::new(),
             best_terminal,
         })
     }
@@ -142,6 +146,10 @@ impl StateGraph {
 
     pub fn segment_count(&self) -> usize {
         self.segments.len()
+    }
+
+    pub fn future_equivalence_proof_count(&self) -> usize {
+        self.future_equivalence_proofs.len()
     }
 
     pub fn best_terminal_path(&self) -> Option<&TerminalPath> {

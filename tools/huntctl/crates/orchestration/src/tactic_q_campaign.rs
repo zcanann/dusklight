@@ -681,6 +681,7 @@ impl TacticQCampaign {
         self.state_graph = Some(StateGraph::new(
             StateGraphIdentity {
                 execution_authority_sha256,
+                future_equivalence_validator_sha256: execution_authority_sha256,
                 feature_schema_sha256: self.feature_schema_sha256,
                 objective_sha256: self.objective_sha256,
                 root_checkpoint_sha256: self.root_checkpoint_sha256,

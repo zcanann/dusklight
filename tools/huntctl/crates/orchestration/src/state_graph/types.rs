@@ -4,6 +4,7 @@ use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::option_transition::OptionTransitionSample;
 use dusklight_learning::option_values::OptionActionDescriptor;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const STATE_GRAPH_SCHEMA_V1: &str = "dusklight-state-graph/v1";
@@ -13,6 +14,10 @@ pub const FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1: &str = "dusklight-future-equivalen
 #[serde(deny_unknown_fields)]
 pub struct StateGraphIdentity {
     pub execution_authority_sha256: Digest,
+    /// Validator allowed to admit native future-equivalence proofs. Legacy
+    /// graphs decode with zero and therefore keep transpositions disabled.
+    #[serde(default)]
+    pub future_equivalence_validator_sha256: Digest,
     pub feature_schema_sha256: Digest,
     pub objective_sha256: Digest,
     pub root_checkpoint_sha256: Digest,
@@ -152,17 +157,66 @@ pub struct FutureEquivalenceProof {
 }
 
 impl FutureEquivalenceProof {
+    pub fn new(
+        left: ExactStateId,
+        right: ExactStateId,
+        validator_sha256: Digest,
+        native_evidence_sha256: Digest,
+    ) -> Result<Self, &'static str> {
+        let (left, right) = if left < right {
+            (left, right)
+        } else {
+            (right, left)
+        };
+        let proof_sha256 =
+            future_equivalence_proof_sha256(left, right, validator_sha256, native_evidence_sha256);
+        let proof = Self {
+            schema: FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1.into(),
+            proof_sha256,
+            left,
+            right,
+            validator_sha256,
+            native_evidence_sha256,
+        };
+        proof.validate()?;
+        Ok(proof)
+    }
+
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.schema != FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1
             || self.proof_sha256 == Digest::ZERO
             || self.validator_sha256 == Digest::ZERO
             || self.native_evidence_sha256 == Digest::ZERO
-            || self.left == self.right
+            || self.left >= self.right
+            || self.proof_sha256
+                != future_equivalence_proof_sha256(
+                    self.left,
+                    self.right,
+                    self.validator_sha256,
+                    self.native_evidence_sha256,
+                )
         {
-            return Err("future-equivalence proof is missing or self-referential");
+            return Err("future-equivalence proof is invalid or non-canonical");
         }
         Ok(())
     }
+}
+
+fn future_equivalence_proof_sha256(
+    left: ExactStateId,
+    right: ExactStateId,
+    validator_sha256: Digest,
+    native_evidence_sha256: Digest,
+) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1.as_bytes());
+    for node in [left, right] {
+        hasher.update(node.route_checkpoint_sha256.0);
+        hasher.update(node.state_sha256.0);
+    }
+    hasher.update(validator_sha256.0);
+    hasher.update(native_evidence_sha256.0);
+    Digest(hasher.finalize().into())
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
