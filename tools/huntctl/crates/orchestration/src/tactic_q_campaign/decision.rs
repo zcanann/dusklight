@@ -251,6 +251,9 @@ impl TacticQCampaign {
                 .training_replay
                 .iter()
                 .any(|transition| transition.value_sample.terminal);
+            let goal_reachability_acquisition = self.value_treatment
+                == TacticValueTreatment::GoalRelabeledFittedQKnnV2
+                && !native_terminal_supported;
             if let Some(goal_distance_feature) = goal_distance_feature {
                 let ranked_applicable = match self.value_treatment {
                     TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => self
@@ -289,7 +292,11 @@ impl TacticQCampaign {
                         } else {
                             self.active_goal_relabel_model(goal_distance_feature)?
                                 .map(|model| {
-                                    model.rank(&features, &context, &applicable_descriptors)
+                                    model.rank_goal_reachability(
+                                        &features,
+                                        &context,
+                                        &applicable_descriptors,
+                                    )
                                 })
                                 .transpose()?
                                 .map(|estimates| {
@@ -312,12 +319,21 @@ impl TacticQCampaign {
                         }),
                 };
                 if let Some(ranked_applicable) = ranked_applicable {
-                    ensure_generalized_value_acquisition(
-                        &ranked_applicable,
-                        acquisition_partition,
-                        maximum_proposals,
-                        &mut proposals,
-                    )?;
+                    if goal_reachability_acquisition {
+                        ensure_goal_reachability_acquisition(
+                            &ranked_applicable,
+                            acquisition_partition,
+                            maximum_proposals,
+                            &mut proposals,
+                        )?;
+                    } else {
+                        ensure_generalized_value_acquisition(
+                            &ranked_applicable,
+                            acquisition_partition,
+                            maximum_proposals,
+                            &mut proposals,
+                        )?;
+                    }
                     if terminal_support_acquisition
                         && (self.value_treatment
                             == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
@@ -341,7 +357,11 @@ impl TacticQCampaign {
                 maximum_proposals,
                 &mut proposals,
             )?;
-            retain_generalized_value_acquisition(&mut proposals)?;
+            if goal_reachability_acquisition {
+                retain_goal_reachability_acquisition(&mut proposals)?;
+            } else {
+                retain_generalized_value_acquisition(&mut proposals)?;
+            }
         }
         if let Some(primary) = forced_primary {
             proposals.retain(|proposal| proposal.descriptor != primary.descriptor);

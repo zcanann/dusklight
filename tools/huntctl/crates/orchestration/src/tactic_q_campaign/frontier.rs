@@ -419,7 +419,7 @@ impl TacticQCampaign {
             .enumerate()
             .map(|(novelty_rank, entry)| {
                 let acquisition_estimates = if demonstration_curriculum {
-                    (None, None, None, None)
+                    (None, None, None, None, None)
                 } else {
                     let features = encode(&entry.frontier_state)
                         .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
@@ -437,11 +437,29 @@ impl TacticQCampaign {
                     }
                     if let Some(model) = generalized_model.as_ref() {
                         let context = GeneralizedTacticContext::from_facts(&entry.frontier_state)?;
-                        let estimates = model.rank(&features, &context, &applicable)?;
+                        let goal_reachability_supported = self.value_treatment
+                            == TacticValueTreatment::GoalRelabeledFittedQKnnV2
+                            && !terminal_value_supported;
+                        let estimates = if goal_reachability_supported {
+                            model.rank_goal_reachability(&features, &context, &applicable)?
+                        } else {
+                            model.rank(&features, &context, &applicable)?
+                        };
                         (
-                            estimates
-                                .first()
-                                .map(|value| f64::from(value.outcome.reward)),
+                            (!goal_reachability_supported)
+                                .then(|| {
+                                    estimates
+                                        .first()
+                                        .map(|value| f64::from(value.outcome.reward))
+                                })
+                                .flatten(),
+                            goal_reachability_supported
+                                .then(|| {
+                                    estimates.first().map(|value| {
+                                        f64::from(value.outcome.goal_progress_per_tick)
+                                    })
+                                })
+                                .flatten(),
                             estimates.first().and_then(|value| {
                                 (value.outcome.terminal > 0.0
                                     && value.outcome.duration_ticks.is_finite()
@@ -459,6 +477,7 @@ impl TacticQCampaign {
                         let estimates = model.rank(&features, &context, &applicable)?;
                         (
                             estimates.first().map(|value| value.mean_q),
+                            None,
                             None,
                             estimates
                                 .iter()
@@ -478,6 +497,7 @@ impl TacticQCampaign {
                                 .and_then(|values| values.ranked.first())
                                 .map(|value| value.mean_q),
                             None,
+                            None,
                             estimates.as_ref().and_then(|values| {
                                 values
                                     .ranked
@@ -491,6 +511,7 @@ impl TacticQCampaign {
                 };
                 let (
                     best_mean_q,
+                    best_goal_progress_per_tick,
                     predicted_terminal_ticks_to_go,
                     maximum_ensemble_variance,
                     generalized_nearest_distance,
@@ -521,11 +542,13 @@ impl TacticQCampaign {
                     expansion_count,
                     terminal: entry.transition.value_sample.terminal,
                     terminal_value_supported,
-                    achieved_goal_value_supported: !terminal_value_supported
+                    achieved_goal_value_supported: false,
+                    goal_reachability_supported: !terminal_value_supported
                         && self.value_treatment == TacticValueTreatment::GoalRelabeledFittedQKnnV2
                         && generalized_model.is_some(),
                     reward: entry.transition.value_sample.reward,
                     best_mean_q,
+                    best_goal_progress_per_tick,
                     predicted_terminal_ticks_to_go,
                     predicted_total_terminal_ticks: predicted_terminal_ticks_to_go
                         .map(|ticks| replayed_prefix_ticks as f64 + ticks),

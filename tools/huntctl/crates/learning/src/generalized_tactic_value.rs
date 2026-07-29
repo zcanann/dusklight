@@ -293,11 +293,12 @@ impl GeneralizedTacticValueModel {
     /// Fits a universal goal-conditioned acquisition model from goals that
     /// native exploration actually reached.
     ///
-    /// Each exact replay endpoint becomes a temporary coordinate goal. Exact
-    /// predecessor edges receive the negative native ticks required to reach
-    /// that endpoint. The resulting rows train ordinary state/action return
-    /// prediction, but carry no terminal-support authority for the authored
-    /// objective.
+    /// A bounded set of exact replay endpoints becomes temporary coordinate
+    /// goals. Every observed transition is re-encoded relative to those goals
+    /// to supervise target-relative physical reachability; exact predecessor
+    /// edges additionally receive the negative native ticks required to reach
+    /// the endpoint. Neither signal carries terminal-support authority for the
+    /// authored objective.
     pub fn fit_achieved_goal_returns(
         transitions: &[OptionTransitionSample],
         goal_distance_feature: usize,
@@ -482,6 +483,26 @@ impl GeneralizedTacticValueModel {
         estimates.sort_by(|left, right| {
             compare_generalized_tactic_estimates(left, right, self.return_comparison_resolution)
         });
+        Ok(estimates)
+    }
+
+    /// Ranks executable actions by learned target-relative motion before the
+    /// authored objective has any authenticated terminal support.
+    ///
+    /// Achieved-goal returns describe the cost of reaching arbitrary replay
+    /// endpoints. They are useful supervision for how controls move relative
+    /// to a goal, but are not objective Q-values. This exploration-only
+    /// ordering therefore uses the learned goal-progress head directly and
+    /// cannot grant terminal or promotion authority.
+    pub fn rank_goal_reachability(
+        &self,
+        state_features: &[f32],
+        context: &GeneralizedTacticContext,
+        descriptors: &[OptionActionDescriptor],
+    ) -> Result<Vec<GeneralizedTacticEstimate>, GeneralizedTacticValueError> {
+        let mut estimates =
+            prediction::estimate_actions(self, state_features, context, descriptors)?;
+        estimates.sort_by(compare_goal_reachability_estimates);
         Ok(estimates)
     }
 
@@ -672,6 +693,18 @@ fn compare_generalized_tactic_estimates(
     })
     .then_with(|| left.nearest_distance.total_cmp(&right.nearest_distance))
     .then_with(|| left.descriptor.option_id.cmp(&right.descriptor.option_id))
+}
+
+fn compare_goal_reachability_estimates(
+    left: &GeneralizedTacticEstimate,
+    right: &GeneralizedTacticEstimate,
+) -> std::cmp::Ordering {
+    right
+        .outcome
+        .goal_progress_per_tick
+        .total_cmp(&left.outcome.goal_progress_per_tick)
+        .then_with(|| left.nearest_distance.total_cmp(&right.nearest_distance))
+        .then_with(|| left.descriptor.option_id.cmp(&right.descriptor.option_id))
 }
 
 fn compare_terminal_support_estimates(

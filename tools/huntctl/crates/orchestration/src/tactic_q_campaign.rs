@@ -43,8 +43,9 @@ use dusklight_learning::tactic_exploration::{
     SelectedTactic, TACTIC_EXPLORATION_SCHEMA_V1, TacticExplorationConfig, TacticExplorationError,
     TacticProposalPolicy, TacticSelectionReason, choose_tactic_batch_for_policy,
     choose_tactic_batch_with_state_untried, ensure_action_factor_coverage,
-    ensure_generalized_value_acquisition, ensure_terminal_support_factor_acquisitions,
-    retain_generalized_value_acquisition,
+    ensure_generalized_value_acquisition, ensure_goal_reachability_acquisition,
+    ensure_terminal_support_factor_acquisitions, retain_generalized_value_acquisition,
+    retain_goal_reachability_acquisition,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_learning::tactic_value_treatment::{
@@ -214,13 +215,20 @@ pub struct TacticFrontierAcquisition {
     /// as evidence that a frontier leads to the objective.
     #[serde(default)]
     pub terminal_value_supported: bool,
-    /// True when a universal goal-conditioned treatment has authenticated
-    /// achieved-goal return support. This may rank cold-start continuation,
-    /// but never claims that the authored native terminal was reached.
+    /// Legacy checkpoint field for the former achieved-goal return ordering.
+    /// New campaigns keep this false because arbitrary replay endpoints do not
+    /// confer objective-value authority.
     #[serde(default)]
     pub achieved_goal_value_supported: bool,
+    /// True when learned target-relative physical progress can prioritize
+    /// exploration. This is not authored-objective value support.
+    #[serde(default)]
+    pub goal_reachability_supported: bool,
     pub reward: f32,
     pub best_mean_q: Option<f64>,
+    /// Best learned target-relative distance reduction per native tick.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub best_goal_progress_per_tick: Option<f64>,
     /// Learned terminal-supported cost from the frontier through first hit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub predicted_terminal_ticks_to_go: Option<f64>,
@@ -904,6 +912,26 @@ fn compare_frontier_acquisition(
         return terminal;
     }
     if !left.terminal_value_supported && !right.terminal_value_supported {
+        if left.goal_reachability_supported != right.goal_reachability_supported {
+            return right
+                .goal_reachability_supported
+                .cmp(&left.goal_reachability_supported);
+        }
+        if left.goal_reachability_supported && right.goal_reachability_supported {
+            return left
+                .expansion_count
+                .cmp(&right.expansion_count)
+                .then_with(|| {
+                    option_f64(right.best_goal_progress_per_tick)
+                        .total_cmp(&option_f64(left.best_goal_progress_per_tick))
+                })
+                .then_with(|| left.novelty_rank.cmp(&right.novelty_rank))
+                .then_with(|| {
+                    option_f64(right.generalized_nearest_distance.map(f64::from)).total_cmp(
+                        &option_f64(left.generalized_nearest_distance.map(f64::from)),
+                    )
+                });
+        }
         if left.achieved_goal_value_supported != right.achieved_goal_value_supported {
             return right
                 .achieved_goal_value_supported

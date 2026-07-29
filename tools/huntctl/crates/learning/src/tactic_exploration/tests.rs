@@ -1408,6 +1408,28 @@ fn generalized_value_can_become_primary_without_dropping_its_control() {
 }
 
 #[test]
+fn goal_reachability_is_an_explicit_preterminal_primary() {
+    let control = descriptor("known/control", OptionType::Move);
+    let reachable = descriptor("unseen/reachable", OptionType::Roll);
+    let mut proposals = vec![SelectedTactic {
+        schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+        learner_snapshot_sha256: Digest([31; 32]),
+        decision_index: 7,
+        descriptor: control.clone(),
+        reason: TacticSelectionReason::UnsupportedBootstrap,
+        exploration_draw: 0,
+    }];
+
+    ensure_goal_reachability_acquisition(std::slice::from_ref(&reachable), 0, 2, &mut proposals)
+        .unwrap();
+    retain_goal_reachability_acquisition(&mut proposals).unwrap();
+
+    assert_eq!(proposals[0].descriptor, reachable);
+    assert_eq!(proposals[0].reason, TacticSelectionReason::GoalReachability);
+    assert_eq!(proposals[1].descriptor, control);
+}
+
+#[test]
 fn generalized_value_does_not_override_an_epsilon_primary() {
     let exploratory = descriptor("unseen/epsilon", OptionType::Move);
     let predicted = descriptor("unseen/predicted", OptionType::Roll);

@@ -58,6 +58,10 @@ pub enum TacticSelectionReason {
     /// model predicts that its executable factors transfer productive motion
     /// from nearby authenticated outcomes.
     GeneralizedValue,
+    /// Acquire an action by learned target-relative motion before the authored
+    /// objective has authenticated terminal support. This is exploration
+    /// evidence, not objective value or promotion authority.
+    GoalReachability,
     /// Re-evaluate an untried nearby parameterization of a terminal action so
     /// route cost can improve after the first successful completion.
     TerminalCostRefinement,
@@ -847,6 +851,37 @@ pub fn ensure_generalized_value_acquisition(
     maximum_proposals: usize,
     proposals: &mut Vec<SelectedTactic>,
 ) -> Result<(), TacticExplorationError> {
+    ensure_ranked_model_acquisition(
+        ranked_applicable,
+        acquisition_partition,
+        maximum_proposals,
+        TacticSelectionReason::GeneralizedValue,
+        proposals,
+    )
+}
+
+pub fn ensure_goal_reachability_acquisition(
+    ranked_applicable: &[OptionActionDescriptor],
+    acquisition_partition: u64,
+    maximum_proposals: usize,
+    proposals: &mut Vec<SelectedTactic>,
+) -> Result<(), TacticExplorationError> {
+    ensure_ranked_model_acquisition(
+        ranked_applicable,
+        acquisition_partition,
+        maximum_proposals,
+        TacticSelectionReason::GoalReachability,
+        proposals,
+    )
+}
+
+fn ensure_ranked_model_acquisition(
+    ranked_applicable: &[OptionActionDescriptor],
+    acquisition_partition: u64,
+    maximum_proposals: usize,
+    reason: TacticSelectionReason,
+    proposals: &mut Vec<SelectedTactic>,
+) -> Result<(), TacticExplorationError> {
     if maximum_proposals <= 1 || proposals.is_empty() || proposals.len() > maximum_proposals {
         return if !proposals.is_empty() && proposals.len() <= maximum_proposals {
             Ok(())
@@ -867,13 +902,13 @@ pub fn ensure_generalized_value_acquisition(
         .find(|proposal| proposal.descriptor == *descriptor)
     {
         if existing.reason != TacticSelectionReason::Epsilon {
-            existing.reason = TacticSelectionReason::GeneralizedValue;
+            existing.reason = reason;
         }
         return Ok(());
     }
     let mut acquisition = proposals[0].clone();
     acquisition.descriptor = (*descriptor).clone();
-    acquisition.reason = TacticSelectionReason::GeneralizedValue;
+    acquisition.reason = reason;
     proposals.insert(1, acquisition);
     proposals.truncate(maximum_proposals);
     Ok(())
@@ -921,6 +956,19 @@ fn interleave_ranked_groups<'a, T>(
 pub fn retain_generalized_value_acquisition(
     proposals: &mut [SelectedTactic],
 ) -> Result<(), TacticExplorationError> {
+    retain_ranked_model_acquisition(proposals, TacticSelectionReason::GeneralizedValue)
+}
+
+pub fn retain_goal_reachability_acquisition(
+    proposals: &mut [SelectedTactic],
+) -> Result<(), TacticExplorationError> {
+    retain_ranked_model_acquisition(proposals, TacticSelectionReason::GoalReachability)
+}
+
+fn retain_ranked_model_acquisition(
+    proposals: &mut [SelectedTactic],
+    reason: TacticSelectionReason,
+) -> Result<(), TacticExplorationError> {
     if proposals.is_empty() {
         return Err(TacticExplorationError::InvalidInput);
     }
@@ -937,7 +985,7 @@ pub fn retain_generalized_value_acquisition(
     }
     let Some(index) = proposals
         .iter()
-        .position(|proposal| proposal.reason == TacticSelectionReason::GeneralizedValue)
+        .position(|proposal| proposal.reason == reason)
     else {
         return Ok(());
     };

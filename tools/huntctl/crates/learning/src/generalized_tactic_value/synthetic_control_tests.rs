@@ -69,8 +69,8 @@ fn generalized_context_ignores_absolute_replay_position() {
 }
 
 #[test]
-fn achieved_goal_relabeling_learns_direction_without_native_terminal_support() {
-    let mut east = transition(
+fn achieved_goal_relabeling_generalizes_reachability_beyond_observed_goals() {
+    let east = scheduled_transition(
         "east",
         -std::f32::consts::FRAC_PI_2,
         [0.0, 0.0],
@@ -79,34 +79,91 @@ fn achieved_goal_relabeling_learns_direction_without_native_terminal_support() {
         3,
         -0.01,
         false,
+        &[0, 0, 0, 0],
+    );
+    let north = transition("north", 0.0, [0.0, 0.0], [0.0, 10.0], 3, 3, -0.01, false, 0);
+    let west = transition(
+        "west",
+        std::f32::consts::FRAC_PI_2,
+        [0.0, 0.0],
+        [-10.0, 0.0],
+        3,
+        3,
+        -0.01,
+        false,
         0,
     );
-    let mut north = transition("north", 0.0, [0.0, 0.0], [0.0, 10.0], 3, 3, -0.01, false, 0);
-    let target = east.after.player.position_f32_bits.map(f32::from_bits);
+    let south = transition(
+        "south",
+        std::f32::consts::PI,
+        [0.0, 0.0],
+        [0.0, -10.0],
+        3,
+        3,
+        -0.01,
+        false,
+        0,
+    );
+    let northeast = transition(
+        "northeast",
+        -std::f32::consts::FRAC_PI_4,
+        [0.0, 0.0],
+        [7.0, 7.0],
+        3,
+        3,
+        -0.01,
+        false,
+        0,
+    );
+    let southeast = transition(
+        "southeast",
+        -3.0 * std::f32::consts::FRAC_PI_4,
+        [0.0, 0.0],
+        [7.0, -7.0],
+        3,
+        3,
+        -0.01,
+        false,
+        0,
+    );
+    // The query target was never reached and is far beyond either supervised
+    // endpoint. The fast north action has a better arbitrary achieved-goal
+    // return, while the slower east action supplies the correct relative
+    // motion. Scratch acquisition must use the latter signal.
+    let target = [100.0, 0.0, 0.0];
     let encoder = GoalConditionedTacticFeatureEncoder::new(target).unwrap();
-    for row in [&mut east, &mut north] {
+    let mut transitions = vec![east, north, west, south, northeast, southeast];
+    for row in &mut transitions {
         row.feature_schema_sha256 = encoder.schema_sha256;
         row.value_sample.state = encoder.encode(&row.before).unwrap();
         row.value_sample.next_state = encoder.encode(&row.after).unwrap();
     }
-    let state = encoder.encode(&east.before).unwrap();
-    let context = GeneralizedTacticContext::from_facts(&east.before).unwrap();
+    let state = encoder.encode(&transitions[0].before).unwrap();
+    let context = GeneralizedTacticContext::from_facts(&transitions[0].before).unwrap();
     let actions = [
-        east.value_sample.action.clone(),
-        north.value_sample.action.clone(),
+        transitions[0].value_sample.action.clone(),
+        transitions[1].value_sample.action.clone(),
     ];
 
-    let ranked = GeneralizedTacticValueModel::fit_achieved_goal_returns(
-        &[east, north],
+    let model = GeneralizedTacticValueModel::fit_achieved_goal_returns(
+        &transitions,
         encoder.goal_distance_feature(),
     )
-    .unwrap()
-    .rank(&state, &context, &actions)
     .unwrap();
+    let reachability_ranked = model
+        .rank_goal_reachability(&state, &context, &actions)
+        .unwrap();
 
-    assert_eq!(ranked[0].descriptor.option_id, "east");
-    assert_eq!(ranked[0].outcome.terminal, 0.0);
-    assert!(ranked.iter().all(|estimate| {
+    assert_eq!(
+        reachability_ranked[0].descriptor.option_id, "east",
+        "{reachability_ranked:#?}"
+    );
+    assert!(
+        reachability_ranked[0].outcome.goal_progress_per_tick
+            > reachability_ranked[1].outcome.goal_progress_per_tick
+    );
+    assert_eq!(reachability_ranked[0].outcome.terminal, 0.0);
+    assert!(reachability_ranked.iter().all(|estimate| {
         estimate.terminal_support_distance.is_none()
             && estimate.outcome.reward.is_finite()
             && estimate.outcome.reward < 0.0

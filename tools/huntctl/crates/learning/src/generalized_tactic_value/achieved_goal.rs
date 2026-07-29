@@ -1,7 +1,7 @@
 use super::*;
 use std::collections::{BTreeMap, VecDeque};
 
-const MAX_ACHIEVED_GOAL_TARGETS: usize = 8_192;
+const MAX_ACHIEVED_GOAL_TARGETS: usize = 32;
 const MAX_ACHIEVED_GOAL_HOPS: u32 = 16;
 const MAX_REVERSE_STATES_PER_TARGET: usize = 4_096;
 
@@ -53,7 +53,15 @@ pub(super) fn fit(
         })
         .collect::<Vec<_>>();
     let incoming = incoming_edges(&edges);
-    let targets = sampled_targets(transitions);
+    // Cross-relabel every observed physical transition against a bounded set
+    // of achieved targets. Reverse-path rows alone only show what an action
+    // did relative to a goal it eventually reached; they omit the
+    // counterexamples needed to distinguish target-directed motion from raw
+    // speed. Bound the target count further for very large corpora so fitting
+    // remains within the model's deterministic sample budget.
+    let maximum_targets =
+        (MAX_GENERALIZED_TACTIC_SAMPLES / transitions.len()).clamp(1, MAX_ACHIEVED_GOAL_TARGETS);
+    let targets = sampled_targets(transitions, maximum_targets);
     let mut samples = Vec::new();
     'targets: for target_index in targets {
         let target_transition = &transitions[target_index];
@@ -68,11 +76,10 @@ pub(super) fn fit(
         let encoder = GoalConditionedTacticFeatureEncoder::new(target)
             .map_err(|error| GeneralizedTacticValueError::InvalidFacts(error.to_string()))?;
         let costs = reverse_path_costs(&edges, &incoming, target_transition.after_state_sha256);
-        for (transition_index, ticks_to_goal) in costs {
+        for (transition_index, transition) in transitions.iter().enumerate() {
             if samples.len() == MAX_GENERALIZED_TACTIC_SAMPLES {
                 break 'targets;
             }
-            let transition = &transitions[transition_index];
             let state_features = encoder
                 .encode(&transition.before)
                 .map_err(|error| GeneralizedTacticValueError::InvalidFacts(error.to_string()))?;
@@ -82,7 +89,12 @@ pub(super) fn fit(
             let duration = transition.value_sample.duration_ticks as f32;
             let mut outcome =
                 GeneralizedTacticOutcome::from_transition(transition, goal_distance_feature)?;
-            outcome.reward = -(ticks_to_goal as f32);
+            // Only an exact reverse path owns an achieved-goal return. Other
+            // cross-relabeled rows train relative reachability and carry no
+            // value authority.
+            outcome.reward = costs
+                .get(&transition_index)
+                .map_or(0.0, |ticks_to_goal| -(*ticks_to_goal as f32));
             // These are supervised returns to an achieved coordinate, not
             // evidence that the authored native terminal was reached.
             outcome.terminal = 0.0;
@@ -118,16 +130,17 @@ fn incoming_edges(edges: &[ReverseEdge]) -> BTreeMap<Digest, Vec<usize>> {
     incoming
 }
 
-fn sampled_targets(transitions: &[OptionTransitionSample]) -> Vec<usize> {
+fn sampled_targets(transitions: &[OptionTransitionSample], maximum_targets: usize) -> Vec<usize> {
+    debug_assert!(maximum_targets > 0);
     let mut unique = BTreeMap::<Digest, usize>::new();
     for (index, transition) in transitions.iter().enumerate() {
         unique.entry(transition.after_state_sha256).or_insert(index);
     }
-    let stride = unique.len().div_ceil(MAX_ACHIEVED_GOAL_TARGETS).max(1);
+    let stride = unique.len().div_ceil(maximum_targets).max(1);
     unique
         .into_values()
         .step_by(stride)
-        .take(MAX_ACHIEVED_GOAL_TARGETS)
+        .take(maximum_targets)
         .collect()
 }
 
