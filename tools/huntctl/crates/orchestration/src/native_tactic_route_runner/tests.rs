@@ -100,19 +100,6 @@ fn demonstration_frontier_intervention_only_forces_the_first_expansion() {
 }
 
 #[test]
-fn frontier_rank_cycles_independently_of_decision_branch_cadence() {
-    let acquisition = NativeTacticAcquisitionPlan::CyclicSupportAndRanks {
-        cycle_width: 4,
-        ranked_lanes_per_cycle: 3,
-    };
-    assert_eq!(
-        [1, 2, 3, 5, 6]
-            .map(|episode| { super::campaign::frontier_acquisition_rank(acquisition, episode) }),
-        [0, 1, 2, 3, 0]
-    );
-}
-
-#[test]
 fn demonstration_chunks_preserve_the_bounded_authenticated_suffix() {
     let mut frames = Vec::new();
     for value in 0_i8..12 {

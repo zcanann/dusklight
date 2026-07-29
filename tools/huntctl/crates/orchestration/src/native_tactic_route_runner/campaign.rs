@@ -3,13 +3,6 @@ use super::*;
 pub(super) const NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1: &str =
     "dusklight-native-tactic-result-admission/v1";
 
-pub(super) fn frontier_acquisition_rank(
-    acquisition: NativeTacticAcquisitionPlan,
-    episode: u64,
-) -> u64 {
-    acquisition.rank(frontier_sampling_round(episode))
-}
-
 pub(super) fn first_demonstration_intervention(
     coverage_pending: bool,
     prefer_root: bool,
@@ -248,7 +241,6 @@ pub(super) fn run_seed(
                 TacticProposalPolicy::Learned => campaign.sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
-                    frontier_acquisition_rank(lane.acquisition, episode),
                     &[],
                     maximum_frontier_frames,
                     demonstration_coverage_pending,
@@ -422,7 +414,6 @@ pub(super) fn run_seed(
                 TacticProposalPolicy::Learned => campaign.sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
-                    frontier_acquisition_rank(lane.acquisition, episode),
                     &[],
                     maximum_frontier_frames,
                     demonstration_coverage_pending,
