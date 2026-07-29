@@ -93,9 +93,11 @@ The current implementation is not yet an accepted learning architecture.
   fewer expansions than exhaustive and seeded non-learning controls across
   four graph-disjoint translated fixture seeds without pruning unsupported
   work.
-- Long options historically exposed only their endpoints. Four-tick native
-  interior boundaries now exist, but they do not by themselves turn the
-  system into coherent graph search.
+- Long options historically exposed only their endpoints. A graph invariant
+  now admits a 40-tick realization as ten observed segments with nine ordinary
+  four-tick interior nodes, then independently executes a counterfactual
+  expansion from every interior node without relabeling observed continuation
+  as a selected action.
 - One isolated scratch route improved from tick `206` to tick `195`; controlled
   variants returned to tick `206`. This is not evidence of a reliable
   optimizer.
