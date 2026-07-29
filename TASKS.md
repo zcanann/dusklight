@@ -185,6 +185,17 @@ at tick `125`. The best machine result ties `125`; it has not beaten it.
   later counterfactual proposals produced the improvement at decisions `30`
   and `31`. The remaining `97` decisions found no further improvement, so
   self-refinement is real but still plateaus far above tick `131`.
+- Frontier acquisition now distinguishes an exact authenticated terminal
+  suffix from approximate k-NN terminal prediction. Under the same isolated
+  `128`-decision plan, `15/20` terminal-supported acquisitions followed exact
+  replay-connected states with exact root-relative costs of `197` or `207`
+  ticks, preventing an optimistic approximate prediction from displacing
+  proven evidence. The best result was tick `196`, so exact-path authority
+  fixed evidence semantics but did not improve the route. Every retained
+  frontier in the one-worker plan had acquisition rank `0`; that rank still
+  used a demonstration-era behavior-transfer sorter for the generalized
+  proposal. Native-terminal scratch refinement must rank those actions by
+  learned return rather than imitate the first slow success.
 - Shared replay had coupled training evidence to exploration coverage: every
   peer transition entered every lane's frontier archive and visited-state set.
   Under the full `4x64` plan this correlated all lanes onto the same failed

@@ -904,6 +904,37 @@
         "route_shortened": true,
         "route_beats_demonstration": false,
         "interpretation": "The native-terminal critic and retained counterfactuals shortened the learner's own authenticated scratch route by 11 ticks without demonstration or incumbent authority. Improvement occurred by decisions 30 and 31; no later decision improved tick 195. Native-terminal self-refinement is therefore operational but remains poorly calibrated and plateaus 64 ticks above the tick-131 demonstration."
+      },
+      "exact_terminal_frontier_probe": {
+        "source_report_path": "build/campaigns/ordon-p3-q131-exact-terminal-frontier-seed155921-1x128-b4-w1-v3-20260728/report.json",
+        "source_report_sha256": "6d40dbbb2ec14838574d2eec7d7cbe366fa0eee6b0a6d3795740ae9b256e8429",
+        "execution_plan_sha256": "0a550efea3daa4dc4d0a89d33273bfbd4acfe76954ed3f181fdec4f5de25c0a7",
+        "seed": 155921,
+        "decisions": 128,
+        "proposals_per_decision": 4,
+        "demonstration_transitions": 0,
+        "terminal": true,
+        "best_authenticated_tick": 196,
+        "promotion_successful": false,
+        "terminal_supported_frontier_acquisitions": 20,
+        "exact_terminal_path_frontier_acquisitions": 15,
+        "minimum_exact_total_terminal_ticks": 197,
+        "maximum_exact_total_terminal_ticks": 207,
+        "minimum_predicted_total_terminal_ticks": 154.872161865234,
+        "maximum_predicted_total_terminal_ticks": 215.0,
+        "native_ticks": 7213,
+        "useful_decisions": 84,
+        "useful_training_transitions": 325,
+        "training_replay_rows": 490,
+        "learner_updates": 67,
+        "visited_states": 52,
+        "retained_frontier_acquisition_ranks": [
+          0
+        ],
+        "exact_path_authority_operational": true,
+        "route_beats_prior_tick_195": false,
+        "route_beats_demonstration": false,
+        "interpretation": "Exact replay connectivity now outranks speculative k-NN terminal cost, and 15 retained-frontier acquisitions exercised proven terminal suffix states. The result did not improve tick 195. The one-worker execution plan assigned every retained frontier acquisition rank zero, which still routed the generalized proposal through demonstration-oriented behavior transfer instead of native-terminal learned-return ranking. Exact-path authority is correct, but scratch refinement remains policy-confounded."
       }
     },
     "conclusion": "The learner reached the real terminal from scratch once route discovery received adequate time. Isolated learners reproduced terminals in 2/4 seeds, and separating global value evidence from lane-local frontier coverage raised the matched shared-replay result from 0/4 to 3/4. A separate native-terminal critic supplies total-tick predictions after genuine terminal support and shortened an isolated authenticated route from tick 206 to tick 195. Reliable scratch discovery and self-refinement are established; strict 131/125 authority still applies to promotion, and the best scratch route remains far too slow."
@@ -938,6 +969,8 @@
     "goal_relabel_critic_supplies_terminal_tick_predictions": true,
     "native_terminal_critic_shortens_scratch_route": true,
     "native_terminal_critic_beats_demonstration": false,
+    "exact_terminal_path_controls_frontier_acquisition": true,
+    "exact_terminal_path_improves_scratch_route": false,
     "p3_task_complete": false
   }
 }
