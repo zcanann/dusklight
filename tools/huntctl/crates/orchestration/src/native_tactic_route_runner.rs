@@ -189,6 +189,11 @@ pub use scratch_comparison::{
     NativeTacticScratchComparisonReport, NativeTacticScratchEfficiencyMetrics,
     NativeTacticScratchTreatment,
 };
+mod route_diagnosis;
+pub use route_diagnosis::{
+    NATIVE_TACTIC_ROUTE_DIAGNOSIS_SCHEMA_V1, NativeTacticRouteActionSurfaceProfile,
+    NativeTacticRouteDiagnosisReport, NativeTacticRouteProfile, NativeTacticScratchRouteDiagnosis,
+};
 
 mod throughput_curve;
 pub use throughput_curve::{

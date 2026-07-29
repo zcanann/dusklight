@@ -383,6 +383,7 @@ fn journal_trace(decision_index: u64) -> NativeTacticDecisionTrace {
         "measurements": [{"name": "goal_distance", "before": 8.0, "after": 7.0}],
         "applicable_tactics": [{
             "option_id": format!("move.{decision_index}"),
+            "descriptor": null,
             "mean_q": 1.5,
             "ensemble_variance": 0.25,
             "selected": true

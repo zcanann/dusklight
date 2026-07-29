@@ -5,15 +5,16 @@ use super::{
     MAX_LEARN_INPUT_CORPORA, NativeEpisodeShard, NativeFactorizedPolicyBatchConfig,
     NativeFactorizedPolicySuffixBatch, NativeFrozenPolicyReinferenceReport,
     NativeFrozenPolicySuffixBatch, NativeGenericExecutionStrategy, NativeResidualExecutionBinding,
-    NativeTacticPolicyRunConfig, NativeTacticRestoreLocalityConfig,
-    NativeTacticRestoreLocalityReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
+    NativeTacticDemonstrationReport, NativeTacticPolicyRunConfig,
+    NativeTacticRestoreLocalityConfig, NativeTacticRestoreLocalityReport,
+    NativeTacticRouteDiagnosisReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
     NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
     NativeTacticScratchDiscoveryReport, NativeTacticScratchEvidenceBundle,
     NativeTacticThroughputCurveConfig, OptimizationRequest, Sha256, TacticFrozenPolicy,
-    TacticProposalPolicy, TacticQCampaign, TacticQTrainingCorpus, cli, command_conservative_q,
-    flag, native_frozen_policy_probe_model, native_tactic_execution_plan, option,
-    prove_generalized_tactic_held_out_value, realize_native_frozen_policy_tape, repeated_option,
-    required_path, run_native_tactic_policy, run_native_tactic_restore_locality,
+    TacticProposalPolicy, TacticQCampaign, TacticQFinalResult, TacticQTrainingCorpus, cli,
+    command_conservative_q, flag, native_frozen_policy_probe_model, native_tactic_execution_plan,
+    option, prove_generalized_tactic_held_out_value, realize_native_frozen_policy_tape,
+    repeated_option, required_path, run_native_tactic_policy, run_native_tactic_restore_locality,
     run_native_tactic_route, run_native_tactic_throughput_curve, tactic_macro_registry_identity,
     u64_option, usage_error, usize_option, verify_native_frozen_policy_cold_replay,
     verify_native_frozen_policy_reinference,
@@ -889,6 +890,66 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 fs::create_dir_all(parent)?;
             }
             let report = NativeTacticScratchComparisonReport::build(&repository_root, routes)?;
+            fs::write(&output, report.to_pretty_json()?)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("diagnose-tactic-terminal-routes") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let scratch: NativeTacticRouteReport =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--scratch-report")?)?)?;
+            let demonstration: NativeTacticDemonstrationReport = serde_json::from_slice(
+                &fs::read(required_path(learn_args, "--demonstration-report")?)?,
+            )?;
+            let corpus_path = required_path(learn_args, "--demonstration-corpus")?;
+            let corpus_bytes = fs::read(&corpus_path)?;
+            if Digest(Sha256::digest(&corpus_bytes).into()) != demonstration.corpus_sha256 {
+                return Err("demonstration corpus bytes differ from its report".into());
+            }
+            let corpus = TacticQTrainingCorpus::read(&corpus_path)?;
+            let mut terminal_results = Vec::new();
+            for seed in scratch.seeds.iter().filter(|seed| seed.terminal_discovered) {
+                let declared = seed
+                    .best_terminal_result
+                    .as_deref()
+                    .ok_or("terminal seed lacks its best terminal result")?;
+                let candidate = PathBuf::from(declared);
+                let candidate = if candidate.is_absolute() {
+                    candidate
+                } else {
+                    repository_root.join(candidate)
+                };
+                let resolved = fs::canonicalize(candidate)?;
+                if !resolved.starts_with(&repository_root) || !resolved.is_file() {
+                    return Err("terminal result is outside the repository or absent".into());
+                }
+                terminal_results.push((seed.seed, TacticQFinalResult::read(&resolved)?));
+            }
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "route diagnosis output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let report = NativeTacticRouteDiagnosisReport::build(
+                &scratch,
+                &demonstration,
+                &corpus,
+                terminal_results,
+            )?;
             fs::write(&output, report.to_pretty_json()?)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())

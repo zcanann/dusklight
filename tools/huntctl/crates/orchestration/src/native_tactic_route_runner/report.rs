@@ -681,6 +681,10 @@ pub struct NativeTacticMeasurementTrace {
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticValueTrace {
     pub option_id: String,
+    /// Typed executable identity used by the policy. Legacy reports retained
+    /// only `option_id` and therefore cannot prove action-family availability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descriptor: Option<OptionActionDescriptor>,
     pub mean_q: Option<f64>,
     pub ensemble_variance: Option<f64>,
     pub selected: bool,

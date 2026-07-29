@@ -870,6 +870,7 @@ pub(super) fn run_seed(
                     .find(|ranked| ranked.descriptor == choice.descriptor);
                 NativeTacticValueTrace {
                     option_id: choice.choice_id.clone(),
+                    descriptor: Some(choice.descriptor.clone()),
                     mean_q: estimate.map(|ranked| ranked.mean_q),
                     ensemble_variance: estimate.map(|ranked| ranked.ensemble_variance),
                     selected: choice.choice_id == selected.descriptor.option_id,

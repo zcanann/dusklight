@@ -67,6 +67,11 @@ The incoming 2026-07-29 work made substantial, useful progress:
   overlap and the momentum loss measured on those ticks. The v5 tactic feature
   schema exposes the measured consequence with explicit legacy missingness;
   contact itself still has no encoded desirability.
+- A content-bound terminal-route diagnosis command profiles every
+  graph-selected scratch result against an authenticated ordinary
+  demonstration. It reports typed roll/camera use, duration, trajectory,
+  velocity, detour, contact-correlated slowdown, neutral/repeated work, and
+  exact action-availability/support coverage without scoring human similarity.
 - Matched scratch comparison now keeps graph-node acquisition schedules fixed
   across learned, scheduler-only, and random-valid action ranking. Its
   fail-closed comparator rejects source, horizon, topology, schema, budget, or
