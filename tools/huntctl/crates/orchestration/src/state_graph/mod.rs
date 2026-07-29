@@ -323,10 +323,47 @@ pub(crate) fn tape_prefix(
     Ok(prefix)
 }
 
+pub(crate) fn same_intermediate_boundary_realization(
+    left: &[dusklight_learning::option_transition::OptionIntermediateBoundary],
+    right: &[dusklight_learning::option_transition::OptionIntermediateBoundary],
+) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.offset_ticks == right.offset_ticks
+                && left.state_sha256 == right.state_sha256
+                && left.state == right.state
+        })
+}
+
+pub(crate) fn same_native_realization(
+    left: &OptionTransitionSample,
+    right: &OptionTransitionSample,
+) -> bool {
+    left.execution_authority_sha256 == right.execution_authority_sha256
+        && left.before_state_sha256 == right.before_state_sha256
+        && left.after_state_sha256 == right.after_state_sha256
+        && left.source_checkpoint_sha256 == right.source_checkpoint_sha256
+        && left.next_checkpoint_sha256 == right.next_checkpoint_sha256
+        && left.before == right.before
+        && left.after == right.after
+        && left.execution == right.execution
+        && left.value_sample.terminal == right.value_sample.terminal
+        && same_intermediate_boundary_realization(
+            &left.intermediate_boundaries,
+            &right.intermediate_boundaries,
+        )
+}
+
 #[derive(Debug)]
 pub enum StateGraphError {
     Invalid(&'static str),
     Invariant(&'static str),
+    ConflictingNativeEvidence {
+        expansion_sha256: Digest,
+        canonical_evidence_sha256: Digest,
+        conflicting_evidence_sha256: Digest,
+        differing_fields: String,
+    },
     DigestCollision(&'static str),
     Tape(String),
     Facts(String),
@@ -343,6 +380,17 @@ impl fmt::Display for StateGraphError {
             Self::Invariant(message) => {
                 write!(formatter, "state graph invariant failed: {message}")
             }
+            Self::ConflictingNativeEvidence {
+                expansion_sha256,
+                canonical_evidence_sha256,
+                conflicting_evidence_sha256,
+                differing_fields,
+            } => write!(
+                formatter,
+                "state graph invariant failed: deterministic expansion {expansion_sha256} \
+                 has conflicting native evidence {canonical_evidence_sha256} and \
+                 {conflicting_evidence_sha256}; differing fields: {differing_fields}"
+            ),
             Self::DigestCollision(message) => {
                 write!(
                     formatter,

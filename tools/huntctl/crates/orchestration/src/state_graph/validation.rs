@@ -186,7 +186,7 @@ impl StateGraph {
                 for (evidence_sha256, row) in evidence {
                     row.transition.validate()?;
                     if row.transition.replay_identity_sha256()? != *evidence_sha256
-                        || !same_native_realization(&first.transition, &row.transition)
+                        || !super::same_native_realization(&first.transition, &row.transition)
                         || row.transition.before_state_sha256 != expansion.source.state_sha256
                         || row.transition.source_checkpoint_sha256
                             != expansion.source.route_checkpoint_sha256
@@ -295,20 +295,4 @@ impl StateGraph {
         }
         Ok(())
     }
-}
-
-fn same_native_realization(
-    left: &dusklight_learning::option_transition::OptionTransitionSample,
-    right: &dusklight_learning::option_transition::OptionTransitionSample,
-) -> bool {
-    left.execution_authority_sha256 == right.execution_authority_sha256
-        && left.before_state_sha256 == right.before_state_sha256
-        && left.after_state_sha256 == right.after_state_sha256
-        && left.source_checkpoint_sha256 == right.source_checkpoint_sha256
-        && left.next_checkpoint_sha256 == right.next_checkpoint_sha256
-        && left.before == right.before
-        && left.after == right.after
-        && left.execution == right.execution
-        && left.value_sample.terminal == right.value_sample.terminal
-        && left.intermediate_boundaries == right.intermediate_boundaries
 }

@@ -791,6 +791,76 @@ fn duplicate_completed_evidence_does_not_duplicate_graph_truth() {
 }
 
 #[test]
+fn independently_captured_boundary_provenance_does_not_split_graph_truth() {
+    let (mut graph, transition, route) = graph_and_transition();
+    let first = graph
+        .admit_completed_expansion(
+            transition.clone(),
+            route.clone(),
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+    let mut independent_capture = transition;
+    independent_capture.intermediate_boundaries[0].episode_shard_sha256 = Digest([6; 32]);
+    independent_capture.validate().unwrap();
+    let duplicate = graph
+        .admit_completed_expansion(
+            independent_capture,
+            route,
+            18,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+
+    assert_eq!(duplicate.expansion_sha256, first.expansion_sha256);
+    assert!(duplicate.duplicate);
+    assert_eq!(graph.node_count(), 3);
+    assert_eq!(graph.expansion_count(), 1);
+    assert_eq!(graph.segment_count(), 2);
+    graph.validate().unwrap();
+}
+
+#[test]
+fn conflicting_intermediate_game_state_still_fails_closed() {
+    let (mut graph, transition, route) = graph_and_transition();
+    graph
+        .admit_completed_expansion(
+            transition.clone(),
+            route.clone(),
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+    let mut conflicting = transition;
+    conflicting.intermediate_boundaries[0]
+        .state
+        .player
+        .position_f32_bits[0] = 999.0_f32.to_bits();
+    conflicting.intermediate_boundaries[0].state_sha256 = conflicting.intermediate_boundaries[0]
+        .state
+        .content_sha256()
+        .unwrap();
+    conflicting.validate().unwrap();
+    let error = graph
+        .admit_completed_expansion(
+            conflicting,
+            route,
+            18,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        StateGraphError::ConflictingNativeEvidence {
+            differing_fields,
+            ..
+        } if differing_fields == "intermediate_boundaries"
+    ));
+}
+
+#[test]
 fn one_deterministic_action_retains_distinct_learner_labels_as_evidence() {
     let (mut graph, transition, route) = graph_and_transition();
     let first = graph

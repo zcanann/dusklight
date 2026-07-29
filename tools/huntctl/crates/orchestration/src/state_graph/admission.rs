@@ -2,7 +2,8 @@ use super::{
     ActionExpansion, ActionExpansionStatus, CompletedExpansionEvidence, ExactStateId,
     ExpansionAdmission, ExpansionEvidenceAuthority, NativeBoundaryLocator, ObservedSegment,
     RestorationLocator, RouteRecord, StateGraph, StateGraphError, StateGraphNode,
-    action_expansion_identity, route_checkpoint_sha256, tape_prefix, tape_sha256,
+    action_expansion_identity, route_checkpoint_sha256, same_intermediate_boundary_realization,
+    tape_prefix, tape_sha256,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
@@ -76,13 +77,19 @@ impl StateGraph {
                 evidence,
             } = &mut existing.status
         {
-            let canonical = evidence.values().next().ok_or(StateGraphError::Invariant(
-                "completed expansion has no evidence",
-            ))?;
-            if !same_native_realization(&canonical.transition, &transition) {
-                return Err(StateGraphError::Invariant(
-                    "one deterministic node/action expansion produced conflicting native evidence",
-                ));
+            let (canonical_evidence_sha256, canonical) =
+                evidence.iter().next().ok_or(StateGraphError::Invariant(
+                    "completed expansion has no evidence",
+                ))?;
+            let differing_fields =
+                native_realization_differences(&canonical.transition, &transition);
+            if !differing_fields.is_empty() {
+                return Err(StateGraphError::ConflictingNativeEvidence {
+                    expansion_sha256,
+                    canonical_evidence_sha256: *canonical_evidence_sha256,
+                    conflicting_evidence_sha256: evidence_sha256,
+                    differing_fields: differing_fields.join(","),
+                });
             }
             let duplicate = evidence.contains_key(&evidence_sha256);
             if duplicate && authority == ExpansionEvidenceAuthority::Executable {
@@ -424,17 +431,45 @@ impl StateGraph {
     }
 }
 
-fn same_native_realization(left: &OptionTransitionSample, right: &OptionTransitionSample) -> bool {
-    left.execution_authority_sha256 == right.execution_authority_sha256
-        && left.before_state_sha256 == right.before_state_sha256
-        && left.after_state_sha256 == right.after_state_sha256
-        && left.source_checkpoint_sha256 == right.source_checkpoint_sha256
-        && left.next_checkpoint_sha256 == right.next_checkpoint_sha256
-        && left.before == right.before
-        && left.after == right.after
-        && left.execution == right.execution
-        && left.value_sample.terminal == right.value_sample.terminal
-        && left.intermediate_boundaries == right.intermediate_boundaries
+fn native_realization_differences(
+    left: &OptionTransitionSample,
+    right: &OptionTransitionSample,
+) -> Vec<&'static str> {
+    let mut fields = Vec::new();
+    if left.execution_authority_sha256 != right.execution_authority_sha256 {
+        fields.push("execution_authority");
+    }
+    if left.before_state_sha256 != right.before_state_sha256 {
+        fields.push("before_state_digest");
+    }
+    if left.after_state_sha256 != right.after_state_sha256 {
+        fields.push("after_state_digest");
+    }
+    if left.source_checkpoint_sha256 != right.source_checkpoint_sha256 {
+        fields.push("source_checkpoint");
+    }
+    if left.next_checkpoint_sha256 != right.next_checkpoint_sha256 {
+        fields.push("next_checkpoint");
+    }
+    if left.before != right.before {
+        fields.push("before_state");
+    }
+    if left.after != right.after {
+        fields.push("after_state");
+    }
+    if left.execution != right.execution {
+        fields.push("execution");
+    }
+    if left.value_sample.terminal != right.value_sample.terminal {
+        fields.push("terminal");
+    }
+    if !same_intermediate_boundary_realization(
+        &left.intermediate_boundaries,
+        &right.intermediate_boundaries,
+    ) {
+        fields.push("intermediate_boundaries");
+    }
+    fields
 }
 
 #[derive(Clone, Copy)]
