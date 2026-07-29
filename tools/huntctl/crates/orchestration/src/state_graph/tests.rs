@@ -868,6 +868,49 @@ fn transposition_proof_rejects_tampering_and_absent_nodes() {
 }
 
 #[test]
+fn durable_graph_and_exported_report_share_one_content_identity() {
+    let (mut graph, mut transition, route) = graph_and_transition();
+    terminalize(&mut transition);
+    graph
+        .admit_completed_expansion(
+            transition,
+            route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+    let directory = std::env::temp_dir().join(format!(
+        "dusklight-state-graph-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+
+    let stored = crate::persistence::persist_state_graph(&directory, &graph).unwrap();
+    let duplicate = crate::persistence::persist_state_graph(&directory, &graph).unwrap();
+    let restored = crate::persistence::read_state_graph(&stored.path, stored.graph_sha256).unwrap();
+    let report = crate::reporting::GraphSearchReport::from_graph(&restored).unwrap();
+
+    assert_eq!(stored, duplicate);
+    assert_eq!(restored, graph);
+    assert_eq!(report.graph_sha256, stored.graph_sha256);
+    assert_eq!(report.graph_identity, graph.identity);
+    assert_eq!(report.completed_expansions, 1);
+    assert_eq!(report.best_terminal, graph.best_terminal_path().cloned());
+    report.validate_against(&graph).unwrap();
+    let exported: serde_json::Value =
+        serde_json::from_slice(&report.to_pretty_json().unwrap()).unwrap();
+    assert_eq!(
+        exported["graph_sha256"],
+        serde_json::to_value(stored.graph_sha256).unwrap()
+    );
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn detached_evidence_is_rejected_before_mutating_the_graph() {
     let (mut graph, mut transition, route) = graph_and_transition();
     transition.source_checkpoint_sha256 = Digest([9; 32]);

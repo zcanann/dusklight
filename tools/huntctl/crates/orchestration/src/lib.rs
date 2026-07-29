@@ -25,6 +25,8 @@ pub mod native_tactic_route_runner;
 pub mod native_tactic_worker;
 pub mod optimization_request;
 pub mod optimization_resume;
+pub mod persistence;
+pub mod reporting;
 pub mod residual_campaign;
 pub mod residual_campaign_audit;
 pub mod residual_campaign_runner;
