@@ -176,6 +176,17 @@ fn learner_targets_keep_exact_success_separate_from_censored_continuation() {
         censored_batch.rows[0].exact_conditional_ticks_to_terminal,
         None
     );
+    assert_eq!(censored_batch.rows[0].realized_duration_ticks, 8);
+    assert!(censored_batch.rows[0].action_accepted);
+    assert!(!censored_batch.rows[0].immediate_terminal);
+    assert_eq!(
+        censored_batch.rows[0].prompted_action_status,
+        censored_batch.rows[0]
+            .target_state
+            .player
+            .action_state
+            .map(|action| action.do_status)
+    );
     let exact_learner = crate::learner::ExactGraphTableLearner;
     let censored_snapshot = crate::learner::ActionConditionedGraphLearner::fit(
         &exact_learner,
@@ -191,6 +202,71 @@ fn learner_targets_keep_exact_success_separate_from_censored_continuation() {
             .terminal_support_per_million,
         None
     );
+    let exact_auxiliary = censored_snapshot
+        .auxiliary_prediction(censored_batch.rows[0].source, censored_action_sha256)
+        .unwrap();
+    assert!(!exact_auxiliary.generalized);
+    assert_eq!(exact_auxiliary.realized_duration_ticks, 8);
+    assert_eq!(exact_auxiliary.action_acceptance_per_million, 1_000_000);
+    assert_eq!(
+        exact_auxiliary.next_state_feature_f32_bits,
+        censored_batch.rows[0]
+            .target_features
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>()
+    );
+    let generalized_auxiliary = censored_snapshot
+        .auxiliary_prediction(censored_batch.rows[0].target, censored_action_sha256)
+        .unwrap();
+    assert!(generalized_auxiliary.generalized);
+    assert_eq!(generalized_auxiliary.support_rows, 1);
+    assert_eq!(
+        generalized_auxiliary.next_state_feature_f32_bits,
+        vec![(censored_batch.rows[0].target_features[0] + 8.0).to_bits()]
+    );
+    let mut mixed_batch = censored_batch.clone();
+    let mut second = mixed_batch.rows[0].clone();
+    second.expansion_sha256 = Digest([42; 32]);
+    second.source = mixed_batch.rows[0].target;
+    second.source_state = mixed_batch.rows[0].target_state.clone();
+    second.source_features = mixed_batch.rows[0].target_features.clone();
+    second.target_state = advanced_state(&second.source_state, 4);
+    second.target = ExactStateId {
+        route_checkpoint_sha256: Digest([43; 32]),
+        state_sha256: second.target_state.content_sha256().unwrap(),
+    };
+    second.target_features = vec![second.source_features[0] + 4.0];
+    second.realized_duration_ticks = 4;
+    second.end_reason = OptionEndReason::Completed;
+    second.action_accepted = true;
+    second.prompted_action_status = second
+        .target_state
+        .player
+        .action_state
+        .map(|action| action.do_status);
+    second.immediate_terminal = false;
+    second.support = crate::learner::GraphTargetSupport::OpenContinuationCensored;
+    second.exact_conditional_ticks_to_terminal = None;
+    let prediction_source = second.target;
+    mixed_batch.rows.push(second);
+    mixed_batch.validate().unwrap();
+    let mixed_snapshot = crate::learner::ActionConditionedGraphLearner::fit(
+        &exact_learner,
+        &crate::learner::GraphLearnerContract::default(),
+        &mixed_batch,
+    )
+    .unwrap();
+    let mixed_prediction = mixed_snapshot
+        .auxiliary_prediction(prediction_source, censored_action_sha256)
+        .unwrap();
+    assert!(mixed_prediction.generalized);
+    assert_eq!(mixed_prediction.realized_duration_ticks, 6);
+    assert_eq!(
+        mixed_prediction.next_state_feature_f32_bits,
+        vec![(mixed_batch.rows[1].target_features[0] + 6.0).to_bits()]
+    );
+    assert!(mixed_prediction.prediction_error_millionths > 0);
 
     let (mut terminal_graph, mut terminal, terminal_route) = graph_and_transition();
     terminalize(&mut terminal);
@@ -226,6 +302,16 @@ fn learner_targets_keep_exact_success_separate_from_censored_continuation() {
         .unwrap();
     assert_eq!(estimate.terminal_support_per_million, Some(1_000_000));
     assert_eq!(estimate.conditional_ticks_to_terminal, Some(8));
+    assert_eq!(
+        terminal_snapshot
+            .auxiliary_prediction(
+                terminal_batch.rows[0].source,
+                terminal_batch.rows[0].action.content_sha256().unwrap(),
+            )
+            .unwrap()
+            .immediate_terminal_per_million,
+        1_000_000
+    );
 }
 
 #[test]

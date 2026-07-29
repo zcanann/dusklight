@@ -9,4 +9,4 @@ pub use contract::{
     GraphNodeInput, GraphRankingTuple, GraphTargetSupport, GraphUncertaintyRule,
     LearnedGraphActionEstimate,
 };
-pub use exact_table::{ExactGraphTableLearner, ExactGraphTableSnapshot};
+pub use exact_table::{ExactGraphTableLearner, ExactGraphTableSnapshot, GraphAuxiliaryPrediction};

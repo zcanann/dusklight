@@ -47,6 +47,11 @@ The current implementation is not yet an accepted learning architecture.
   return only on authenticated terminal-connected rows, using negative native
   ticks-to-terminal. Horizon/cancellation tails remain unsupported rather than
   becoming scalar-reward failures.
+- Graph learner rows now carry exact source/next feature vectors, realized
+  duration, option end reason, observed action acceptance, prompted-action
+  status, and immediate terminal outcome. The exact table retains exact
+  predictions and fits an action-shared delta/rate baseline whose numeric
+  prediction error is published to the scheduler as exploration evidence.
 - Long options historically exposed only their endpoints. Four-tick native
   interior boundaries now exist, but they do not by themselves turn the
   system into coherent graph search.
@@ -195,10 +200,6 @@ Exit gate:
 
 ## P2 - Make learning a serious expansion policy
 
-- [ ] Train auxiliary predictions for next-state features, realized duration,
-      action acceptance, prompted-action availability, and terminal
-      probability. Use their errors/uncertainty for representation and
-      exploration, not hand-authored route reward.
 - [ ] Use held-out state groups and independently realized actions to measure
       value calibration and ranking quality. In-sample fit is not evidence.
 - [ ] Implement prioritized replay over surprising, rare, terminal-connected,

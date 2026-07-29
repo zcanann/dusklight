@@ -2,6 +2,7 @@ use crate::state_graph::{
     ActionExpansionStatus, ExactStateId, ExpansionEvidenceAuthority, StateGraph, StateGraphError,
 };
 use dusklight_automation_contracts::artifact::Digest;
+use dusklight_control::option_execution::OptionEndReason;
 use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::option_values::OptionActionDescriptor;
 use serde::{Deserialize, Serialize};
@@ -9,7 +10,7 @@ use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
 
-pub const GRAPH_LEARNING_BATCH_SCHEMA_V1: &str = "dusklight-graph-learning-batch/v1";
+pub const GRAPH_LEARNING_BATCH_SCHEMA_V2: &str = "dusklight-graph-learning-batch/v2";
 pub const GRAPH_LEARNER_CONTRACT_SCHEMA_V1: &str = "dusklight-graph-learner-contract/v1";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -108,8 +109,15 @@ pub struct GraphExpansionLearningTarget {
     pub source: ExactStateId,
     pub target: ExactStateId,
     pub source_state: FactSnapshot,
+    pub target_state: FactSnapshot,
+    pub source_features: Vec<f32>,
+    pub target_features: Vec<f32>,
     pub action: OptionActionDescriptor,
     pub realized_duration_ticks: u32,
+    pub end_reason: OptionEndReason,
+    pub action_accepted: bool,
+    pub prompted_action_status: Option<u8>,
+    pub immediate_terminal: bool,
     pub graph_visits: u64,
     pub support: GraphTargetSupport,
     pub exact_conditional_ticks_to_terminal: Option<u64>,
@@ -149,6 +157,12 @@ impl GraphLearningBatch {
                 .ok_or(GraphLearnerError::Invalid(
                     "completed expansion has no execution",
                 ))?;
+            let evidence_row = evidence
+                .values()
+                .find(|row| row.authority == ExpansionEvidenceAuthority::Executable)
+                .ok_or(GraphLearnerError::Invalid(
+                    "executable expansion has no executable learner evidence",
+                ))?;
             let source_state = graph
                 .node(expansion.source)
                 .ok_or(GraphLearnerError::Invalid(
@@ -156,6 +170,23 @@ impl GraphLearningBatch {
                 ))?
                 .state
                 .clone();
+            let target_state = graph
+                .node(target)
+                .ok_or(GraphLearnerError::Invalid(
+                    "completed expansion target is absent",
+                ))?
+                .state
+                .clone();
+            let transition = &evidence_row.transition;
+            let source_features = transition.value_sample.state.clone();
+            let target_features = transition.value_sample.next_state.clone();
+            let end_reason = execution.end_reason;
+            let action_accepted = !matches!(end_reason, OptionEndReason::Cancelled { .. });
+            let prompted_action_status = target_state
+                .player
+                .action_state
+                .map(|action| action.do_status);
+            let immediate_terminal = target_state.terminal.reached == Some(true);
             let exact_conditional_ticks_to_terminal = exact_returns
                 .get(&target)
                 .map(|ticks| u64::from(execution.duration.realized_ticks).saturating_add(*ticks));
@@ -164,8 +195,15 @@ impl GraphLearningBatch {
                 source: expansion.source,
                 target,
                 source_state,
+                target_state,
+                source_features,
+                target_features,
                 action: expansion.action.clone(),
                 realized_duration_ticks: execution.duration.realized_ticks,
+                end_reason,
+                action_accepted,
+                prompted_action_status,
+                immediate_terminal,
                 graph_visits: evidence.len() as u64,
                 support: if exact_conditional_ticks_to_terminal.is_some() {
                     GraphTargetSupport::ExactTerminalPath
@@ -176,7 +214,7 @@ impl GraphLearningBatch {
             });
         }
         let batch = Self {
-            schema: GRAPH_LEARNING_BATCH_SCHEMA_V1.into(),
+            schema: GRAPH_LEARNING_BATCH_SCHEMA_V2.into(),
             graph_sha256: graph.content_sha256()?,
             rows,
         };
@@ -185,7 +223,7 @@ impl GraphLearningBatch {
     }
 
     pub fn validate(&self) -> Result<(), GraphLearnerError> {
-        if self.schema != GRAPH_LEARNING_BATCH_SCHEMA_V1 || self.graph_sha256 == Digest::ZERO {
+        if self.schema != GRAPH_LEARNING_BATCH_SCHEMA_V2 || self.graph_sha256 == Digest::ZERO {
             return Err(GraphLearnerError::Invalid(
                 "graph learning batch identity is invalid",
             ));
@@ -194,17 +232,41 @@ impl GraphLearningBatch {
             row.source_state
                 .validate()
                 .map_err(|error| GraphLearnerError::Facts(error.to_string()))?;
+            row.target_state
+                .validate()
+                .map_err(|error| GraphLearnerError::Facts(error.to_string()))?;
             row.action
                 .validate()
                 .map_err(|error| GraphLearnerError::Action(error.to_string()))?;
             if row.expansion_sha256 == Digest::ZERO
                 || row.realized_duration_ticks == 0
                 || row.graph_visits == 0
+                || row.source_features.is_empty()
+                || row.source_features.len() != row.target_features.len()
+                || row
+                    .source_features
+                    .iter()
+                    .chain(&row.target_features)
+                    .any(|value| !value.is_finite())
                 || row
                     .source_state
                     .content_sha256()
                     .map_err(|error| GraphLearnerError::Facts(error.to_string()))?
                     != row.source.state_sha256
+                || row
+                    .target_state
+                    .content_sha256()
+                    .map_err(|error| GraphLearnerError::Facts(error.to_string()))?
+                    != row.target.state_sha256
+                || row.action_accepted
+                    == matches!(row.end_reason, OptionEndReason::Cancelled { .. })
+                || row.prompted_action_status
+                    != row
+                        .target_state
+                        .player
+                        .action_state
+                        .map(|action| action.do_status)
+                || row.immediate_terminal != (row.target_state.terminal.reached == Some(true))
                 || (row.support == GraphTargetSupport::ExactTerminalPath)
                     != row.exact_conditional_ticks_to_terminal.is_some()
                 || row
