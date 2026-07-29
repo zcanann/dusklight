@@ -70,6 +70,13 @@ The current implementation is not yet an accepted learning architecture.
   publishes coverage, tick error, and pairwise ranking for every treatment and
   selects only a treatment that passes the sealed thresholds; the scheduler
   retains state-kNN while the losing controls remain non-authoritative.
+- A deterministic around-the-corner fixture has a known unique nine-tick
+  optimum and content-addressed exact states. Exhaustive search proves the
+  optimum, exact transpositions reduce duplicate expansions, and a
+  return learner trained only from realized transitions ranks the optimum in
+  fewer expansions than exhaustive and seeded non-learning controls across
+  four graph-disjoint translated fixture seeds without pruning unsupported
+  work.
 - Long options historically exposed only their endpoints. Four-tick native
   interior boundaries now exist, but they do not by themselves turn the
   system into coherent graph search.
@@ -205,10 +212,6 @@ Exit gate:
       costs without deleting alternate incoming evidence.
 - [ ] Implement a deterministic priority queue whose decision can be replayed
       from graph state, learner snapshot, seed, and sealed scheduler config.
-- [ ] Add a small deterministic around-the-corner environment with a known
-      shortest path. Prove exhaustive mode finds it and transpositions reduce
-      duplicate work.
-
 Exit gate:
 
 - A terminal trajectory containing a 40-tick option exposes all configured
@@ -217,10 +220,6 @@ Exit gate:
   number of unique expansions.
 
 ## P2 - Make learning a serious expansion policy
-
-- [ ] Prove on the deterministic fixture that the learned scheduler reaches
-      the shortest path in fewer expansions than exhaustive and non-learning
-      search without losing completeness.
 
 Exit gate:
 
