@@ -1,0 +1,168 @@
+use dusklight_automation_contracts::artifact::Digest;
+use dusklight_control::option_execution::OptionExecution;
+use dusklight_learning::fact_snapshot::FactSnapshot;
+use dusklight_learning::option_transition::OptionTransitionSample;
+use dusklight_learning::option_values::OptionActionDescriptor;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+
+pub const STATE_GRAPH_SCHEMA_V1: &str = "dusklight-state-graph/v1";
+pub const FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1: &str = "dusklight-future-equivalence-proof/v1";
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StateGraphIdentity {
+    pub execution_authority_sha256: Digest,
+    pub feature_schema_sha256: Digest,
+    pub objective_sha256: Digest,
+    pub root_checkpoint_sha256: Digest,
+}
+
+impl StateGraphIdentity {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.execution_authority_sha256 == Digest::ZERO
+            || self.feature_schema_sha256 == Digest::ZERO
+            || self.objective_sha256 == Digest::ZERO
+            || self.root_checkpoint_sha256 == Digest::ZERO
+        {
+            return Err("state graph identity contains a zero digest");
+        }
+        Ok(())
+    }
+}
+
+/// An exact state is route-specific until a future-equivalence proof says two
+/// native states have interchangeable futures. Semantic similarity is never
+/// sufficient to collapse this identity.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExactStateId {
+    pub route_checkpoint_sha256: Digest,
+    pub state_sha256: Digest,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteRecord {
+    pub route_checkpoint_sha256: Digest,
+    pub tape_sha256: Digest,
+    pub tape_frames: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeBoundaryLocator {
+    pub episode_shard_sha256: Digest,
+    pub option_offset_ticks: u32,
+}
+
+/// Portable route replay is always the fallback. A native episode locator is
+/// optional acceleration evidence and never replaces the portable identity.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestorationLocator {
+    pub route: RouteRecord,
+    pub native_boundary: Option<NativeBoundaryLocator>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StateGraphNode {
+    pub id: ExactStateId,
+    pub state: FactSnapshot,
+    pub terminal: bool,
+    pub root_ticks: u64,
+    pub restoration: RestorationLocator,
+    pub incoming_segments: BTreeSet<Digest>,
+    pub outgoing_segments: BTreeSet<Digest>,
+    pub outgoing_expansions: BTreeSet<Digest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ObservedSegment {
+    pub identity_sha256: Digest,
+    pub parent_expansion_sha256: Digest,
+    pub source: ExactStateId,
+    pub target: ExactStateId,
+    pub option_start_offset_ticks: u32,
+    pub option_end_offset_ticks: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "status", deny_unknown_fields)]
+pub enum ActionExpansionStatus {
+    Untried,
+    Leased {
+        lease_sha256: Digest,
+        expires_at_generation: u64,
+    },
+    Completed {
+        episode_group: u64,
+        route_checkpoint_sha256: Digest,
+        transition: Box<OptionTransitionSample>,
+    },
+    FailedValidation {
+        evidence_sha256: Digest,
+    },
+    Retryable {
+        attempts: u32,
+    },
+}
+
+/// This is the only place a selected action appears in the graph. Interior
+/// segments point back to this expansion; they are observations, not actions.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActionExpansion {
+    pub identity_sha256: Digest,
+    pub source: ExactStateId,
+    pub target: Option<ExactStateId>,
+    pub action: OptionActionDescriptor,
+    pub execution: Option<OptionExecution>,
+    pub observed_segments: Vec<Digest>,
+    pub status: ActionExpansionStatus,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FutureEquivalenceProof {
+    pub schema: String,
+    pub proof_sha256: Digest,
+    pub left: ExactStateId,
+    pub right: ExactStateId,
+    pub validator_sha256: Digest,
+    pub native_evidence_sha256: Digest,
+}
+
+impl FutureEquivalenceProof {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.schema != FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1
+            || self.proof_sha256 == Digest::ZERO
+            || self.validator_sha256 == Digest::ZERO
+            || self.native_evidence_sha256 == Digest::ZERO
+            || self.left == self.right
+        {
+            return Err("future-equivalence proof is missing or self-referential");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalPath {
+    pub terminal: ExactStateId,
+    pub route_checkpoint_sha256: Digest,
+    pub root_to_terminal_ticks: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExpansionAdmission {
+    pub expansion_sha256: Digest,
+    pub source: ExactStateId,
+    pub target: ExactStateId,
+    pub inserted_nodes: usize,
+    pub inserted_segments: usize,
+    pub duplicate: bool,
+}

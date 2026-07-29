@@ -147,9 +147,6 @@ journals, or learned tactics.
 - [ ] Keep production Rust files below 1,500 physical lines, with a normal
       target below 1,000. Split existing oversized route-runner and campaign
       files by responsibility before adding more policy variants.
-- [ ] Define the typed graph node, observed segment, action expansion,
-      future-equivalence/transposition proof, restoration locator, and
-      terminal-path interfaces.
 - [ ] Make the state graph the only mutable owner of discovered states,
       executed expansions, route costs, and terminal paths.
 - [ ] Remove or demote coarse frontier archives and linear replay fields that

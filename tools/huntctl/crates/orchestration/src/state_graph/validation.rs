@@ -1,0 +1,249 @@
+use super::{
+    ActionExpansionStatus, ExactStateId, StateGraph, StateGraphError, TerminalPath,
+    route_checkpoint_sha256, tape_sha256,
+};
+use dusklight_automation_contracts::artifact::Digest;
+use std::collections::BTreeSet;
+
+impl StateGraph {
+    pub fn validate(&self) -> Result<(), StateGraphError> {
+        if self.schema != super::STATE_GRAPH_SCHEMA_V1 {
+            return Err(StateGraphError::Invalid(
+                "state graph schema is unsupported",
+            ));
+        }
+        self.identity.validate().map_err(StateGraphError::Invalid)?;
+        let root = self
+            .nodes
+            .get(&self.root)
+            .ok_or(StateGraphError::Invariant("root node is absent"))?;
+        if root.root_ticks != 0
+            || root.restoration.route.tape_frames != self.root_route_frames
+            || root.id != self.root
+        {
+            return Err(StateGraphError::Invariant(
+                "root node is detached from graph identity",
+            ));
+        }
+
+        for (route_identity, route) in &self.routes {
+            if *route_identity
+                != route_checkpoint_sha256(self.identity.root_checkpoint_sha256, route)?
+            {
+                return Err(StateGraphError::Invariant(
+                    "route store key is detached from canonical tape",
+                ));
+            }
+        }
+        for (id, node) in &self.nodes {
+            node.state.validate()?;
+            if node.id != *id
+                || node.id.state_sha256 != node.state.content_sha256()?
+                || node.terminal != (node.state.terminal.reached == Some(true))
+                || node.restoration.route.route_checkpoint_sha256 != node.id.route_checkpoint_sha256
+            {
+                return Err(StateGraphError::Invariant(
+                    "node identity is detached from its typed state",
+                ));
+            }
+            let route = self.routes.get(&node.id.route_checkpoint_sha256).ok_or(
+                StateGraphError::Invariant("node restoration route is absent"),
+            )?;
+            if node.restoration.route.tape_frames != route.frames.len() as u64
+                || node.restoration.route.tape_sha256 != tape_sha256(route)?
+                || node.state.tape_frame != route.frames.len() as u64
+                || node.root_ticks
+                    != (route.frames.len() as u64)
+                        .checked_sub(self.root_route_frames)
+                        .ok_or(StateGraphError::Invariant("node route precedes graph root"))?
+            {
+                return Err(StateGraphError::Invariant(
+                    "node restoration evidence is detached",
+                ));
+            }
+            if let Some(native) = &node.restoration.native_boundary
+                && (native.episode_shard_sha256 == Digest::ZERO || native.option_offset_ticks == 0)
+            {
+                return Err(StateGraphError::Invariant(
+                    "native restoration locator is invalid",
+                ));
+            }
+            for segment in &node.incoming_segments {
+                if self
+                    .segments
+                    .get(segment)
+                    .is_none_or(|value| value.target != *id)
+                {
+                    return Err(StateGraphError::Invariant(
+                        "node incoming segment is detached",
+                    ));
+                }
+            }
+            for segment in &node.outgoing_segments {
+                if self
+                    .segments
+                    .get(segment)
+                    .is_none_or(|value| value.source != *id)
+                {
+                    return Err(StateGraphError::Invariant(
+                        "node outgoing segment is detached",
+                    ));
+                }
+            }
+            for expansion in &node.outgoing_expansions {
+                if self
+                    .expansions
+                    .get(expansion)
+                    .is_none_or(|value| value.source != *id)
+                {
+                    return Err(StateGraphError::Invariant(
+                        "node outgoing expansion is detached",
+                    ));
+                }
+            }
+        }
+
+        for (identity, segment) in &self.segments {
+            if segment.identity_sha256 != *identity
+                || segment.option_start_offset_ticks >= segment.option_end_offset_ticks
+                || !self.nodes.contains_key(&segment.source)
+                || !self.nodes.contains_key(&segment.target)
+                || !self
+                    .expansions
+                    .contains_key(&segment.parent_expansion_sha256)
+            {
+                return Err(StateGraphError::Invariant("observed segment is detached"));
+            }
+        }
+        for (identity, expansion) in &self.expansions {
+            if expansion.identity_sha256 != *identity || !self.nodes.contains_key(&expansion.source)
+            {
+                return Err(StateGraphError::Invariant(
+                    "action expansion identity is detached",
+                ));
+            }
+            self.validate_expansion(expansion)?;
+        }
+
+        let expected_terminal = self
+            .nodes
+            .values()
+            .filter(|node| node.terminal)
+            .min_by_key(|node| (node.root_ticks, node.id))
+            .map(|node| TerminalPath {
+                terminal: node.id,
+                route_checkpoint_sha256: node.id.route_checkpoint_sha256,
+                root_to_terminal_ticks: node.root_ticks,
+            });
+        if self.best_terminal != expected_terminal {
+            return Err(StateGraphError::Invariant(
+                "best terminal path is not derived from graph nodes",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_expansion(
+        &self,
+        expansion: &super::ActionExpansion,
+    ) -> Result<(), StateGraphError> {
+        match &expansion.status {
+            ActionExpansionStatus::Completed {
+                episode_group: _,
+                route_checkpoint_sha256,
+                transition,
+            } => {
+                transition.validate()?;
+                let target = expansion.target.ok_or(StateGraphError::Invariant(
+                    "completed expansion has no target",
+                ))?;
+                if transition.replay_identity_sha256()? != expansion.identity_sha256
+                    || transition.before_state_sha256 != expansion.source.state_sha256
+                    || transition.source_checkpoint_sha256
+                        != expansion.source.route_checkpoint_sha256
+                    || transition.after_state_sha256 != target.state_sha256
+                    || transition.next_checkpoint_sha256 != target.route_checkpoint_sha256
+                    || *route_checkpoint_sha256 != target.route_checkpoint_sha256
+                    || transition.value_sample.action != expansion.action
+                    || expansion.execution.as_ref() != Some(&transition.execution)
+                {
+                    return Err(StateGraphError::Invariant(
+                        "completed action expansion is detached from native evidence",
+                    ));
+                }
+                self.validate_segment_chain(
+                    expansion.source,
+                    target,
+                    transition.execution.duration.realized_ticks,
+                    expansion.identity_sha256,
+                    &expansion.observed_segments,
+                )
+            }
+            ActionExpansionStatus::Leased {
+                lease_sha256,
+                expires_at_generation: _,
+            } if *lease_sha256 == Digest::ZERO => Err(StateGraphError::Invariant(
+                "leased expansion has no lease identity",
+            )),
+            ActionExpansionStatus::FailedValidation { evidence_sha256 }
+                if *evidence_sha256 == Digest::ZERO =>
+            {
+                Err(StateGraphError::Invariant(
+                    "failed expansion has no evidence identity",
+                ))
+            }
+            _ if expansion.target.is_some()
+                || expansion.execution.is_some()
+                || !expansion.observed_segments.is_empty() =>
+            {
+                Err(StateGraphError::Invariant(
+                    "unfinished expansion contains realized evidence",
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn validate_segment_chain(
+        &self,
+        source: ExactStateId,
+        target: ExactStateId,
+        duration_ticks: u32,
+        expansion_sha256: Digest,
+        segment_ids: &[Digest],
+    ) -> Result<(), StateGraphError> {
+        if segment_ids.is_empty()
+            || segment_ids.iter().copied().collect::<BTreeSet<_>>().len() != segment_ids.len()
+        {
+            return Err(StateGraphError::Invariant(
+                "completed expansion has an empty or duplicate segment chain",
+            ));
+        }
+        let mut expected_source = source;
+        let mut expected_offset = 0_u32;
+        for identity in segment_ids {
+            let segment = self
+                .segments
+                .get(identity)
+                .ok_or(StateGraphError::Invariant(
+                    "completed expansion segment is absent",
+                ))?;
+            if segment.parent_expansion_sha256 != expansion_sha256
+                || segment.source != expected_source
+                || segment.option_start_offset_ticks != expected_offset
+            {
+                return Err(StateGraphError::Invariant(
+                    "completed expansion segment chain is discontinuous",
+                ));
+            }
+            expected_source = segment.target;
+            expected_offset = segment.option_end_offset_ticks;
+        }
+        if expected_source != target || expected_offset != duration_ticks {
+            return Err(StateGraphError::Invariant(
+                "completed expansion segment chain misses its target",
+            ));
+        }
+        Ok(())
+    }
+}

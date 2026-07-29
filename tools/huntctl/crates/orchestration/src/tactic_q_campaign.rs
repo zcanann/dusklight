@@ -79,8 +79,6 @@ pub const TACTIC_Q_MODEL_ONLY_EPISODE_GROUP: u64 = u64::MAX;
 /// executable tactics from it.
 pub const TACTIC_Q_DEMONSTRATION_EPISODE_GROUP: u64 = u64::MAX - 1;
 const MAX_RANKED_FRONTIER_CANDIDATES: usize = 16;
-const ROUTE_CHECKPOINT_SCHEMA_V1: &[u8] = b"dusklight-route-checkpoint/v1";
-
 fn digest_is_zero(value: &Digest) -> bool {
     *value == Digest::ZERO
 }
@@ -1447,17 +1445,8 @@ pub(crate) fn route_checkpoint(
     root_checkpoint_sha256: Digest,
     route: &InputTape,
 ) -> Result<Digest, TacticQCampaignError> {
-    route
-        .validate()
-        .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
-    let bytes = serde_json::to_vec(route)
-        .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-    let mut hasher = Sha256::new();
-    hasher.update(ROUTE_CHECKPOINT_SCHEMA_V1);
-    hasher.update(root_checkpoint_sha256.0);
-    hasher.update((bytes.len() as u64).to_le_bytes());
-    hasher.update(bytes);
-    Ok(Digest(hasher.finalize().into()))
+    crate::state_graph::route_checkpoint_sha256(root_checkpoint_sha256, route)
+        .map_err(|error| TacticQCampaignError::Tape(error.to_string()))
 }
 
 fn sha256(bytes: &[u8]) -> Digest {

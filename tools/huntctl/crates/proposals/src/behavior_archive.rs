@@ -937,8 +937,9 @@ fn tactic_route_checkpoint(
     root_checkpoint_sha256: Digest,
     route: &InputTape,
 ) -> Result<Digest, BehaviorArchiveError> {
-    let bytes =
-        serde_json::to_vec(route).map_err(|error| BehaviorArchiveError::new(error.to_string()))?;
+    let bytes = route
+        .encode()
+        .map_err(|error| BehaviorArchiveError::new(error.to_string()))?;
     let mut hasher = Sha256::new();
     hasher.update(b"dusklight-route-checkpoint/v1");
     hasher.update(root_checkpoint_sha256.0);
