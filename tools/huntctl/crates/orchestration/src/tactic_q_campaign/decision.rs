@@ -821,40 +821,97 @@ impl TacticQCampaign {
         replay_routes.push(outcome.route_tape.clone());
         let mut episode_groups = self.episode_groups.clone();
         episode_groups.push(self.episode_group);
-        let mut state_graph =
-            self.state_graph
-                .clone()
-                .ok_or(TacticQCampaignError::InvalidState(
-                    "native execution requires a bound state graph",
-                ))?;
-        let mut frontier_archive = self.frontier_archive.clone();
-        let graph_admission = state_graph.admit_completed_expansion(
-            transition.clone(),
-            outcome.route_tape.clone(),
-            self.episode_group,
-            if self.episode_group == TACTIC_Q_MODEL_ONLY_EPISODE_GROUP {
-                crate::state_graph::ExpansionEvidenceAuthority::LearnerEvidenceOnly
-            } else {
-                crate::state_graph::ExpansionEvidenceAuthority::Executable
+        let evidence_sha256 = transition.replay_identity_sha256()?;
+        let expansion_sha256 = crate::state_graph::action_expansion_identity(
+            crate::state_graph::ExactStateId {
+                route_checkpoint_sha256: transition.source_checkpoint_sha256,
+                state_sha256: transition.before_state_sha256,
             },
+            &transition.value_sample.action,
         )?;
-        if !graph_admission.duplicate || graph_admission.authority_promoted {
-            consider_frontier_transition(
-                &mut frontier_archive,
-                self.root_checkpoint_sha256,
-                &transition,
-                &outcome.route_tape,
-                self.episode_group,
-                state_graph.expansion_count().saturating_sub(1),
-            )?;
+        let expected_authority = if self.episode_group == TACTIC_Q_MODEL_ONLY_EPISODE_GROUP {
+            crate::state_graph::ExpansionEvidenceAuthority::LearnerEvidenceOnly
+        } else {
+            crate::state_graph::ExpansionEvidenceAuthority::Executable
+        };
+        let transition_already_admitted = self
+            .state_graph
+            .as_ref()
+            .and_then(|graph| graph.expansion(expansion_sha256))
+            .and_then(|expansion| match &expansion.status {
+                crate::state_graph::ActionExpansionStatus::Completed { evidence, .. } => {
+                    evidence.get(&evidence_sha256)
+                }
+                _ => None,
+            })
+            .is_some_and(|evidence| {
+                evidence.episode_group == self.episode_group
+                    && evidence.authority == expected_authority
+                    && evidence.transition.as_ref() == &transition
+            });
+        let projection_already_contains_transition = self
+            .training_replay
+            .iter()
+            .zip(&self.training_replay_routes)
+            .zip(&self.training_episode_groups)
+            .any(|((row, route), episode_group)| {
+                row == &transition
+                    && route == &outcome.route_tape
+                    && *episode_group == self.episode_group
+            });
+        if transition_already_admitted && !projection_already_contains_transition {
+            return Err(TacticQCampaignError::InvalidState(
+                "pre-admitted native transition is absent from the learner projection",
+            ));
         }
-        let projection = graph_training_projection(&state_graph)?;
+        let (state_graph_update, frontier_archive_update, projection_update) =
+            if transition_already_admitted {
+                (None, None, None)
+            } else {
+                let mut state_graph =
+                    self.state_graph
+                        .clone()
+                        .ok_or(TacticQCampaignError::InvalidState(
+                            "native execution requires a bound state graph",
+                        ))?;
+                let mut frontier_archive = self.frontier_archive.clone();
+                let graph_admission = state_graph.admit_completed_expansion(
+                    transition.clone(),
+                    outcome.route_tape.clone(),
+                    self.episode_group,
+                    expected_authority,
+                )?;
+                if !graph_admission.duplicate || graph_admission.authority_promoted {
+                    consider_frontier_transition(
+                        &mut frontier_archive,
+                        self.root_checkpoint_sha256,
+                        &transition,
+                        &outcome.route_tape,
+                        self.episode_group,
+                        state_graph.expansion_count().saturating_sub(1),
+                    )?;
+                }
+                let projection = graph_training_projection(&state_graph)?;
+                (Some(state_graph), Some(frontier_archive), Some(projection))
+            };
         let model_update = if refit_model {
+            let (transitions, episode_groups) = projection_update
+                .as_ref()
+                .map(|projection| {
+                    (
+                        projection.transitions.as_slice(),
+                        projection.episode_groups.as_slice(),
+                    )
+                })
+                .unwrap_or((
+                    self.training_replay.as_slice(),
+                    self.training_episode_groups.as_slice(),
+                ));
             Some(replay_model(
                 self.feature_schema_sha256,
                 self.objective_sha256,
-                &projection.transitions,
-                &projection.episode_groups,
+                transitions,
+                episode_groups,
                 &self.model_config,
             )?)
         } else {
@@ -870,11 +927,17 @@ impl TacticQCampaign {
         self.replay = replay;
         self.replay_routes = replay_routes;
         self.episode_groups = episode_groups;
-        self.state_graph = Some(state_graph);
-        self.training_replay = projection.transitions;
-        self.training_replay_routes = projection.routes;
-        self.training_episode_groups = projection.episode_groups;
-        self.frontier_archive = frontier_archive;
+        if let Some(state_graph) = state_graph_update {
+            self.state_graph = Some(state_graph);
+        }
+        if let Some(projection) = projection_update {
+            self.training_replay = projection.transitions;
+            self.training_replay_routes = projection.routes;
+            self.training_episode_groups = projection.episode_groups;
+        }
+        if let Some(frontier_archive) = frontier_archive_update {
+            self.frontier_archive = frontier_archive;
+        }
         if let Some(model) = model_update {
             // Exact-descriptor FQI is a small-data control, not the scalable
             // action representation. Clear it once a dynamic controller

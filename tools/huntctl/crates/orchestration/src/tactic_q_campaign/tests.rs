@@ -763,6 +763,10 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         )
         .unwrap();
     assert_eq!(first_incremental.persistence.replay_rows, 1);
+    assert_eq!(
+        first_incremental.graph_head, zero_incremental.graph_head,
+        "retaining the already-admitted selected outcome must not dirty or rewrite the graph"
+    );
 
     assert_eq!(evaluated.transition, retained.step.transition);
     assert_eq!(evaluated.reward, retained.reward);
