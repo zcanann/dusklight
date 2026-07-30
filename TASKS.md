@@ -481,9 +481,13 @@ Exit gate:
       in new journals, and reconstructs legacy family actions deterministically.
       This remains open pending compilation and native discovery evidence.
 - [ ] Learn typed entry conditions from independent source states.
-      Candidate construction now requires at least two distinct entry-state
-      identities, but this stays open until compiled tests and held-out native
-      applicability evidence validate the learned condition.
+      Candidate construction requires at least two distinct entry-state
+      identities. Source checkpoint `be0427afcd` fixes a false-generalization
+      bug: stage/room, procedure, contacts, and distance evidence now remains
+      in joint typed cells with per-cell distance ranges instead of fabricating
+      unsupported Cartesian combinations from independent sets. This stays
+      open until compiled tests and held-out native applicability evidence
+      validate the learned condition.
 - [ ] Promote only when a composition improves terminal/tick return on held-out
       state groups relative to executing its primitive components.
       Source checkpoint `79ff1f996a` deletes the best-single-primitive
