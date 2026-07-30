@@ -1,12 +1,17 @@
 //! Tactic-learning codecs over the shared content-addressed evidence store.
 
-use crate::state_graph::StateGraph;
+use crate::state_graph::{
+    ExactStateId, StateGraph, StateGraphPersistenceHead, StateGraphPersistencePlan,
+    route_checkpoint_sha256,
+};
 use crate::tactic_q_campaign::{
-    TACTIC_Q_CHECKPOINT_EXTENSION, TACTIC_Q_CHECKPOINT_SCHEMA_V5,
+    TACTIC_Q_CHECKPOINT_EXTENSION, TACTIC_Q_CHECKPOINT_PERSISTENCE_SCHEMA_V1,
+    TACTIC_Q_CHECKPOINT_SCHEMA_V5, TACTIC_Q_CHECKPOINT_SCHEMA_V6,
     TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1, TacticQCampaignCheckpoint,
-    TacticQCampaignError, TacticQCheckpointSerializationBenchmark, TacticQFinalResult,
-    TacticQLearnerSnapshot, TacticQTrainingCorpus, checkpoint_digest, validate_checkpoint,
-    validate_final_result, validate_training_corpus,
+    TacticQCampaignError, TacticQCheckpointIdentityV6, TacticQCheckpointPersistence,
+    TacticQCheckpointSerializationBenchmark, TacticQFinalResult, TacticQLearnerSnapshot,
+    TacticQTrainingCorpus, checkpoint_digest, validate_checkpoint, validate_final_result,
+    validate_training_corpus,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
@@ -33,6 +38,13 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+mod legacy;
+mod read;
+mod v6;
+pub(crate) use legacy::{write_checkpoint, write_checkpoint_with_local_store};
+pub(crate) use read::read_checkpoint;
+pub(crate) use v6::{TacticQCampaignPersistenceView, TacticQCheckpointCommit, write_checkpoint_v6};
 
 const FACT_OBJECT_SCHEMA_V1: &str = "dusklight-tactic-q-fact-object/v1";
 const CHECKPOINT_MANIFEST_SCHEMA_V4: &str = "dusklight-tactic-q-checkpoint-manifest/v4";
@@ -193,6 +205,86 @@ impl TacticQContentStore {
     ) -> Result<StateGraph, TacticQContentStoreError> {
         require_kind(reference, ContentKind::StateGraph)?;
         StateGraph::decode(&self.read_bytes(reference)?).map_err(TacticQContentStoreError::domain)
+    }
+
+    pub(crate) fn store_state_graph_journal(
+        &self,
+        graph: &StateGraph,
+    ) -> Result<(StoredContentRef, StateGraphPersistenceHead), TacticQContentStoreError> {
+        match graph
+            .persistence_plan()
+            .map_err(TacticQContentStoreError::domain)?
+        {
+            StateGraphPersistencePlan::Reuse(head) => Ok((
+                StoredContentRef {
+                    kind: ContentKind::StateGraphJournal,
+                    sha256: head.sha256,
+                },
+                head,
+            )),
+            StateGraphPersistencePlan::Store { parent, bytes } => {
+                let reference = StoredContentRef::from(
+                    &self
+                        .store
+                        .put_bytes(&bytes, ContentKind::StateGraphJournal)
+                        .map_err(TacticQContentStoreError::Store)?,
+                );
+                let depth = parent
+                    .map_or(Some(0), |head| head.depth.checked_add(1))
+                    .ok_or(TacticQContentStoreError::Invalid(
+                        "state graph persistence depth overflows",
+                    ))?;
+                Ok((
+                    reference,
+                    StateGraphPersistenceHead {
+                        sha256: reference.sha256,
+                        depth,
+                    },
+                ))
+            }
+        }
+    }
+
+    pub(crate) fn load_state_graph_journal(
+        &self,
+        head: StateGraphPersistenceHead,
+    ) -> Result<StateGraph, TacticQContentStoreError> {
+        let capacity = usize::try_from(head.depth.checked_add(1).ok_or(
+            TacticQContentStoreError::Invalid("state graph persistence depth overflows"),
+        )?)
+        .map_err(TacticQContentStoreError::domain)?;
+        let mut records = Vec::with_capacity(capacity);
+        let mut cursor = head;
+        loop {
+            let reference = StoredContentRef {
+                kind: ContentKind::StateGraphJournal,
+                sha256: cursor.sha256,
+            };
+            let bytes = self.read_bytes(reference)?;
+            let parent = StateGraph::persistence_record_parent(&bytes)
+                .map_err(TacticQContentStoreError::domain)?;
+            records.push((cursor, bytes));
+            match parent {
+                Some(parent_sha256) => {
+                    cursor = StateGraphPersistenceHead {
+                        sha256: parent_sha256,
+                        depth: cursor.depth.checked_sub(1).ok_or(
+                            TacticQContentStoreError::Invalid(
+                                "state graph persistence chain underflows",
+                            ),
+                        )?,
+                    };
+                }
+                None if cursor.depth == 0 => break,
+                None => {
+                    return Err(TacticQContentStoreError::Invalid(
+                        "state graph persistence chain ended before its base",
+                    ));
+                }
+            }
+        }
+        records.reverse();
+        StateGraph::from_persistence_records(&records).map_err(TacticQContentStoreError::domain)
     }
 
     pub fn store_fact(
@@ -580,60 +672,6 @@ struct InlineTrainingCorpusManifest {
     episode_groups: Vec<u64>,
 }
 
-pub(crate) fn write_checkpoint_with_local_store(
-    checkpoint: &TacticQCampaignCheckpoint,
-    directory: &Path,
-) -> Result<PathBuf, TacticQCampaignError> {
-    write_checkpoint(checkpoint, directory, &directory.join(CONTENT_DIRECTORY))
-}
-
-pub(crate) fn write_checkpoint(
-    checkpoint: &TacticQCampaignCheckpoint,
-    directory: &Path,
-    content_root: &Path,
-) -> Result<PathBuf, TacticQCampaignError> {
-    if content_root.file_name().and_then(|name| name.to_str()) != Some(CONTENT_DIRECTORY) {
-        return Err(TacticQCampaignError::InvalidState(
-            "checkpoint content root must use the discoverable objects directory",
-        ));
-    }
-    let store = TacticQContentStore::initialize(content_root).map_err(checkpoint_store_error)?;
-    validate_checkpoint(checkpoint)?;
-    write_validated_checkpoint_to_store(checkpoint, directory, &store)
-}
-
-/// Writes a checkpoint already constructed and validated by
-/// `TacticQCampaign::checkpoint`. Freshly decoded or externally supplied
-/// checkpoints must use `write_checkpoint`.
-pub(crate) fn write_validated_checkpoint_to_store(
-    checkpoint: &TacticQCampaignCheckpoint,
-    directory: &Path,
-    store: &TacticQContentStore,
-) -> Result<PathBuf, TacticQCampaignError> {
-    if store
-        .store
-        .root()
-        .file_name()
-        .and_then(|name| name.to_str())
-        != Some(CONTENT_DIRECTORY)
-    {
-        return Err(TacticQCampaignError::InvalidState(
-            "checkpoint content root must use the discoverable objects directory",
-        ));
-    }
-    fs::create_dir_all(directory).map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
-    let manifest = store_checkpoint_manifest(checkpoint, &store)?;
-    let raw = serde_cbor::to_vec(&manifest)
-        .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-    let envelope = encode_checkpoint_envelope(&raw)?;
-    let final_path = directory.join(format!(
-        "tactic-q-{}.{}",
-        checkpoint.content_sha256, TACTIC_Q_CHECKPOINT_EXTENSION
-    ));
-    install_binary_artifact(&final_path, &envelope)?;
-    Ok(final_path)
-}
-
 pub(crate) fn write_training_corpus(
     corpus: &TacticQTrainingCorpus,
     path: &Path,
@@ -841,42 +879,6 @@ pub(crate) fn read_final_result(path: &Path) -> Result<TacticQFinalResult, Tacti
     let result: TacticQFinalResult = decode_cbor(&raw).map_err(checkpoint_store_error)?;
     validate_final_result(&result)?;
     Ok(result)
-}
-
-pub(crate) fn read_checkpoint(
-    path: &Path,
-) -> Result<TacticQCampaignCheckpoint, TacticQCampaignError> {
-    let metadata =
-        fs::symlink_metadata(path).map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
-    if !metadata.file_type().is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.len() < CHECKPOINT_HEADER_SIZE as u64
-        || metadata.len() > MAXIMUM_CHECKPOINT_MANIFEST_BYTES + CHECKPOINT_HEADER_SIZE as u64
-    {
-        return Err(TacticQCampaignError::InvalidState(
-            "checkpoint path is not a bounded physical binary envelope",
-        ));
-    }
-    let raw = decode_checkpoint_envelope(
-        &fs::read(path).map_err(|error| TacticQCampaignError::Io(error.to_string()))?,
-    )?;
-    let manifest: StoredCheckpointManifest = decode_cbor(&raw).map_err(checkpoint_store_error)?;
-    let parent = path.parent().ok_or(TacticQCampaignError::InvalidState(
-        "checkpoint path has no parent",
-    ))?;
-    for ancestor in parent.ancestors() {
-        let content_root = ancestor.join(CONTENT_DIRECTORY);
-        let Ok(store) = TacticQContentStore::open(&content_root) else {
-            continue;
-        };
-        if let Ok(checkpoint) = load_checkpoint_manifest(&manifest, &store) {
-            validate_checkpoint(&checkpoint)?;
-            return Ok(checkpoint);
-        }
-    }
-    Err(TacticQCampaignError::InvalidState(
-        "checkpoint content objects are unavailable or invalid",
-    ))
 }
 
 pub(crate) fn benchmark_checkpoint_serialization(
@@ -1200,6 +1202,8 @@ fn load_checkpoint_manifest(
         model_revision: manifest.model_revision,
         model_config: manifest.model_config.clone(),
         exploration: manifest.exploration,
+        persistence: None,
+        persistence_validated: false,
     };
     if checkpoint_digest(&checkpoint)? != manifest.content_sha256 {
         return Err(TacticQCampaignError::InvalidState(

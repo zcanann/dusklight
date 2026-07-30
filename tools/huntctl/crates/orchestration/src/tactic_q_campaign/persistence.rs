@@ -30,6 +30,8 @@ impl TacticQCampaign {
             model_revision: self.model_revision,
             model_config: self.model_config.clone(),
             exploration: self.exploration,
+            persistence: None,
+            persistence_validated: false,
         };
         validate_checkpoint_payload(&checkpoint)?;
         checkpoint.content_sha256 = checkpoint_digest(&checkpoint)?;
@@ -112,17 +114,46 @@ impl TacticQCampaign {
     }
 
     pub(crate) fn write_checkpoint_with_content_store(
-        &self,
+        &mut self,
         directory: &Path,
         store: &tactic_q_checkpoint_store::TacticQContentStore,
-    ) -> Result<(PathBuf, TacticQCampaignCheckpoint), TacticQCampaignError> {
-        let checkpoint = self.checkpoint()?;
-        let path = tactic_q_checkpoint_store::write_validated_checkpoint_to_store(
-            &checkpoint,
+    ) -> Result<tactic_q_checkpoint_store::TacticQCheckpointCommit, TacticQCampaignError> {
+        let graph = self
+            .state_graph
+            .as_ref()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "checkpoint requires a bound state graph",
+            ))?;
+        let commit = tactic_q_checkpoint_store::write_checkpoint_v6(
+            tactic_q_checkpoint_store::TacticQCampaignPersistenceView {
+                execution_authority_sha256: self.execution_authority_sha256,
+                feature_schema_sha256: self.feature_schema_sha256,
+                objective_sha256: self.objective_sha256,
+                root_checkpoint_sha256: self.root_checkpoint_sha256,
+                episode_group: self.episode_group,
+                decision_index: self.decision_index,
+                current: &self.current,
+                route_tape: &self.route_tape,
+                state_graph: graph,
+                replay: &self.replay,
+                replay_routes: &self.replay_routes,
+                episode_groups: &self.episode_groups,
+                prior_persistence: self.checkpoint_persistence.as_ref(),
+                model_revision: self.model_revision,
+                model_config: &self.model_config,
+                exploration: self.exploration,
+            },
             directory,
             store,
         )?;
-        Ok((path, checkpoint))
+        self.state_graph
+            .as_mut()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "checkpoint graph disappeared",
+            ))?
+            .install_persistence_head(commit.graph_head);
+        self.checkpoint_persistence = Some(commit.persistence.clone());
+        Ok(commit)
     }
 
     pub fn read_checkpoint(path: &Path) -> Result<Self, TacticQCampaignError> {
@@ -226,6 +257,7 @@ impl TacticQCampaign {
             continuous_model: RefCell::new(None),
             visited_states,
             hindsight,
+            checkpoint_persistence: checkpoint.persistence,
         })
     }
 

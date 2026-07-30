@@ -57,7 +57,7 @@ pub(super) fn has_tactic_recovery_point(
 
 pub(super) fn persist_tactic_recovery_point(
     seed_root: &Path,
-    campaign: &TacticQCampaign,
+    campaign: &mut TacticQCampaign,
     content_store: &TacticQContentStore,
     performance: NativeTacticSeedPerformance,
 ) -> Result<PathBuf, NativeTacticRouteRunError> {
@@ -81,9 +81,10 @@ pub(super) fn persist_tactic_recovery_point(
         remove_recovery_directory(&recovery_root, &partial_directory)?;
     }
     fs::create_dir(&partial_directory).map_err(route_error)?;
-    let (checkpoint_path, checkpoint) = campaign
+    let checkpoint = campaign
         .write_checkpoint_with_content_store(&partial_directory, content_store)
         .map_err(route_error)?;
+    let checkpoint_path = checkpoint.path;
     let checkpoint_file = checkpoint_path
         .file_name()
         .and_then(|name| name.to_str())
@@ -374,6 +375,7 @@ fn sync_directory(path: &Path) -> Result<(), NativeTacticRouteRunError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tactic_q_campaign::{TACTIC_Q_CHECKPOINT_SCHEMA_V5, TACTIC_Q_CHECKPOINT_SCHEMA_V6};
     use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
     use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
     use dusklight_learning::tactic_asset::{TacticAssetSource, TacticCatalogEntry};
@@ -487,14 +489,17 @@ mod tests {
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
-        let campaign = campaign();
+        let mut campaign = campaign();
         let content_root = root.join("objects");
         let content_store = TacticQContentStore::initialize(&content_root).unwrap();
-        persist_tactic_recovery_point(&root, &campaign, &content_store, performance(0)).unwrap();
+        persist_tactic_recovery_point(&root, &mut campaign, &content_store, performance(0))
+            .unwrap();
         assert!(has_tactic_recovery_point(&root).unwrap());
         let loaded = load_tactic_recovery_point(&root, 0).unwrap();
         let checkpoint = TacticQCampaign::read_checkpoint_payload(&loaded.checkpoint_path).unwrap();
         assert_eq!(checkpoint.decision_index, 0);
+        assert_eq!(checkpoint.schema, TACTIC_Q_CHECKPOINT_SCHEMA_V6);
+        assert!(checkpoint.persistence.is_some());
         assert_eq!(loaded.performance, performance(0));
 
         let partial = root
@@ -505,6 +510,42 @@ mod tests {
         prune_tactic_recovery_points(&root, 0).unwrap();
         assert!(!partial.exists());
         assert!(load_tactic_recovery_point(&root, 0).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_checkpoint_resumes_and_migrates_to_the_journal_format() {
+        let root = std::env::temp_dir().join(format!(
+            "dusklight-native-tactic-checkpoint-migration-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let legacy_path = campaign().write_checkpoint(&root.join("legacy")).unwrap();
+        let legacy = TacticQCampaign::read_checkpoint_payload(&legacy_path).unwrap();
+        assert_eq!(legacy.schema, TACTIC_Q_CHECKPOINT_SCHEMA_V5);
+        assert!(legacy.persistence.is_none());
+
+        let mut resumed = TacticQCampaign::resume(legacy).unwrap();
+        let content_store = TacticQContentStore::initialize(&root.join("objects")).unwrap();
+        let first = resumed
+            .write_checkpoint_with_content_store(&root.join("migrated"), &content_store)
+            .unwrap();
+        assert_eq!(first.graph_head.depth, 0);
+        let migrated = TacticQCampaign::read_checkpoint_payload(&first.path).unwrap();
+        assert_eq!(migrated.schema, TACTIC_Q_CHECKPOINT_SCHEMA_V6);
+        assert_eq!(
+            migrated
+                .persistence
+                .as_ref()
+                .unwrap()
+                .state_graph_head_sha256,
+            first.graph_head.sha256
+        );
+
+        let second = resumed
+            .write_checkpoint_with_content_store(&root.join("migrated-again"), &content_store)
+            .unwrap();
+        assert_eq!(second.graph_head, first.graph_head);
         fs::remove_dir_all(root).unwrap();
     }
 

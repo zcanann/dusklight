@@ -68,7 +68,7 @@ pub(super) fn resume_seed(
         ));
     }
     let campaign = TacticQCampaign::resume_without_model(checkpoint).map_err(route_error)?;
-    if campaign.replay.len() as u64 != campaign.decision_index {
+    if campaign.replay().len() as u64 != campaign.decision_index {
         return Err(route_message(
             "paused tactic checkpoint has a detached decision history",
         ));
@@ -82,7 +82,7 @@ pub(super) fn resume_seed(
     if campaign.episode_group != lane.episode_group(episode)?
         || trace
             .iter()
-            .zip(&campaign.replay)
+            .zip(campaign.replay())
             .any(|(decision, replay)| decision.selected_option_id != replay.execution.option_id)
     {
         return Err(route_message(

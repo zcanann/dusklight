@@ -276,7 +276,7 @@ pub(super) fn parameterized_feedback_for_state(
 ) -> Result<Option<ParameterizedTacticFeedback>, NativeTacticRouteRunError> {
     let state_sha256 = state.content_sha256().map_err(route_error)?;
     let Some(previous) = campaign
-        .replay
+        .replay()
         .iter()
         .rev()
         .find(|transition| transition.after_state_sha256 == state_sha256)
@@ -287,7 +287,7 @@ pub(super) fn parameterized_feedback_for_state(
     let before = previous.before.player.position_f32_bits.map(f32::from_bits);
     let after = previous.after.player.position_f32_bits.map(f32::from_bits);
     let prior_occurrences = campaign
-        .replay
+        .replay()
         .iter()
         .filter(|transition| transition.after_state_sha256 == state_sha256)
         .count();

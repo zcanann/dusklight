@@ -47,6 +47,8 @@ pub enum ContentKind {
     Model,
     LearnerSnapshot,
     StateGraph,
+    StateGraphJournal,
+    TacticCheckpointIndex,
     DatasetManifest,
     CrashArtifact,
 }
@@ -93,6 +95,8 @@ impl ContentKind {
             Self::Model => "application/vnd.dusklight.model+json",
             Self::LearnerSnapshot => "application/vnd.dusklight.learner-snapshot+cbor",
             Self::StateGraph => "application/vnd.dusklight.state-graph+cbor",
+            Self::StateGraphJournal => "application/vnd.dusklight.state-graph-journal+cbor",
+            Self::TacticCheckpointIndex => "application/vnd.dusklight.tactic-checkpoint-index+cbor",
             Self::DatasetManifest => "application/vnd.dusklight.dataset-manifest+json",
             Self::CrashArtifact => "application/octet-stream",
         }

@@ -114,6 +114,7 @@ impl StateGraph {
                 "completed expansion has no target",
             ))?;
             let source = existing.source;
+            self.mark_expansion_persistence_dirty(expansion_sha256);
             if authority_promoted {
                 self.promote_expansion_authority(expansion_sha256)?;
             }
@@ -227,6 +228,9 @@ impl StateGraph {
                 .ok_or(StateGraphError::Invariant("segment source is absent"))?
                 .outgoing_segments
                 .insert(identity_sha256);
+            self.mark_segment_persistence_dirty(identity_sha256);
+            self.mark_incoming_segment_persistence_added(target.id, identity_sha256);
+            self.mark_outgoing_segment_persistence_added(source.id, identity_sha256);
             segment_ids.push(identity_sha256);
         }
 
@@ -258,6 +262,8 @@ impl StateGraph {
                 },
             },
         );
+        self.mark_outgoing_expansion_persistence_added(source.id, expansion_sha256);
+        self.mark_expansion_persistence_dirty(expansion_sha256);
         self.refresh_best_terminal();
         Ok(ExpansionAdmission {
             expansion_sha256,
@@ -338,6 +344,7 @@ impl StateGraph {
             Some(_) => {}
             None => {
                 self.routes.insert(route_checkpoint_sha256, route);
+                self.mark_route_persistence_dirty(route_checkpoint_sha256);
             }
         }
         let restoration = RestorationLocator {
@@ -355,10 +362,20 @@ impl StateGraph {
                     "exact state identity names conflicting node evidence",
                 ));
             }
-            if existing.restoration.native_boundary.is_none() {
+            let mut restoration_changed = false;
+            if existing.restoration.native_boundary.is_none()
+                && restoration.native_boundary.is_some()
+            {
                 existing.restoration.native_boundary = restoration.native_boundary;
+                restoration_changed = true;
             }
-            existing.restoration.executable |= restoration.executable;
+            if !existing.restoration.executable && restoration.executable {
+                existing.restoration.executable = true;
+                restoration_changed = true;
+            }
+            if restoration_changed {
+                self.mark_node_persistence_dirty(id);
+            }
             return Ok(NodeAdmission {
                 id,
                 inserted: false,
@@ -377,6 +394,7 @@ impl StateGraph {
                 outgoing_expansions: BTreeSet::new(),
             },
         );
+        self.mark_node_persistence_dirty(id);
         Ok(NodeAdmission { id, inserted: true })
     }
 
@@ -416,6 +434,7 @@ impl StateGraph {
             nodes.push(segment.source);
             nodes.push(segment.target);
         }
+        self.mark_expansion_persistence_dirty(expansion_sha256);
         for node in nodes {
             self.nodes
                 .get_mut(&node)
@@ -424,6 +443,7 @@ impl StateGraph {
                 ))?
                 .restoration
                 .executable = true;
+            self.mark_node_persistence_dirty(node);
         }
         self.refresh_best_terminal();
         Ok(true)

@@ -1,4 +1,5 @@
 use super::*;
+use dusklight_control::option_execution::OptionParameter;
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
 use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::option_values::OptionActionDescriptor;
@@ -110,5 +111,100 @@ fn inline_training_corpus_reader_accepts_legacy_reference_envelopes() {
     fs::create_dir_all(&root).unwrap();
     fs::write(&path, envelope).unwrap();
     assert_eq!(read_training_corpus(&path).unwrap(), expected);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn state_graph_journal_stores_one_base_then_only_dirty_upserts() {
+    let root = std::env::temp_dir().join(format!(
+        "dusklight-tactic-state-graph-journal-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    let store = TacticQContentStore::initialize(&root).unwrap();
+    let mut root_fact = fact();
+    root_fact.terminal.configured = Some(true);
+    root_fact.terminal.reached = Some(false);
+    let mut root_tape = InputTape::default();
+    root_tape
+        .frames
+        .resize_with(root_fact.tape_frame as usize, Default::default);
+    let mut graph = StateGraph::new(
+        crate::state_graph::StateGraphIdentity {
+            execution_authority_sha256: Digest([7; 32]),
+            future_equivalence_validator_sha256: Digest::ZERO,
+            feature_schema_sha256: Digest([8; 32]),
+            objective_sha256: Digest([9; 32]),
+            root_checkpoint_sha256: Digest([10; 32]),
+        },
+        root_fact,
+        root_tape,
+    )
+    .unwrap();
+
+    let (base_reference, base_head) = store.store_state_graph_journal(&graph).unwrap();
+    assert_eq!(base_head.depth, 0);
+    graph.install_persistence_head(base_head);
+    graph
+        .register_action_expansion(
+            graph.root(),
+            OptionActionDescriptor {
+                option_id: "move.east".into(),
+                option_type: dusklight_control::option_execution::OptionType::Move,
+                parameters: BTreeMap::new(),
+            },
+        )
+        .unwrap();
+    let (delta_reference, delta_head) = store.store_state_graph_journal(&graph).unwrap();
+    assert_eq!(delta_head.depth, 1);
+    assert_ne!(delta_reference, base_reference);
+    graph.install_persistence_head(delta_head);
+    let (reused_reference, reused_head) = store.store_state_graph_journal(&graph).unwrap();
+    assert_eq!(reused_reference, delta_reference);
+    assert_eq!(reused_head, delta_head);
+
+    let base_bytes = store.read_bytes(base_reference).unwrap();
+    let delta_bytes = store.read_bytes(delta_reference).unwrap();
+    assert!(delta_bytes.len() < base_bytes.len());
+    let first_delta_len = delta_bytes.len();
+
+    let mut maximum_delta_len = first_delta_len;
+    for variant in 1..=128 {
+        graph
+            .register_action_expansion(
+                graph.root(),
+                OptionActionDescriptor {
+                    option_id: "move.east".into(),
+                    option_type: dusklight_control::option_execution::OptionType::Move,
+                    parameters: BTreeMap::from([(
+                        "variant".into(),
+                        OptionParameter::Unsigned(variant),
+                    )]),
+                },
+            )
+            .unwrap();
+        let (reference, head) = store.store_state_graph_journal(&graph).unwrap();
+        maximum_delta_len = maximum_delta_len.max(store.read_bytes(reference).unwrap().len());
+        graph.install_persistence_head(head);
+    }
+    let final_head = graph.persistence_plan().unwrap();
+    assert!(matches!(final_head, StateGraphPersistencePlan::Reuse(_)));
+    assert!(
+        maximum_delta_len <= first_delta_len + 32,
+        "journal records grew from {first_delta_len} to {maximum_delta_len} bytes"
+    );
+    assert!(
+        serde_cbor::to_vec(&graph).unwrap().len() > maximum_delta_len * 10,
+        "test graph did not grow enough to expose whole-graph persistence"
+    );
+    assert_eq!(
+        store
+            .load_state_graph_journal(match final_head {
+                StateGraphPersistencePlan::Reuse(head) => head,
+                StateGraphPersistencePlan::Store { .. } => unreachable!(),
+            })
+            .unwrap(),
+        graph
+    );
     fs::remove_dir_all(root).unwrap();
 }

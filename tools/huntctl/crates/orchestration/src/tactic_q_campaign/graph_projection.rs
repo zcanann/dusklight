@@ -1,13 +1,13 @@
 use super::*;
 use crate::state_graph::{ActionExpansionStatus, ExpansionEvidenceAuthority};
 
-pub(super) struct GraphTrainingProjection {
+pub(crate) struct GraphTrainingProjection {
     pub transitions: Vec<OptionTransitionSample>,
     pub routes: Vec<InputTape>,
     pub episode_groups: Vec<u64>,
 }
 
-pub(super) fn graph_training_projection(
+pub(crate) fn graph_training_projection(
     graph: &StateGraph,
 ) -> Result<GraphTrainingProjection, TacticQCampaignError> {
     graph.validate()?;

@@ -167,9 +167,16 @@ The incoming 2026-07-29 work made substantial, useful progress:
   about `2,152.5` seconds with `777.6` seconds in persistence. Relative to the
   untreated cell, wall time fell 42.6%, persistence fell 65.5%, and useful
   expansion throughput rose 74.3% to about `0.119` expansions per second.
-  Persistence still consumes 36.1% of wall time because checkpoint v5 clones,
-  hashes, validates, and projects the complete accumulated graph and replay at
-  least once per decision. Another full curve is not yet justified.
+  Checkpoint v6 now replaces the remaining whole-history write path with a
+  bounded root manifest, one immutable graph base followed by authenticated
+  dirty-object and edge-addition records, and a parent-linked append journal
+  for retained replay. The graph-derived training corpus is reconstructed
+  instead of persisted as a second authority. V5 remains readable and migrates
+  on the next write. A 129-mutation growth test proves that individual graph
+  records remain within 32 bytes of the first delta after the complete graph
+  has grown beyond ten times one record; two-decision replay restart tests
+  exercise the append chain. The identical native cell has not yet been rerun,
+  so another full curve is still unjustified.
 
 That campaign proves bounded terminal discovery under its exact conditions. It
 does not prove practical discovery, useful native learning, route
@@ -333,14 +340,18 @@ Exit gate:
 
 ## P3 - Make real-campaign throughput scale
 
-- [ ] Replace checkpoint v5's whole-payload identity and eager campaign clone
+- [x] Replace checkpoint v5's whole-payload identity and eager campaign clone
       with a versioned manifest over immutable graph/replay objects and
       append-only authenticated summaries. Preserve v5 read/migration support,
       but make each durable decision authenticate newly admitted content once
       and install a bounded root manifest. Add a long synthetic growth test
-      proving that per-decision persistence cost does not rise linearly with
-      accumulated history. Rerun the identical one-worker cell and require
-      persistence to stop dominating wall time before spending a full curve.
+      proving that per-decision persistence volume does not rise linearly with
+      accumulated history.
+- [ ] Rerun the identical one-worker, 16-decision, 256-expansion Windows cell.
+      Require persistence to stop dominating wall time and compare phase
+      occupancy, useful expansions per second, native ticks, graph work, and
+      artifact volume with all three retained predecessor cells before
+      spending a full curve.
 - [ ] Run fixed-work curves at 1, 2, 4, 8, and 16 workers over enough decisions
       to exercise graph growth, repeated restores, learner updates,
       persistence, and bounded checkpoint eviction. Retain the complete

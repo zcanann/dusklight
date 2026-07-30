@@ -1,4 +1,5 @@
 use super::*;
+use crate::tactic_q_checkpoint_store::TacticQContentStore;
 use dusklight_automation_contracts::tape::{InputFrame, RawPadState};
 use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
 use dusklight_control::option_execution::{OptionCondition, OptionEndReason, TapeRange};
@@ -1354,6 +1355,20 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     // tape, and final proof identities rather than only decoding.
     let mut uninterrupted = campaign;
     let mut resumed = from_file;
+    let incremental_directory = std::env::temp_dir().join(format!(
+        "dusklight-tactic-q-incremental-checkpoint-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&incremental_directory);
+    let incremental_store =
+        TacticQContentStore::initialize(incremental_directory.join("objects")).unwrap();
+    let first_incremental = resumed
+        .write_checkpoint_with_content_store(
+            &incremental_directory.join("decision-1"),
+            &incremental_store,
+        )
+        .unwrap();
+    assert_eq!(first_incremental.persistence.replay_rows, 1);
     let uninterrupted_decision = uninterrupted.decide(&catalog, &[], &encode).unwrap();
     let resumed_decision = resumed.decide(&catalog, &[], &encode).unwrap();
     assert_eq!(uninterrupted_decision, resumed_decision);
@@ -1456,6 +1471,21 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             true,
         )
         .unwrap();
+    let second_incremental = resumed
+        .write_checkpoint_with_content_store(
+            &incremental_directory.join("decision-2"),
+            &incremental_store,
+        )
+        .unwrap();
+    assert_eq!(second_incremental.persistence.replay_rows, 2);
+    assert_ne!(
+        second_incremental.persistence.replay_index_sha256,
+        first_incremental.persistence.replay_index_sha256
+    );
+    let reloaded_incremental =
+        TacticQCampaign::read_checkpoint_payload(&second_incremental.path).unwrap();
+    assert_eq!(reloaded_incremental.replay.len(), 2);
+    assert_eq!(reloaded_incremental.training_replay.len(), 2);
     let cached_model = uninterrupted.generalized_model(0).unwrap().unwrap();
     let reused_model = uninterrupted.generalized_model(0).unwrap().unwrap();
     assert!(Arc::ptr_eq(&cached_model, &reused_model));
@@ -1536,4 +1566,5 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         )
         .unwrap()
     );
+    fs::remove_dir_all(incremental_directory).unwrap();
 }

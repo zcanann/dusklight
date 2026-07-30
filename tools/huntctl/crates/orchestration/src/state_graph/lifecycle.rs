@@ -48,6 +48,8 @@ impl StateGraph {
             ))?
             .outgoing_expansions
             .insert(identity_sha256);
+        self.mark_expansion_persistence_dirty(identity_sha256);
+        self.mark_outgoing_expansion_persistence_added(source, identity_sha256);
         Ok(identity_sha256)
     }
 
@@ -85,6 +87,7 @@ impl StateGraph {
             lease_sha256,
             expires_at_generation,
         };
+        self.mark_expansion_persistence_dirty(expansion_sha256);
         Ok(())
     }
 
@@ -99,8 +102,11 @@ impl StateGraph {
                 "retryable expansion requires a positive attempt count",
             ));
         }
-        let expansion = self.match_leased_expansion(expansion_sha256, lease_sha256)?;
-        expansion.status = ActionExpansionStatus::Retryable { attempts };
+        {
+            let expansion = self.match_leased_expansion(expansion_sha256, lease_sha256)?;
+            expansion.status = ActionExpansionStatus::Retryable { attempts };
+        }
+        self.mark_expansion_persistence_dirty(expansion_sha256);
         Ok(())
     }
 
@@ -115,8 +121,11 @@ impl StateGraph {
                 "validation failure requires an evidence identity",
             ));
         }
-        let expansion = self.match_leased_expansion(expansion_sha256, lease_sha256)?;
-        expansion.status = ActionExpansionStatus::FailedValidation { evidence_sha256 };
+        {
+            let expansion = self.match_leased_expansion(expansion_sha256, lease_sha256)?;
+            expansion.status = ActionExpansionStatus::FailedValidation { evidence_sha256 };
+        }
+        self.mark_expansion_persistence_dirty(expansion_sha256);
         Ok(())
     }
 

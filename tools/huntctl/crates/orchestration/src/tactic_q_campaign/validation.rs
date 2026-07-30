@@ -5,6 +5,7 @@ pub(crate) fn validate_checkpoint(
 ) -> Result<(), TacticQCampaignError> {
     if checkpoint.content_sha256 == Digest::ZERO
         || checkpoint.content_sha256 != checkpoint_digest(checkpoint)?
+        || (checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V6 && !checkpoint.persistence_validated)
     {
         return Err(TacticQCampaignError::InvalidState(
             "campaign checkpoint content identity is invalid",
@@ -21,10 +22,22 @@ pub(crate) fn validate_checkpoint_payload(
         .route_tape
         .validate()
         .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
-    let current = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V5;
+    let legacy = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V5;
+    let current = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V6;
     checkpoint.state_graph.validate()?;
     let graph_identity = &checkpoint.state_graph.identity;
-    if !current
+    let persistence_valid = match (&checkpoint.persistence, legacy, current) {
+        (None, true, false) => true,
+        (Some(persistence), false, true) => {
+            persistence.schema == TACTIC_Q_CHECKPOINT_PERSISTENCE_SCHEMA_V1
+                && persistence.state_graph_head_sha256 != Digest::ZERO
+                && persistence.replay_index_sha256 != Digest::ZERO
+                && persistence.replay_rows == checkpoint.replay.len() as u64
+        }
+        _ => false,
+    };
+    if (!legacy && !current)
+        || !persistence_valid
         || checkpoint.feature_schema_sha256 == Digest::ZERO
         || checkpoint.objective_sha256 == Digest::ZERO
         || checkpoint.root_checkpoint_sha256 == Digest::ZERO
@@ -292,11 +305,61 @@ pub(crate) fn training_replay_sha256(
 pub(crate) fn checkpoint_digest(
     checkpoint: &TacticQCampaignCheckpoint,
 ) -> Result<Digest, TacticQCampaignError> {
+    if checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V6 {
+        let persistence =
+            checkpoint
+                .persistence
+                .as_ref()
+                .ok_or(TacticQCampaignError::InvalidState(
+                    "current checkpoint persistence identity is missing",
+                ))?;
+        let identity = TacticQCheckpointIdentityV6 {
+            schema: &checkpoint.schema,
+            execution_authority_sha256: checkpoint.execution_authority_sha256,
+            feature_schema_sha256: checkpoint.feature_schema_sha256,
+            objective_sha256: checkpoint.objective_sha256,
+            root_checkpoint_sha256: checkpoint.root_checkpoint_sha256,
+            episode_group: checkpoint.episode_group,
+            decision_index: checkpoint.decision_index,
+            current: &checkpoint.current,
+            route_tape: &checkpoint.route_tape,
+            persistence,
+            model_revision: checkpoint.model_revision,
+            model_config: &checkpoint.model_config,
+            exploration: checkpoint.exploration,
+        };
+        return identity.content_sha256();
+    }
     let mut canonical = checkpoint.clone();
     canonical.content_sha256 = Digest::ZERO;
     let bytes = serde_cbor::to_vec(&canonical)
         .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
     Ok(sha256(&bytes))
+}
+
+#[derive(Serialize)]
+pub(crate) struct TacticQCheckpointIdentityV6<'a> {
+    pub schema: &'a str,
+    pub execution_authority_sha256: Digest,
+    pub feature_schema_sha256: Digest,
+    pub objective_sha256: Digest,
+    pub root_checkpoint_sha256: Digest,
+    pub episode_group: u64,
+    pub decision_index: u64,
+    pub current: &'a LearnerState,
+    pub route_tape: &'a InputTape,
+    pub persistence: &'a TacticQCheckpointPersistence,
+    pub model_revision: u64,
+    pub model_config: &'a OptionValueConfig,
+    pub exploration: TacticExplorationConfig,
+}
+
+impl TacticQCheckpointIdentityV6<'_> {
+    pub(crate) fn content_sha256(&self) -> Result<Digest, TacticQCampaignError> {
+        let bytes = serde_cbor::to_vec(self)
+            .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
+        Ok(sha256(&bytes))
+    }
 }
 
 pub(crate) fn validate_final_result(

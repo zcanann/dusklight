@@ -52,6 +52,7 @@ impl StateGraph {
             self.future_equivalence_proofs.remove(&identity);
             return Err(error);
         }
+        self.mark_proof_persistence_dirty(identity);
         Ok(true)
     }
 

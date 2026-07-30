@@ -1,9 +1,9 @@
 //! Online option-Q campaign over authenticated learner states and native tactic
 //! boundaries.
 
+pub(crate) use self::graph_projection::graph_training_projection;
 use self::graph_projection::{
-    graph_frontier_entries, graph_root_branch, graph_training_projection,
-    validate_training_projection,
+    graph_frontier_entries, graph_root_branch, validate_training_projection,
 };
 use crate::native_tactic_worker::{
     NativeTacticWorkerError, NativeTacticWorkerOutcome, NativeTacticWorkerPaths,
@@ -65,6 +65,7 @@ use std::sync::Arc;
 
 pub const TACTIC_Q_CAMPAIGN_SCHEMA_V1: &str = "dusklight-tactic-q-campaign/v1";
 pub const TACTIC_Q_CHECKPOINT_SCHEMA_V5: &str = "dusklight-tactic-q-checkpoint/v5";
+pub const TACTIC_Q_CHECKPOINT_SCHEMA_V6: &str = "dusklight-tactic-q-checkpoint/v6";
 pub const TACTIC_Q_CHECKPOINT_EXTENSION: &str = "dtqz";
 pub const TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1: &str =
     "dusklight-tactic-q-checkpoint-serialization-benchmark/v1";
@@ -167,6 +168,23 @@ pub struct TacticQCampaignCheckpoint {
     pub model_revision: u64,
     pub model_config: OptionValueConfig,
     pub exploration: TacticExplorationConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persistence: Option<TacticQCheckpointPersistence>,
+    #[serde(skip)]
+    pub(crate) persistence_validated: bool,
+}
+
+pub const TACTIC_Q_CHECKPOINT_PERSISTENCE_SCHEMA_V1: &str =
+    "dusklight-tactic-q-checkpoint-persistence/v1";
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticQCheckpointPersistence {
+    pub schema: String,
+    pub state_graph_head_sha256: Digest,
+    pub state_graph_depth: u64,
+    pub replay_index_sha256: Digest,
+    pub replay_rows: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -377,9 +395,9 @@ pub struct TacticQCampaign {
     state_graph: Option<StateGraph>,
     // The currently retained cursor lineage, kept for final-route export.
     // It is not consulted to decide which exact states or terminal paths exist.
-    pub replay: Vec<OptionTransitionSample>,
-    pub replay_routes: Vec<InputTape>,
-    pub episode_groups: Vec<u64>,
+    replay: Vec<OptionTransitionSample>,
+    replay_routes: Vec<InputTape>,
+    episode_groups: Vec<u64>,
     // Read-only learner publication caches. Every production mutation replaces
     // all three from `state_graph`; checkpoint validation rejects drift.
     training_replay: Vec<OptionTransitionSample>,
@@ -400,6 +418,7 @@ pub struct TacticQCampaign {
     continuous_model: RefCell<Option<CachedContinuousTacticValueModel>>,
     visited_states: BTreeSet<TacticStateDescriptor>,
     hindsight: HindsightOptionReplay,
+    checkpoint_persistence: Option<TacticQCheckpointPersistence>,
 }
 
 /// In-memory training evidence shared across independent tactic episodes.
@@ -555,6 +574,7 @@ impl TacticQCampaign {
             continuous_model: RefCell::new(None),
             visited_states,
             hindsight,
+            checkpoint_persistence: None,
         })
     }
 
@@ -715,6 +735,10 @@ impl TacticQCampaign {
 
     pub fn training_replay_len(&self) -> usize {
         self.training_replay.len()
+    }
+
+    pub(crate) fn replay(&self) -> &[OptionTransitionSample] {
+        &self.replay
     }
 
     pub fn training_corpus(&self) -> TacticQTrainingCorpus {

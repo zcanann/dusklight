@@ -6,12 +6,14 @@
 
 mod admission;
 mod lifecycle;
+mod persistence;
 mod restoration;
 mod returns;
 mod transpositions;
 mod types;
 mod validation;
 
+pub(crate) use persistence::{StateGraphPersistenceHead, StateGraphPersistencePlan};
 pub use types::{
     ActionExpansion, ActionExpansionStatus, CompletedExpansionEvidence, ExactStateId,
     ExpansionAdmission, ExpansionEvidenceAuthority, FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1,
@@ -49,6 +51,8 @@ pub struct StateGraph {
     #[serde(default)]
     future_equivalence_proofs: BTreeMap<Digest, FutureEquivalenceProof>,
     best_terminal: Option<TerminalPath>,
+    #[serde(skip)]
+    persistence: persistence::StateGraphPersistence,
 }
 
 impl StateGraph {
@@ -108,6 +112,7 @@ impl StateGraph {
             routes: BTreeMap::from([(root_route_checkpoint, root_route)]),
             future_equivalence_proofs: BTreeMap::new(),
             best_terminal,
+            persistence: Default::default(),
         })
     }
 

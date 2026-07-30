@@ -244,13 +244,14 @@ pub(super) fn run_seed(
         prune_tactic_native_attempts(&seed_root, campaign.decision_index)?;
         prune_tactic_recovery_points(&seed_root, campaign.decision_index)?;
     } else {
+        let recovery_decision_index = campaign.decision_index;
         persist_tactic_recovery_point(
             &seed_root,
-            &campaign,
+            &mut campaign,
             &decision_content_store,
             NativeTacticSeedPerformance {
                 schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2.into(),
-                decisions: campaign.decision_index,
+                decisions: recovery_decision_index,
                 useful_decisions,
                 native_restore_accounting: native_restore_accounting.clone(),
                 timing: timing.clone(),
@@ -287,7 +288,7 @@ pub(super) fn run_seed(
             config.execution_plan.branch_every_decisions,
             terminal_restart,
         );
-        if !campaign.replay.is_empty() && periodic_branch {
+        if !campaign.replay().is_empty() && periodic_branch {
             let branch_started = Instant::now();
             episode = episode
                 .checked_add(1)
@@ -1095,13 +1096,14 @@ pub(super) fn run_seed(
         let persistence_started = Instant::now();
         timing.wall_micros =
             prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
+        let recovery_decision_index = campaign.decision_index;
         persist_tactic_recovery_point(
             &seed_root,
-            &campaign,
+            &mut campaign,
             &decision_content_store,
             NativeTacticSeedPerformance {
                 schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2.into(),
-                decisions: campaign.decision_index,
+                decisions: recovery_decision_index,
                 useful_decisions,
                 native_restore_accounting: native_restore_accounting.clone(),
                 timing: timing.clone(),
@@ -1250,12 +1252,15 @@ pub(super) fn run_seed(
     let imported_training_replay_rows = campaign
         .training_replay_len()
         .saturating_sub(generated_training.transitions.len());
-    let (final_checkpoint_path, final_campaign_checkpoint) = campaign
+    let final_checkpoint_commit = campaign
         .write_checkpoint_with_content_store(
             &seed_root.join("final-checkpoint"),
             &decision_content_store,
         )
         .map_err(route_error)?;
+    let final_checkpoint_path = final_checkpoint_commit.path;
+    let final_campaign_checkpoint =
+        TacticQCampaign::read_checkpoint_payload(&final_checkpoint_path).map_err(route_error)?;
     let unique_useful_graph_expansions = u64::try_from(
         final_campaign_checkpoint
             .state_graph
@@ -1347,7 +1352,7 @@ pub(super) fn run_seed(
             decisions: campaign.decision_index,
             episodes: episode + 1,
             native_ticks,
-            replay_rows: campaign.replay.len(),
+            replay_rows: campaign.replay().len(),
             training_replay_rows: campaign.training_replay_len(),
             imported_training_replay_rows,
             duplicate_training_transitions,
