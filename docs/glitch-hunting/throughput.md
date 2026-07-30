@@ -487,7 +487,19 @@ ticks, source and terminal boundaries, and terminal observations/evidence.
 The proof-disabled follow-up matched all of those identities and reported state
 validation as disabled.
 
-The report schema is `dusklight-native-subsystem-parity/v1`; the ignored report
-path is `build/benchmarks/native-subsystem-parity-macos-v1.report.json`, and its
-content SHA-256 is
+That historical report uses schema
+`dusklight-native-subsystem-parity/v1`; the ignored report path is
+`build/benchmarks/native-subsystem-parity-macos-v1.report.json`, and its content
+SHA-256 is
 `69ef05bc1d62b3704e057fa3fc848260f684ea79bf0ac0762ddeb1548d42acb8`.
+It is useful renderer/runtime evidence but no longer satisfies the active
+parity gate by itself.
+
+Schema `dusklight-native-subsystem-parity/v2` additionally retains and compares
+separate SHA-256 authorities for the native state trajectory, the complete
+primitive applicable-action surface recomputed at every candidate boundary,
+and chosen plus consumed controller output. It also compares the explicit
+per-candidate first-hit vector and terminal projection. Action-surface
+derivation uses a fixed audit seed, no campaign feedback, and no promoted
+actions, so every retained/suppressed condition issues the same reproducible
+query against its own typed native state. A retained v2 run is still required.

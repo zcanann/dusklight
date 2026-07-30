@@ -426,6 +426,14 @@ Exit gate:
       gate. Prefer reducing restore/replay and idle time before adding capacity.
 - [ ] Preserve native state, applicable actions, controller output, terminal
       evidence, and first-hit tick for every disabled presentation subsystem.
+      Source checkpoint `703dcdbbba` advances the parity report to v2 and
+      makes those authorities explicit: it separately binds the native state
+      trajectory, recomputed complete primitive action surface at every
+      boundary, chosen and consumed controller pads, first-hit vector, and
+      terminal projection for every legal retained/suppressed pair. The
+      historical ignored v1 report only compared opaque episode payloads and
+      cannot close this gate. Keep this open until focused tests compile and a
+      retained v2 native report passes.
 
 Exit gate:
 
