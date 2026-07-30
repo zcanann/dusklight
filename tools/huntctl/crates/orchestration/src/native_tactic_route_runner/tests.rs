@@ -1131,8 +1131,10 @@ fn connected_macro_needs_repeated_occurrences_not_internal_steps() {
     let source = |seed: u64, state: u8, transition: u8| MacroSourceProvenance {
         seed,
         frontier_state_sha256: Digest([state; 32]),
-        transition_sha256: Digest([transition; 32]),
-        option_id: "family/primitive".into(),
+        transition_sha256s: vec![
+            Digest([transition; 32]),
+            Digest([transition.saturating_add(1); 32]),
+        ],
         entry: MacroEntryObservation {
             stage: "F_SP103".into(),
             room: 1,
@@ -1141,12 +1143,27 @@ fn connected_macro_needs_repeated_occurrences_not_internal_steps() {
             goal_distance_f32_bits: (100.0 + f32::from(state)).to_bits(),
         },
     };
+    let components = vec![
+        OptionActionDescriptor {
+            option_id: "family/primitive/a".into(),
+            option_type: OptionType::Move,
+            parameters: BTreeMap::new(),
+        },
+        OptionActionDescriptor {
+            option_id: "family/primitive/b".into(),
+            option_type: OptionType::Roll,
+            parameters: BTreeMap::new(),
+        },
+    ];
     let occurrences = |sources: Vec<MacroSourceProvenance>| {
         let sources = sources
             .into_iter()
-            .map(|source| (source.transition_sha256, source))
+            .map(|source| (source.transition_sha256s.clone(), source))
             .collect::<BTreeMap<_, _>>();
-        BTreeMap::from([(tape.encode().unwrap(), (tape.clone(), sources))])
+        BTreeMap::from([(
+            tape.encode().unwrap(),
+            (tape.clone(), components.clone(), sources),
+        )])
     };
 
     assert!(
@@ -1158,6 +1175,7 @@ fn connected_macro_needs_repeated_occurrences_not_internal_steps() {
         connected_macro_candidates(occurrences(vec![source(11, 1, 3), source(13, 2, 4)]))
             .unwrap();
     assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].components, components);
     assert_eq!(candidates[0].sources.len(), 2);
     assert_eq!(
         candidates[0]
@@ -1317,14 +1335,19 @@ fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
         ],
         ..InputTape::default()
     };
+    let component = OptionActionDescriptor {
+        option_id: "family/primitive".into(),
+        option_type: OptionType::Move,
+        parameters: BTreeMap::new(),
+    };
     let candidate = replay_macro_candidate(
         tape,
+        vec![component],
         vec![
             MacroSourceProvenance {
                 seed: 11,
                 frontier_state_sha256: Digest([1; 32]),
-                transition_sha256: Digest([2; 32]),
-                option_id: "family/primitive/a".into(),
+                transition_sha256s: vec![Digest([2; 32])],
                 entry: MacroEntryObservation {
                     stage: "F_SP103".into(),
                     room: 1,
@@ -1336,8 +1359,7 @@ fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
             MacroSourceProvenance {
                 seed: 22,
                 frontier_state_sha256: Digest([3; 32]),
-                transition_sha256: Digest([4; 32]),
-                option_id: "family/primitive/b".into(),
+                transition_sha256s: vec![Digest([4; 32])],
                 entry: MacroEntryObservation {
                     stage: "F_SP103".into(),
                     room: 1,

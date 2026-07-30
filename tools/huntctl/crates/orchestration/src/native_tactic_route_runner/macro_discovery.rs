@@ -49,7 +49,7 @@ pub(super) fn mine_and_store_tactic_macros(
                         proposal.transition,
                         proposal.inline_transition.as_ref(),
                     )?,
-                    option_id: transition.value_sample.action.option_id,
+                    action: transition.value_sample.action,
                     entry: macro_entry_observation(&transition.before, encoder)?,
                     tape: InputTape {
                         boot: root_tape.boot.clone(),
@@ -89,11 +89,19 @@ pub(super) fn mine_and_store_tactic_macros(
     for candidate in candidates {
         match deduplicated.remove(&candidate.candidate_sha256) {
             Some(existing) => {
+                if existing.tape != candidate.tape
+                    || existing.components != candidate.components
+                {
+                    return Err(route_message(
+                        "tactic macro candidate identity collides across different content",
+                    ));
+                }
                 let mut sources = existing.sources;
                 sources.extend(candidate.sources);
                 deduplicated.insert(
                     candidate.candidate_sha256,
-                    replay_macro_candidate(candidate.tape, sources).map_err(route_error)?,
+                    replay_macro_candidate(candidate.tape, candidate.components, sources)
+                        .map_err(route_error)?,
                 );
             }
             None => {
@@ -195,8 +203,7 @@ pub(super) fn mine_connected_tactic_macro_compositions(
     exploration_seeds: &[u64],
     encoder: &GoalConditionedTacticFeatureEncoder,
 ) -> Result<Vec<DiscoveredMacroCandidate>, NativeTacticRouteRunError> {
-    let mut occurrences =
-        BTreeMap::<Vec<u8>, (InputTape, BTreeMap<Digest, MacroSourceProvenance>)>::new();
+    let mut occurrences = ConnectedMacroOccurrences::new();
     for (seed_index, seed) in exploration_seeds.iter().copied().enumerate() {
         let seed_root = output_root.join(format!("seed-{seed_index:03}-{seed}"));
         let replay = load_tactic_journal_replay(&seed_root)?;
@@ -207,18 +214,10 @@ pub(super) fn mine_connected_tactic_macro_compositions(
             .map_err(route_error)?;
         for start in 0..replay.transitions.len() {
             let mut frames = Vec::new();
+            let mut components = Vec::new();
+            let mut transition_sha256s = Vec::new();
             let source_transition = &replay.transitions[start];
-            let source_record = &replay.records[start];
-            let source = MacroSourceProvenance {
-                seed,
-                frontier_state_sha256: source_transition.before_state_sha256,
-                transition_sha256: journal_transition_sha256(
-                    source_record.transition,
-                    source_record.inline_transition.as_ref(),
-                )?,
-                option_id: source_transition.value_sample.action.option_id.clone(),
-                entry: macro_entry_observation(&source_transition.before, encoder)?,
-            };
+            let source_entry = macro_entry_observation(&source_transition.before, encoder)?;
             for end in start..replay.transitions.len() {
                 if end > start {
                     let prior = &replay.transitions[end - 1];
@@ -238,6 +237,12 @@ pub(super) fn mine_connected_tactic_macro_compositions(
                     break;
                 }
                 frames.extend_from_slice(&transition.execution.emitted_raw_actions);
+                components.push(transition.value_sample.action.clone());
+                let record = &replay.records[end];
+                transition_sha256s.push(journal_transition_sha256(
+                    record.transition,
+                    record.inline_transition.as_ref(),
+                )?);
                 if end > start {
                     let tape = InputTape {
                         boot: root_tape.boot.clone(),
@@ -245,12 +250,18 @@ pub(super) fn mine_connected_tactic_macro_compositions(
                         tick_rate_denominator: root_tape.tick_rate_denominator,
                         frames: frames.clone(),
                     };
-                    let key = tape.encode().map_err(route_error)?;
+                    let source = MacroSourceProvenance {
+                        seed,
+                        frontier_state_sha256: source_transition.before_state_sha256,
+                        transition_sha256s: transition_sha256s.clone(),
+                        entry: source_entry.clone(),
+                    };
+                    let key = connected_macro_occurrence_key(&tape, &components)?;
                     occurrences
                         .entry(key)
-                        .or_insert_with(|| (tape, BTreeMap::new()))
-                        .1
-                        .insert(source.transition_sha256, source.clone());
+                        .or_insert_with(|| (tape, components.clone(), BTreeMap::new()))
+                        .2
+                        .insert(source.transition_sha256s.clone(), source);
                 }
             }
         }
@@ -259,14 +270,37 @@ pub(super) fn mine_connected_tactic_macro_compositions(
 }
 
 pub(super) type ConnectedMacroOccurrences =
-    BTreeMap<Vec<u8>, (InputTape, BTreeMap<Digest, MacroSourceProvenance>)>;
+    BTreeMap<
+        Vec<u8>,
+        (
+            InputTape,
+            Vec<OptionActionDescriptor>,
+            BTreeMap<Vec<Digest>, MacroSourceProvenance>,
+        ),
+    >;
+
+fn connected_macro_occurrence_key(
+    tape: &InputTape,
+    components: &[OptionActionDescriptor],
+) -> Result<Vec<u8>, NativeTacticRouteRunError> {
+    let encoded_tape = tape.encode().map_err(route_error)?;
+    let mut key =
+        Vec::with_capacity(8 + encoded_tape.len() + 8 + components.len().saturating_mul(32));
+    key.extend_from_slice(&(encoded_tape.len() as u64).to_le_bytes());
+    key.extend_from_slice(&encoded_tape);
+    key.extend_from_slice(&(components.len() as u64).to_le_bytes());
+    for component in components {
+        key.extend_from_slice(&component.content_sha256().map_err(route_error)?.0);
+    }
+    Ok(key)
+}
 
 pub(super) fn connected_macro_candidates(
     occurrences: ConnectedMacroOccurrences,
 ) -> Result<Vec<DiscoveredMacroCandidate>, NativeTacticRouteRunError> {
     occurrences
         .into_values()
-        .filter(|(_, sources)| {
+        .filter(|(_, _, sources)| {
             sources
                 .values()
                 .map(|source| source.frontier_state_sha256)
@@ -274,8 +308,9 @@ pub(super) fn connected_macro_candidates(
                 .len()
                 >= MIN_DISCOVERY_OCCURRENCES
         })
-        .map(|(tape, sources)| {
-            replay_macro_candidate(tape, sources.into_values().collect()).map_err(route_error)
+        .map(|(tape, components, sources)| {
+            replay_macro_candidate(tape, components, sources.into_values().collect())
+                .map_err(route_error)
         })
         .collect()
 }

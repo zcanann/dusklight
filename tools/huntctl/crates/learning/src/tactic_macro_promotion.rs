@@ -5,6 +5,7 @@
 //! continues through the ordinary tactic-asset adapter.
 
 use crate::artifact::Digest;
+use crate::option_values::OptionActionDescriptor;
 use crate::tactic_asset::{TacticAssetError, TacticAssetSource, TacticCatalogEntry};
 use crate::tape::InputTape;
 use sha2::{Digest as _, Sha256};
@@ -12,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const TACTIC_MACRO_DISCOVERY_SCHEMA_V1: &str = "dusklight-tactic-macro-discovery/v1";
 pub const TACTIC_MACRO_DISCOVERY_SCHEMA_V2: &str = "dusklight-tactic-macro-discovery/v2";
+pub const TACTIC_MACRO_DISCOVERY_SCHEMA_V3: &str = "dusklight-tactic-macro-discovery/v3";
 pub const MAX_DISCOVERY_OBSERVATIONS: usize = 4_096;
 pub const MAX_DISCOVERED_MACROS: usize = 32;
 pub const MAX_DISCOVERED_MACRO_TICKS: usize = 64;
@@ -23,7 +25,7 @@ pub struct MacroDiscoveryObservation {
     pub seed: u64,
     pub frontier_state_sha256: Digest,
     pub transition_sha256: Digest,
-    pub option_id: String,
+    pub action: OptionActionDescriptor,
     pub entry: MacroEntryObservation,
     pub tape: InputTape,
     pub reward: f32,
@@ -54,8 +56,7 @@ impl MacroEntryObservation {
 pub struct MacroSourceProvenance {
     pub seed: u64,
     pub frontier_state_sha256: Digest,
-    pub transition_sha256: Digest,
-    pub option_id: String,
+    pub transition_sha256s: Vec<Digest>,
     pub entry: MacroEntryObservation,
 }
 
@@ -94,6 +95,7 @@ pub struct DiscoveredMacroCandidate {
     pub candidate_sha256: Digest,
     pub option_id: String,
     pub tape: InputTape,
+    pub components: Vec<OptionActionDescriptor>,
     pub sources: Vec<MacroSourceProvenance>,
 }
 
@@ -132,21 +134,22 @@ impl DiscoveredMacroCandidate {
 
 pub fn replay_macro_candidate(
     tape: InputTape,
+    components: Vec<OptionActionDescriptor>,
     mut sources: Vec<MacroSourceProvenance>,
 ) -> Result<DiscoveredMacroCandidate, &'static str> {
     sources.sort_by(|left, right| {
-        left.transition_sha256
-            .cmp(&right.transition_sha256)
+        left.transition_sha256s
+            .cmp(&right.transition_sha256s)
             .then_with(|| left.frontier_state_sha256.cmp(&right.frontier_state_sha256))
             .then_with(|| left.seed.cmp(&right.seed))
-            .then_with(|| left.option_id.cmp(&right.option_id))
     });
-    sources.dedup_by_key(|source| source.transition_sha256);
-    let candidate_sha256 = macro_tape_sha256(&tape)?;
+    sources.dedup_by(|left, right| left.transition_sha256s == right.transition_sha256s);
+    let candidate_sha256 = macro_candidate_sha256(&tape, &components)?;
     let candidate = DiscoveredMacroCandidate {
         candidate_sha256,
         option_id: format!("promoted/{}", short_digest(candidate_sha256)),
         tape,
+        components,
         sources,
     };
     validate_candidate(&candidate)?;
@@ -177,11 +180,13 @@ pub fn discover_replay_macros(
                 tick_rate_denominator: observation.tape.tick_rate_denominator,
                 frames: observation.tape.frames[..width].to_vec(),
             };
-            let candidate_sha256 = macro_tape_sha256(&tape)?;
+            let components = vec![observation.action.clone()];
+            let candidate_sha256 = macro_candidate_sha256(&tape, &components)?;
             let bucket = buckets
                 .entry(candidate_sha256)
                 .or_insert_with(|| MacroBucket {
                     tape,
+                    components,
                     sources: BTreeMap::new(),
                     terminal_sources: 0,
                 });
@@ -192,8 +197,7 @@ pub fn discover_replay_macros(
                     MacroSourceProvenance {
                         seed: observation.seed,
                         frontier_state_sha256: observation.frontier_state_sha256,
-                        transition_sha256: observation.transition_sha256,
-                        option_id: observation.option_id.clone(),
+                        transition_sha256s: vec![observation.transition_sha256],
                         entry: observation.entry.clone(),
                     },
                 )
@@ -224,6 +228,7 @@ pub fn discover_replay_macros(
                     candidate_sha256,
                     option_id: format!("promoted/{}", short_digest(candidate_sha256)),
                     tape: bucket.tape,
+                    components: bucket.components,
                     sources: bucket.sources.into_values().collect(),
                 },
             )
@@ -461,7 +466,6 @@ fn validate_observation(observation: &MacroDiscoveryObservation) -> Result<(), &
         .map_err(|_| "macro discovery tape is invalid")?;
     if observation.frontier_state_sha256 == Digest::ZERO
         || observation.transition_sha256 == Digest::ZERO
-        || observation.option_id.is_empty()
         || observation.tape.frames.is_empty()
         || observation.tape.frames.len() > MAX_DISCOVERED_MACRO_TICKS
         || !observation.reward.is_finite()
@@ -469,6 +473,10 @@ fn validate_observation(observation: &MacroDiscoveryObservation) -> Result<(), &
     {
         return Err("macro discovery observation is invalid");
     }
+    observation
+        .action
+        .validate()
+        .map_err(|_| "macro discovery action is invalid")?;
     observation.entry.validate()?;
     Ok(())
 }
@@ -477,7 +485,7 @@ fn validate_candidate(candidate: &DiscoveredMacroCandidate) -> Result<(), &'stat
     let distinct_sources = candidate
         .sources
         .iter()
-        .map(|source| source.transition_sha256)
+        .map(|source| source.transition_sha256s.clone())
         .collect::<BTreeSet<_>>();
     let distinct_source_states = candidate
         .sources
@@ -489,32 +497,55 @@ fn validate_candidate(candidate: &DiscoveredMacroCandidate) -> Result<(), &'stat
         || candidate.sources.len() < MIN_DISCOVERY_OCCURRENCES
         || candidate.sources.len() != distinct_sources.len()
         || distinct_source_states.len() < MIN_DISCOVERY_OCCURRENCES
+        || candidate.components.is_empty()
+        || candidate.components.len() > MAX_DISCOVERED_MACRO_TICKS
+        || candidate
+            .components
+            .iter()
+            .any(|component| component.validate().is_err())
         || candidate.sources.iter().any(|source| {
             source.frontier_state_sha256 == Digest::ZERO
-                || source.transition_sha256 == Digest::ZERO
-                || source.option_id.is_empty()
+                || source.transition_sha256s.is_empty()
+                || source.transition_sha256s.contains(&Digest::ZERO)
+                || source.transition_sha256s.len() != candidate.components.len()
                 || source.entry.validate().is_err()
         })
-        || macro_tape_sha256(&candidate.tape)? != candidate.candidate_sha256
+        || macro_candidate_sha256(&candidate.tape, &candidate.components)?
+            != candidate.candidate_sha256
     {
         return Err("discovered macro candidate is invalid");
     }
     Ok(())
 }
 
-fn macro_tape_sha256(tape: &InputTape) -> Result<Digest, &'static str> {
+fn macro_candidate_sha256(
+    tape: &InputTape,
+    components: &[OptionActionDescriptor],
+) -> Result<Digest, &'static str> {
     tape.validate().map_err(|_| "macro tape is invalid")?;
+    if components.is_empty() || components.iter().any(|component| component.validate().is_err()) {
+        return Err("macro component sequence is invalid");
+    }
     let encoded = tape.encode().map_err(|_| "macro tape encoding failed")?;
     let mut hasher = Sha256::new();
-    hasher.update(TACTIC_MACRO_DISCOVERY_SCHEMA_V2.as_bytes());
+    hasher.update(TACTIC_MACRO_DISCOVERY_SCHEMA_V3.as_bytes());
     hasher.update((encoded.len() as u64).to_le_bytes());
     hasher.update(encoded);
+    hasher.update((components.len() as u64).to_le_bytes());
+    for component in components {
+        hasher.update(
+            component
+                .content_sha256()
+                .map_err(|_| "macro component identity failed")?
+                .0,
+        );
+    }
     Ok(Digest(hasher.finalize().into()))
 }
 
 fn comparison_sha256(evidence: &MacroComparisonEvidence) -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(TACTIC_MACRO_DISCOVERY_SCHEMA_V2.as_bytes());
+    hasher.update(TACTIC_MACRO_DISCOVERY_SCHEMA_V3.as_bytes());
     hasher.update(evidence.candidate_sha256.0);
     hasher.update(evidence.seed.to_le_bytes());
     hasher.update(evidence.frontier_state_sha256.0);
@@ -538,6 +569,7 @@ fn short_digest(digest: Digest) -> String {
 
 struct MacroBucket {
     tape: InputTape,
+    components: Vec<OptionActionDescriptor>,
     sources: BTreeMap<Digest, MacroSourceProvenance>,
     terminal_sources: usize,
 }
@@ -562,7 +594,11 @@ mod tests {
             seed,
             frontier_state_sha256: Digest([state; 32]),
             transition_sha256: Digest([transition; 32]),
-            option_id: format!("family/move/{transition}"),
+            action: OptionActionDescriptor {
+                option_id: "family/move".into(),
+                option_type: crate::option_execution::OptionType::Move,
+                parameters: BTreeMap::new(),
+            },
             entry: MacroEntryObservation {
                 stage: "F_SP103".into(),
                 room: 1,
@@ -585,6 +621,13 @@ mod tests {
         let longest = &candidates[0];
         assert_eq!(longest.tape.frames.len(), 8);
         assert_eq!(longest.sources.len(), 2);
+        assert_eq!(longest.components, vec![observation(17, 3, 5).action]);
+        assert!(
+            longest
+                .sources
+                .iter()
+                .all(|source| source.transition_sha256s.len() == 1)
+        );
         assert!(longest.option_id.starts_with("promoted/"));
         let entry = longest.catalog_entry().unwrap();
         let exact = entry.exact_static_realization().unwrap().unwrap();
@@ -619,28 +662,41 @@ mod tests {
     }
 
     #[test]
+    fn identical_tapes_from_different_typed_actions_do_not_claim_one_composition() {
+        let left = observation(11, 1, 3);
+        let mut right = observation(13, 2, 4);
+        right.action.option_id = "family/roll".into();
+        right.action.option_type = crate::option_execution::OptionType::Roll;
+
+        assert!(discover_replay_macros(&[left, right]).unwrap().is_empty());
+    }
+
+    #[test]
     fn independent_entry_states_can_propose_one_exact_composed_macro() {
         let candidate = replay_macro_candidate(
             tape(80, 16),
             vec![
+                observation(11, 1, 3).action,
+                observation(11, 2, 4).action,
+            ],
+            vec![
                 MacroSourceProvenance {
                     seed: 11,
                     frontier_state_sha256: Digest([1; 32]),
-                    transition_sha256: Digest([3; 32]),
-                    option_id: "family/seek/a".into(),
+                    transition_sha256s: vec![Digest([3; 32]), Digest([5; 32])],
                     entry: observation(11, 1, 3).entry,
                 },
                 MacroSourceProvenance {
                     seed: 11,
                     frontier_state_sha256: Digest([2; 32]),
-                    transition_sha256: Digest([4; 32]),
-                    option_id: "family/curve/b".into(),
+                    transition_sha256s: vec![Digest([4; 32]), Digest([6; 32])],
                     entry: observation(11, 2, 4).entry,
                 },
             ],
         )
         .unwrap();
         assert_eq!(candidate.tape.frames.len(), 16);
+        assert_eq!(candidate.components.len(), 2);
         assert_eq!(candidate.sources.len(), 2);
         let condition = candidate.entry_condition().unwrap();
         assert_eq!(

@@ -2,9 +2,10 @@
 
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
+use dusklight_learning::option_values::OptionActionDescriptor;
 use dusklight_learning::tactic_macro_promotion::{
     DiscoveredMacroCandidate, MacroComparisonEvidence, MacroEntryObservation, MacroPromotionStatus,
-    MacroSourceProvenance, TACTIC_MACRO_DISCOVERY_SCHEMA_V2, TacticMacroPromotionRegistry,
+    MacroSourceProvenance, TACTIC_MACRO_DISCOVERY_SCHEMA_V3, TacticMacroPromotionRegistry,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -15,9 +16,9 @@ use std::io::Write;
 use std::path::Path;
 
 pub const TACTIC_MACRO_REGISTRY_EXTENSION: &str = "dtmr";
-const TACTIC_MACRO_REGISTRY_SCHEMA_V2: &str = "dusklight-tactic-macro-registry/v2";
-const TACTIC_MACRO_REGISTRY_MAGIC: &[u8; 8] = b"DSKTMAC2";
-const TACTIC_MACRO_REGISTRY_VERSION: u16 = 2;
+const TACTIC_MACRO_REGISTRY_SCHEMA_V3: &str = "dusklight-tactic-macro-registry/v3";
+const TACTIC_MACRO_REGISTRY_MAGIC: &[u8; 8] = b"DSKTMAC3";
+const TACTIC_MACRO_REGISTRY_VERSION: u16 = 3;
 const TACTIC_MACRO_REGISTRY_HEADER_BYTES: usize = 8 + 2 + 2 + 8 + 8 + 32;
 const TACTIC_MACRO_REGISTRY_COMPRESSION_LEVEL: i32 = 3;
 const MAXIMUM_TACTIC_MACRO_REGISTRY_BYTES: usize = 64 * 1024 * 1024;
@@ -42,6 +43,7 @@ struct StoredRecord {
     candidate_sha256: Digest,
     option_id: String,
     tape: Vec<u8>,
+    components: Vec<OptionActionDescriptor>,
     sources: Vec<StoredSource>,
     comparisons: Vec<StoredComparison>,
     status: StoredStatus,
@@ -52,8 +54,7 @@ struct StoredRecord {
 struct StoredSource {
     seed: u64,
     frontier_state_sha256: Digest,
-    transition_sha256: Digest,
-    option_id: String,
+    transition_sha256s: Vec<Digest>,
     stage: String,
     room: i8,
     player_procedure: Option<u16>,
@@ -92,8 +93,8 @@ pub fn write_tactic_macro_registry(
         return Err(store_error("tactic macro registry extension is invalid"));
     }
     let stored = StoredRegistry {
-        schema: TACTIC_MACRO_REGISTRY_SCHEMA_V2.into(),
-        discovery_schema: TACTIC_MACRO_DISCOVERY_SCHEMA_V2.into(),
+        schema: TACTIC_MACRO_REGISTRY_SCHEMA_V3.into(),
+        discovery_schema: TACTIC_MACRO_DISCOVERY_SCHEMA_V3.into(),
         records: registry
             .records()
             .map(|record| {
@@ -105,6 +106,7 @@ pub fn write_tactic_macro_registry(
                         .tape
                         .encode()
                         .map_err(TacticMacroStoreError::domain)?,
+                    components: record.candidate.components.clone(),
                     sources: record
                         .candidate
                         .sources
@@ -112,8 +114,7 @@ pub fn write_tactic_macro_registry(
                         .map(|source| StoredSource {
                             seed: source.seed,
                             frontier_state_sha256: source.frontier_state_sha256,
-                            transition_sha256: source.transition_sha256,
-                            option_id: source.option_id.clone(),
+                            transition_sha256s: source.transition_sha256s.clone(),
                             stage: source.entry.stage.clone(),
                             room: source.entry.room,
                             player_procedure: source.entry.player_procedure,
@@ -166,8 +167,8 @@ pub fn read_tactic_macro_registry(
     let (content_sha256, raw) = decode_registry(&bytes)?;
     let stored: StoredRegistry =
         serde_cbor::from_slice(&raw).map_err(TacticMacroStoreError::domain)?;
-    if stored.schema != TACTIC_MACRO_REGISTRY_SCHEMA_V2
-        || stored.discovery_schema != TACTIC_MACRO_DISCOVERY_SCHEMA_V2
+    if stored.schema != TACTIC_MACRO_REGISTRY_SCHEMA_V3
+        || stored.discovery_schema != TACTIC_MACRO_DISCOVERY_SCHEMA_V3
     {
         return Err(store_error("tactic macro registry schema is invalid"));
     }
@@ -180,14 +181,14 @@ pub fn read_tactic_macro_registry(
             candidate_sha256: record.candidate_sha256,
             option_id: record.option_id,
             tape: decoded,
+            components: record.components,
             sources: record
                 .sources
                 .into_iter()
                 .map(|source| MacroSourceProvenance {
                     seed: source.seed,
                     frontier_state_sha256: source.frontier_state_sha256,
-                    transition_sha256: source.transition_sha256,
-                    option_id: source.option_id,
+                    transition_sha256s: source.transition_sha256s,
                     entry: MacroEntryObservation {
                         stage: source.stage,
                         room: source.room,
@@ -383,7 +384,11 @@ mod tests {
             seed,
             frontier_state_sha256: Digest([identity; 32]),
             transition_sha256: Digest([identity.saturating_add(16); 32]),
-            option_id: format!("family/seek/{identity}"),
+            action: OptionActionDescriptor {
+                option_id: "family/seek".into(),
+                option_type: dusklight_control::option_execution::OptionType::Move,
+                parameters: Default::default(),
+            },
             entry: MacroEntryObservation {
                 stage: "F_SP103".into(),
                 room: 1,
