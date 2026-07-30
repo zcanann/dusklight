@@ -8,11 +8,12 @@ use crate::native_suffix_worker::{
     NativeHeadlessAuditComparators, NativeSuffixPrevalidatedFileIdentities,
     NativeSuffixWorkerLaunch, NativeSuffixWorkerLaunchTiming, NativeSuffixWorkerSession,
 };
+use crate::native_tactic_route_runner::native_tactic_applicable_action_surface_identity;
 use crate::native_tactic_worker::pad_runs;
 use crate::optimization_request::OptimizationRequest;
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
-use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
+use dusklight_evidence::native_episode_shard::{NativeEpisodeShard, NativeRawPad};
 use dusklight_search::suffix_batch::{
     NATIVE_SUFFIX_BATCH_SCHEMA, NativeCheckpointValidation, NativeSuffixBatch,
     NativeSuffixCandidate,
@@ -26,7 +27,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const NATIVE_SUBSYSTEM_PARITY_SCHEMA: &str = "dusklight-native-subsystem-parity/v1";
+pub const NATIVE_SUBSYSTEM_PARITY_SCHEMA: &str = "dusklight-native-subsystem-parity/v2";
 const DISABLED_SUBSYSTEMS: [&str; 7] = [
     "gpu_frame_submission",
     "cpu_renderer_submission",
@@ -50,7 +51,13 @@ pub struct NativeSubsystemParityConfig<'a> {
 pub struct NativeSubsystemEvidenceProjection {
     pub source_boundary_fingerprint: String,
     pub simulated_ticks: u64,
+    pub native_state_trajectory_sha256: Digest,
     pub episode_payload_xxh3_128: Vec<String>,
+    pub applicable_action_surface_sha256: Digest,
+    pub applicable_action_surface_boundaries: u64,
+    pub applicable_action_descriptors: u64,
+    pub controller_output_sha256: Digest,
+    pub first_hit_ticks: Vec<Option<u64>>,
     pub terminal_evidence_sha256: Digest,
     pub terminal_boundary_fingerprints: Vec<String>,
     /// Diagnostic digest of the full state proof emitted inside one native process.
@@ -193,12 +200,21 @@ impl NativeSubsystemParityReport {
             );
             let evidence_valid = !condition.evidence.source_boundary_fingerprint.is_empty()
                 && condition.evidence.simulated_ticks == self.candidate_ticks
+                && condition.evidence.native_state_trajectory_sha256 != Digest::ZERO
                 && !condition.evidence.episode_payload_xxh3_128.is_empty()
                 && condition
                     .evidence
                     .episode_payload_xxh3_128
                     .iter()
                     .all(|digest| !digest.is_empty())
+                && condition.evidence.applicable_action_surface_sha256 != Digest::ZERO
+                && condition.evidence.applicable_action_surface_boundaries
+                    == condition.evidence.simulated_ticks
+                && condition.evidence.applicable_action_descriptors
+                    >= condition.evidence.applicable_action_surface_boundaries
+                && condition.evidence.controller_output_sha256 != Digest::ZERO
+                && condition.evidence.first_hit_ticks.len()
+                    == condition.evidence.episode_payload_xxh3_128.len()
                 && condition.evidence.terminal_evidence_sha256 != Digest::ZERO
                 && !condition.evidence.terminal_boundary_fingerprints.is_empty()
                 && condition
@@ -256,6 +272,8 @@ pub fn run_native_subsystem_parity(
         definition_sha256: config.optimization.terminal_predicate.definition_sha256,
     };
     let inputs = ConditionInputs {
+        optimization: config.optimization,
+        execution: config.execution,
         root: root.clone(),
         executable: root.join(&config.execution.executable.path),
         game_data: root.join(&config.execution.game_data.path),
@@ -358,7 +376,9 @@ pub fn run_native_subsystem_parity(
     Ok(report)
 }
 
-struct ConditionInputs {
+struct ConditionInputs<'a> {
+    optimization: &'a OptimizationRequest,
+    execution: &'a NativeResidualExecutionBinding,
     root: PathBuf,
     executable: PathBuf,
     game_data: PathBuf,
@@ -379,7 +399,7 @@ struct ConditionRun {
 }
 
 fn run_condition(
-    inputs: &ConditionInputs,
+    inputs: &ConditionInputs<'_>,
     output_root: &Path,
     definition: ConditionDefinition,
 ) -> Result<ConditionRun, String> {
@@ -412,6 +432,7 @@ fn run_condition(
             )?;
         let raw: NativeSuffixBatchResult = serde_json::from_slice(&fs::read(&result_path)?)?;
         let primary_measurement = measurement(
+            inputs,
             definition.name,
             definition.reference,
             definition.comparators,
@@ -427,6 +448,7 @@ fn run_condition(
             let validated = worker.run_batch(&batch_path, &result_path, None)?;
             let raw: NativeSuffixBatchResult = serde_json::from_slice(&fs::read(&result_path)?)?;
             Some(measurement(
+                inputs,
                 "state_hash_proof_disabled",
                 "production_all_disabled",
                 definition.comparators,
@@ -454,6 +476,7 @@ fn run_condition(
 }
 
 fn measurement(
+    inputs: &ConditionInputs<'_>,
     condition: &str,
     reference_condition: &str,
     comparators: NativeHeadlessAuditComparators,
@@ -484,7 +507,7 @@ fn measurement(
         .get("state_validation")
         .ok_or("native suffix timing lacks state validation")?
         .clone();
-    let evidence = evidence_projection(raw, &shard)?;
+    let evidence = evidence_projection(inputs, raw, &shard)?;
     let configuration_verified = validate_configuration_projection(
         comparators,
         verify_state_hashes,
@@ -514,14 +537,39 @@ fn measurement(
 }
 
 fn evidence_projection(
+    inputs: &ConditionInputs<'_>,
     raw: &NativeSuffixBatchResult,
     shard: &NativeEpisodeShard,
 ) -> Result<NativeSubsystemEvidenceProjection, Box<dyn Error>> {
+    if raw.candidates.len() != shard.episodes.len()
+        || raw
+            .candidates
+            .iter()
+            .zip(&shard.episodes)
+            .any(|(candidate, episode)| {
+                candidate.id != episode.id
+                    || candidate.success != episode.success
+                    || candidate.ticks_executed != u64::from(episode.ticks_executed)
+                    || candidate.first_hit_tick != episode.first_hit_tick.map(u64::from)
+            })
+    {
+        return Err("native subsystem result is detached from its episode shard".into());
+    }
     let terminal_evidence_sha256 = digest_json(
         &raw.candidates
             .iter()
             .map(terminal_projection)
             .collect::<Vec<_>>(),
+    )?;
+    let (
+        applicable_action_surface_sha256,
+        applicable_action_surface_boundaries,
+        applicable_action_descriptors,
+    ) = native_tactic_applicable_action_surface_identity(
+        &inputs.root,
+        inputs.optimization,
+        inputs.execution,
+        shard,
     )?;
     let process_local_state_proof_sha256 = raw
         .verify_state_hashes
@@ -551,10 +599,20 @@ fn evidence_projection(
             .iter()
             .map(|candidate| candidate.ticks_executed)
             .sum(),
+        native_state_trajectory_sha256: native_state_trajectory_sha256(shard),
         episode_payload_xxh3_128: shard
             .episodes
             .iter()
             .map(|episode| hex_bytes(&episode.payload_xxh3_128))
+            .collect(),
+        applicable_action_surface_sha256,
+        applicable_action_surface_boundaries,
+        applicable_action_descriptors,
+        controller_output_sha256: controller_output_sha256(shard),
+        first_hit_ticks: raw
+            .candidates
+            .iter()
+            .map(|candidate| candidate.first_hit_tick)
             .collect(),
         terminal_evidence_sha256,
         terminal_boundary_fingerprints: raw
@@ -564,6 +622,58 @@ fn evidence_projection(
             .collect(),
         process_local_state_proof_sha256,
     })
+}
+
+fn native_state_trajectory_sha256(shard: &NativeEpisodeShard) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-native-subsystem-state-trajectory/v1");
+    hasher.update((shard.episodes.len() as u64).to_le_bytes());
+    for episode in &shard.episodes {
+        hasher.update((episode.id.len() as u64).to_le_bytes());
+        hasher.update(episode.id.as_bytes());
+        hasher.update((episode.steps.len() as u64).to_le_bytes());
+        for step in &episode.steps {
+            for observation in [&step.pre_input, &step.post_simulation] {
+                hasher.update(observation.state_identity);
+                hasher.update(observation.boundary_index.to_le_bytes());
+                hasher.update(observation.simulation_tick.to_le_bytes());
+                hasher.update(observation.tape_frame.to_le_bytes());
+            }
+        }
+    }
+    Digest(hasher.finalize().into())
+}
+
+fn controller_output_sha256(shard: &NativeEpisodeShard) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-native-subsystem-controller-output/v1");
+    hasher.update((shard.episodes.len() as u64).to_le_bytes());
+    for episode in &shard.episodes {
+        hasher.update((episode.id.len() as u64).to_le_bytes());
+        hasher.update(episode.id.as_bytes());
+        hasher.update((episode.steps.len() as u64).to_le_bytes());
+        for step in &episode.steps {
+            hash_native_pad(&mut hasher, step.chosen_pad);
+            hash_native_pad(&mut hasher, step.consumed_pad);
+        }
+    }
+    Digest(hasher.finalize().into())
+}
+
+fn hash_native_pad(hasher: &mut Sha256, pad: NativeRawPad) {
+    hasher.update(pad.buttons.to_le_bytes());
+    hasher.update(pad.stick_x.to_le_bytes());
+    hasher.update(pad.stick_y.to_le_bytes());
+    hasher.update(pad.substick_x.to_le_bytes());
+    hasher.update(pad.substick_y.to_le_bytes());
+    hasher.update([
+        pad.trigger_left,
+        pad.trigger_right,
+        pad.analog_a,
+        pad.analog_b,
+    ]);
+    hasher.update([u8::from(pad.connected)]);
+    hasher.update(pad.error.to_le_bytes());
 }
 
 fn terminal_projection(candidate: &NativeSuffixCandidateResult) -> Value {
@@ -765,7 +875,13 @@ fn native_evidence_matches(
 ) -> bool {
     left.source_boundary_fingerprint == right.source_boundary_fingerprint
         && left.simulated_ticks == right.simulated_ticks
+        && left.native_state_trajectory_sha256 == right.native_state_trajectory_sha256
         && left.episode_payload_xxh3_128 == right.episode_payload_xxh3_128
+        && left.applicable_action_surface_sha256 == right.applicable_action_surface_sha256
+        && left.applicable_action_surface_boundaries == right.applicable_action_surface_boundaries
+        && left.applicable_action_descriptors == right.applicable_action_descriptors
+        && left.controller_output_sha256 == right.controller_output_sha256
+        && left.first_hit_ticks == right.first_hit_ticks
         && left.terminal_evidence_sha256 == right.terminal_evidence_sha256
         && left.terminal_boundary_fingerprints == right.terminal_boundary_fingerprints
 }
@@ -852,16 +968,55 @@ mod tests {
         let evidence = NativeSubsystemEvidenceProjection {
             source_boundary_fingerprint: "source".into(),
             simulated_ticks: 16,
+            native_state_trajectory_sha256: Digest([1; 32]),
             episode_payload_xxh3_128: vec!["episode".into()],
-            terminal_evidence_sha256: Digest([1; 32]),
+            applicable_action_surface_sha256: Digest([2; 32]),
+            applicable_action_surface_boundaries: 16,
+            applicable_action_descriptors: 64,
+            controller_output_sha256: Digest([3; 32]),
+            first_hit_ticks: vec![Some(15)],
+            terminal_evidence_sha256: Digest([4; 32]),
             terminal_boundary_fingerprints: vec!["terminal".into()],
-            process_local_state_proof_sha256: Some(Digest([2; 32])),
+            process_local_state_proof_sha256: Some(Digest([5; 32])),
         };
         let mut other_process = evidence.clone();
-        other_process.process_local_state_proof_sha256 = Some(Digest([3; 32]));
+        other_process.process_local_state_proof_sha256 = Some(Digest([6; 32]));
         assert!(native_evidence_matches(&evidence, &other_process));
 
         other_process.terminal_boundary_fingerprints = vec!["changed".into()];
         assert!(!native_evidence_matches(&evidence, &other_process));
+    }
+
+    #[test]
+    fn cross_process_evidence_rejects_named_planner_and_controller_drift() {
+        let evidence = NativeSubsystemEvidenceProjection {
+            source_boundary_fingerprint: "source".into(),
+            simulated_ticks: 1,
+            native_state_trajectory_sha256: Digest([1; 32]),
+            episode_payload_xxh3_128: vec!["episode".into()],
+            applicable_action_surface_sha256: Digest([2; 32]),
+            applicable_action_surface_boundaries: 1,
+            applicable_action_descriptors: 4,
+            controller_output_sha256: Digest([3; 32]),
+            first_hit_ticks: vec![None],
+            terminal_evidence_sha256: Digest([4; 32]),
+            terminal_boundary_fingerprints: vec!["terminal".into()],
+            process_local_state_proof_sha256: Some(Digest([5; 32])),
+        };
+        let mut drifted = evidence.clone();
+        drifted.applicable_action_surface_sha256 = Digest([9; 32]);
+        assert!(!native_evidence_matches(&evidence, &drifted));
+
+        drifted = evidence.clone();
+        drifted.controller_output_sha256 = Digest([9; 32]);
+        assert!(!native_evidence_matches(&evidence, &drifted));
+
+        drifted = evidence.clone();
+        drifted.first_hit_ticks = vec![Some(0)];
+        assert!(!native_evidence_matches(&evidence, &drifted));
+
+        drifted = evidence.clone();
+        drifted.native_state_trajectory_sha256 = Digest([9; 32]);
+        assert!(!native_evidence_matches(&evidence, &drifted));
     }
 }

@@ -65,9 +65,9 @@ use dusklight_learning::tactic_macro_promotion::{
     DiscoveredMacroCandidate, MAX_DISCOVERED_MACRO_TICKS, MAX_DISCOVERED_MACROS,
     MAX_DISCOVERY_OBSERVATIONS, MIN_DISCOVERY_OCCURRENCES, MIN_PROMOTION_COMPARISONS,
     MacroComparisonEvidence, MacroDiscoveryObservation, MacroEntryObservation,
-    MacroPromotionStatus, MacroSourceProvenance, TacticMacroEntryCondition,
-    TacticMacroComponent, TacticMacroEntryConditionCell, TacticMacroPromotionRegistry,
-    discover_replay_macros, replay_macro_candidate,
+    MacroPromotionStatus, MacroSourceProvenance, TacticMacroComponent, TacticMacroEntryCondition,
+    TacticMacroEntryConditionCell, TacticMacroPromotionRegistry, discover_replay_macros,
+    replay_macro_candidate,
 };
 use dusklight_learning::tactic_value_treatment::TacticValueTreatment;
 use dusklight_objectives::milestone_dsl::{Comparison, Expression, Field, Value};
@@ -224,10 +224,9 @@ pub use scratch_evidence_bundle::{
 };
 mod scratch_campaign_audit;
 pub use scratch_campaign_audit::{
-    NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2,
-    NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3, NativeTacticCampaignResourceAudit,
-    NativeTacticScratchCampaignAudit, NativeTacticScratchDecisionAudit,
-    NativeTacticScratchSeedAudit, NativeTacticScratchStopReason,
+    NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2, NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3,
+    NativeTacticCampaignResourceAudit, NativeTacticScratchCampaignAudit,
+    NativeTacticScratchDecisionAudit, NativeTacticScratchSeedAudit, NativeTacticScratchStopReason,
     NativeTacticScratchTerminalImprovementAudit,
 };
 mod scratch_comparison;
@@ -248,10 +247,10 @@ pub use observation_audit::{
 };
 mod post_terminal_controls;
 pub use post_terminal_controls::{
-    NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V1,
-    NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V2, NativeTacticPostTerminalControl,
-    NativeTacticPostTerminalControlReport, NativeTacticPostTerminalDecisionControl,
-    NativeTacticPostTerminalRanking, NativeTacticPostTerminalSeedControl,
+    NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V1, NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V2,
+    NativeTacticPostTerminalControl, NativeTacticPostTerminalControlReport,
+    NativeTacticPostTerminalDecisionControl, NativeTacticPostTerminalRanking,
+    NativeTacticPostTerminalSeedControl,
 };
 
 mod throughput_curve;
@@ -880,6 +879,8 @@ use worker_pool::{
     parameterized_catalog_for_state, parameterized_catalog_for_state_with_promoted,
     parameterized_feedback_for_state, run_seed_coordinator,
 };
+mod action_surface_audit;
+pub(crate) use action_surface_audit::native_tactic_applicable_action_surface_identity;
 mod worker_fleet;
 use worker_fleet::NativeTacticWorkerFleet;
 mod campaign;
@@ -1141,9 +1142,8 @@ pub(crate) fn initial_facts(
 }
 
 fn maximum_demonstration_chunk_ticks(horizon: u64) -> Result<u32, NativeTacticRouteRunError> {
-    Ok(goal_tactic_maximum_ticks(horizon)?.min(
-        u32::try_from(TACTIC_INTERMEDIATE_BOUNDARY_STRIDE).map_err(route_error)?,
-    ))
+    Ok(goal_tactic_maximum_ticks(horizon)?
+        .min(u32::try_from(TACTIC_INTERMEDIATE_BOUNDARY_STRIDE).map_err(route_error)?))
 }
 
 fn validate_config(
@@ -1155,9 +1155,8 @@ fn validate_config(
         config.execution_plan.budgets.memory_bytes,
         config.workers,
     )?;
-    let maximum_demonstration_chunk_ticks = maximum_demonstration_chunk_ticks(
-        config.optimization.budgets.exploration_horizon_ticks,
-    )?;
+    let maximum_demonstration_chunk_ticks =
+        maximum_demonstration_chunk_ticks(config.optimization.budgets.exploration_horizon_ticks)?;
     if config.workers == 0
         || config.workers > MAX_ROUTE_WORKERS
         || config.execution_plan.budgets.decisions_per_lane > MAX_ROUTE_DECISIONS
