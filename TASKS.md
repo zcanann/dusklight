@@ -49,7 +49,7 @@ The incoming 2026-07-29 work made substantial, useful progress:
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 325 tests.
+  orchestration suite is hermetic and passes all 327 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
   tape/result, source-authority evidence, and a content-bound campaign audit.
@@ -239,7 +239,16 @@ The incoming 2026-07-29 work made substantial, useful progress:
   P3: authoritative admission still consumes about 11% of total wall, while
   tactic execution, persistence, and model update consume about `341.4`,
   `360.1`, and `200.8` seconds respectively. Profile those remaining paths
-  before launching another curve cell.
+  before launching another curve cell. Checkpoint `252cd20dc7` makes clones of
+  the authenticated transition capability and graph evidence share one
+  immutable allocation instead of copying both complete typed snapshots. It
+  also publishes an exact wire-compatible admission breakdown for terminal
+  projection, batch graph admission, next-action catalog construction,
+  selected-outcome retention, frontier retention, and unattributed work in
+  route reports, curve samples, and matched comparisons. All 327 orchestration
+  and 430 learning tests pass. This is source-level treatment awaiting a
+  matched measurement; the breakdown must identify the dominant remaining
+  subphase before another optimization is accepted.
 
 That campaign proves bounded terminal discovery under its exact conditions. It
 does not prove practical discovery, useful native learning, route
@@ -505,7 +514,13 @@ Exit gate:
       admission. Profile and remove the remaining measured coordinator,
       persistence, model-update, and restore/capture growth before spending the
       remaining v4 cells; the curve must still identify the steady-state
-      saturation point.
+      saturation point. Checkpoint `252cd20dc7` removes the remaining deep
+      clone of each authenticated proposal on entry to batch admission and
+      makes the next report attribute every admission microsecond among
+      terminal projection, batch graph admission, action-catalog construction,
+      selected retention, frontier retention, and unaccounted overhead. Use
+      that evidence to select the next treatment; do not infer another
+      bottleneck from the aggregate timer.
 - [x] Preserve native state, applicable actions, controller output, terminal
       evidence, and first-hit tick for every disabled presentation subsystem.
       Source checkpoint `703dcdbbba` advances the parity report to v2 and
