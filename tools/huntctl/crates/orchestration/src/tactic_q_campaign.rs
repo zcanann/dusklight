@@ -32,7 +32,9 @@ use dusklight_learning::learner_state::{
 use dusklight_learning::live_tactic_catalog::{
     LiveTacticCatalog, LiveTacticCatalogError, LiveTacticRanking,
 };
-use dusklight_learning::option_transition::{OptionTransitionError, OptionTransitionSample};
+use dusklight_learning::option_transition::{
+    AuthenticatedOptionTransition, OptionTransitionError, OptionTransitionSample,
+};
 use dusklight_learning::option_values::{
     AvailableOptionRanking, MAX_OPTION_ACTIONS, OptionActionDescriptor, OptionValueBatch,
     OptionValueConfig, OptionValueError, OptionValueModel,
@@ -121,7 +123,7 @@ pub struct TacticQGoalReachabilityEstimate {
 #[serde(deny_unknown_fields)]
 pub struct EvaluatedRewardedTacticOutcome {
     pub outcome: NativeTacticWorkerOutcome,
-    pub transition: OptionTransitionSample,
+    pub transition: AuthenticatedOptionTransition,
     pub reward: TacticRewardBreakdown,
 }
 

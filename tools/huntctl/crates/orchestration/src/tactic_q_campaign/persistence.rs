@@ -332,7 +332,7 @@ impl TacticQCampaign {
             ));
         }
         let mut replay = self.replay.clone();
-        replay.push(evaluated.transition.clone());
+        replay.push(evaluated.transition.as_ref().clone());
         let mut replay_routes = self.replay_routes.clone();
         replay_routes.push(outcome.route_tape.clone());
         self.build_final_result(

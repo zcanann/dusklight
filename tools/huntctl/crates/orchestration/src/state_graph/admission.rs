@@ -8,7 +8,9 @@ use super::{
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_learning::fact_snapshot::FactSnapshot;
-use dusklight_learning::option_transition::OptionTransitionSample;
+use dusklight_learning::option_transition::{
+    AuthenticatedOptionTransition, OptionTransitionSample,
+};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -21,7 +23,13 @@ impl StateGraph {
         episode_group: u64,
         authority: ExpansionEvidenceAuthority,
     ) -> Result<ExpansionAdmission, StateGraphError> {
-        self.admit_completed_expansion_with_lease(transition, route, episode_group, authority, None)
+        self.admit_authenticated_completed_expansion_with_lease(
+            AuthenticatedOptionTransition::new(transition)?,
+            route,
+            episode_group,
+            authority,
+            None,
+        )
     }
 
     pub fn admit_leased_completed_expansion(
@@ -37,7 +45,45 @@ impl StateGraph {
                 "completed expansion lease is missing",
             ));
         }
-        self.admit_completed_expansion_with_lease(
+        self.admit_authenticated_completed_expansion_with_lease(
+            AuthenticatedOptionTransition::new(transition)?,
+            route,
+            episode_group,
+            authority,
+            Some(lease_sha256),
+        )
+    }
+
+    pub(crate) fn admit_authenticated_completed_expansion(
+        &mut self,
+        transition: AuthenticatedOptionTransition,
+        route: InputTape,
+        episode_group: u64,
+        authority: ExpansionEvidenceAuthority,
+    ) -> Result<ExpansionAdmission, StateGraphError> {
+        self.admit_authenticated_completed_expansion_with_lease(
+            transition,
+            route,
+            episode_group,
+            authority,
+            None,
+        )
+    }
+
+    pub(crate) fn admit_leased_authenticated_completed_expansion(
+        &mut self,
+        transition: AuthenticatedOptionTransition,
+        route: InputTape,
+        episode_group: u64,
+        authority: ExpansionEvidenceAuthority,
+        lease_sha256: Digest,
+    ) -> Result<ExpansionAdmission, StateGraphError> {
+        if lease_sha256 == Digest::ZERO {
+            return Err(StateGraphError::Invalid(
+                "completed expansion lease is missing",
+            ));
+        }
+        self.admit_authenticated_completed_expansion_with_lease(
             transition,
             route,
             episode_group,
@@ -46,16 +92,19 @@ impl StateGraph {
         )
     }
 
-    fn admit_completed_expansion_with_lease(
+    fn admit_authenticated_completed_expansion_with_lease(
         &mut self,
-        transition: OptionTransitionSample,
+        transition: AuthenticatedOptionTransition,
         route: InputTape,
         episode_group: u64,
         authority: ExpansionEvidenceAuthority,
         lease_sha256: Option<Digest>,
     ) -> Result<ExpansionAdmission, StateGraphError> {
-        let (evidence_sha256, option_start, option_end) =
-            self.validate_transition(&transition, &route)?;
+        let evidence_sha256 = transition.replay_identity_sha256();
+        let (transition, authenticated_evidence_sha256) = transition.into_parts();
+        debug_assert_eq!(evidence_sha256, authenticated_evidence_sha256);
+        let (option_start, option_end) =
+            self.validate_authenticated_transition(&transition, &route)?;
         let source_route = self.prepare_route(tape_prefix(&route, option_start)?)?;
         let target_route = self.prepare_route(tape_prefix(&route, option_end)?)?;
         let full_tape_sha256 = if option_end == route.frames.len() {
@@ -314,12 +363,11 @@ impl StateGraph {
         })
     }
 
-    fn validate_transition(
+    fn validate_authenticated_transition(
         &self,
         transition: &OptionTransitionSample,
         route: &InputTape,
-    ) -> Result<(Digest, usize, usize), StateGraphError> {
-        let evidence_sha256 = transition.validate_and_replay_identity_sha256()?;
+    ) -> Result<(usize, usize), StateGraphError> {
         let start = usize::try_from(transition.execution.realized_tape_range.start_frame)
             .map_err(|_| StateGraphError::Invalid("option start frame overflows"))?;
         let end = usize::try_from(transition.execution.realized_tape_range.end_frame_exclusive)
@@ -332,7 +380,7 @@ impl StateGraph {
                 "completed expansion is detached from this graph",
             ));
         }
-        Ok((evidence_sha256, start, end))
+        Ok((start, end))
     }
 
     fn prepare_route(&self, route: InputTape) -> Result<PreparedRoute, StateGraphError> {

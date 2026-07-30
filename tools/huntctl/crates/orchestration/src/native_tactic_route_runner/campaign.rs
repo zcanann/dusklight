@@ -892,7 +892,7 @@ pub(super) fn run_seed(
         timing.graph_admission_micros = timing
             .graph_admission_micros
             .saturating_add(elapsed_micros(graph_admission_started.elapsed()));
-        if step.step.transition != expected_transition
+        if step.step.transition != *expected_transition
             || step.reward != evaluated[winner_index].reward
         {
             return Err(route_message(
@@ -1146,7 +1146,7 @@ pub(super) fn run_seed(
                     trace: trace.clone(),
                     component,
                     transition: None,
-                    inline_transition: Some(proposal.transition.clone()),
+                    inline_transition: Some(proposal.transition.as_ref().clone()),
                 })
             })
             .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
@@ -1189,7 +1189,7 @@ pub(super) fn run_seed(
             root_tape_ref,
             Some(source_route_tape_ref),
             None,
-            Some(transition),
+            Some(transition.as_ref().clone()),
             proposal_records,
         ))?;
         inject_tactic_fault(

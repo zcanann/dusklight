@@ -460,7 +460,7 @@ impl TacticQCampaign {
         )?;
         transition.intermediate_boundaries = outcome.intermediate_boundaries.clone();
         transition.execution_authority_sha256 = self.execution_authority_sha256;
-        transition.validate()?;
+        let transition = AuthenticatedOptionTransition::new(transition)?;
         Ok(EvaluatedRewardedTacticOutcome {
             outcome,
             transition,
@@ -552,7 +552,7 @@ impl TacticQCampaign {
                         "evaluated tactic replay is detached from its graph lease",
                     ));
                 }
-                let admission = state_graph.admit_leased_completed_expansion(
+                let admission = state_graph.admit_leased_authenticated_completed_expansion(
                     evaluated.transition.clone(),
                     evaluated.outcome.route_tape.clone(),
                     *episode_group,
@@ -566,7 +566,7 @@ impl TacticQCampaign {
                 }
                 admission
             } else {
-                state_graph.admit_completed_expansion(
+                state_graph.admit_authenticated_completed_expansion(
                     evaluated.transition.clone(),
                     evaluated.outcome.route_tape.clone(),
                     *episode_group,

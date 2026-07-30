@@ -110,6 +110,18 @@ fn combined_route_identity_preserves_both_persisted_digests() {
 
 #[test]
 fn shared_node_state_preserves_legacy_serialization_bytes() {
+    #[derive(serde::Serialize)]
+    struct LegacyStateGraphNode<'a> {
+        id: ExactStateId,
+        state: &'a FactSnapshot,
+        terminal: bool,
+        root_ticks: u64,
+        restoration: &'a RestorationLocator,
+        incoming_segments: &'a BTreeSet<Digest>,
+        outgoing_segments: &'a BTreeSet<Digest>,
+        outgoing_expansions: &'a BTreeSet<Digest>,
+    }
+
     let state = fixture_state();
     let shared = Arc::new(state.clone());
     assert_eq!(
@@ -119,6 +131,22 @@ fn shared_node_state_preserves_legacy_serialization_bytes() {
     assert_eq!(
         serde_json::to_vec(&state).unwrap(),
         serde_json::to_vec(&shared).unwrap()
+    );
+    let (graph, _, _) = graph_and_transition();
+    let node = graph.node(graph.root()).unwrap();
+    let legacy = LegacyStateGraphNode {
+        id: node.id,
+        state: node.state.as_ref(),
+        terminal: node.terminal,
+        root_ticks: node.root_ticks,
+        restoration: &node.restoration,
+        incoming_segments: &node.incoming_segments,
+        outgoing_segments: &node.outgoing_segments,
+        outgoing_expansions: &node.outgoing_expansions,
+    };
+    assert_eq!(
+        serde_cbor::to_vec(node).unwrap(),
+        serde_cbor::to_vec(&legacy).unwrap()
     );
 }
 

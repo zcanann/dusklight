@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
+use std::ops::Deref;
 
 pub const OPTION_TRANSITION_SAMPLE_SCHEMA_V1: &str = "dusklight-option-transition-sample/v1";
 pub const MAX_OPTION_INTERMEDIATE_BOUNDARIES: usize = 256;
@@ -48,6 +49,57 @@ pub struct OptionTransitionSample {
     pub value_sample: OptionValueSample,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub intermediate_boundaries: Vec<OptionIntermediateBoundary>,
+}
+
+/// An immutable transition plus the replay identity derived by validating all
+/// of its native facts. The private fields prevent callers from manufacturing
+/// a receipt for unauthenticated evidence, while transparent serialization
+/// preserves the existing transition wire shape.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AuthenticatedOptionTransition {
+    transition: OptionTransitionSample,
+    replay_identity_sha256: Digest,
+}
+
+impl AuthenticatedOptionTransition {
+    pub fn new(transition: OptionTransitionSample) -> Result<Self, OptionTransitionError> {
+        let replay_identity_sha256 = transition.validate_and_replay_identity_sha256()?;
+        Ok(Self {
+            transition,
+            replay_identity_sha256,
+        })
+    }
+
+    pub fn replay_identity_sha256(&self) -> Digest {
+        self.replay_identity_sha256
+    }
+
+    pub fn into_parts(self) -> (OptionTransitionSample, Digest) {
+        (self.transition, self.replay_identity_sha256)
+    }
+}
+
+impl AsRef<OptionTransitionSample> for AuthenticatedOptionTransition {
+    fn as_ref(&self) -> &OptionTransitionSample {
+        &self.transition
+    }
+}
+
+impl Deref for AuthenticatedOptionTransition {
+    type Target = OptionTransitionSample;
+
+    fn deref(&self) -> &Self::Target {
+        &self.transition
+    }
+}
+
+impl Serialize for AuthenticatedOptionTransition {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.transition.serialize(serializer)
+    }
 }
 
 impl OptionTransitionSample {
@@ -558,6 +610,21 @@ mod tests {
             first_plan.replay_identity_sha256().unwrap(),
             second_plan.replay_identity_sha256().unwrap()
         );
+    }
+
+    #[test]
+    fn authenticated_transition_is_wire_transparent_and_retains_its_receipt() {
+        let row = row();
+        let expected_identity = row.replay_identity_sha256().unwrap();
+        let expected_json = serde_json::to_vec(&row).unwrap();
+        let expected_cbor = serde_cbor::to_vec(&row).unwrap();
+        let authenticated = AuthenticatedOptionTransition::new(row.clone()).unwrap();
+
+        assert_eq!(authenticated.as_ref(), &row);
+        assert_eq!(authenticated.replay_identity_sha256(), expected_identity);
+        assert_eq!(serde_json::to_vec(&authenticated).unwrap(), expected_json);
+        assert_eq!(serde_cbor::to_vec(&authenticated).unwrap(), expected_cbor);
+        assert_eq!(authenticated.into_parts(), (row, expected_identity));
     }
 
     #[test]

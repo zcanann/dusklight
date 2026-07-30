@@ -773,7 +773,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         "retaining the already-admitted selected outcome must not dirty or rewrite the graph"
     );
 
-    assert_eq!(evaluated.transition, retained.step.transition);
+    assert_eq!(evaluated.transition.as_ref(), &retained.step.transition);
     assert_eq!(evaluated.reward, retained.reward);
     assert_eq!(retained.step.replay_rows, 1);
     assert_eq!(retained.reward.terminal_observed, terminal);
@@ -1560,7 +1560,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     );
     assert_eq!(
         graph_terminal_result.replay,
-        vec![evaluated_terminal.transition.clone()]
+        vec![evaluated_terminal.transition.as_ref().clone()]
     );
     assert_eq!(
         graph_terminal_result.replay_routes,

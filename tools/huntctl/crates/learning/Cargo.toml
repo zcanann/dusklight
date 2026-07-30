@@ -17,3 +17,6 @@ serde_json = "1"
 sha2 = "0.10"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
+[dev-dependencies]
+serde_cbor = "0.11"
+
