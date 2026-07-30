@@ -28,7 +28,8 @@ use huntctl::search_evaluator::native_checkpoint_benchmark::{
 };
 use huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding;
 use huntctl::search_evaluator::native_subsystem_parity::{
-    NativeSubsystemParityConfig, NativeSubsystemParityReport, run_native_subsystem_parity,
+    NativeSubsystemParityConfig, NativeSubsystemParityEvidenceBundle, NativeSubsystemParityReport,
+    run_native_subsystem_parity,
 };
 use huntctl::search_evaluator::optimization_request::OptimizationRequest;
 use huntctl::throughput_benchmark::{
@@ -193,6 +194,25 @@ pub(crate) fn command_benchmark(args: &[String]) -> Result<(), Box<dyn Error>> {
         Some("route-cold-process") => route_cold_process(&args[1..]),
         Some("native-checkpoint") => native_checkpoint(&args[1..]),
         Some("native-subsystem-parity") => native_subsystem_parity(&args[1..]),
+        Some("seal-native-subsystem-parity-bundle") => {
+            let bundle = NativeSubsystemParityEvidenceBundle::seal(
+                &required_path(&args[1..], "--request")?,
+                &required_path(&args[1..], "--execution")?,
+                &required_path(&args[1..], "--report")?,
+                &required_path(&args[1..], "--run-root")?,
+                &required_path(&args[1..], "--bundle")?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
+            Ok(())
+        }
+        Some("validate-native-subsystem-parity-bundle") => {
+            let bundle = NativeSubsystemParityEvidenceBundle::read_and_validate(&required_path(
+                &args[1..],
+                "--bundle",
+            )?)?;
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
+            Ok(())
+        }
         Some("validate-native-checkpoint") => {
             let report: NativeCheckpointBenchmarkReport = serde_json::from_slice(&fs::read(
                 required_path(&args[1..], "--report")?,
@@ -255,7 +275,7 @@ pub(crate) fn command_benchmark(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
-        _ => Err("benchmark command:\n  import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  index-skybook-requirements --manifest MANIFEST.json --output INDEX.json\n  validate-skybook-requirements --manifest MANIFEST.json --index INDEX.json\n  validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json\n  validate-skybook-pilot --manifest MANIFEST.json --pilot PILOT.json [--repository-root ROOT]\n  route-cold-process --timeline FILE --segment ID --goal GOAL --game PATH --dvd PATH --artifact-root RELATIVE_ROOT [--output REPORT.json] [--repository-root ROOT] [--repetitions N] [--timeout-seconds N]\n  cold-process --request REQUEST.json --artifact-root RELATIVE_ROOT --output REPORT.json [--repository-root ROOT] [--repetitions N] [--prefix-ticks N]\n  validate-cold-process --report REPORT.json\n  native-checkpoint --request REQUEST.json --execution EXECUTION.json --output-root DIRECTORY --report REPORT.json [--repository-root ROOT] [--frontier-ticks N --frontier-ticks N --frontier-ticks N]\n  validate-native-checkpoint --report REPORT.json\n  native-subsystem-parity --request REQUEST.json --execution EXECUTION.json --output-root DIRECTORY --report REPORT.json [--candidate-ticks N] [--repository-root ROOT]\n  validate-native-subsystem-parity --report REPORT.json".into()),
+        _ => Err("benchmark command:\n  import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  index-skybook-requirements --manifest MANIFEST.json --output INDEX.json\n  validate-skybook-requirements --manifest MANIFEST.json --index INDEX.json\n  validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json\n  validate-skybook-pilot --manifest MANIFEST.json --pilot PILOT.json [--repository-root ROOT]\n  route-cold-process --timeline FILE --segment ID --goal GOAL --game PATH --dvd PATH --artifact-root RELATIVE_ROOT [--output REPORT.json] [--repository-root ROOT] [--repetitions N] [--timeout-seconds N]\n  cold-process --request REQUEST.json --artifact-root RELATIVE_ROOT --output REPORT.json [--repository-root ROOT] [--repetitions N] [--prefix-ticks N]\n  validate-cold-process --report REPORT.json\n  native-checkpoint --request REQUEST.json --execution EXECUTION.json --output-root DIRECTORY --report REPORT.json [--repository-root ROOT] [--frontier-ticks N --frontier-ticks N --frontier-ticks N]\n  validate-native-checkpoint --report REPORT.json\n  native-subsystem-parity --request REQUEST.json --execution EXECUTION.json --output-root DIRECTORY --report REPORT.json [--candidate-ticks N] [--repository-root ROOT]\n  validate-native-subsystem-parity --report REPORT.json\n  seal-native-subsystem-parity-bundle --request REQUEST.json --execution EXECUTION.json --report REPORT.json --run-root DIRECTORY --bundle DIRECTORY\n  validate-native-subsystem-parity-bundle --bundle DIRECTORY".into()),
     }
 }
 

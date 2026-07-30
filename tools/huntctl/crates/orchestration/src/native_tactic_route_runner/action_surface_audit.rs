@@ -1,11 +1,46 @@
 use super::*;
 
-pub(crate) fn native_tactic_applicable_action_surface_identity(
+pub const NATIVE_TACTIC_ACTION_SURFACE_AUDIT_CONTEXT_SCHEMA_V1: &str =
+    "dusklight-native-tactic-action-surface-audit-context/v1";
+const ACTION_SURFACE_AUDIT_SEED: u64 = 0;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticActionSurfaceAuditContext {
+    pub schema: String,
+    pub action_schema_sha256: Digest,
+    pub goal_coordinate_f32_bits: [u32; 3],
+    pub maximum_ticks: u32,
+    pub seed: u64,
+}
+
+impl NativeTacticActionSurfaceAuditContext {
+    pub fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
+        if self.schema != NATIVE_TACTIC_ACTION_SURFACE_AUDIT_CONTEXT_SCHEMA_V1
+            || self.action_schema_sha256 != parameterized_policy_action_schema_sha256(None)
+            || self
+                .goal_coordinate_f32_bits
+                .map(f32::from_bits)
+                .iter()
+                .any(|value| !value.is_finite())
+            || self.maximum_ticks == 0
+            || self.maximum_ticks > 40
+            || self.seed != ACTION_SURFACE_AUDIT_SEED
+        {
+            return Err(route_message(
+                "native tactic action-surface audit context is invalid",
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn native_tactic_action_surface_audit_context(
     root: &Path,
     optimization: &OptimizationRequest,
     execution: &NativeResidualExecutionBinding,
     shard: &NativeEpisodeShard,
-) -> Result<(Digest, u64, u64), NativeTacticRouteRunError> {
+) -> Result<NativeTacticActionSurfaceAuditContext, NativeTacticRouteRunError> {
     let initial_observation = shard
         .episodes
         .first()
@@ -17,14 +52,33 @@ pub(crate) fn native_tactic_applicable_action_surface_identity(
             .map_err(route_error)?;
     let GoalConditionedTacticContext { encoder, .. } =
         atomic_goal_conditioned_tactic_context(root, optimization, execution, &initial_facts)?;
-    let action_schema_sha256 = parameterized_policy_action_schema_sha256(None);
-    let maximum_ticks = goal_tactic_maximum_ticks(optimization.budgets.exploration_horizon_ticks)?;
+    let context = NativeTacticActionSurfaceAuditContext {
+        schema: NATIVE_TACTIC_ACTION_SURFACE_AUDIT_CONTEXT_SCHEMA_V1.into(),
+        action_schema_sha256: parameterized_policy_action_schema_sha256(None),
+        goal_coordinate_f32_bits: encoder.target_coordinate_f32_bits,
+        maximum_ticks: goal_tactic_maximum_ticks(optimization.budgets.exploration_horizon_ticks)?,
+        seed: ACTION_SURFACE_AUDIT_SEED,
+    };
+    context.validate()?;
+    Ok(context)
+}
+
+pub(crate) fn native_tactic_applicable_action_surface_identity(
+    context: &NativeTacticActionSurfaceAuditContext,
+    shard: &NativeEpisodeShard,
+) -> Result<(Digest, u64, u64), NativeTacticRouteRunError> {
+    context.validate()?;
+    let encoder = GoalConditionedTacticFeatureEncoder::new(
+        context.goal_coordinate_f32_bits.map(f32::from_bits),
+    )
+    .map_err(route_error)?;
     let registry = FactRegistry::canonical();
     let mut hasher = Sha256::new();
     hasher.update(b"dusklight-native-tactic-applicable-action-surface/v1");
-    hasher.update(action_schema_sha256.0);
+    hasher.update(context.action_schema_sha256.0);
     hasher.update(encoder.schema_sha256.0);
-    hasher.update(maximum_ticks.to_le_bytes());
+    hasher.update(context.maximum_ticks.to_le_bytes());
+    hasher.update(context.seed.to_le_bytes());
     hasher.update((shard.episodes.len() as u64).to_le_bytes());
     let mut boundary_count = 0_u64;
     let mut descriptor_count = 0_u64;
@@ -47,13 +101,13 @@ pub(crate) fn native_tactic_applicable_action_surface_identity(
             // fixed seed and boundary-index decision identity make the complete
             // primitive action query reproducible in every subsystem condition.
             let proposals = parameterized_catalog_for_state(
-                0,
+                context.seed,
                 step.pre_input.boundary_index,
                 &state,
                 &encoder,
-                maximum_ticks,
+                context.maximum_ticks,
                 None,
-                action_schema_sha256,
+                context.action_schema_sha256,
             )?;
             let learner = LearnerState::build(
                 state,
@@ -98,4 +152,36 @@ pub(crate) fn native_tactic_applicable_action_surface_identity(
         boundary_count,
         descriptor_count,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn context() -> NativeTacticActionSurfaceAuditContext {
+        NativeTacticActionSurfaceAuditContext {
+            schema: NATIVE_TACTIC_ACTION_SURFACE_AUDIT_CONTEXT_SCHEMA_V1.into(),
+            action_schema_sha256: parameterized_policy_action_schema_sha256(None),
+            goal_coordinate_f32_bits: [1.0_f32.to_bits(), 2.0_f32.to_bits(), 3.0_f32.to_bits()],
+            maximum_ticks: 16,
+            seed: ACTION_SURFACE_AUDIT_SEED,
+        }
+    }
+
+    #[test]
+    fn action_surface_context_rejects_unsealed_probe_inputs() {
+        context().validate().unwrap();
+
+        let mut drifted = context();
+        drifted.seed = 1;
+        assert!(drifted.validate().is_err());
+
+        drifted = context();
+        drifted.goal_coordinate_f32_bits[0] = f32::NAN.to_bits();
+        assert!(drifted.validate().is_err());
+
+        drifted = context();
+        drifted.action_schema_sha256 = Digest([9; 32]);
+        assert!(drifted.validate().is_err());
+    }
 }

@@ -8,7 +8,10 @@ use crate::native_suffix_worker::{
     NativeHeadlessAuditComparators, NativeSuffixPrevalidatedFileIdentities,
     NativeSuffixWorkerLaunch, NativeSuffixWorkerLaunchTiming, NativeSuffixWorkerSession,
 };
-use crate::native_tactic_route_runner::native_tactic_applicable_action_surface_identity;
+use crate::native_tactic_route_runner::{
+    NativeTacticActionSurfaceAuditContext, native_tactic_action_surface_audit_context,
+    native_tactic_applicable_action_surface_identity,
+};
 use crate::native_tactic_worker::pad_runs;
 use crate::optimization_request::OptimizationRequest;
 use dusklight_automation_contracts::artifact::Digest;
@@ -28,6 +31,12 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const NATIVE_SUBSYSTEM_PARITY_SCHEMA: &str = "dusklight-native-subsystem-parity/v2";
+mod evidence_bundle;
+pub use evidence_bundle::{
+    NATIVE_SUBSYSTEM_PARITY_EVIDENCE_BUNDLE_SCHEMA_V1, NATIVE_SUBSYSTEM_PARITY_EVIDENCE_MANIFEST,
+    NativeSubsystemParityBundleArtifact, NativeSubsystemParityConditionEvidence,
+    NativeSubsystemParityEvidenceBundle,
+};
 const DISABLED_SUBSYSTEMS: [&str; 7] = [
     "gpu_frame_submission",
     "cpu_renderer_submission",
@@ -53,6 +62,7 @@ pub struct NativeSubsystemEvidenceProjection {
     pub simulated_ticks: u64,
     pub native_state_trajectory_sha256: Digest,
     pub episode_payload_xxh3_128: Vec<String>,
+    pub applicable_action_surface_context: NativeTacticActionSurfaceAuditContext,
     pub applicable_action_surface_sha256: Digest,
     pub applicable_action_surface_boundaries: u64,
     pub applicable_action_descriptors: u64,
@@ -208,6 +218,11 @@ impl NativeSubsystemParityReport {
                     .iter()
                     .all(|digest| !digest.is_empty())
                 && condition.evidence.applicable_action_surface_sha256 != Digest::ZERO
+                && condition
+                    .evidence
+                    .applicable_action_surface_context
+                    .validate()
+                    .is_ok()
                 && condition.evidence.applicable_action_surface_boundaries
                     == condition.evidence.simulated_ticks
                 && condition.evidence.applicable_action_descriptors
@@ -541,7 +556,28 @@ fn evidence_projection(
     raw: &NativeSuffixBatchResult,
     shard: &NativeEpisodeShard,
 ) -> Result<NativeSubsystemEvidenceProjection, Box<dyn Error>> {
-    if raw.candidates.len() != shard.episodes.len()
+    let context = native_tactic_action_surface_audit_context(
+        &inputs.root,
+        inputs.optimization,
+        inputs.execution,
+        shard,
+    )?;
+    evidence_projection_with_context(&context, raw, shard)
+}
+
+fn evidence_projection_with_context(
+    applicable_action_surface_context: &NativeTacticActionSurfaceAuditContext,
+    raw: &NativeSuffixBatchResult,
+    shard: &NativeEpisodeShard,
+) -> Result<NativeSubsystemEvidenceProjection, Box<dyn Error>> {
+    if raw.source_frame != shard.source_frame
+        || raw.maximum_ticks != u64::from(shard.maximum_ticks)
+        || raw.episode_shard.observation_schema != shard.metadata.observation_schema
+        || raw.episode_shard.action_schema != shard.metadata.action_schema
+        || raw.episode_shard.episode_count != u64::try_from(shard.episodes.len())?
+        || raw.episode_shard.uncompressed_bytes != shard.uncompressed_bytes
+        || raw.episode_shard.compressed_bytes != shard.compressed_bytes
+        || raw.candidates.len() != shard.episodes.len()
         || raw
             .candidates
             .iter()
@@ -565,12 +601,7 @@ fn evidence_projection(
         applicable_action_surface_sha256,
         applicable_action_surface_boundaries,
         applicable_action_descriptors,
-    ) = native_tactic_applicable_action_surface_identity(
-        &inputs.root,
-        inputs.optimization,
-        inputs.execution,
-        shard,
-    )?;
+    ) = native_tactic_applicable_action_surface_identity(applicable_action_surface_context, shard)?;
     let process_local_state_proof_sha256 = raw
         .verify_state_hashes
         .then(|| {
@@ -605,6 +636,7 @@ fn evidence_projection(
             .iter()
             .map(|episode| hex_bytes(&episode.payload_xxh3_128))
             .collect(),
+        applicable_action_surface_context: applicable_action_surface_context.clone(),
         applicable_action_surface_sha256,
         applicable_action_surface_boundaries,
         applicable_action_descriptors,
@@ -877,6 +909,7 @@ fn native_evidence_matches(
         && left.simulated_ticks == right.simulated_ticks
         && left.native_state_trajectory_sha256 == right.native_state_trajectory_sha256
         && left.episode_payload_xxh3_128 == right.episode_payload_xxh3_128
+        && left.applicable_action_surface_context == right.applicable_action_surface_context
         && left.applicable_action_surface_sha256 == right.applicable_action_surface_sha256
         && left.applicable_action_surface_boundaries == right.applicable_action_surface_boundaries
         && left.applicable_action_descriptors == right.applicable_action_descriptors
@@ -933,6 +966,19 @@ fn write_new_json(path: &Path, value: &impl Serialize) -> Result<(), Box<dyn Err
 mod tests {
     use super::*;
 
+    fn action_surface_context() -> NativeTacticActionSurfaceAuditContext {
+        NativeTacticActionSurfaceAuditContext {
+            schema: crate::native_tactic_route_runner::
+                NATIVE_TACTIC_ACTION_SURFACE_AUDIT_CONTEXT_SCHEMA_V1
+                .into(),
+            action_schema_sha256:
+                crate::native_tactic_route_runner::parameterized_policy_action_schema_sha256(None),
+            goal_coordinate_f32_bits: [1.0_f32.to_bits(), 2.0_f32.to_bits(), 3.0_f32.to_bits()],
+            maximum_ticks: 16,
+            seed: 0,
+        }
+    }
+
     #[test]
     fn conditions_retain_each_subsystem_against_a_legal_reference() {
         let conditions = condition_definitions();
@@ -970,6 +1016,7 @@ mod tests {
             simulated_ticks: 16,
             native_state_trajectory_sha256: Digest([1; 32]),
             episode_payload_xxh3_128: vec!["episode".into()],
+            applicable_action_surface_context: action_surface_context(),
             applicable_action_surface_sha256: Digest([2; 32]),
             applicable_action_surface_boundaries: 16,
             applicable_action_descriptors: 64,
@@ -994,6 +1041,7 @@ mod tests {
             simulated_ticks: 1,
             native_state_trajectory_sha256: Digest([1; 32]),
             episode_payload_xxh3_128: vec!["episode".into()],
+            applicable_action_surface_context: action_surface_context(),
             applicable_action_surface_sha256: Digest([2; 32]),
             applicable_action_surface_boundaries: 1,
             applicable_action_descriptors: 4,

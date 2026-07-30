@@ -23,7 +23,7 @@ pub(crate) struct GoalConditionedTacticContext {
     pub report: NativeTacticGoalTargetReport,
 }
 
-pub(super) fn parameterized_policy_action_schema_sha256(
+pub(crate) fn parameterized_policy_action_schema_sha256(
     promoted_tactic_registry_sha256: Option<Digest>,
 ) -> Digest {
     if promoted_tactic_registry_sha256.is_none() {

@@ -238,6 +238,10 @@ fn print_usage() {
         "  huntctl benchmark native-subsystem-parity --request OPTIMIZATION.json --execution EXECUTION.json --output-root build/DIR --report build/REPORT.json [--candidate-ticks N] [--repository-root ROOT]"
     );
     eprintln!(
+        "  huntctl benchmark seal-native-subsystem-parity-bundle --request OPTIMIZATION.json --execution EXECUTION.json --report REPORT.json --run-root DIRECTORY --bundle DIRECTORY"
+    );
+    eprintln!("  huntctl benchmark validate-native-subsystem-parity-bundle --bundle DIRECTORY");
+    eprintln!(
         "  huntctl learn calibrate-tactic-value (--checkpoint TACTIC-Q.dtqz | --input CORPUS.dtqc) --output REPORT.json [--goal-distance-feature N] [--state-region-width D] [--group-folds N] [--validation-fold N] [--test-fold N] [--interval-coverage-millionths N] [--fitted-q-iterations N] [--per-tick-discount D]"
     );
     eprintln!(

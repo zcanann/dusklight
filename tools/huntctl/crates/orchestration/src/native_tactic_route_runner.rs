@@ -880,7 +880,12 @@ use worker_pool::{
     parameterized_feedback_for_state, run_seed_coordinator,
 };
 mod action_surface_audit;
-pub(crate) use action_surface_audit::native_tactic_applicable_action_surface_identity;
+pub use action_surface_audit::{
+    NATIVE_TACTIC_ACTION_SURFACE_AUDIT_CONTEXT_SCHEMA_V1, NativeTacticActionSurfaceAuditContext,
+};
+pub(crate) use action_surface_audit::{
+    native_tactic_action_surface_audit_context, native_tactic_applicable_action_surface_identity,
+};
 mod worker_fleet;
 use worker_fleet::NativeTacticWorkerFleet;
 mod campaign;
@@ -1009,11 +1014,9 @@ fn attach_root_probe_checkpoint_cache(batch: &mut NativeSuffixBatch, capacity: u
 
 mod goal_target;
 pub use goal_target::NativeTacticGoalTargetReport;
+pub(crate) use goal_target::parameterized_policy_action_schema_sha256;
 pub(crate) use goal_target::{GoalConditionedTacticContext, goal_conditioned_tactic_runtime};
-use goal_target::{
-    atomic_goal_conditioned_tactic_context, parameterized_policy_action_schema_sha256,
-    planar_distance,
-};
+use goal_target::{atomic_goal_conditioned_tactic_context, planar_distance};
 
 fn goal_tactic_maximum_ticks(horizon: u64) -> Result<u32, NativeTacticRouteRunError> {
     let horizon = u32::try_from(horizon).map_err(route_error)?;
