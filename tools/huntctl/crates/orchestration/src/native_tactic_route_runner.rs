@@ -66,8 +66,8 @@ use dusklight_learning::tactic_macro_promotion::{
     MAX_DISCOVERY_OBSERVATIONS, MIN_DISCOVERY_OCCURRENCES, MIN_PROMOTION_COMPARISONS,
     MacroComparisonEvidence, MacroDiscoveryObservation, MacroEntryObservation,
     MacroPromotionStatus, MacroSourceProvenance, TacticMacroEntryCondition,
-    TacticMacroComponent, TacticMacroPromotionRegistry, discover_replay_macros,
-    replay_macro_candidate,
+    TacticMacroComponent, TacticMacroEntryConditionCell, TacticMacroPromotionRegistry,
+    discover_replay_macros, replay_macro_candidate,
 };
 use dusklight_learning::tactic_value_treatment::TacticValueTreatment;
 use dusklight_objectives::milestone_dsl::{Comparison, Expression, Field, Value};

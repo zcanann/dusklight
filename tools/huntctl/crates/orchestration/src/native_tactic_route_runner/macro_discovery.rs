@@ -663,24 +663,14 @@ pub(super) fn tactic_macro_entry_distance(
 ) -> Result<Option<f32>, NativeTacticRouteRunError> {
     let snapshot = &frontier.snapshot;
     let distance = encoder.encode(snapshot).map_err(route_error)?[encoder.goal_distance_feature()];
-    if !condition.matches(
+    Ok(condition.distance_to_support(
         &snapshot.world.stage,
         snapshot.world.room,
         snapshot.player.procedure,
         snapshot.player.contacts,
         distance,
         TACTIC_MACRO_ENTRY_GOAL_DISTANCE_PADDING,
-    ) {
-        return Ok(None);
-    }
-    let entry_distance = if distance < condition.minimum_goal_distance {
-        condition.minimum_goal_distance - distance
-    } else if distance > condition.maximum_goal_distance {
-        distance - condition.maximum_goal_distance
-    } else {
-        0.0
-    };
-    Ok(Some(entry_distance))
+    ))
 }
 
 fn run_tactic_macro_validation_job(

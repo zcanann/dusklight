@@ -1181,11 +1181,14 @@ fn tactic_macro_entry_conditions_admit_nearby_held_out_states_only() {
     let encoder = GoalConditionedTacticFeatureEncoder::new([0.0, 0.0, 0.0]).unwrap();
     let goal_distance = encoder.encode(&snapshot).unwrap()[encoder.goal_distance_feature()];
     let condition = dusklight_learning::tactic_macro_promotion::TacticMacroEntryCondition {
-        stages_and_rooms: BTreeSet::from([(snapshot.world.stage.clone(), snapshot.world.room)]),
-        player_procedures: BTreeSet::from([snapshot.player.procedure]),
-        player_contacts: BTreeSet::from([snapshot.player.contacts]),
-        minimum_goal_distance: goal_distance,
-        maximum_goal_distance: goal_distance,
+        cells: vec![TacticMacroEntryConditionCell {
+            stage: snapshot.world.stage.clone(),
+            room: snapshot.world.room,
+            player_procedure: snapshot.player.procedure,
+            player_contacts: snapshot.player.contacts,
+            minimum_goal_distance: goal_distance,
+            maximum_goal_distance: goal_distance,
+        }],
     };
     let frontier = |snapshot: FactSnapshot| TacticMacroValidationFrontier {
         seed: 11,
@@ -1380,11 +1383,14 @@ fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
     let imported = ImportedPromotedTactic {
         entry: candidate.catalog_entry().unwrap(),
         condition: TacticMacroEntryCondition {
-            stages_and_rooms: BTreeSet::from([(snapshot.world.stage.clone(), snapshot.world.room)]),
-            player_procedures: BTreeSet::from([snapshot.player.procedure]),
-            player_contacts: BTreeSet::from([snapshot.player.contacts]),
-            minimum_goal_distance: 0.0,
-            maximum_goal_distance: 0.0,
+            cells: vec![TacticMacroEntryConditionCell {
+                stage: snapshot.world.stage.clone(),
+                room: snapshot.world.room,
+                player_procedure: snapshot.player.procedure,
+                player_contacts: snapshot.player.contacts,
+                minimum_goal_distance: 0.0,
+                maximum_goal_distance: 0.0,
+            }],
         },
     };
     let proposals = parameterized_catalog_for_state_with_promoted(

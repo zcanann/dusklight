@@ -117,9 +117,15 @@ impl TacticMacroComponent {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TacticMacroEntryCondition {
-    pub stages_and_rooms: BTreeSet<(String, i8)>,
-    pub player_procedures: BTreeSet<Option<u16>>,
-    pub player_contacts: BTreeSet<Option<u8>>,
+    pub cells: Vec<TacticMacroEntryConditionCell>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TacticMacroEntryConditionCell {
+    pub stage: String,
+    pub room: i8,
+    pub player_procedure: Option<u16>,
+    pub player_contacts: Option<u8>,
     pub minimum_goal_distance: f32,
     pub maximum_goal_distance: f32,
 }
@@ -134,14 +140,53 @@ impl TacticMacroEntryCondition {
         goal_distance: f32,
         goal_distance_padding: f32,
     ) -> bool {
-        goal_distance.is_finite()
-            && goal_distance_padding.is_finite()
-            && goal_distance_padding >= 0.0
-            && self.stages_and_rooms.contains(&(stage.to_owned(), room))
-            && self.player_procedures.contains(&player_procedure)
-            && self.player_contacts.contains(&player_contacts)
-            && goal_distance >= (self.minimum_goal_distance - goal_distance_padding).max(0.0)
-            && goal_distance <= self.maximum_goal_distance + goal_distance_padding
+        self.distance_to_support(
+            stage,
+            room,
+            player_procedure,
+            player_contacts,
+            goal_distance,
+            goal_distance_padding,
+        )
+        .is_some()
+    }
+
+    pub fn distance_to_support(
+        &self,
+        stage: &str,
+        room: i8,
+        player_procedure: Option<u16>,
+        player_contacts: Option<u8>,
+        goal_distance: f32,
+        goal_distance_padding: f32,
+    ) -> Option<f32> {
+        if !goal_distance.is_finite()
+            || !goal_distance_padding.is_finite()
+            || goal_distance_padding < 0.0
+        {
+            return None;
+        }
+        self.cells
+            .iter()
+            .filter(|cell| {
+                cell.stage == stage
+                    && cell.room == room
+                    && cell.player_procedure == player_procedure
+                    && cell.player_contacts == player_contacts
+                    && goal_distance
+                        >= (cell.minimum_goal_distance - goal_distance_padding).max(0.0)
+                    && goal_distance <= cell.maximum_goal_distance + goal_distance_padding
+            })
+            .map(|cell| {
+                if goal_distance < cell.minimum_goal_distance {
+                    cell.minimum_goal_distance - goal_distance
+                } else if goal_distance > cell.maximum_goal_distance {
+                    goal_distance - cell.maximum_goal_distance
+                } else {
+                    0.0
+                }
+            })
+            .min_by(f32::total_cmp)
     }
 }
 
@@ -164,25 +209,40 @@ impl DiscoveredMacroCandidate {
 
     pub fn entry_condition(&self) -> Result<TacticMacroEntryCondition, &'static str> {
         validate_candidate(self)?;
-        let mut stages_and_rooms = BTreeSet::new();
-        let mut player_procedures = BTreeSet::new();
-        let mut player_contacts = BTreeSet::new();
-        let mut minimum_goal_distance = f32::INFINITY;
-        let mut maximum_goal_distance = f32::NEG_INFINITY;
+        let mut cells = BTreeMap::<
+            (String, i8, Option<u16>, Option<u8>),
+            (f32, f32),
+        >::new();
         for source in &self.sources {
-            stages_and_rooms.insert((source.entry.stage.clone(), source.entry.room));
-            player_procedures.insert(source.entry.player_procedure);
-            player_contacts.insert(source.entry.player_contacts);
             let distance = f32::from_bits(source.entry.goal_distance_f32_bits);
-            minimum_goal_distance = minimum_goal_distance.min(distance);
-            maximum_goal_distance = maximum_goal_distance.max(distance);
+            let range = cells
+                .entry((
+                    source.entry.stage.clone(),
+                    source.entry.room,
+                    source.entry.player_procedure,
+                    source.entry.player_contacts,
+                ))
+                .or_insert((distance, distance));
+            range.0 = range.0.min(distance);
+            range.1 = range.1.max(distance);
         }
         Ok(TacticMacroEntryCondition {
-            stages_and_rooms,
-            player_procedures,
-            player_contacts,
-            minimum_goal_distance,
-            maximum_goal_distance,
+            cells: cells
+                .into_iter()
+                .map(
+                    |(
+                        (stage, room, player_procedure, player_contacts),
+                        (minimum_goal_distance, maximum_goal_distance),
+                    )| TacticMacroEntryConditionCell {
+                        stage,
+                        room,
+                        player_procedure,
+                        player_contacts,
+                        minimum_goal_distance,
+                        maximum_goal_distance,
+                    },
+                )
+                .collect(),
         })
     }
 }
@@ -767,12 +827,11 @@ mod tests {
         assert_eq!(candidate.components.len(), 2);
         assert_eq!(candidate.sources.len(), 2);
         let condition = candidate.entry_condition().unwrap();
-        assert_eq!(
-            condition.stages_and_rooms,
-            BTreeSet::from([("F_SP103".into(), 1)])
-        );
-        assert_eq!(condition.minimum_goal_distance, 101.0);
-        assert_eq!(condition.maximum_goal_distance, 102.0);
+        assert_eq!(condition.cells.len(), 1);
+        assert_eq!(condition.cells[0].stage, "F_SP103");
+        assert_eq!(condition.cells[0].room, 1);
+        assert_eq!(condition.cells[0].minimum_goal_distance, 101.0);
+        assert_eq!(condition.cells[0].maximum_goal_distance, 102.0);
         assert_eq!(
             candidate
                 .catalog_entry()
@@ -783,6 +842,48 @@ mod tests {
                 .tape,
             candidate.tape
         );
+    }
+
+    #[test]
+    fn entry_conditions_preserve_joint_categorical_evidence() {
+        let component = observation(11, 1, 3).component;
+        let mut left = observation(11, 1, 3);
+        left.entry.stage = "ROOM_A".into();
+        left.entry.room = 1;
+        left.entry.player_procedure = Some(10);
+        left.entry.player_contacts = Some(1);
+        left.entry.goal_distance_f32_bits = 100.0_f32.to_bits();
+        let mut right = observation(13, 2, 4);
+        right.entry.stage = "ROOM_B".into();
+        right.entry.room = 2;
+        right.entry.player_procedure = Some(20);
+        right.entry.player_contacts = Some(2);
+        right.entry.goal_distance_f32_bits = 200.0_f32.to_bits();
+        let candidate = replay_macro_candidate(
+            tape(80, 8),
+            vec![component],
+            vec![
+                MacroSourceProvenance {
+                    seed: left.seed,
+                    frontier_state_sha256: left.frontier_state_sha256,
+                    transition_sha256s: vec![left.transition_sha256],
+                    entry: left.entry,
+                },
+                MacroSourceProvenance {
+                    seed: right.seed,
+                    frontier_state_sha256: right.frontier_state_sha256,
+                    transition_sha256s: vec![right.transition_sha256],
+                    entry: right.entry,
+                },
+            ],
+        )
+        .unwrap();
+        let condition = candidate.entry_condition().unwrap();
+
+        assert!(condition.matches("ROOM_A", 1, Some(10), Some(1), 100.0, 0.0));
+        assert!(condition.matches("ROOM_B", 2, Some(20), Some(2), 200.0, 0.0));
+        assert!(!condition.matches("ROOM_A", 1, Some(20), Some(2), 100.0, 0.0));
+        assert!(!condition.matches("ROOM_B", 2, Some(10), Some(1), 200.0, 0.0));
     }
 
     #[test]
