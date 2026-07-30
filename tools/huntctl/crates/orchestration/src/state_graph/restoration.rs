@@ -76,7 +76,9 @@ impl StateGraph {
             .ok_or(StateGraphError::Invariant(
                 "restoration plan node disappeared",
             ))?;
-        if observed_state_sha256 != plan.expected_state_sha256 || observed != &expected.state {
+        if observed_state_sha256 != plan.expected_state_sha256
+            || observed != expected.state.as_ref()
+        {
             return Err(StateGraphError::Invalid(
                 "restored typed state does not match its exact graph node",
             ));

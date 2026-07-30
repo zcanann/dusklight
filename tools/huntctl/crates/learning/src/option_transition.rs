@@ -52,7 +52,20 @@ pub struct OptionTransitionSample {
 
 impl OptionTransitionSample {
     pub fn replay_identity_sha256(&self) -> Result<Digest, OptionTransitionError> {
+        self.validate_and_replay_identity_sha256()
+    }
+
+    /// Validate the complete replay row and derive its identity in the same
+    /// pass. Callers that must both authenticate and index a row should use
+    /// this method instead of validating and then calling
+    /// [`Self::replay_identity_sha256`], which would re-authenticate every
+    /// retained fact snapshot.
+    pub fn validate_and_replay_identity_sha256(&self) -> Result<Digest, OptionTransitionError> {
         self.validate()?;
+        self.replay_identity_sha256_after_validation()
+    }
+
+    fn replay_identity_sha256_after_validation(&self) -> Result<Digest, OptionTransitionError> {
         let mut hasher = Sha256::new();
         if self.execution_authority_sha256 == Digest::ZERO {
             hasher.update(b"dusklight-option-transition-replay-identity/v1");
@@ -152,25 +165,19 @@ impl OptionTransitionSample {
                 "transition identity is missing or unsupported",
             ));
         }
-        self.before
-            .validate()
-            .map_err(|error| OptionTransitionError::Facts(error.to_string()))?;
-        self.after
-            .validate()
-            .map_err(|error| OptionTransitionError::Facts(error.to_string()))?;
         self.execution
             .validate()
             .map_err(|error| OptionTransitionError::Execution(error.to_string()))?;
-        if self.before_state_sha256
-            != self
-                .before
-                .content_sha256()
-                .map_err(|error| OptionTransitionError::Facts(error.to_string()))?
-            || self.after_state_sha256
-                != self
-                    .after
-                    .content_sha256()
-                    .map_err(|error| OptionTransitionError::Facts(error.to_string()))?
+        let before_state_sha256 = self
+            .before
+            .content_sha256()
+            .map_err(|error| OptionTransitionError::Facts(error.to_string()))?;
+        let after_state_sha256 = self
+            .after
+            .content_sha256()
+            .map_err(|error| OptionTransitionError::Facts(error.to_string()))?;
+        if self.before_state_sha256 != before_state_sha256
+            || self.after_state_sha256 != after_state_sha256
         {
             return Err(OptionTransitionError::Invalid(
                 "fact identity is detached from the transition",
@@ -253,10 +260,6 @@ impl OptionTransitionSample {
         }
         let mut previous_offset = 0_u32;
         for boundary in &self.intermediate_boundaries {
-            boundary
-                .state
-                .validate()
-                .map_err(|error| OptionTransitionError::Facts(error.to_string()))?;
             let expected_tape_frame = self
                 .execution
                 .realized_tape_range
@@ -308,12 +311,11 @@ impl OptionTransitionSample {
                     "intermediate boundary has invalid terminal evidence",
                 ));
             }
-            if boundary.state_sha256
-                != boundary
-                    .state
-                    .content_sha256()
-                    .map_err(|error| OptionTransitionError::Facts(error.to_string()))?
-            {
+            let state_sha256 = boundary
+                .state
+                .content_sha256()
+                .map_err(|error| OptionTransitionError::Facts(error.to_string()))?;
+            if boundary.state_sha256 != state_sha256 {
                 return Err(OptionTransitionError::Invalid(
                     "intermediate boundary state digest is stale",
                 ));
@@ -532,6 +534,10 @@ mod tests {
     fn execution_authority_partitions_replay_identity_without_changing_legacy_rows() {
         let legacy = row();
         let legacy_identity = legacy.replay_identity_sha256().unwrap();
+        assert_eq!(
+            legacy.validate_and_replay_identity_sha256().unwrap(),
+            legacy_identity
+        );
         assert!(
             !serde_json::to_vec(&legacy)
                 .unwrap()

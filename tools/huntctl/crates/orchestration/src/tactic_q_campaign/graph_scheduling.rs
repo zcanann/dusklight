@@ -222,7 +222,7 @@ impl TacticQCampaign {
             },
             restorable_native_checkpoint: None,
             acquisition: Some(acquisition),
-            state: node.state.clone(),
+            state: node.state.as_ref().clone(),
             route_tape: route.clone(),
             descriptor: None,
         };
@@ -280,7 +280,7 @@ impl TacticQCampaign {
             .ok_or(TacticQCampaignError::InvalidState(
                 "current campaign boundary is absent from the state graph",
             ))?;
-        if source_node.state != self.current.snapshot
+        if source_node.state.as_ref() != &self.current.snapshot
             || graph.route(source_route_checkpoint) != Some(&self.route_tape)
         {
             return Err(TacticQCampaignError::InvalidState(

@@ -7,6 +7,7 @@ use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
 use dusklight_learning::fact_snapshot::{FactPhase, FactSnapshot};
 use dusklight_learning::option_transition::{OptionIntermediateBoundary, OptionTransitionSample};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 fn fixture_state() -> FactSnapshot {
     let shard = NativeEpisodeShard::decode(include_bytes!(
@@ -95,6 +96,32 @@ fn graph_and_transition() -> (StateGraph, OptionTransitionSample, InputTape) {
     (graph, transition, route)
 }
 
+#[test]
+fn combined_route_identity_preserves_both_persisted_digests() {
+    let (graph, _, route) = graph_and_transition();
+    let (route_sha256, tape_sha256) =
+        super::route_and_tape_sha256(graph.identity.root_checkpoint_sha256, &route).unwrap();
+    assert_eq!(
+        route_sha256,
+        super::route_checkpoint_sha256(graph.identity.root_checkpoint_sha256, &route).unwrap()
+    );
+    assert_eq!(tape_sha256, super::tape_sha256(&route).unwrap());
+}
+
+#[test]
+fn shared_node_state_preserves_legacy_serialization_bytes() {
+    let state = fixture_state();
+    let shared = Arc::new(state.clone());
+    assert_eq!(
+        serde_cbor::to_vec(&state).unwrap(),
+        serde_cbor::to_vec(&shared).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_vec(&state).unwrap(),
+        serde_json::to_vec(&shared).unwrap()
+    );
+}
+
 fn terminalize(transition: &mut OptionTransitionSample) {
     transition.after.terminal.reached = Some(true);
     transition.after.terminal.reason =
@@ -144,6 +171,7 @@ fn one_selected_action_owns_all_observed_interior_segments() {
 #[test]
 fn graph_transaction_clone_shares_immutable_storage_and_isolates_mutation() {
     let (graph, transition, route) = graph_and_transition();
+    let evidence_sha256 = transition.replay_identity_sha256().unwrap();
     let mut transaction = graph.clone();
 
     assert!(graph.nodes.ptr_eq(&transaction.nodes));
@@ -156,7 +184,7 @@ fn graph_transaction_clone_shares_immutable_storage_and_isolates_mutation() {
             .ptr_eq(&transaction.future_equivalence_proofs)
     );
 
-    transaction
+    let admission = transaction
         .admit_completed_expansion(
             transition,
             route,
@@ -164,6 +192,7 @@ fn graph_transaction_clone_shares_immutable_storage_and_isolates_mutation() {
             ExpansionEvidenceAuthority::Executable,
         )
         .unwrap();
+    assert_eq!(admission.evidence_sha256, evidence_sha256);
 
     assert_eq!(graph.node_count(), 1);
     assert_eq!(graph.expansion_count(), 0);
@@ -172,6 +201,13 @@ fn graph_transaction_clone_shares_immutable_storage_and_isolates_mutation() {
     assert!(!graph.expansions.ptr_eq(&transaction.expansions));
     assert!(!graph.segments.ptr_eq(&transaction.segments));
     assert!(!graph.routes.ptr_eq(&transaction.routes));
+    assert!(
+        Arc::ptr_eq(
+            &graph.nodes.get(&graph.root()).unwrap().state,
+            &transaction.nodes.get(&transaction.root()).unwrap().state,
+        ),
+        "topology mutation must not clone its large immutable typed state"
+    );
     assert!(
         graph
             .future_equivalence_proofs
@@ -361,7 +397,7 @@ fn forty_tick_option_exposes_and_executes_every_four_tick_counterfactual() {
 
     let mut counterfactual_targets = Vec::with_capacity(interior.len());
     for (index, source) in interior.iter().copied().enumerate() {
-        let before = graph.node(source).unwrap().state.clone();
+        let before = graph.node(source).unwrap().state.as_ref().clone();
         let mut route = graph.route(source.route_checkpoint_sha256).unwrap().clone();
         route.frames.push(InputFrame::default());
         let execution = OptionExecution::capture(
@@ -480,7 +516,7 @@ fn optimization_schedules_interiors_from_every_authenticated_terminal_route() {
         )
         .unwrap();
 
-    let before = graph.node(graph.root()).unwrap().state.clone();
+    let before = graph.node(graph.root()).unwrap().state.as_ref().clone();
     let mut alternate_route = graph
         .route(graph.root().route_checkpoint_sha256)
         .unwrap()
@@ -580,7 +616,7 @@ fn optimization_keeps_terminal_interior_when_transposition_prefers_another_route
         .unwrap()
         .id;
 
-    let before = graph.node(graph.root()).unwrap().state.clone();
+    let before = graph.node(graph.root()).unwrap().state.as_ref().clone();
     let mut alternate_route = graph
         .route(graph.root().route_checkpoint_sha256)
         .unwrap()
@@ -1311,7 +1347,12 @@ fn validated_transposition_relaxes_descendants_without_deleting_evidence() {
         .unwrap();
     let interior = graph.nodes().find(|node| node.root_ticks == 4).unwrap().id;
     let slower_equivalent = first.target;
-    let before = graph.node(slower_equivalent).unwrap().state.clone();
+    let before = graph
+        .node(slower_equivalent)
+        .unwrap()
+        .state
+        .as_ref()
+        .clone();
     route.frames.extend(vec![InputFrame::default(); 4]);
     let execution = OptionExecution::capture(
         "continue".into(),
@@ -1506,7 +1547,7 @@ fn durable_graph_and_exported_report_share_one_content_identity() {
 fn restoration_plan_requires_the_complete_typed_state_before_execution() {
     let (graph, _, _) = graph_and_transition();
     let plan = graph.restoration_plan(graph.root()).unwrap();
-    let expected = graph.node(graph.root()).unwrap().state.clone();
+    let expected = graph.node(graph.root()).unwrap().state.as_ref().clone();
     let receipt = graph.validate_restored_state(&plan, &expected).unwrap();
 
     assert_eq!(receipt.restoration_plan_sha256, plan.plan_sha256);

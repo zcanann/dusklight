@@ -86,7 +86,7 @@ impl From<&StateGraphNode> for PersistedStateGraphNode {
     fn from(node: &StateGraphNode) -> Self {
         Self {
             id: node.id,
-            state: node.state.clone(),
+            state: node.state.as_ref().clone(),
             terminal: node.terminal,
             root_ticks: node.root_ticks,
             restoration: node.restoration.clone(),
@@ -250,7 +250,7 @@ impl StateGraph {
                 match graph.nodes.get_mut(&node.id) {
                     Some(existing) => {
                         let existing = Arc::make_mut(existing);
-                        existing.state = node.state;
+                        existing.state = Arc::new(node.state);
                         existing.terminal = node.terminal;
                         existing.root_ticks = node.root_ticks;
                         existing.restoration = node.restoration;
@@ -260,7 +260,7 @@ impl StateGraph {
                             node.id,
                             Arc::new(StateGraphNode {
                                 id: node.id,
-                                state: node.state,
+                                state: Arc::new(node.state),
                                 terminal: node.terminal,
                                 root_ticks: node.root_ticks,
                                 restoration: node.restoration,

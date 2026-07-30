@@ -85,7 +85,7 @@ impl StateGraph {
         let terminal = root_state.terminal.reached == Some(true);
         let node = StateGraphNode {
             id: root,
-            state: root_state,
+            state: Arc::new(root_state),
             terminal,
             root_ticks: 0,
             restoration: RestorationLocator {
@@ -301,6 +301,23 @@ pub(crate) fn route_checkpoint_sha256(
     hasher.update((bytes.len() as u64).to_le_bytes());
     hasher.update(bytes);
     Ok(Digest(hasher.finalize().into()))
+}
+
+pub(crate) fn route_and_tape_sha256(
+    root_checkpoint_sha256: Digest,
+    route: &InputTape,
+) -> Result<(Digest, Digest), StateGraphError> {
+    if root_checkpoint_sha256 == Digest::ZERO {
+        return Err(StateGraphError::Invalid("root checkpoint is missing"));
+    }
+    let bytes = route.encode()?;
+    let tape_sha256 = Digest(Sha256::digest(&bytes).into());
+    let mut hasher = Sha256::new();
+    hasher.update(ROUTE_CHECKPOINT_SCHEMA_V1);
+    hasher.update(root_checkpoint_sha256.0);
+    hasher.update((bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
+    Ok((Digest(hasher.finalize().into()), tape_sha256))
 }
 
 pub fn action_expansion_identity(

@@ -513,8 +513,6 @@ impl TacticQCampaign {
                 "evaluated tactic replay batch has invalid episode lineages",
             ));
         }
-        let source_checkpoint_sha256 =
-            route_checkpoint(self.root_checkpoint_sha256, &self.route_tape)?;
         let mut state_graph =
             self.state_graph
                 .clone()
@@ -523,23 +521,16 @@ impl TacticQCampaign {
                 ))?;
         let mut frontier_archive = self.frontier_archive.clone();
         let mut admitted = 0;
+        let mut projection_keys = Vec::with_capacity(evaluated.len());
         for (index, (evaluated, episode_group)) in evaluated.iter().zip(episode_groups).enumerate()
         {
-            evaluated.transition.validate()?;
             if evaluated.outcome.selected.decision_index != self.decision_index
                 || evaluated.outcome.selected.learner_snapshot_sha256
                     != self.current.snapshot_sha256
                 || evaluated.outcome.source_checkpoint_sha256 != self.root_checkpoint_sha256
                 || evaluated.transition.before_state_sha256 != self.current.snapshot_sha256
-                || evaluated.transition.source_checkpoint_sha256 != source_checkpoint_sha256
-                || evaluated.transition.after_state_sha256
-                    != evaluated
-                        .outcome
-                        .next_facts
-                        .content_sha256()
-                        .map_err(|error| TacticQCampaignError::Features(error.to_string()))?
-                || evaluated.transition.next_checkpoint_sha256
-                    != route_checkpoint(self.root_checkpoint_sha256, &evaluated.outcome.route_tape)?
+                || evaluated.transition.before != self.current.snapshot
+                || evaluated.transition.after != evaluated.outcome.next_facts
                 || evaluated.transition.value_sample.action != evaluated.outcome.selected.descriptor
                 || evaluated.transition.value_sample.reward.to_bits()
                     != evaluated.reward.training_reward.to_bits()
@@ -595,11 +586,9 @@ impl TacticQCampaign {
             if !admission.duplicate {
                 admitted += 1;
             }
+            projection_keys.push((admission.expansion_sha256, admission.evidence_sha256));
         }
-        let projection_rows = graph_training_projection_rows(
-            &state_graph,
-            evaluated.iter().map(|evaluated| &evaluated.transition),
-        )?;
+        let projection_rows = graph_training_projection_rows(&state_graph, projection_keys)?;
         validate_graph_training_projection_merge(
             &self.training_projection_keys,
             &self.training_replay,

@@ -184,8 +184,7 @@ impl StateGraph {
                     .values()
                     .any(|row| row.authority == super::ExpansionEvidenceAuthority::Executable);
                 for (evidence_sha256, row) in evidence {
-                    row.transition.validate()?;
-                    if row.transition.replay_identity_sha256()? != *evidence_sha256
+                    if row.transition.validate_and_replay_identity_sha256()? != *evidence_sha256
                         || !super::same_native_realization(&first.transition, &row.transition)
                         || row.transition.before_state_sha256 != expansion.source.state_sha256
                         || row.transition.source_checkpoint_sha256

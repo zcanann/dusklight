@@ -220,6 +220,7 @@ impl GraphLearningBatch {
                     "completed expansion source is absent",
                 ))?
                 .state
+                .as_ref()
                 .clone();
             let target_state = graph
                 .node(target)
@@ -227,6 +228,7 @@ impl GraphLearningBatch {
                     "completed expansion target is absent",
                 ))?
                 .state
+                .as_ref()
                 .clone();
             let transition = &evidence_row.transition;
             let source_features = transition.value_sample.state.clone();

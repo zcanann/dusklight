@@ -70,7 +70,7 @@ impl TacticQCampaign {
                 TacticCampaignGraphNode {
                     checkpoint_sha256: node.id.route_checkpoint_sha256,
                     state_sha256: node.id.state_sha256,
-                    state: node.state.clone(),
+                    state: node.state.as_ref().clone(),
                     route_tape: graph
                         .route(node.id.route_checkpoint_sha256)
                         .ok_or(TacticQCampaignError::InvalidState(

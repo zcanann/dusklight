@@ -1,7 +1,5 @@
 use super::*;
-use crate::state_graph::{
-    ActionExpansionStatus, ExactStateId, ExpansionEvidenceAuthority, action_expansion_identity,
-};
+use crate::state_graph::{ActionExpansionStatus, ExpansionEvidenceAuthority};
 
 pub(crate) struct GraphTrainingProjection {
     pub keys: Vec<(Digest, Digest)>,
@@ -42,8 +40,7 @@ pub(crate) fn graph_training_projection(
                     "completed graph evidence route is absent",
                 ))?;
         for (evidence_sha256, row) in evidence {
-            let identity = row.transition.replay_identity_sha256()?;
-            if identity != *evidence_sha256 || !identities.insert(identity) {
+            if !identities.insert(*evidence_sha256) {
                 return Err(TacticQCampaignError::InvalidState(
                     "state graph contains duplicate completed evidence",
                 ));
@@ -62,23 +59,11 @@ pub(crate) fn graph_training_projection(
     })
 }
 
-pub(crate) fn graph_training_projection_rows<'a>(
+pub(crate) fn graph_training_projection_rows(
     graph: &StateGraph,
-    transitions: impl IntoIterator<Item = &'a OptionTransitionSample>,
+    admitted_keys: impl IntoIterator<Item = (Digest, Digest)>,
 ) -> Result<Vec<GraphTrainingProjectionRow>, TacticQCampaignError> {
-    let mut requested = BTreeSet::new();
-    for transition in transitions {
-        requested.insert((
-            action_expansion_identity(
-                ExactStateId {
-                    route_checkpoint_sha256: transition.source_checkpoint_sha256,
-                    state_sha256: transition.before_state_sha256,
-                },
-                &transition.value_sample.action,
-            )?,
-            transition.replay_identity_sha256()?,
-        ));
-    }
+    let requested = admitted_keys.into_iter().collect::<BTreeSet<_>>();
     let mut rows = Vec::with_capacity(requested.len());
     for (expansion_sha256, evidence_sha256) in requested {
         let expansion =
@@ -208,7 +193,7 @@ pub(super) fn graph_root_branch(
         },
         restorable_native_checkpoint: None,
         acquisition: None,
-        state: root.state.clone(),
+        state: root.state.as_ref().clone(),
         route_tape: route.clone(),
         descriptor: None,
     })
@@ -278,7 +263,7 @@ pub(super) fn graph_frontier_entries(
             root_checkpoint_sha256: graph.identity.root_checkpoint_sha256,
             route_checkpoint_sha256: node.id.route_checkpoint_sha256,
             frontier_state_sha256: node.id.state_sha256,
-            frontier_state: node.state.clone(),
+            frontier_state: node.state.as_ref().clone(),
             transition: transition.clone(),
             route_tape: route.clone(),
             first_seen_generation: node.root_ticks,

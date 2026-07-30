@@ -6,6 +6,7 @@ use dusklight_learning::option_values::OptionActionDescriptor;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 pub const STATE_GRAPH_SCHEMA_V1: &str = "dusklight-state-graph/v1";
 pub const FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1: &str = "dusklight-future-equivalence-proof/v1";
@@ -99,7 +100,7 @@ pub struct RestoredStateReceipt {
 #[serde(deny_unknown_fields)]
 pub struct StateGraphNode {
     pub id: ExactStateId,
-    pub state: FactSnapshot,
+    pub state: Arc<FactSnapshot>,
     pub terminal: bool,
     pub root_ticks: u64,
     pub restoration: RestorationLocator,
@@ -254,6 +255,7 @@ pub struct TerminalPath {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExpansionAdmission {
     pub expansion_sha256: Digest,
+    pub evidence_sha256: Digest,
     pub source: ExactStateId,
     pub target: ExactStateId,
     pub inserted_nodes: usize,

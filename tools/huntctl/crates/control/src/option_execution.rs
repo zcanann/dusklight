@@ -345,8 +345,30 @@ impl OptionExecution {
 
     pub fn validate_against_tape(&self, tape: &InputTape) -> Result<(), OptionExecutionError> {
         self.validate()?;
+        let tape_sha256 = canonical_tape_digest(tape)?;
+        self.validate_tape_binding(tape, tape_sha256)
+    }
+
+    /// Validate against a canonical tape digest already computed by the
+    /// caller. This avoids recompressing a tape when an ingestion boundary
+    /// must also derive another content identity from the same canonical
+    /// bytes.
+    pub fn validate_against_prehashed_tape(
+        &self,
+        tape: &InputTape,
+        tape_sha256: Digest,
+    ) -> Result<(), OptionExecutionError> {
+        self.validate()?;
         tape.validate()?;
-        if canonical_tape_digest(tape)? != self.tape_sha256 {
+        self.validate_tape_binding(tape, tape_sha256)
+    }
+
+    fn validate_tape_binding(
+        &self,
+        tape: &InputTape,
+        tape_sha256: Digest,
+    ) -> Result<(), OptionExecutionError> {
+        if tape_sha256 != self.tape_sha256 {
             return Err(OptionExecutionError::TapeDigestMismatch);
         }
         let (start, end) = checked_range(tape, self.realized_tape_range)?;
@@ -545,6 +567,14 @@ mod tests {
         different.frames[5].pads[0].buttons = 0x0200;
         assert_eq!(
             execution.validate_against_tape(&different),
+            Err(OptionExecutionError::TapeDigestMismatch)
+        );
+        let tape_sha256 = canonical_tape_digest(&tape).unwrap();
+        execution
+            .validate_against_prehashed_tape(&tape, tape_sha256)
+            .unwrap();
+        assert_eq!(
+            execution.validate_against_prehashed_tape(&tape, Digest([7; 32])),
             Err(OptionExecutionError::TapeDigestMismatch)
         );
         let mut reactive = execution;

@@ -396,7 +396,7 @@ impl TacticQCampaign {
             route.clone(),
             vec![transition.clone()],
             vec![route.clone()],
-            terminal.state.clone(),
+            terminal.state.as_ref().clone(),
         )
         .map(Some)
     }

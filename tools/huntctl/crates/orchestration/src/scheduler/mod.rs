@@ -784,7 +784,7 @@ mod tests {
 
     fn terminal_replay_graph() -> (StateGraph, Digest) {
         let (mut graph, _, pending) = replay_graph();
-        let before = graph.node(graph.root()).unwrap().state.clone();
+        let before = graph.node(graph.root()).unwrap().state.as_ref().clone();
         let mut route = graph
             .route(graph.root().route_checkpoint_sha256)
             .unwrap()

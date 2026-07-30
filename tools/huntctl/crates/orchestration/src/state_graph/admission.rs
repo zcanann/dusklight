@@ -2,8 +2,8 @@ use super::{
     ActionExpansion, ActionExpansionStatus, CompletedExpansionEvidence, ExactStateId,
     ExpansionAdmission, ExpansionEvidenceAuthority, NativeBoundaryLocator, ObservedSegment,
     RestorationLocator, RouteRecord, StateGraph, StateGraphError, StateGraphNode,
-    action_expansion_identity, route_checkpoint_sha256, same_intermediate_boundary_realization,
-    tape_prefix, tape_sha256,
+    action_expansion_identity, route_and_tape_sha256, same_intermediate_boundary_realization,
+    tape_prefix,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
@@ -54,15 +54,28 @@ impl StateGraph {
         authority: ExpansionEvidenceAuthority,
         lease_sha256: Option<Digest>,
     ) -> Result<ExpansionAdmission, StateGraphError> {
-        self.validate_transition(&transition, &route)?;
-        let option_start = usize::try_from(transition.execution.realized_tape_range.start_frame)
-            .map_err(|_| StateGraphError::Invalid("option start frame overflows"))?;
-        let option_end =
-            usize::try_from(transition.execution.realized_tape_range.end_frame_exclusive)
-                .map_err(|_| StateGraphError::Invalid("option end frame overflows"))?;
-        let source_route = tape_prefix(&route, option_start)?;
+        let (evidence_sha256, option_start, option_end) =
+            self.validate_transition(&transition, &route)?;
+        let source_route = self.prepare_route(tape_prefix(&route, option_start)?)?;
+        let target_route = self.prepare_route(tape_prefix(&route, option_end)?)?;
+        let full_tape_sha256 = if option_end == route.frames.len() {
+            target_route.record.tape_sha256
+        } else {
+            route_and_tape_sha256(self.identity.root_checkpoint_sha256, &route)?.1
+        };
+        transition
+            .execution
+            .validate_against_prehashed_tape(&route, full_tape_sha256)?;
+        if transition.source_checkpoint_sha256 != source_route.record.route_checkpoint_sha256
+            || transition.next_checkpoint_sha256 != target_route.record.route_checkpoint_sha256
+        {
+            return Err(StateGraphError::Invalid(
+                "completed expansion is detached from this graph",
+            ));
+        }
         let source = self.admit_node(
             transition.before.clone(),
+            transition.before_state_sha256,
             source_route,
             transition.before.terminal.reached == Some(true),
             None,
@@ -70,7 +83,6 @@ impl StateGraph {
         )?;
         let expansion_sha256 =
             action_expansion_identity(source.id, &transition.value_sample.action)?;
-        let evidence_sha256 = transition.replay_identity_sha256()?;
         if let Some(existing) = self
             .expansions
             .get_mut(&expansion_sha256)
@@ -124,6 +136,7 @@ impl StateGraph {
             }
             return Ok(ExpansionAdmission {
                 expansion_sha256,
+                evidence_sha256,
                 source,
                 target,
                 inserted_nodes: 0,
@@ -166,18 +179,30 @@ impl StateGraph {
             None => {}
         }
 
+        let prepared_intermediate_routes = transition
+            .intermediate_boundaries
+            .iter()
+            .map(|boundary| {
+                let end = option_start
+                    .checked_add(boundary.offset_ticks as usize)
+                    .ok_or(StateGraphError::Invalid(
+                        "intermediate route prefix overflows",
+                    ))?;
+                self.prepare_route(tape_prefix(&route, end)?)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let mut boundaries = Vec::with_capacity(transition.intermediate_boundaries.len() + 2);
         boundaries.push((0_u32, source));
         let mut inserted_nodes = usize::from(source.inserted);
-        for boundary in &transition.intermediate_boundaries {
-            let end = option_start
-                .checked_add(boundary.offset_ticks as usize)
-                .ok_or(StateGraphError::Invalid(
-                    "intermediate route prefix overflows",
-                ))?;
+        for (boundary, prepared_route) in transition
+            .intermediate_boundaries
+            .iter()
+            .zip(prepared_intermediate_routes)
+        {
             let admitted = self.admit_node(
                 boundary.state.clone(),
-                tape_prefix(&route, end)?,
+                boundary.state_sha256,
+                prepared_route,
                 false,
                 Some(NativeBoundaryLocator {
                     episode_shard_sha256: boundary.episode_shard_sha256,
@@ -190,7 +215,8 @@ impl StateGraph {
         }
         let target = self.admit_node(
             transition.after.clone(),
-            tape_prefix(&route, option_end)?,
+            transition.after_state_sha256,
+            target_route,
             transition.value_sample.terminal,
             None,
             authority == ExpansionEvidenceAuthority::Executable,
@@ -278,6 +304,7 @@ impl StateGraph {
         self.refresh_best_terminal();
         Ok(ExpansionAdmission {
             expansion_sha256,
+            evidence_sha256,
             source: source.id,
             target: target.id,
             inserted_nodes,
@@ -291,10 +318,8 @@ impl StateGraph {
         &self,
         transition: &OptionTransitionSample,
         route: &InputTape,
-    ) -> Result<(), StateGraphError> {
-        transition.validate()?;
-        route.validate()?;
-        transition.execution.validate_against_tape(route)?;
+    ) -> Result<(Digest, usize, usize), StateGraphError> {
+        let evidence_sha256 = transition.validate_and_replay_identity_sha256()?;
         let start = usize::try_from(transition.execution.realized_tape_range.start_frame)
             .map_err(|_| StateGraphError::Invalid("option start frame overflows"))?;
         let end = usize::try_from(transition.execution.realized_tape_range.end_frame_exclusive)
@@ -302,43 +327,41 @@ impl StateGraph {
         if transition.execution_authority_sha256 != self.identity.execution_authority_sha256
             || transition.feature_schema_sha256 != self.identity.feature_schema_sha256
             || end > route.frames.len()
-            || transition.source_checkpoint_sha256
-                != route_checkpoint_sha256(
-                    self.identity.root_checkpoint_sha256,
-                    &tape_prefix(route, start)?,
-                )?
-            || transition.next_checkpoint_sha256
-                != route_checkpoint_sha256(
-                    self.identity.root_checkpoint_sha256,
-                    &tape_prefix(route, end)?,
-                )?
         {
             return Err(StateGraphError::Invalid(
                 "completed expansion is detached from this graph",
             ));
         }
-        Ok(())
+        Ok((evidence_sha256, start, end))
+    }
+
+    fn prepare_route(&self, route: InputTape) -> Result<PreparedRoute, StateGraphError> {
+        let (route_checkpoint_sha256, tape_sha256) =
+            route_and_tape_sha256(self.identity.root_checkpoint_sha256, &route)?;
+        Ok(PreparedRoute {
+            record: RouteRecord {
+                route_checkpoint_sha256,
+                tape_sha256,
+                tape_frames: route.frames.len() as u64,
+            },
+            route,
+        })
     }
 
     fn admit_node(
         &mut self,
         state: FactSnapshot,
-        route: InputTape,
+        state_sha256: Digest,
+        prepared_route: PreparedRoute,
         terminal: bool,
         native_boundary: Option<NativeBoundaryLocator>,
         executable: bool,
     ) -> Result<NodeAdmission, StateGraphError> {
-        let state_sha256 = state.content_sha256()?;
-        let route_checkpoint_sha256 =
-            route_checkpoint_sha256(self.identity.root_checkpoint_sha256, &route)?;
+        let PreparedRoute { route, record } = prepared_route;
+        let route_checkpoint_sha256 = record.route_checkpoint_sha256;
         let id = ExactStateId {
             route_checkpoint_sha256,
             state_sha256,
-        };
-        let record = RouteRecord {
-            route_checkpoint_sha256,
-            tape_sha256: tape_sha256(&route)?,
-            tape_frames: route.frames.len() as u64,
         };
         let root_ticks = record
             .tape_frames
@@ -363,8 +386,8 @@ impl StateGraph {
             native_boundary,
             executable,
         };
-        if let Some(existing) = self.nodes.get_mut(&id).map(Arc::make_mut) {
-            if existing.state != state
+        if let Some(existing) = self.nodes.get(&id) {
+            if existing.state.as_ref() != &state
                 || existing.terminal != terminal
                 || existing.root_ticks != root_ticks
                 || existing.restoration.route != restoration.route
@@ -373,18 +396,22 @@ impl StateGraph {
                     "exact state identity names conflicting node evidence",
                 ));
             }
-            let mut restoration_changed = false;
-            if existing.restoration.native_boundary.is_none()
-                && restoration.native_boundary.is_some()
-            {
-                existing.restoration.native_boundary = restoration.native_boundary;
-                restoration_changed = true;
-            }
-            if !existing.restoration.executable && restoration.executable {
-                existing.restoration.executable = true;
-                restoration_changed = true;
-            }
+            let add_native_boundary = existing.restoration.native_boundary.is_none()
+                && restoration.native_boundary.is_some();
+            let promote_executable = !existing.restoration.executable && restoration.executable;
+            let restoration_changed = add_native_boundary || promote_executable;
             if restoration_changed {
+                let existing = self.nodes.get_mut(&id).map(Arc::make_mut).ok_or(
+                    StateGraphError::Invariant(
+                        "existing node disappeared during restoration promotion",
+                    ),
+                )?;
+                if add_native_boundary {
+                    existing.restoration.native_boundary = restoration.native_boundary;
+                }
+                if promote_executable {
+                    existing.restoration.executable = true;
+                }
                 self.mark_node_persistence_dirty(id);
             }
             return Ok(NodeAdmission {
@@ -396,7 +423,7 @@ impl StateGraph {
             id,
             Arc::new(StateGraphNode {
                 id,
-                state,
+                state: Arc::new(state),
                 terminal,
                 root_ticks,
                 restoration,
@@ -508,6 +535,11 @@ fn native_realization_differences(
 struct NodeAdmission {
     id: ExactStateId,
     inserted: bool,
+}
+
+struct PreparedRoute {
+    route: InputTape,
+    record: RouteRecord,
 }
 
 fn segment_identity(
