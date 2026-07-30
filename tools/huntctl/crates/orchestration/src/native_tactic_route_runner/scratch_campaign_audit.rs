@@ -489,9 +489,17 @@ fn seed_audit(
     let mut terminal_improvements = Vec::new();
     let mut terminal_improvement_timing_complete = true;
     let mut best_observed_terminal_tick = None;
-    let source_frame = seed.trace.first().map(|trace| trace.before.tape_frame);
+    let source_frame = graph
+        .node(graph.root())
+        .map(|root| root.restoration.route.tape_frames)
+        .ok_or_else(|| route_message("scratch campaign audit graph root is absent"))?;
     let mut decisions = Vec::with_capacity(seed.trace.len());
     for trace in &seed.trace {
+        if trace.source_route_ticks != trace.before.tape_frame {
+            return Err(route_message(
+                "scratch campaign decision source route differs from its native boundary",
+            ));
+        }
         let unique_action_ids = trace
             .applicable_tactics
             .iter()
@@ -522,17 +530,25 @@ fn seed_audit(
                     })
         });
         for tactic in &trace.applicable_tactics {
-            *action_availability_counts
+            let availability = action_availability_counts
                 .entry(tactic.option_id.clone())
-                .or_default() += 1;
+                .or_default();
+            *availability = availability
+                .checked_add(1)
+                .ok_or_else(|| route_message("scratch action availability count overflows"))?;
             if tactic.mean_q.is_none() {
-                *unsupported_action_availability_counts
+                let unsupported = unsupported_action_availability_counts
                     .entry(tactic.option_id.clone())
-                    .or_default() += 1;
+                    .or_default();
+                *unsupported = unsupported.checked_add(1).ok_or_else(|| {
+                    route_message("scratch unsupported action availability count overflows")
+                })?;
             }
         }
         let proposal_count = u64::try_from(trace.proposal_batch.len()).map_err(route_error)?;
-        proposal_expansions = proposal_expansions.saturating_add(proposal_count);
+        proposal_expansions = proposal_expansions
+            .checked_add(proposal_count)
+            .ok_or_else(|| route_message("scratch proposal expansion count overflows"))?;
         if Some(trace.decision_index) == seed.first_terminal_decision_index {
             proposal_expansions_to_first_terminal = Some(proposal_expansions);
             useful_graph_expansions_to_first_terminal =
@@ -543,28 +559,24 @@ fn seed_audit(
             learner_snapshots.insert(trace.learner_snapshot_sha256);
         }
         for (proposal_index, proposal) in trace.proposal_batch.iter().enumerate() {
-            *proposal_selection_counts
+            let selected = proposal_selection_counts
                 .entry(selection_reason_key(proposal.selection_reason)?)
-                .or_default() += 1;
+                .or_default();
+            *selected = selected
+                .checked_add(1)
+                .ok_or_else(|| route_message("scratch proposal selection count overflows"))?;
             if proposal.terminal {
-                let graph_authenticated = trace
-                    .scheduler_decision
-                    .as_ref()
-                    .is_some_and(|scheduler| {
-                        proposal_matches_graph_expansion(
-                            graph,
-                            scheduler,
-                            proposal_index,
-                            proposal,
-                        )
+                let graph_authenticated =
+                    trace.scheduler_decision.as_ref().is_some_and(|scheduler| {
+                        proposal_matches_graph_expansion(graph, scheduler, proposal_index, proposal)
                     });
                 if !graph_authenticated {
                     terminal_improvement_timing_complete = false;
                     continue;
                 }
-                let Some(authenticated_tick) = source_frame.and_then(|source_frame| {
+                let Some(authenticated_tick) =
                     route_frames_first_hit_tick(proposal.root_route_ticks, source_frame)
-                }) else {
+                else {
                     terminal_improvement_timing_complete = false;
                     continue;
                 };
@@ -622,8 +634,12 @@ fn seed_audit(
     let mut terminal_path_ticks = graph
         .nodes()
         .filter(|node| node.terminal && node.restoration.executable)
-        .map(|node| node.root_ticks.saturating_sub(1))
-        .collect::<Vec<_>>();
+        .map(|node| {
+            node.root_ticks.checked_sub(1).ok_or_else(|| {
+                route_message("scratch campaign terminal node precedes its first native tick")
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     terminal_path_ticks.sort_unstable();
     let graph_metrics = seed
         .graph_metrics
@@ -725,32 +741,16 @@ fn stop_reasons(
 }
 
 fn seed_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
-    let total_proposals = seed
-        .decisions
-        .iter()
-        .map(|decision| decision.proposal_count)
-        .sum::<u64>();
-    let first_terminal_valid = match (
-        seed.terminal_discovered,
-        seed.first_terminal_decision_index,
-        seed.time_to_first_terminal_micros,
-        seed.proposal_expansions_to_first_terminal,
-        seed.best_authenticated_tick,
-    ) {
-        (true, Some(decision), Some(_), Some(expansions), Some(_)) => {
-            expansions > 0
-                && seed
-                    .decisions
-                    .iter()
-                    .any(|row| row.decision_index == decision && row.terminal_proposal_count > 0)
-        }
-        (false, None, None, None, None) => true,
-        _ => false,
+    let Some(total_proposals) = seed.decisions.iter().try_fold(0_u64, |total, decision| {
+        total.checked_add(decision.proposal_count)
+    }) else {
+        return false;
     };
-    seed.decisions
-        .windows(2)
-        .all(|pair| pair[0].decision_index < pair[1].decision_index)
-        && !seed.stop_reasons.is_empty()
+    let first_terminal_valid = first_terminal_evidence_is_valid(seed);
+    seed.decisions.windows(2).all(|pair| {
+        pair[0].decision_index < pair[1].decision_index
+            && pair[0].cumulative_wall_micros <= pair[1].cumulative_wall_micros
+    }) && !seed.stop_reasons.is_empty()
         && total_proposals == seed.total_proposal_expansions
         && seed.completed_graph_leases == total_proposals
         && seed.proposal_dispatches
@@ -763,7 +763,13 @@ fn seed_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
         && seed.unresolved_graph_leases == 0
         && (!seed.action_surface_timeline_complete
             || seed.decisions.iter().all(|decision| {
+                let unique = decision
+                    .applicable_tactics
+                    .iter()
+                    .map(|tactic| tactic.option_id.as_str())
+                    .collect::<BTreeSet<_>>();
                 !decision.applicable_tactics.is_empty()
+                    && unique.len() == decision.applicable_tactics.len()
                     && decision
                         .applicable_tactics
                         .iter()
@@ -782,22 +788,119 @@ fn seed_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
                     .is_some_and(|scheduler| {
                         scheduler.learner_model_sha256 == decision.learner_snapshot_sha256
                             && scheduler.validate().is_ok()
+                            && usize::try_from(decision.proposal_count).ok()
+                                == Some(scheduler.evaluated_expansion_sha256.len())
                     })
             }))
         && first_terminal_valid
         && seed.terminal_discovered == !seed.terminal_path_ticks.is_empty()
+        && seed
+            .terminal_path_ticks
+            .windows(2)
+            .all(|pair| pair[0] <= pair[1])
         && seed.best_authenticated_tick == seed.terminal_path_ticks.first().copied()
-        && (!seed.terminal_improvement_timing_complete
-            || (seed.best_terminal_decision_index.is_some() == seed.terminal_discovered
-                && seed.time_to_best_terminal_micros.is_some() == seed.terminal_discovered
-                && seed.proposal_expansions_to_best_terminal.is_some() == seed.terminal_discovered
-                && seed.useful_graph_expansions_to_best_terminal.is_some()
-                    == seed.terminal_discovered
-                && seed
-                    .terminal_improvements
-                    .last()
-                    .map(|row| row.authenticated_tick)
-                    == seed.best_authenticated_tick))
+        && terminal_improvement_timeline_is_valid(seed)
+}
+
+fn first_terminal_evidence_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
+    match (
+        seed.terminal_discovered,
+        seed.first_terminal_decision_index,
+        seed.time_to_first_terminal_micros,
+        seed.proposal_expansions_to_first_terminal,
+        seed.useful_graph_expansions_to_first_terminal,
+        seed.best_authenticated_tick,
+    ) {
+        (
+            true,
+            Some(decision_index),
+            Some(wall_micros),
+            Some(proposal_expansions),
+            Some(useful_expansions),
+            Some(_),
+        ) => {
+            let Some((position, decision)) = seed
+                .decisions
+                .iter()
+                .enumerate()
+                .find(|(_, row)| row.decision_index == decision_index)
+            else {
+                return false;
+            };
+            let expected_proposals = seed.decisions[..=position]
+                .iter()
+                .try_fold(0_u64, |total, row| total.checked_add(row.proposal_count));
+            wall_micros == decision.cumulative_wall_micros
+                && expected_proposals == Some(proposal_expansions)
+                && proposal_expansions > 0
+                && useful_expansions == decision.completed_executable_graph_expansions
+                && useful_expansions > 0
+                && decision.terminal_proposal_count > 0
+        }
+        (false, None, None, None, None, None) => true,
+        _ => false,
+    }
+}
+
+fn terminal_improvement_timeline_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
+    if !seed.terminal_discovered {
+        return seed.terminal_improvements.is_empty()
+            && seed.best_terminal_decision_index.is_none()
+            && seed.time_to_best_terminal_micros.is_none()
+            && seed.proposal_expansions_to_best_terminal.is_none()
+            && seed.useful_graph_expansions_to_best_terminal.is_none();
+    }
+    if !seed.terminal_improvement_timing_complete {
+        return true;
+    }
+    let Some(first) = seed.terminal_improvements.first() else {
+        return false;
+    };
+    let Some(last) = seed.terminal_improvements.last() else {
+        return false;
+    };
+    if Some(first.decision_index) != seed.first_terminal_decision_index
+        || Some(first.cumulative_wall_micros) != seed.time_to_first_terminal_micros
+        || Some(first.cumulative_proposal_expansions) != seed.proposal_expansions_to_first_terminal
+        || Some(first.cumulative_useful_graph_expansions)
+            != seed.useful_graph_expansions_to_first_terminal
+        || Some(last.decision_index) != seed.best_terminal_decision_index
+        || Some(last.cumulative_wall_micros) != seed.time_to_best_terminal_micros
+        || Some(last.cumulative_proposal_expansions) != seed.proposal_expansions_to_best_terminal
+        || Some(last.cumulative_useful_graph_expansions)
+            != seed.useful_graph_expansions_to_best_terminal
+        || Some(last.authenticated_tick) != seed.best_authenticated_tick
+        || seed.terminal_improvements.windows(2).any(|pair| {
+            pair[0].authenticated_tick <= pair[1].authenticated_tick
+                || pair[0].decision_index > pair[1].decision_index
+                || pair[0].cumulative_wall_micros > pair[1].cumulative_wall_micros
+                || pair[0].cumulative_proposal_expansions > pair[1].cumulative_proposal_expansions
+                || pair[0].cumulative_useful_graph_expansions
+                    > pair[1].cumulative_useful_graph_expansions
+        })
+    {
+        return false;
+    }
+    seed.terminal_improvements.iter().all(|improvement| {
+        let Some((position, decision)) = seed
+            .decisions
+            .iter()
+            .enumerate()
+            .find(|(_, row)| row.decision_index == improvement.decision_index)
+        else {
+            return false;
+        };
+        let expected_proposals = seed.decisions[..=position]
+            .iter()
+            .try_fold(0_u64, |total, row| total.checked_add(row.proposal_count));
+        improvement.cumulative_wall_micros == decision.cumulative_wall_micros
+            && expected_proposals == Some(improvement.cumulative_proposal_expansions)
+            && improvement.cumulative_useful_graph_expansions
+                == decision.completed_executable_graph_expansions
+            && improvement.cumulative_proposal_expansions > 0
+            && improvement.cumulative_useful_graph_expansions > 0
+            && decision.terminal_proposal_count > 0
+    })
 }
 
 fn proposal_matches_graph_expansion(
@@ -824,24 +927,43 @@ fn proposal_matches_graph_expansion(
         },
         Some(target),
         Some(execution),
-    ) = (&expansion.status, expansion.target, expansion.execution.as_ref())
+    ) = (
+        &expansion.status,
+        expansion.target,
+        expansion.execution.as_ref(),
+    )
     else {
+        return false;
+    };
+    let Some(source_node) = graph.node(expansion.source) else {
         return false;
     };
     let Some(target_node) = graph.node(target) else {
         return false;
     };
     expansion.action.option_id == proposal.option_id
+        && execution.option_id == expansion.action.option_id
+        && execution.option_type == expansion.action.option_type
+        && execution.parameters == expansion.action.parameters
         && execution.duration.realized_ticks == proposal.realized_ticks
+        && execution.tape_sha256 == proposal.emitted_tape_sha256
+        && execution.realized_tape_range.start_frame == source_node.restoration.route.tape_frames
+        && execution.realized_tape_range.end_frame_exclusive
+            == target_node.restoration.route.tape_frames
+        && source_node
+            .restoration
+            .route
+            .tape_frames
+            .checked_add(u64::from(proposal.realized_ticks))
+            == Some(proposal.root_route_ticks)
         && target_node.terminal == proposal.terminal
         && target_node.id.state_sha256 == proposal.after_snapshot_sha256
         && target_node.restoration.route.tape_frames == proposal.root_route_ticks
         && evidence.values().any(|row| {
             row.authority == ExpansionEvidenceAuthority::Executable
                 && row.transition.after_state_sha256 == proposal.after_snapshot_sha256
-                && row.transition.value_sample.action.option_id == proposal.option_id
-                && row.transition.value_sample.realized_tape_sha256
-                    == proposal.emitted_tape_sha256
+                && row.transition.value_sample.action == expansion.action
+                && row.transition.value_sample.realized_tape_sha256 == proposal.emitted_tape_sha256
                 && row.transition.value_sample.reward.to_bits() == proposal.reward.to_bits()
                 && row.transition.value_sample.terminal == proposal.terminal
         })

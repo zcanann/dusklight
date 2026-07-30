@@ -557,8 +557,12 @@ fn validate_seed(
         .state_graph
         .nodes()
         .filter(|node| node.terminal && node.restoration.executable)
-        .map(|node| node.root_ticks.saturating_sub(1))
-        .collect::<Vec<_>>();
+        .map(|node| {
+            node.root_ticks.checked_sub(1).ok_or_else(|| {
+                route_message("bundled scratch terminal node precedes its first native tick")
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     terminal_path_ticks.sort_unstable();
     if canonical_json_sha256(reported)? != canonical_json_sha256(&stored)?
         || bundled.seed_result.logical_identity_sha256 != canonical_json_sha256(&stored)?
