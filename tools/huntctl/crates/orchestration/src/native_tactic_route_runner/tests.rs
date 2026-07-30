@@ -80,6 +80,10 @@ fn scratch_discovery_periodically_revisits_graph_frontiers() {
     assert!(campaign::should_periodically_branch(8, 8, false));
     assert!(campaign::should_periodically_branch(256, 8, false));
     assert!(campaign::should_periodically_branch(3, 8, true));
+    assert!(!campaign::prefer_root_for_periodic_branch(true, false));
+    assert!(!campaign::prefer_root_for_periodic_branch(true, true));
+    assert!(!campaign::prefer_root_for_periodic_branch(false, false));
+    assert!(campaign::prefer_root_for_periodic_branch(false, true));
 }
 
 #[test]

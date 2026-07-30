@@ -21,6 +21,16 @@ pub(super) fn should_periodically_branch(
     terminal_restart || (decision_index > 0 && decision_index % branch_every_decisions == 0)
 }
 
+pub(super) fn prefer_root_for_periodic_branch(
+    terminal_restart: bool,
+    root_refresh_due: bool,
+) -> bool {
+    // A terminal boundary cannot continue, but the graph now owns its exact
+    // successful path. Hand that path to the scheduled frontier immediately;
+    // root refresh remains an independent cadence for ordinary branching.
+    !terminal_restart && root_refresh_due
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_seed(
     config: &NativeTacticRouteRunConfig<'_>,
@@ -330,8 +340,10 @@ pub(super) fn run_seed(
                 )
             }
             .map_err(route_error)?;
-            let prefer_root = terminal_restart
-                || lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence);
+            let prefer_root = prefer_root_for_periodic_branch(
+                terminal_restart,
+                lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
+            );
             let selected_branch = if prefer_root { &root } else { &frontier };
             if demonstration_coverage_pending
                 && selected_branch

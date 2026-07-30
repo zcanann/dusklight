@@ -322,6 +322,204 @@ fn exact_terminal_returns_cover_route_specific_interior_nodes() {
 }
 
 #[test]
+fn optimization_schedules_interiors_from_every_authenticated_terminal_route() {
+    let (mut graph, mut best_transition, best_route) = graph_and_transition();
+    terminalize(&mut best_transition);
+    graph
+        .admit_completed_expansion(
+            best_transition,
+            best_route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+
+    let before = graph.node(graph.root()).unwrap().state.clone();
+    let mut alternate_route = graph.route(graph.root().route_checkpoint_sha256).unwrap().clone();
+    let mut alternate_frames = vec![InputFrame::default(); 12];
+    alternate_frames[0].owned_ports = 1;
+    alternate_route.frames.extend(alternate_frames);
+    let execution = OptionExecution::capture(
+        "alternate-terminal".into(),
+        OptionType::Move,
+        BTreeMap::new(),
+        12,
+        12,
+        OptionCondition::DurationElapsed,
+        Vec::new(),
+        OptionEndReason::Completed,
+        &alternate_route,
+        TapeRange {
+            start_frame: before.tape_frame,
+            end_frame_exclusive: before.tape_frame + 12,
+        },
+    )
+    .unwrap();
+    let alternate_interior_states = [advanced_state(&before, 4), advanced_state(&before, 8)];
+    let mut alternate_transition = OptionTransitionSample::capture(
+        graph.identity.feature_schema_sha256,
+        graph.root().route_checkpoint_sha256,
+        route_checkpoint_sha256(graph.identity.root_checkpoint_sha256, &alternate_route).unwrap(),
+        before.clone(),
+        advanced_state(&before, 12),
+        execution,
+        &alternate_route,
+        -12.0,
+        false,
+        |state| Ok::<_, &'static str>(vec![state.tape_frame as f32]),
+    )
+    .unwrap();
+    alternate_transition.execution_authority_sha256 = graph.identity.execution_authority_sha256;
+    alternate_transition.intermediate_boundaries = alternate_interior_states
+        .into_iter()
+        .enumerate()
+        .map(|(index, state)| OptionIntermediateBoundary {
+            episode_shard_sha256: Digest([11; 32]),
+            offset_ticks: 4 + index as u32 * 4,
+            state_sha256: state.content_sha256().unwrap(),
+            state,
+        })
+        .collect();
+    terminalize(&mut alternate_transition);
+    alternate_transition.validate().unwrap();
+    graph
+        .admit_completed_expansion(
+            alternate_transition,
+            alternate_route,
+            18,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+
+    assert_eq!(
+        graph.best_terminal_path().unwrap().root_to_terminal_ticks,
+        8
+    );
+    let alternate_interior = graph
+        .nodes()
+        .find(|node| node.root_ticks == 8 && !node.terminal)
+        .unwrap()
+        .id;
+    let scheduled = crate::scheduler::rank_schedulable_nodes(
+        &graph,
+        crate::scheduler::SearchRegime::Optimization,
+        u64::MAX,
+        31,
+        0,
+    )
+    .unwrap();
+    assert!(scheduled.iter().any(|entry| {
+        entry.node == alternate_interior && entry.exact_terminal_ticks_to_go == Some(4)
+    }));
+}
+
+#[test]
+fn optimization_keeps_terminal_interior_when_transposition_prefers_another_route() {
+    let (mut graph, mut terminal_transition, terminal_route) = graph_and_transition();
+    terminalize(&mut terminal_transition);
+    graph
+        .admit_completed_expansion(
+            terminal_transition,
+            terminal_route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+    let successful_interior = graph
+        .nodes()
+        .find(|node| node.root_ticks == 4 && !node.terminal)
+        .unwrap()
+        .id;
+
+    let before = graph.node(graph.root()).unwrap().state.clone();
+    let mut alternate_route = graph.route(graph.root().route_checkpoint_sha256).unwrap().clone();
+    alternate_route.frames.extend([
+        InputFrame {
+            owned_ports: 1,
+            ..InputFrame::default()
+        },
+        InputFrame::default(),
+    ]);
+    let execution = OptionExecution::capture(
+        "alternate".into(),
+        OptionType::Move,
+        BTreeMap::new(),
+        2,
+        2,
+        OptionCondition::DurationElapsed,
+        Vec::new(),
+        OptionEndReason::Completed,
+        &alternate_route,
+        TapeRange {
+            start_frame: before.tape_frame,
+            end_frame_exclusive: before.tape_frame + 2,
+        },
+    )
+    .unwrap();
+    let mut alternate_transition = OptionTransitionSample::capture(
+        graph.identity.feature_schema_sha256,
+        graph.root().route_checkpoint_sha256,
+        route_checkpoint_sha256(graph.identity.root_checkpoint_sha256, &alternate_route).unwrap(),
+        before.clone(),
+        advanced_state(&before, 2),
+        execution,
+        &alternate_route,
+        -2.0,
+        false,
+        |state| Ok::<_, &'static str>(vec![state.tape_frame as f32]),
+    )
+    .unwrap();
+    alternate_transition.execution_authority_sha256 = graph.identity.execution_authority_sha256;
+    alternate_transition.validate().unwrap();
+    let alternate = graph
+        .admit_completed_expansion(
+            alternate_transition,
+            alternate_route,
+            18,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap()
+        .target;
+
+    graph
+        .admit_future_equivalence_proof(
+            FutureEquivalenceProof::new(
+                alternate,
+                successful_interior,
+                graph.identity.future_equivalence_validator_sha256,
+                Digest([10; 32]),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        graph
+            .canonical_restoration_node(successful_interior)
+            .unwrap(),
+        alternate
+    );
+    let exact_returns = graph.exact_terminal_returns().unwrap();
+    assert_eq!(exact_returns.get(&successful_interior), Some(&4));
+    assert_eq!(exact_returns.get(&alternate), None);
+
+    let scheduled = crate::scheduler::rank_schedulable_nodes(
+        &graph,
+        crate::scheduler::SearchRegime::Optimization,
+        u64::MAX,
+        31,
+        0,
+    )
+    .unwrap();
+    let supported = scheduled
+        .iter()
+        .find(|entry| entry.node == successful_interior)
+        .unwrap();
+    assert_eq!(supported.exact_terminal_ticks_to_go, Some(4));
+    assert_eq!(scheduled.first(), Some(supported));
+    assert!(scheduled.iter().any(|entry| entry.node == alternate));
+}
+
+#[test]
 fn learner_targets_keep_exact_success_separate_from_censored_continuation() {
     let (mut censored_graph, censored, censored_route) = graph_and_transition();
     censored_graph

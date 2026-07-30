@@ -303,12 +303,7 @@ pub fn rank_schedulable_nodes(
             "optimization scheduling requires a terminal path",
         ));
     }
-    let best_terminal_route = graph
-        .best_terminal_path()
-        .and_then(|path| graph.route(path.route_checkpoint_sha256));
-    let best_terminal_ticks = graph
-        .best_terminal_path()
-        .map(|path| path.root_to_terminal_ticks);
+    let exact_terminal_returns = graph.exact_terminal_returns()?;
     let relaxed_root_ticks = graph.relaxed_root_ticks()?;
     let canonical_nodes = graph
         .nodes()
@@ -323,7 +318,13 @@ pub fn rank_schedulable_nodes(
         .nodes()
         .filter(|node| {
             node.id != graph.root()
-                && canonical_nodes.get(&node.id) == Some(&node.id)
+                // Future-equivalence canonicalization may choose a faster
+                // restoration from another route. That is useful for
+                // discovery, but it must not erase an exact interior of an
+                // authenticated terminal tape: the alternate route does not
+                // itself carry that route-specific continuation.
+                && (canonical_nodes.get(&node.id) == Some(&node.id)
+                    || exact_terminal_returns.contains_key(&node.id))
                 && node.restoration.executable
                 && !node.terminal
                 && node.restoration.route.tape_frames <= maximum_route_frames
@@ -342,18 +343,7 @@ pub fn rank_schedulable_nodes(
                     })
                 })
                 .count() as u64;
-            let route = graph.route(node.id.route_checkpoint_sha256);
-            let exact_terminal_ticks_to_go = match (route, best_terminal_route, best_terminal_ticks)
-            {
-                (Some(route), Some(best), Some(total))
-                    if same_tape_origin(route, best)
-                        && best.frames.starts_with(&route.frames)
-                        && total >= node.root_ticks =>
-                {
-                    Some(total - node.root_ticks)
-                }
-                _ => None,
-            };
+            let exact_terminal_ticks_to_go = exact_terminal_returns.get(&node.id).copied();
             ScheduledNode {
                 node: node.id,
                 root_ticks: relaxed_root_ticks
@@ -549,15 +539,6 @@ fn compare_scheduled_node(
     ordering
         .then_with(|| left.tie_rank.cmp(&right.tie_rank))
         .then_with(|| left.node.cmp(&right.node))
-}
-
-fn same_tape_origin(
-    left: &dusklight_automation_contracts::tape::InputTape,
-    right: &dusklight_automation_contracts::tape::InputTape,
-) -> bool {
-    left.boot == right.boot
-        && left.tick_rate_numerator == right.tick_rate_numerator
-        && left.tick_rate_denominator == right.tick_rate_denominator
 }
 
 const REACHABILITY_POSITION_BIN_WORLD_UNITS: f64 = 64.0;

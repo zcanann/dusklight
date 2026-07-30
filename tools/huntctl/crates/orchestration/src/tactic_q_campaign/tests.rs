@@ -1387,6 +1387,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         ..InputFrame::default()
     });
     let start_frame = uninterrupted.current.snapshot.tape_frame;
+    let successful_interior_state_sha256 = uninterrupted.current.snapshot_sha256;
     let terminal_execution = OptionExecution::capture(
         uninterrupted_decision.selected.descriptor.option_id.clone(),
         uninterrupted_decision
@@ -1561,17 +1562,28 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             .final_result_matches_graph_terminal(&graph_terminal_result)
             .unwrap()
     );
+    let best_graph_terminal_path = uninterrupted.best_graph_terminal_path().unwrap().unwrap();
     assert_eq!(
-        uninterrupted
-            .best_graph_terminal_path()
-            .unwrap()
-            .unwrap()
-            .route_checkpoint_sha256,
+        best_graph_terminal_path.route_checkpoint_sha256,
         route_checkpoint(
             uninterrupted.root_checkpoint_sha256,
             &evaluated_terminal_result.route_tape
         )
         .unwrap()
+    );
+    let [_, optimization_frontier] = uninterrupted
+        .graph_scheduled_root_and_frontier(8, 1, 0, usize::MAX)
+        .unwrap();
+    assert_eq!(
+        optimization_frontier.logical_frontier.state_sha256,
+        successful_interior_state_sha256
+    );
+    let optimization_acquisition = optimization_frontier.acquisition.as_ref().unwrap();
+    assert!(optimization_acquisition.terminal_value_supported);
+    assert_eq!(optimization_acquisition.exact_terminal_ticks_to_go, Some(1));
+    assert_eq!(
+        optimization_acquisition.exact_total_terminal_ticks,
+        Some(best_graph_terminal_path.root_to_terminal_ticks)
     );
     fs::remove_dir_all(incremental_directory).unwrap();
 }
