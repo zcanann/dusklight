@@ -440,16 +440,25 @@ Exit gate:
       returns directly to the optimization scheduler.
       Source checkpoint `3dbf335b7d` keeps rank-zero terminal-support lanes on
       exact-return optimization while sealed nonzero acquisition ranks retain
-      discovery-ordered broad exploration. This remains open until focused
-      tests compile and retained native traces prove post-terminal work and
-      improvement rather than merely continued execution.
+      discovery-ordered broad exploration. Source checkpoint `62aac70a51`
+      fixes the remaining terminal handoff: a terminal-triggered branch now
+      restores the scheduled frontier immediately instead of unconditionally
+      restarting from root, and a campaign-level test requires rank-zero
+      acquisition to select the supported successful-path interior. This
+      remains open until focused tests compile and retained native traces prove
+      post-terminal work and improvement rather than merely continued
+      execution.
 - [ ] Schedule counterfactuals across the complete interior-state sequence of
       every newly successful path, not option endpoints alone.
       Source checkpoint `c9bfb90865` aligns native and optional-replay
       boundaries to at most four ticks and requires terminal-path interior
-      nodes to retain exact optimization-scheduler support. Keep this open
-      until the focused tests compile and retained native traces show the
-      scheduler actually leases counterfactuals across the complete sequence.
+      nodes to retain exact optimization-scheduler support. Source checkpoint
+      `62aac70a51` removes best-route-only node support, schedules interiors
+      from every authenticated terminal route, and prevents validated
+      transposition canonicalization from erasing a route-specific supported
+      interior. Keep this open until the focused tests compile and retained
+      native traces show the scheduler actually leases counterfactuals across
+      the complete sequence.
 - [ ] Demonstrate repeated monotonic best-route improvement from the first
       terminal in at least three sealed seeds. One favorable counterfactual is
       not proof.
