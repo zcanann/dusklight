@@ -42,6 +42,17 @@ For the retained Windows execution on 2026-07-29, one checkpoint was
 `335,544,320` bytes per worker. Passing only `335,544,320` bytes as the
 aggregate gives each worker `20,971,520` bytes and is invalid.
 
+If the command is interrupted, repeat the exact invocation with `--resume`.
+The output contains an authenticated binary run commit, append-only fleet
+launch records, and one immutable commit per completed sample. Resume audits
+and skips the contiguous completed prefix, resumes the first partial route
+sample from its own durable campaign state, and rejects gaps, changed inputs,
+or a committed sample whose report no longer matches. If all samples finished
+but aggregate sealing was interrupted, resume atomically publishes the
+aggregate without launching native workers again.
+Interrupted outputs created before the run-commit protocol are rejected rather
+than adopted without an authenticated identity.
+
 An existing curve can be sealed later:
 
 ```text

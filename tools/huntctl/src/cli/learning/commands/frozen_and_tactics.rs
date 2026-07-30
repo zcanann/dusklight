@@ -794,6 +794,7 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 execution_plan: &execution_plan,
                 output_root: &output,
                 repetitions: usize_option(learn_args, "--repetitions", 2)?.try_into()?,
+                resume: flag(learn_args, "--resume"),
             })?;
             let report_path = output.join("throughput-curve.json");
             let bundle = option(learn_args, "--bundle")

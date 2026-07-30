@@ -14,6 +14,13 @@ const MINIMUM_LONG_WORK_DECISIONS: u64 = 16;
 const MINIMUM_REPETITIONS: u32 = 2;
 const MAXIMUM_REPETITIONS: u32 = 6;
 const REPORT_FILE: &str = "throughput-curve.json";
+const PROGRESS_DIRECTORY: &str = "throughput-progress";
+const RUN_COMMIT_FILE: &str = "run.dtcr";
+const RUN_COMMIT_SCHEMA_V1: &str = "dusklight-native-tactic-throughput-run-commit/v1";
+const SAMPLE_COMMIT_SCHEMA_V1: &str = "dusklight-native-tactic-throughput-sample-commit/v1";
+const FLEET_LAUNCH_COMMIT_SCHEMA_V1: &str =
+    "dusklight-native-tactic-throughput-fleet-launch-commit/v1";
+const MAXIMUM_PROGRESS_RECORD_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct NativeTacticThroughputCurveConfig<'a> {
@@ -23,6 +30,7 @@ pub struct NativeTacticThroughputCurveConfig<'a> {
     pub execution_plan: &'a NativeTacticExecutionPlan,
     pub output_root: &'a Path,
     pub repetitions: u32,
+    pub resume: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -63,6 +71,178 @@ pub struct NativeTacticThroughputCurveSample {
     pub result_validation_and_fact_extraction_micros: u64,
     pub graph_admission_micros: u64,
     pub native_worker_occupancy_per_million: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeTacticThroughputRunCommit {
+    schema: String,
+    content_sha256: Digest,
+    optimization_request_sha256: Digest,
+    execution_binding_sha256: Digest,
+    execution_plan_sha256: Digest,
+    repetitions: u32,
+    worker_counts: Vec<usize>,
+}
+
+impl NativeTacticThroughputRunCommit {
+    fn new(
+        config: &NativeTacticThroughputCurveConfig<'_>,
+        execution_plan_sha256: Digest,
+    ) -> Result<Self, NativeTacticRouteRunError> {
+        let mut commit = Self {
+            schema: RUN_COMMIT_SCHEMA_V1.into(),
+            content_sha256: Digest::ZERO,
+            optimization_request_sha256: config.optimization.content_sha256,
+            execution_binding_sha256: config.execution.content_sha256,
+            execution_plan_sha256,
+            repetitions: config.repetitions,
+            worker_counts: NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS.to_vec(),
+        };
+        commit.content_sha256 = commit.compute_content_sha256()?;
+        Ok(commit)
+    }
+
+    fn validate(
+        &self,
+        config: &NativeTacticThroughputCurveConfig<'_>,
+        execution_plan_sha256: Digest,
+    ) -> Result<(), NativeTacticRouteRunError> {
+        if self.schema != RUN_COMMIT_SCHEMA_V1
+            || self.content_sha256 == Digest::ZERO
+            || self.content_sha256 != self.compute_content_sha256()?
+            || self.optimization_request_sha256 != config.optimization.content_sha256
+            || self.execution_binding_sha256 != config.execution.content_sha256
+            || self.execution_plan_sha256 != execution_plan_sha256
+            || self.repetitions != config.repetitions
+            || self.worker_counts != NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS
+        {
+            return Err(route_message(
+                "native tactic throughput run commit is detached",
+            ));
+        }
+        Ok(())
+    }
+
+    fn compute_content_sha256(&self) -> Result<Digest, NativeTacticRouteRunError> {
+        let mut unsigned = self.clone();
+        unsigned.content_sha256 = Digest::ZERO;
+        Ok(Digest(
+            Sha256::digest(serde_cbor::to_vec(&unsigned).map_err(route_error)?).into(),
+        ))
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeTacticThroughputSampleCommit {
+    schema: String,
+    content_sha256: Digest,
+    execution_plan_sha256: Digest,
+    sample: NativeTacticThroughputCurveSample,
+}
+
+impl NativeTacticThroughputSampleCommit {
+    fn new(
+        execution_plan_sha256: Digest,
+        sample: NativeTacticThroughputCurveSample,
+    ) -> Result<Self, NativeTacticRouteRunError> {
+        let mut commit = Self {
+            schema: SAMPLE_COMMIT_SCHEMA_V1.into(),
+            content_sha256: Digest::ZERO,
+            execution_plan_sha256,
+            sample,
+        };
+        commit.content_sha256 = commit.compute_content_sha256()?;
+        Ok(commit)
+    }
+
+    fn validate(
+        &self,
+        execution_plan_sha256: Digest,
+        ordinal: u32,
+        repetition: u32,
+        workers: usize,
+        route_report_path: &Path,
+    ) -> Result<(), NativeTacticRouteRunError> {
+        if self.schema != SAMPLE_COMMIT_SCHEMA_V1
+            || self.content_sha256 == Digest::ZERO
+            || self.content_sha256 != self.compute_content_sha256()?
+            || self.execution_plan_sha256 != execution_plan_sha256
+            || self.sample.ordinal != ordinal
+            || self.sample.repetition != repetition
+            || self.sample.workers != workers
+            || self.sample.route_report_path != path_text(route_report_path)
+        {
+            return Err(route_message(
+                "native tactic throughput sample commit is detached",
+            ));
+        }
+        Ok(())
+    }
+
+    fn compute_content_sha256(&self) -> Result<Digest, NativeTacticRouteRunError> {
+        let mut unsigned = self.clone();
+        unsigned.content_sha256 = Digest::ZERO;
+        Ok(Digest(
+            Sha256::digest(serde_cbor::to_vec(&unsigned).map_err(route_error)?).into(),
+        ))
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeTacticThroughputFleetLaunchCommit {
+    schema: String,
+    content_sha256: Digest,
+    execution_plan_sha256: Digest,
+    fleet_workers: usize,
+    launch_micros: u64,
+}
+
+impl NativeTacticThroughputFleetLaunchCommit {
+    fn new(
+        execution_plan_sha256: Digest,
+        fleet_workers: usize,
+        launch_micros: u64,
+    ) -> Result<Self, NativeTacticRouteRunError> {
+        let mut commit = Self {
+            schema: FLEET_LAUNCH_COMMIT_SCHEMA_V1.into(),
+            content_sha256: Digest::ZERO,
+            execution_plan_sha256,
+            fleet_workers,
+            launch_micros,
+        };
+        commit.content_sha256 = commit.compute_content_sha256()?;
+        Ok(commit)
+    }
+
+    fn validate(
+        &self,
+        execution_plan_sha256: Digest,
+        fleet_workers: usize,
+    ) -> Result<(), NativeTacticRouteRunError> {
+        if self.schema != FLEET_LAUNCH_COMMIT_SCHEMA_V1
+            || self.content_sha256 == Digest::ZERO
+            || self.content_sha256 != self.compute_content_sha256()?
+            || self.execution_plan_sha256 != execution_plan_sha256
+            || self.fleet_workers != fleet_workers
+            || self.launch_micros == 0
+        {
+            return Err(route_message(
+                "native tactic throughput fleet launch commit is detached",
+            ));
+        }
+        Ok(())
+    }
+
+    fn compute_content_sha256(&self) -> Result<Digest, NativeTacticRouteRunError> {
+        let mut unsigned = self.clone();
+        unsigned.content_sha256 = Digest::ZERO;
+        Ok(Digest(
+            Sha256::digest(serde_cbor::to_vec(&unsigned).map_err(route_error)?).into(),
+        ))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -381,15 +561,16 @@ pub fn run_native_tactic_throughput_curve(
     config: &NativeTacticThroughputCurveConfig<'_>,
 ) -> Result<NativeTacticThroughputCurveReport, NativeTacticRouteRunError> {
     validate_curve_config(config)?;
-    if let Some(parent) = config
-        .output_root
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent).map_err(route_error)?;
-    }
-    fs::create_dir(config.output_root).map_err(route_error)?;
     let execution_plan_sha256 = config.execution_plan.identity()?;
+    let report_path = config.output_root.join(REPORT_FILE);
+    prepare_curve_output(config)?;
+    if report_path.exists() {
+        let report = NativeTacticThroughputCurveReport::read_and_validate(&report_path)?;
+        validate_resumed_curve_report(config, execution_plan_sha256, &report)?;
+        return Ok(report);
+    }
+    let progress_root = config.output_root.join(PROGRESS_DIRECTORY);
+    prepare_curve_run_commit(config, &progress_root, execution_plan_sha256)?;
     let fixed_completed_decisions = config
         .execution_plan
         .budgets
@@ -417,37 +598,51 @@ pub fn run_native_tactic_throughput_curve(
         .last()
         .copied()
         .ok_or_else(|| route_message("throughput curve worker topology is empty"))?;
-    let fleet_root = config.output_root.join("worker-fleet");
-    let fleet_config = NativeTacticRouteRunConfig {
-        repository_root: config.repository_root,
-        optimization: config.optimization,
-        execution: config.execution,
-        execution_plan: config.execution_plan,
-        promoted_tactic_registry: None,
-        output_root: &fleet_root,
-        workers: fleet_workers,
-        cancellation: None,
-        fault_injection: None,
-        resume: false,
-    };
-    let fleet = launch_native_tactic_worker_fleet(&fleet_config, &fleet_root, fleet_workers)?;
-    let fleet_launch_micros = fleet.launch_micros();
+    let schedule = throughput_sample_schedule(config.repetitions)?;
     let mut execution_order = Vec::new();
-    for repetition in 1..=config.repetitions {
-        let worker_order = if repetition % 2 == 1 {
-            NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS.to_vec()
-        } else {
-            NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS
-                .iter()
-                .rev()
-                .copied()
-                .collect()
+    let mut first_unfinished = schedule.len();
+    for (index, &(ordinal, repetition, workers)) in schedule.iter().enumerate() {
+        match load_or_commit_completed_sample(
+            config,
+            &progress_root,
+            execution_plan_sha256,
+            ordinal,
+            repetition,
+            workers,
+        )? {
+            Some(sample) => execution_order.push(sample),
+            None => {
+                first_unfinished = index;
+                break;
+            }
+        }
+    }
+    reject_non_prefix_progress(config, &progress_root, &schedule, first_unfinished)?;
+
+    if first_unfinished < schedule.len() {
+        let fleet_root = config.output_root.join("worker-fleet");
+        let fleet_config = NativeTacticRouteRunConfig {
+            repository_root: config.repository_root,
+            optimization: config.optimization,
+            execution: config.execution,
+            execution_plan: config.execution_plan,
+            promoted_tactic_registry: None,
+            output_root: &fleet_root,
+            workers: fleet_workers,
+            cancellation: None,
+            fault_injection: None,
+            resume: config.resume,
         };
-        for workers in worker_order {
-            let ordinal = u32::try_from(execution_order.len() + 1).map_err(route_error)?;
-            let sample_root = config
-                .output_root
-                .join(format!("sample-{ordinal:02}-r{repetition}-w{workers}"));
+        let fleet = launch_native_tactic_worker_fleet(&fleet_config, &fleet_root, fleet_workers)?;
+        append_fleet_launch_commit(
+            &progress_root,
+            execution_plan_sha256,
+            fleet_workers,
+            fleet.launch_micros(),
+        )?;
+        for &(ordinal, repetition, workers) in &schedule[first_unfinished..] {
+            let sample_root = sample_root(config.output_root, ordinal, repetition, workers);
+            let resume_sample = sample_root.exists();
             let route_report = run_native_tactic_route_with_fleet(
                 &NativeTacticRouteRunConfig {
                     repository_root: config.repository_root,
@@ -459,24 +654,29 @@ pub fn run_native_tactic_throughput_curve(
                     workers,
                     cancellation: None,
                     fault_injection: None,
-                    resume: false,
+                    resume: resume_sample,
                 },
                 &fleet,
             )?;
             let route_report_path = sample_root.join("report.json");
             let route_report_bytes = fs::read(&route_report_path).map_err(route_error)?;
             let route_report_sha256 = Digest(Sha256::digest(route_report_bytes).into());
-            execution_order.push(sample_from_route_report(
+            let sample = sample_from_route_report(
                 ordinal,
                 repetition,
                 workers,
                 path_text(&route_report_path),
                 route_report_sha256,
                 &route_report,
-            ));
+            );
+            validate_completed_sample(config, execution_plan_sha256, &sample, &route_report)?;
+            write_sample_commit(&progress_root, execution_plan_sha256, sample.clone())?;
+            execution_order.push(sample);
         }
+        fleet.shutdown()?;
     }
-    fleet.shutdown()?;
+    let fleet_launch_micros =
+        read_fleet_launch_micros(&progress_root, execution_plan_sha256, fleet_workers)?;
     let derived = DerivedCurve::from_samples(
         &execution_order,
         fixed_completed_decisions,
@@ -521,11 +721,373 @@ pub fn run_native_tactic_throughput_curve(
     };
     report.refresh_content_sha256()?;
     report.validate()?;
-    write_new(
-        &config.output_root.join(REPORT_FILE),
-        &report.to_pretty_json()?,
-    )?;
+    publish_curve_report(&report_path, &report.to_pretty_json()?)?;
     Ok(report)
+}
+
+fn publish_curve_report(
+    report_path: &Path,
+    bytes: &[u8],
+) -> Result<(), NativeTacticRouteRunError> {
+    let parent = report_path
+        .parent()
+        .ok_or_else(|| route_message("native tactic throughput report has no parent"))?;
+    let file_name = report_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| route_message("native tactic throughput report filename is invalid"))?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(route_error)?
+        .as_nanos();
+    let partial = parent.join(format!(
+        ".{file_name}.{}.{}.partial",
+        std::process::id(),
+        nonce
+    ));
+    write_new(&partial, bytes)?;
+    fs::rename(&partial, report_path).map_err(route_error)?;
+    fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(route_error)
+}
+
+fn prepare_curve_output(
+    config: &NativeTacticThroughputCurveConfig<'_>,
+) -> Result<(), NativeTacticRouteRunError> {
+    if config.output_root.exists() {
+        if !config.resume {
+            return Err(route_message(
+                "native tactic throughput curve output already exists; pass --resume",
+            ));
+        }
+        if !config.output_root.is_dir() {
+            return Err(route_message(
+                "native tactic throughput curve output is not a directory",
+            ));
+        }
+        return Ok(());
+    }
+    if config.resume {
+        return Err(route_message(
+            "native tactic throughput curve resume output does not exist",
+        ));
+    }
+    if let Some(parent) = config
+        .output_root
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).map_err(route_error)?;
+    }
+    fs::create_dir(config.output_root).map_err(route_error)
+}
+
+fn prepare_curve_run_commit(
+    config: &NativeTacticThroughputCurveConfig<'_>,
+    progress_root: &Path,
+    execution_plan_sha256: Digest,
+) -> Result<(), NativeTacticRouteRunError> {
+    let path = progress_root.join(RUN_COMMIT_FILE);
+    let expected = NativeTacticThroughputRunCommit::new(config, execution_plan_sha256)?;
+    if path.exists() {
+        let actual: NativeTacticThroughputRunCommit = read_progress_record(&path)?;
+        actual.validate(config, execution_plan_sha256)?;
+        if actual != expected {
+            return Err(route_message(
+                "native tactic throughput run commit differs from its request",
+            ));
+        }
+    } else {
+        let output_has_artifacts = fs::read_dir(config.output_root)
+            .map_err(route_error)?
+            .next()
+            .transpose()
+            .map_err(route_error)?
+            .is_some();
+        if config.resume && output_has_artifacts {
+            return Err(route_message(
+                "legacy native tactic throughput progress has no authenticated run commit",
+            ));
+        }
+        fs::create_dir_all(progress_root).map_err(route_error)?;
+        write_progress_record(&path, &expected)?;
+    }
+    Ok(())
+}
+
+fn validate_resumed_curve_report(
+    config: &NativeTacticThroughputCurveConfig<'_>,
+    execution_plan_sha256: Digest,
+    report: &NativeTacticThroughputCurveReport,
+) -> Result<(), NativeTacticRouteRunError> {
+    if report.optimization_request_sha256 != config.optimization.content_sha256
+        || report.execution_binding_sha256 != config.execution.content_sha256
+        || report.execution_plan_sha256 != execution_plan_sha256
+        || report.repetitions != config.repetitions
+        || report.worker_counts != NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS
+    {
+        return Err(route_message(
+            "completed native tactic throughput curve is detached from resume",
+        ));
+    }
+    Ok(())
+}
+
+fn throughput_sample_schedule(
+    repetitions: u32,
+) -> Result<Vec<(u32, u32, usize)>, NativeTacticRouteRunError> {
+    let mut schedule = Vec::new();
+    for repetition in 1..=repetitions {
+        let workers = if repetition % 2 == 1 {
+            NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS.to_vec()
+        } else {
+            NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS
+                .iter()
+                .rev()
+                .copied()
+                .collect()
+        };
+        for workers in workers {
+            schedule.push((
+                u32::try_from(schedule.len() + 1).map_err(route_error)?,
+                repetition,
+                workers,
+            ));
+        }
+    }
+    Ok(schedule)
+}
+
+fn sample_root(output_root: &Path, ordinal: u32, repetition: u32, workers: usize) -> PathBuf {
+    output_root.join(format!("sample-{ordinal:02}-r{repetition}-w{workers}"))
+}
+
+fn sample_commit_path(progress_root: &Path, ordinal: u32) -> PathBuf {
+    progress_root.join(format!("sample-{ordinal:02}.dtcs"))
+}
+
+fn load_or_commit_completed_sample(
+    config: &NativeTacticThroughputCurveConfig<'_>,
+    progress_root: &Path,
+    execution_plan_sha256: Digest,
+    ordinal: u32,
+    repetition: u32,
+    workers: usize,
+) -> Result<Option<NativeTacticThroughputCurveSample>, NativeTacticRouteRunError> {
+    let report_path =
+        sample_root(config.output_root, ordinal, repetition, workers).join("report.json");
+    let commit_path = sample_commit_path(progress_root, ordinal);
+    if commit_path.exists() && !report_path.exists() {
+        return Err(route_message(
+            "native tactic throughput sample commit has no route report",
+        ));
+    }
+    if !report_path.exists() {
+        return Ok(None);
+    }
+    let sample = read_completed_sample(
+        config,
+        execution_plan_sha256,
+        ordinal,
+        repetition,
+        workers,
+        &report_path,
+    )?;
+    if commit_path.exists() {
+        let commit: NativeTacticThroughputSampleCommit = read_progress_record(&commit_path)?;
+        commit.validate(
+            execution_plan_sha256,
+            ordinal,
+            repetition,
+            workers,
+            &report_path,
+        )?;
+        if commit.sample != sample {
+            return Err(route_message(
+                "native tactic throughput sample differs from its durable commit",
+            ));
+        }
+    } else {
+        write_sample_commit(progress_root, execution_plan_sha256, sample.clone())?;
+    }
+    Ok(Some(sample))
+}
+
+fn read_completed_sample(
+    config: &NativeTacticThroughputCurveConfig<'_>,
+    execution_plan_sha256: Digest,
+    ordinal: u32,
+    repetition: u32,
+    workers: usize,
+    report_path: &Path,
+) -> Result<NativeTacticThroughputCurveSample, NativeTacticRouteRunError> {
+    let bytes = fs::read(report_path).map_err(route_error)?;
+    let route: NativeTacticRouteReport = serde_json::from_slice(&bytes).map_err(route_error)?;
+    let sample = sample_from_route_report(
+        ordinal,
+        repetition,
+        workers,
+        path_text(report_path),
+        Digest(Sha256::digest(bytes).into()),
+        &route,
+    );
+    validate_completed_sample(config, execution_plan_sha256, &sample, &route)?;
+    Ok(sample)
+}
+
+fn validate_completed_sample(
+    config: &NativeTacticThroughputCurveConfig<'_>,
+    execution_plan_sha256: Digest,
+    sample: &NativeTacticThroughputCurveSample,
+    route: &NativeTacticRouteReport,
+) -> Result<(), NativeTacticRouteRunError> {
+    if route.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36
+        || route.optimization_request_sha256 != config.optimization.content_sha256
+        || route.execution_binding_sha256 != config.execution.content_sha256
+        || route.execution_plan_sha256 != execution_plan_sha256
+        || route.workers != sample.workers
+        || route.timing.process_launch_micros != 0
+    {
+        return Err(route_message(
+            "native tactic throughput route sample is detached",
+        ));
+    }
+    let audit = NativeTacticScratchCampaignAudit::build(config.repository_root, route)?;
+    audit.validate_resource_binding(route, config.execution_plan)?;
+    Ok(())
+}
+
+fn write_sample_commit(
+    progress_root: &Path,
+    execution_plan_sha256: Digest,
+    sample: NativeTacticThroughputCurveSample,
+) -> Result<(), NativeTacticRouteRunError> {
+    let path = sample_commit_path(progress_root, sample.ordinal);
+    write_progress_record(
+        &path,
+        &NativeTacticThroughputSampleCommit::new(execution_plan_sha256, sample)?,
+    )
+}
+
+fn reject_non_prefix_progress(
+    config: &NativeTacticThroughputCurveConfig<'_>,
+    progress_root: &Path,
+    schedule: &[(u32, u32, usize)],
+    first_unfinished: usize,
+) -> Result<(), NativeTacticRouteRunError> {
+    for entry in fs::read_dir(progress_root).map_err(route_error)? {
+        let path = entry.map_err(route_error)?.path();
+        if path.extension().and_then(|extension| extension.to_str()) == Some("dtcs")
+            && !schedule
+                .iter()
+                .any(|(ordinal, _, _)| sample_commit_path(progress_root, *ordinal) == path)
+        {
+            return Err(route_message(
+                "native tactic throughput progress contains an unexpected sample commit",
+            ));
+        }
+    }
+    for &(ordinal, repetition, workers) in schedule.iter().skip(first_unfinished + 1) {
+        if sample_commit_path(progress_root, ordinal).exists()
+            || sample_root(config.output_root, ordinal, repetition, workers).exists()
+        {
+            return Err(route_message(
+                "native tactic throughput progress is not a contiguous sample prefix",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn append_fleet_launch_commit(
+    progress_root: &Path,
+    execution_plan_sha256: Digest,
+    fleet_workers: usize,
+    launch_micros: u64,
+) -> Result<(), NativeTacticRouteRunError> {
+    let existing = fleet_launch_commit_paths(progress_root)?;
+    let ordinal = existing
+        .len()
+        .checked_add(1)
+        .ok_or_else(|| route_message("native tactic fleet launch ordinal overflows"))?;
+    let path = progress_root.join(format!("fleet-launch-{ordinal:04}.dtfl"));
+    write_progress_record(
+        &path,
+        &NativeTacticThroughputFleetLaunchCommit::new(
+            execution_plan_sha256,
+            fleet_workers,
+            launch_micros,
+        )?,
+    )
+}
+
+fn read_fleet_launch_micros(
+    progress_root: &Path,
+    execution_plan_sha256: Digest,
+    fleet_workers: usize,
+) -> Result<u64, NativeTacticRouteRunError> {
+    let paths = fleet_launch_commit_paths(progress_root)?;
+    if paths.is_empty() {
+        return Err(route_message(
+            "native tactic throughput progress has no fleet launch",
+        ));
+    }
+    let mut total = 0_u64;
+    for (index, path) in paths.iter().enumerate() {
+        let expected_name = format!("fleet-launch-{:04}.dtfl", index + 1);
+        if path.file_name().and_then(|name| name.to_str()) != Some(expected_name.as_str()) {
+            return Err(route_message(
+                "native tactic throughput fleet launch commits are not contiguous",
+            ));
+        }
+        let commit: NativeTacticThroughputFleetLaunchCommit = read_progress_record(path)?;
+        commit.validate(execution_plan_sha256, fleet_workers)?;
+        total = total
+            .checked_add(commit.launch_micros)
+            .ok_or_else(|| route_message("native tactic fleet launch time overflows"))?;
+    }
+    Ok(total)
+}
+
+fn fleet_launch_commit_paths(
+    progress_root: &Path,
+) -> Result<Vec<PathBuf>, NativeTacticRouteRunError> {
+    let mut paths = fs::read_dir(progress_root)
+        .map_err(route_error)?
+        .map(|entry| entry.map_err(route_error).map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.retain(|path| path.extension().and_then(|extension| extension.to_str()) == Some("dtfl"));
+    paths.sort();
+    Ok(paths)
+}
+
+fn read_progress_record<T>(path: &Path) -> Result<T, NativeTacticRouteRunError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let metadata = fs::metadata(path).map_err(route_error)?;
+    if metadata.len() == 0 || metadata.len() > MAXIMUM_PROGRESS_RECORD_BYTES {
+        return Err(route_message(
+            "native tactic throughput progress record size is invalid",
+        ));
+    }
+    serde_cbor::from_slice(&fs::read(path).map_err(route_error)?).map_err(route_error)
+}
+
+fn write_progress_record<T: Serialize>(
+    path: &Path,
+    value: &T,
+) -> Result<(), NativeTacticRouteRunError> {
+    let bytes = serde_cbor::to_vec(value).map_err(route_error)?;
+    if bytes.is_empty()
+        || u64::try_from(bytes.len()).map_err(route_error)? > MAXIMUM_PROGRESS_RECORD_BYTES
+    {
+        return Err(route_message(
+            "native tactic throughput progress record size is invalid",
+        ));
+    }
+    write_new(path, &bytes)
 }
 
 pub(super) fn sample_from_route_report(
@@ -713,6 +1275,50 @@ mod tests {
             graph_admission_micros: 100,
             native_worker_occupancy_per_million: 500_000,
         }
+    }
+
+    #[test]
+    fn throughput_schedule_balances_worker_order_between_repetitions() {
+        assert_eq!(
+            throughput_sample_schedule(2).unwrap(),
+            vec![
+                (1, 1, 1),
+                (2, 1, 2),
+                (3, 1, 4),
+                (4, 1, 8),
+                (5, 1, 16),
+                (6, 2, 16),
+                (7, 2, 8),
+                (8, 2, 4),
+                (9, 2, 2),
+                (10, 2, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn sample_commit_binds_useful_expansion_evidence() {
+        let plan = Digest([3; 32]);
+        let route_path = Path::new("sample-01-r1-w1/report.json");
+        let mut commit =
+            NativeTacticThroughputSampleCommit::new(plan, sample(1, 1, 1, 1_000_000)).unwrap();
+        commit.sample.route_report_path = path_text(route_path);
+        commit.content_sha256 = commit.compute_content_sha256().unwrap();
+        commit.validate(plan, 1, 1, 1, route_path).unwrap();
+
+        commit.sample.useful_graph_expansion_set_sha256s[0] = Digest([7; 32]);
+        assert!(commit.validate(plan, 1, 1, 1, route_path).is_err());
+    }
+
+    #[test]
+    fn fleet_launch_commit_rejects_detached_timing() {
+        let plan = Digest([4; 32]);
+        let mut commit =
+            NativeTacticThroughputFleetLaunchCommit::new(plan, 16, 5_000).unwrap();
+        commit.validate(plan, 16).unwrap();
+
+        commit.launch_micros += 1;
+        assert!(commit.validate(plan, 16).is_err());
     }
 
     #[test]
