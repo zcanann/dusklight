@@ -547,31 +547,15 @@ fn lifecycle_status(record: &MacroPromotionRecord) -> MacroPromotionStatus {
 }
 
 fn aggregate_improves(evidence: &[MacroComparisonEvidence]) -> bool {
-    let candidate_terminals = evidence
-        .iter()
-        .filter(|comparison| comparison.candidate_terminal)
-        .count();
-    let primitive_terminals = evidence
-        .iter()
-        .filter(|comparison| comparison.primitive_terminal)
-        .count();
-    if candidate_terminals != primitive_terminals {
-        return candidate_terminals > primitive_terminals;
-    }
-    if candidate_terminals == 0 {
-        // Auxiliary progress is useful training signal but cannot promote a
-        // policy action in the absence of authenticated terminal evidence.
-        return false;
-    }
-    let candidate_ticks = evidence
-        .iter()
-        .map(|comparison| u64::from(comparison.candidate_ticks))
-        .sum::<u64>();
-    let primitive_ticks = evidence
-        .iter()
-        .map(|comparison| u64::from(comparison.primitive_ticks))
-        .sum::<u64>();
-    candidate_ticks < primitive_ticks
+    evidence.len() >= MIN_PROMOTION_COMPARISONS
+        && evidence.iter().all(|comparison| {
+            if comparison.candidate_terminal != comparison.primitive_terminal {
+                comparison.candidate_terminal
+            } else {
+                comparison.candidate_terminal
+                    && comparison.candidate_ticks < comparison.primitive_ticks
+            }
+        })
 }
 
 fn validate_observation(observation: &MacroDiscoveryObservation) -> Result<(), &'static str> {
@@ -946,6 +930,41 @@ mod tests {
                 MacroPromotionStatus::Proposed
             );
         }
+    }
+
+    #[test]
+    fn cheap_failures_cannot_offset_a_slower_terminal_route() {
+        let candidate_sha256 = Digest([7; 32]);
+        let comparison = |seed,
+                          state,
+                          candidate_terminal,
+                          candidate_ticks,
+                          primitive_terminal,
+                          primitive_ticks| {
+            MacroComparisonEvidence::new(
+                candidate_sha256,
+                seed,
+                Digest([state; 32]),
+                candidate_terminal,
+                0.0,
+                candidate_ticks,
+                primitive_terminal,
+                0.0,
+                primitive_ticks,
+            )
+            .unwrap()
+        };
+        let misleading_aggregate = vec![
+            comparison(11, 1, true, 100, true, 90),
+            comparison(13, 2, false, 1, false, 64),
+        ];
+        let one_win_one_tie = vec![
+            comparison(11, 1, true, 8, false, 8),
+            comparison(13, 2, false, 8, false, 8),
+        ];
+
+        assert!(!aggregate_improves(&misleading_aggregate));
+        assert!(!aggregate_improves(&one_win_one_tie));
     }
 
     #[test]
