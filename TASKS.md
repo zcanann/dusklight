@@ -475,20 +475,23 @@ Exit gate:
       occurrence's true entry state, not internal steps. Source checkpoint
       `9987099995` advances the registry to v3: candidate identity and binary
       persistence now retain the complete ordered typed primitive/parameter
-      sequence plus every occurrence's full transition chain. This remains
-      open pending compilation and native evidence, and because typed
-      descriptors identify but do not yet retain the executable source plans
-      needed for an honest component-sequence baseline.
+      sequence plus every occurrence's full transition chain. Source
+      checkpoint `79ff1f996a` advances that contract to v4, retains each
+      component's bounded canonical executable source, captures those sources
+      in new journals, and reconstructs legacy family actions deterministically.
+      This remains open pending compilation and native discovery evidence.
 - [ ] Learn typed entry conditions from independent source states.
       Candidate construction now requires at least two distinct entry-state
       identities, but this stays open until compiled tests and held-out native
       applicability evidence validate the learned condition.
 - [ ] Promote only when a composition improves terminal/tick return on held-out
       state groups relative to executing its primitive components.
-      Replace the current best-single-primitive frontier baseline with native
-      execution of the candidate's complete retained component sequence under
-      the same source state and horizon. Until then, no retained promotion may
-      be treated as satisfying this gate.
+      Source checkpoint `79ff1f996a` deletes the best-single-primitive
+      shortcut and executes the complete retained component sequence natively
+      from the same held-out frontier under the same horizon; route report v37
+      counts those executions separately and leaves the legacy shortcut count
+      at zero. This stays open until compiled tests and a sealed native report
+      prove every promotion comparison used that path.
 - [ ] Keep every valid primitive selectable after promotion.
 - [ ] Compare promotion-enabled and primitives-only search on held-out seeds
       using terminal rate, time to first terminal, time to best route, and
