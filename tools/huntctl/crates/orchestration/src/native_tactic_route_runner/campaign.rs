@@ -1080,8 +1080,29 @@ pub(super) fn run_seed(
             .iter()
             .zip(&decision_trace.proposal_batch)
             .map(|(proposal, trace)| {
+                let retain_component = trace.retained
+                    || trace.terminal
+                    || trace.reward > 0.0
+                    || trace.goal_distance_after
+                        < before_features[encoder.goal_distance_feature()];
+                let component = if retain_component {
+                    let entry = proposal_catalog
+                        .entry(&proposal.outcome.selected.descriptor.option_id)
+                        .filter(|entry| {
+                            entry.description().option == proposal.outcome.selected.descriptor
+                        })
+                        .ok_or_else(|| {
+                            route_message(
+                                "executed proposal is detached from its executable tactic source",
+                            )
+                        })?;
+                    Some(TacticMacroComponent::from_catalog_entry(entry).map_err(route_error)?)
+                } else {
+                    None
+                };
                 Ok(NativeTacticProposalRecord {
                     trace: trace.clone(),
+                    component,
                     transition: None,
                     inline_transition: Some(proposal.transition.clone()),
                 })

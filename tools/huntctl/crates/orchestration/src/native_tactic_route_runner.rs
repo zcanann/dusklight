@@ -66,7 +66,8 @@ use dusklight_learning::tactic_macro_promotion::{
     MAX_DISCOVERY_OBSERVATIONS, MIN_DISCOVERY_OCCURRENCES, MIN_PROMOTION_COMPARISONS,
     MacroComparisonEvidence, MacroDiscoveryObservation, MacroEntryObservation,
     MacroPromotionStatus, MacroSourceProvenance, TacticMacroEntryCondition,
-    TacticMacroPromotionRegistry, discover_replay_macros, replay_macro_candidate,
+    TacticMacroComponent, TacticMacroPromotionRegistry, discover_replay_macros,
+    replay_macro_candidate,
 };
 use dusklight_learning::tactic_value_treatment::TacticValueTreatment;
 use dusklight_objectives::milestone_dsl::{Comparison, Expression, Field, Value};
@@ -97,6 +98,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V33: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V34: &str = "dusklight-native-tactic-route-report/v34";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V35: &str = "dusklight-native-tactic-route-report/v35";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36: &str = "dusklight-native-tactic-route-report/v36";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37: &str = "dusklight-native-tactic-route-report/v37";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -729,7 +731,7 @@ fn run_native_tactic_route_with_optional_fleet(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let mut report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
@@ -859,8 +861,9 @@ use replay_sharing::{
 
 mod worker_pool;
 use worker_pool::{
-    CachedTacticFrontier, NativeTacticProposalPool, applicable_parameterized_descriptors_for_state,
-    load_or_capture_demonstration, parameterized_catalog_for_state_with_promoted,
+    CachedTacticFrontier, NativeTacticProposalPool, NativeTacticProposalWork,
+    applicable_parameterized_descriptors_for_state, load_or_capture_demonstration,
+    parameterized_catalog_for_state, parameterized_catalog_for_state_with_promoted,
     parameterized_feedback_for_state, run_seed_coordinator,
 };
 mod worker_fleet;

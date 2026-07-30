@@ -589,6 +589,16 @@ pub(super) fn project_tactic_decision_record(
                     "tactic proposal journal reference is detached",
                 ));
             }
+            if let Some(component) = &proposal.component {
+                let entry = component.catalog_entry().map_err(route_error)?;
+                if component.action != candidate.value_sample.action
+                    || entry.description().option != candidate.value_sample.action
+                {
+                    return Err(route_message(
+                        "tactic proposal executable component is detached",
+                    ));
+                }
+            }
             Ok(proposal.trace.clone())
         })
         .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;

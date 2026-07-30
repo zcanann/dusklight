@@ -302,7 +302,7 @@ fn validate_route_binding(
         route_sha256,
         route,
     );
-    if route.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36
+    if route.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
         || route.optimization_request_sha256 != curve.optimization_request_sha256
         || route.execution_binding_sha256 != curve.execution_binding_sha256
         || route.execution_plan_sha256 != curve.execution_plan_sha256

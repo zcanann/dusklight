@@ -414,6 +414,49 @@ fn one_finite_catalog_holds_all_existing_plan_families() {
 }
 
 #[test]
+fn executable_source_records_round_trip_every_tactic_family_canonically() {
+    let mut frame = InputFrame::default();
+    frame.owned_ports = 1;
+    frame.pads[0].stick_y = 100;
+    let sources = vec![
+        TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Interact {
+            press_frames: 1,
+            recovery_frames: 1,
+        })),
+        TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan::new(
+            GenericTactic::MaintainRelativeHeading {
+                heading_radians_f32_bits: 0.0_f32.to_bits(),
+                magnitude: 100,
+            },
+            4,
+        )),
+        TacticAssetSource::MotionPath(MotionPathPlan::new(
+            StickPath::Waypoint {
+                points: vec![StickPoint { x: 0, y: 100 }],
+            },
+            2,
+        )),
+        TacticAssetSource::Roll(RollOptionPlan::new(0, 100, 2)),
+        TacticAssetSource::ReactiveController(
+            ControllerProgram::parse(
+                "duskcontrol 1\nframes 2\nbezier replace from 0 for 2 p0 0 100 p1 0 100 p2 0 100 p3 0 100\n",
+            )
+            .unwrap(),
+        ),
+        TacticAssetSource::RecordedTape(InputTape {
+            frames: vec![frame; 2],
+            ..InputTape::default()
+        }),
+    ];
+
+    for source in sources {
+        let encoded = EncodedTacticAssetSource::capture(&source).unwrap();
+        assert_eq!(encoded.decode().unwrap(), source);
+        assert_ne!(encoded.content_sha256().unwrap(), Digest::ZERO);
+    }
+}
+
+#[test]
 fn catalog_dispatches_observation_driven_controller_to_existing_program() {
     let catalog = TacticAssetCatalog::new(vec![
             TacticCatalogEntry::new(

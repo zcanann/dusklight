@@ -33,7 +33,10 @@ use std::error::Error;
 use std::fmt;
 
 pub const TACTIC_ASSET_ADAPTER_SCHEMA_V1: &str = "dusklight-tactic-asset-adapter/v1";
+pub const ENCODED_TACTIC_ASSET_SOURCE_SCHEMA_V1: &str =
+    "dusklight-encoded-tactic-asset-source/v1";
 pub const MAX_TACTIC_CATALOG_ENTRIES: usize = 512;
+pub const MAX_ENCODED_TACTIC_ASSET_SOURCE_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -220,6 +223,100 @@ pub enum TacticAssetSource {
     Roll(RollOptionPlan),
     ReactiveController(ControllerProgram),
     RecordedTape(InputTape),
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EncodedTacticAssetSource {
+    pub schema: String,
+    pub kind: TacticAssetKind,
+    pub canonical_bytes: Vec<u8>,
+}
+
+impl EncodedTacticAssetSource {
+    pub fn capture(source: &TacticAssetSource) -> Result<Self, TacticAssetError> {
+        let encoded = Self {
+            schema: ENCODED_TACTIC_ASSET_SOURCE_SCHEMA_V1.into(),
+            kind: source.kind(),
+            canonical_bytes: source.canonical_bytes()?,
+        };
+        encoded.decode()?;
+        Ok(encoded)
+    }
+
+    pub fn decode(&self) -> Result<TacticAssetSource, TacticAssetError> {
+        if self.schema != ENCODED_TACTIC_ASSET_SOURCE_SCHEMA_V1
+            || self.canonical_bytes.is_empty()
+            || self.canonical_bytes.len() > MAX_ENCODED_TACTIC_ASSET_SOURCE_BYTES
+        {
+            return Err(invalid("encoded tactic source is invalid or oversized"));
+        }
+        let source = match self.kind {
+            TacticAssetKind::GameTactic => TacticAssetSource::GameTactic(
+                serde_json::from_slice(&self.canonical_bytes).map_err(serialization)?,
+            ),
+            TacticAssetKind::NativeGenericTactic => TacticAssetSource::NativeGenericTactic(
+                serde_json::from_slice(&self.canonical_bytes).map_err(serialization)?,
+            ),
+            TacticAssetKind::MotionPath => TacticAssetSource::MotionPath(
+                serde_json::from_slice(&self.canonical_bytes).map_err(serialization)?,
+            ),
+            TacticAssetKind::Roll => TacticAssetSource::Roll(
+                serde_json::from_slice(&self.canonical_bytes).map_err(serialization)?,
+            ),
+            TacticAssetKind::ReactiveController => TacticAssetSource::ReactiveController(
+                ControllerProgram::decode(&self.canonical_bytes)
+                    .map_err(|error| invalid(error.to_string()))?,
+            ),
+            TacticAssetKind::RecordedTape => TacticAssetSource::RecordedTape(
+                InputTape::decode(&self.canonical_bytes)
+                    .map_err(|error| invalid(error.to_string()))?
+                    .tape,
+            ),
+        };
+        if source.kind() != self.kind || source.canonical_bytes()? != self.canonical_bytes {
+            return Err(invalid(
+                "encoded tactic source differs from its canonical content",
+            ));
+        }
+        Ok(source)
+    }
+
+    pub fn content_sha256(&self) -> Result<Digest, TacticAssetError> {
+        let source = self.decode()?;
+        let mut hasher = Sha256::new();
+        hasher.update(ENCODED_TACTIC_ASSET_SOURCE_SCHEMA_V1.as_bytes());
+        hasher.update([source.kind().identity_tag()]);
+        hasher.update((self.canonical_bytes.len() as u64).to_le_bytes());
+        hasher.update(&self.canonical_bytes);
+        Ok(Digest(hasher.finalize().into()))
+    }
+}
+
+impl TacticAssetKind {
+    fn identity_tag(self) -> u8 {
+        match self {
+            Self::GameTactic => 0,
+            Self::NativeGenericTactic => 1,
+            Self::MotionPath => 2,
+            Self::Roll => 3,
+            Self::ReactiveController => 4,
+            Self::RecordedTape => 5,
+        }
+    }
+}
+
+impl TacticAssetSource {
+    pub fn kind(&self) -> TacticAssetKind {
+        match self {
+            Self::GameTactic(_) => TacticAssetKind::GameTactic,
+            Self::NativeGenericTactic(_) => TacticAssetKind::NativeGenericTactic,
+            Self::MotionPath(_) => TacticAssetKind::MotionPath,
+            Self::Roll(_) => TacticAssetKind::Roll,
+            Self::ReactiveController(_) => TacticAssetKind::ReactiveController,
+            Self::RecordedTape(_) => TacticAssetKind::RecordedTape,
+        }
+    }
 }
 
 impl TacticAssetAdapter for TacticAssetSource {

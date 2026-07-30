@@ -2,10 +2,10 @@
 
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
-use dusklight_learning::option_values::OptionActionDescriptor;
 use dusklight_learning::tactic_macro_promotion::{
     DiscoveredMacroCandidate, MacroComparisonEvidence, MacroEntryObservation, MacroPromotionStatus,
-    MacroSourceProvenance, TACTIC_MACRO_DISCOVERY_SCHEMA_V3, TacticMacroPromotionRegistry,
+    MacroSourceProvenance, TACTIC_MACRO_DISCOVERY_SCHEMA_V4, TacticMacroComponent,
+    TacticMacroPromotionRegistry,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -16,9 +16,9 @@ use std::io::Write;
 use std::path::Path;
 
 pub const TACTIC_MACRO_REGISTRY_EXTENSION: &str = "dtmr";
-const TACTIC_MACRO_REGISTRY_SCHEMA_V3: &str = "dusklight-tactic-macro-registry/v3";
-const TACTIC_MACRO_REGISTRY_MAGIC: &[u8; 8] = b"DSKTMAC3";
-const TACTIC_MACRO_REGISTRY_VERSION: u16 = 3;
+const TACTIC_MACRO_REGISTRY_SCHEMA_V4: &str = "dusklight-tactic-macro-registry/v4";
+const TACTIC_MACRO_REGISTRY_MAGIC: &[u8; 8] = b"DSKTMAC4";
+const TACTIC_MACRO_REGISTRY_VERSION: u16 = 4;
 const TACTIC_MACRO_REGISTRY_HEADER_BYTES: usize = 8 + 2 + 2 + 8 + 8 + 32;
 const TACTIC_MACRO_REGISTRY_COMPRESSION_LEVEL: i32 = 3;
 const MAXIMUM_TACTIC_MACRO_REGISTRY_BYTES: usize = 64 * 1024 * 1024;
@@ -43,7 +43,7 @@ struct StoredRecord {
     candidate_sha256: Digest,
     option_id: String,
     tape: Vec<u8>,
-    components: Vec<OptionActionDescriptor>,
+    components: Vec<TacticMacroComponent>,
     sources: Vec<StoredSource>,
     comparisons: Vec<StoredComparison>,
     status: StoredStatus,
@@ -93,8 +93,8 @@ pub fn write_tactic_macro_registry(
         return Err(store_error("tactic macro registry extension is invalid"));
     }
     let stored = StoredRegistry {
-        schema: TACTIC_MACRO_REGISTRY_SCHEMA_V3.into(),
-        discovery_schema: TACTIC_MACRO_DISCOVERY_SCHEMA_V3.into(),
+        schema: TACTIC_MACRO_REGISTRY_SCHEMA_V4.into(),
+        discovery_schema: TACTIC_MACRO_DISCOVERY_SCHEMA_V4.into(),
         records: registry
             .records()
             .map(|record| {
@@ -167,8 +167,8 @@ pub fn read_tactic_macro_registry(
     let (content_sha256, raw) = decode_registry(&bytes)?;
     let stored: StoredRegistry =
         serde_cbor::from_slice(&raw).map_err(TacticMacroStoreError::domain)?;
-    if stored.schema != TACTIC_MACRO_REGISTRY_SCHEMA_V3
-        || stored.discovery_schema != TACTIC_MACRO_DISCOVERY_SCHEMA_V3
+    if stored.schema != TACTIC_MACRO_REGISTRY_SCHEMA_V4
+        || stored.discovery_schema != TACTIC_MACRO_DISCOVERY_SCHEMA_V4
     {
         return Err(store_error("tactic macro registry schema is invalid"));
     }
@@ -372,6 +372,7 @@ fn store_error(message: impl Into<String>) -> TacticMacroStoreError {
 mod tests {
     use super::*;
     use dusklight_automation_contracts::tape::InputFrame;
+    use dusklight_learning::tactic_asset::{TacticAssetSource, TacticCatalogEntry};
     use dusklight_learning::tactic_macro_promotion::{
         MacroDiscoveryObservation, discover_replay_macros,
     };
@@ -380,15 +381,20 @@ mod tests {
         let mut frame = InputFrame::default();
         frame.owned_ports = 1;
         frame.pads[0].stick_x = 90;
+        let tape = InputTape {
+            frames: vec![frame; 8],
+            ..InputTape::default()
+        };
+        let entry = TacticCatalogEntry::new(
+            "family/seek",
+            TacticAssetSource::RecordedTape(tape.clone()),
+        )
+        .unwrap();
         MacroDiscoveryObservation {
             seed,
             frontier_state_sha256: Digest([identity; 32]),
             transition_sha256: Digest([identity.saturating_add(16); 32]),
-            action: OptionActionDescriptor {
-                option_id: "family/seek".into(),
-                option_type: dusklight_control::option_execution::OptionType::Move,
-                parameters: Default::default(),
-            },
+            component: TacticMacroComponent::from_catalog_entry(&entry).unwrap(),
             entry: MacroEntryObservation {
                 stage: "F_SP103".into(),
                 room: 1,
@@ -396,10 +402,7 @@ mod tests {
                 player_contacts: Some(1),
                 goal_distance_f32_bits: (100.0 + f32::from(identity)).to_bits(),
             },
-            tape: InputTape {
-                frames: vec![frame; 8],
-                ..InputTape::default()
-            },
+            tape,
             reward: 1.0,
             goal_progress: 8.0,
             terminal: false,

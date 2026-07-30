@@ -170,32 +170,6 @@ fn demonstration_chunks_reject_empty_or_detached_sources() {
 }
 
 #[test]
-fn macro_primitive_baseline_uses_only_terminal_and_tick_utility() {
-    let terminal = TacticMacroMeasuredOutcome {
-        terminal: true,
-        progress: 0.1,
-        ticks: 130,
-    };
-    let fast_progress = TacticMacroMeasuredOutcome {
-        terminal: false,
-        progress: 100.0,
-        ticks: 4,
-    };
-
-    assert!(tactic_macro_outcome_is_better(terminal, fast_progress));
-    assert!(!tactic_macro_outcome_is_better(fast_progress, terminal));
-    let short_regression = TacticMacroMeasuredOutcome {
-        terminal: false,
-        progress: -100.0,
-        ticks: 3,
-    };
-    assert!(tactic_macro_outcome_is_better(
-        short_regression,
-        fast_progress
-    ));
-}
-
-#[test]
 fn retained_success_ranking_minimizes_ticks_and_breaks_ties_deterministically() {
     assert!(successful_route_rank_is_better(
         124,
@@ -273,11 +247,6 @@ fn macro_validation_keeps_distinct_tapes_that_converge_on_one_fact_snapshot() {
             state_sha256,
             snapshot: snapshot.clone(),
             route_tape: neutral_route.clone(),
-            primitive_baseline: TacticMacroMeasuredOutcome {
-                terminal: false,
-                progress: 1.0,
-                ticks: 4,
-            },
         },
     )
     .unwrap();
@@ -288,11 +257,6 @@ fn macro_validation_keeps_distinct_tapes_that_converge_on_one_fact_snapshot() {
             state_sha256,
             snapshot: snapshot.clone(),
             route_tape: rolling_route,
-            primitive_baseline: TacticMacroMeasuredOutcome {
-                terminal: false,
-                progress: 1.0,
-                ticks: 4,
-            },
         },
     )
     .unwrap();
@@ -303,22 +267,16 @@ fn macro_validation_keeps_distinct_tapes_that_converge_on_one_fact_snapshot() {
             state_sha256,
             snapshot,
             route_tape: neutral_route.clone(),
-            primitive_baseline: TacticMacroMeasuredOutcome {
-                terminal: false,
-                progress: -100.0,
-                ticks: 3,
-            },
         },
     )
     .unwrap();
 
     assert_eq!(frontiers.len(), 2);
-    let merged = frontiers
-        .values()
-        .find(|frontier| frontier.route_tape == neutral_route)
-        .unwrap();
-    assert_eq!(merged.primitive_baseline.ticks, 3);
-    assert_eq!(merged.primitive_baseline.progress, -100.0);
+    assert!(
+        frontiers
+            .values()
+            .any(|frontier| frontier.route_tape == neutral_route)
+    );
 }
 
 fn journal_trace(decision_index: u64) -> NativeTacticDecisionTrace {
@@ -645,12 +603,30 @@ fn journal_projects_graph_and_materializes_routes_from_content_objects() {
         Some(transition.clone()),
         vec![NativeTacticProposalRecord {
             trace: proposal_trace,
+            component: None,
             transition: None,
             inline_transition: Some(transition.clone()),
         }],
     );
     let mut detached = record.clone();
     detached.proposal_batch[0].trace.emitted_tape_sha256 = Digest([0xff; 32]);
+    assert!(project_tactic_decision_record(&store, detached).is_err());
+    let mut detached = record.clone();
+    let mut component_frame = InputFrame::default();
+    component_frame.owned_ports = 1;
+    detached.proposal_batch[0].component = Some(
+        TacticMacroComponent::from_catalog_entry(
+            &TacticCatalogEntry::new(
+                "family/detached-component",
+                TacticAssetSource::RecordedTape(InputTape {
+                    frames: vec![component_frame],
+                    ..InputTape::default()
+                }),
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    );
     assert!(project_tactic_decision_record(&store, detached).is_err());
     append_tactic_decision_record(&root, &record).unwrap();
 
@@ -1143,17 +1119,19 @@ fn connected_macro_needs_repeated_occurrences_not_internal_steps() {
             goal_distance_f32_bits: (100.0 + f32::from(state)).to_bits(),
         },
     };
+    let component = |option_id: &str| {
+        TacticMacroComponent::from_catalog_entry(
+            &TacticCatalogEntry::new(
+                option_id,
+                TacticAssetSource::RecordedTape(tape.clone()),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    };
     let components = vec![
-        OptionActionDescriptor {
-            option_id: "family/primitive/a".into(),
-            option_type: OptionType::Move,
-            parameters: BTreeMap::new(),
-        },
-        OptionActionDescriptor {
-            option_id: "family/primitive/b".into(),
-            option_type: OptionType::Roll,
-            parameters: BTreeMap::new(),
-        },
+        component("family/primitive/a"),
+        component("family/primitive/b"),
     ];
     let occurrences = |sources: Vec<MacroSourceProvenance>| {
         let sources = sources
@@ -1216,11 +1194,6 @@ fn tactic_macro_entry_conditions_admit_nearby_held_out_states_only() {
         route_tape: InputTape {
             frames: vec![InputFrame::default()],
             ..InputTape::default()
-        },
-        primitive_baseline: TacticMacroMeasuredOutcome {
-            terminal: false,
-            progress: 0.0,
-            ticks: 4,
         },
     };
 
@@ -1335,11 +1308,14 @@ fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
         ],
         ..InputTape::default()
     };
-    let component = OptionActionDescriptor {
-        option_id: "family/primitive".into(),
-        option_type: OptionType::Move,
-        parameters: BTreeMap::new(),
-    };
+    let component = TacticMacroComponent::from_catalog_entry(
+        &TacticCatalogEntry::new(
+            "family/primitive",
+            TacticAssetSource::RecordedTape(tape.clone()),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     let candidate = replay_macro_candidate(
         tape,
         vec![component],

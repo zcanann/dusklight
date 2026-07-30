@@ -6,7 +6,9 @@
 
 use crate::artifact::Digest;
 use crate::option_values::OptionActionDescriptor;
-use crate::tactic_asset::{TacticAssetError, TacticAssetSource, TacticCatalogEntry};
+use crate::tactic_asset::{
+    EncodedTacticAssetSource, TacticAssetError, TacticAssetSource, TacticCatalogEntry,
+};
 use crate::tape::InputTape;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,6 +16,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const TACTIC_MACRO_DISCOVERY_SCHEMA_V1: &str = "dusklight-tactic-macro-discovery/v1";
 pub const TACTIC_MACRO_DISCOVERY_SCHEMA_V2: &str = "dusklight-tactic-macro-discovery/v2";
 pub const TACTIC_MACRO_DISCOVERY_SCHEMA_V3: &str = "dusklight-tactic-macro-discovery/v3";
+pub const TACTIC_MACRO_DISCOVERY_SCHEMA_V4: &str = "dusklight-tactic-macro-discovery/v4";
+pub const TACTIC_MACRO_COMPONENT_SCHEMA_V1: &str = "dusklight-tactic-macro-component/v1";
 pub const MAX_DISCOVERY_OBSERVATIONS: usize = 4_096;
 pub const MAX_DISCOVERED_MACROS: usize = 32;
 pub const MAX_DISCOVERED_MACRO_TICKS: usize = 64;
@@ -25,7 +29,7 @@ pub struct MacroDiscoveryObservation {
     pub seed: u64,
     pub frontier_state_sha256: Digest,
     pub transition_sha256: Digest,
-    pub action: OptionActionDescriptor,
+    pub component: TacticMacroComponent,
     pub entry: MacroEntryObservation,
     pub tape: InputTape,
     pub reward: f32,
@@ -58,6 +62,57 @@ pub struct MacroSourceProvenance {
     pub frontier_state_sha256: Digest,
     pub transition_sha256s: Vec<Digest>,
     pub entry: MacroEntryObservation,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticMacroComponent {
+    pub schema: String,
+    pub action: OptionActionDescriptor,
+    pub source: EncodedTacticAssetSource,
+}
+
+impl TacticMacroComponent {
+    pub fn from_catalog_entry(entry: &TacticCatalogEntry) -> Result<Self, TacticAssetError> {
+        let component = Self {
+            schema: TACTIC_MACRO_COMPONENT_SCHEMA_V1.into(),
+            action: entry.description().option.clone(),
+            source: EncodedTacticAssetSource::capture(entry.source())?,
+        };
+        component.catalog_entry()?;
+        Ok(component)
+    }
+
+    pub fn catalog_entry(&self) -> Result<TacticCatalogEntry, TacticAssetError> {
+        if self.schema != TACTIC_MACRO_COMPONENT_SCHEMA_V1 {
+            return Err(TacticAssetError::InvalidAsset(
+                "tactic macro component schema is invalid".into(),
+            ));
+        }
+        self.action
+            .validate()
+            .map_err(|error| TacticAssetError::InvalidAsset(error.to_string()))?;
+        let entry = TacticCatalogEntry::new(self.action.option_id.clone(), self.source.decode()?)?;
+        if entry.description().option != self.action {
+            return Err(TacticAssetError::InvalidAsset(
+                "tactic macro component action differs from its executable source".into(),
+            ));
+        }
+        Ok(entry)
+    }
+
+    pub fn content_sha256(&self) -> Result<Digest, TacticAssetError> {
+        self.catalog_entry()?;
+        let mut hasher = Sha256::new();
+        hasher.update(TACTIC_MACRO_COMPONENT_SCHEMA_V1.as_bytes());
+        let action_sha256 = self
+            .action
+            .content_sha256()
+            .map_err(|error| TacticAssetError::InvalidAsset(error.to_string()))?;
+        hasher.update(action_sha256.0);
+        hasher.update(self.source.content_sha256()?.0);
+        Ok(Digest(hasher.finalize().into()))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -95,7 +150,7 @@ pub struct DiscoveredMacroCandidate {
     pub candidate_sha256: Digest,
     pub option_id: String,
     pub tape: InputTape,
-    pub components: Vec<OptionActionDescriptor>,
+    pub components: Vec<TacticMacroComponent>,
     pub sources: Vec<MacroSourceProvenance>,
 }
 
@@ -134,7 +189,7 @@ impl DiscoveredMacroCandidate {
 
 pub fn replay_macro_candidate(
     tape: InputTape,
-    components: Vec<OptionActionDescriptor>,
+    components: Vec<TacticMacroComponent>,
     mut sources: Vec<MacroSourceProvenance>,
 ) -> Result<DiscoveredMacroCandidate, &'static str> {
     sources.sort_by(|left, right| {
@@ -180,7 +235,7 @@ pub fn discover_replay_macros(
                 tick_rate_denominator: observation.tape.tick_rate_denominator,
                 frames: observation.tape.frames[..width].to_vec(),
             };
-            let components = vec![observation.action.clone()];
+            let components = vec![observation.component.clone()];
             let candidate_sha256 = macro_candidate_sha256(&tape, &components)?;
             let bucket = buckets
                 .entry(candidate_sha256)
@@ -474,9 +529,9 @@ fn validate_observation(observation: &MacroDiscoveryObservation) -> Result<(), &
         return Err("macro discovery observation is invalid");
     }
     observation
-        .action
-        .validate()
-        .map_err(|_| "macro discovery action is invalid")?;
+        .component
+        .catalog_entry()
+        .map_err(|_| "macro discovery component is invalid")?;
     observation.entry.validate()?;
     Ok(())
 }
@@ -502,7 +557,7 @@ fn validate_candidate(candidate: &DiscoveredMacroCandidate) -> Result<(), &'stat
         || candidate
             .components
             .iter()
-            .any(|component| component.validate().is_err())
+            .any(|component| component.catalog_entry().is_err())
         || candidate.sources.iter().any(|source| {
             source.frontier_state_sha256 == Digest::ZERO
                 || source.transition_sha256s.is_empty()
@@ -520,15 +575,19 @@ fn validate_candidate(candidate: &DiscoveredMacroCandidate) -> Result<(), &'stat
 
 fn macro_candidate_sha256(
     tape: &InputTape,
-    components: &[OptionActionDescriptor],
+    components: &[TacticMacroComponent],
 ) -> Result<Digest, &'static str> {
     tape.validate().map_err(|_| "macro tape is invalid")?;
-    if components.is_empty() || components.iter().any(|component| component.validate().is_err()) {
+    if components.is_empty()
+        || components
+            .iter()
+            .any(|component| component.catalog_entry().is_err())
+    {
         return Err("macro component sequence is invalid");
     }
     let encoded = tape.encode().map_err(|_| "macro tape encoding failed")?;
     let mut hasher = Sha256::new();
-    hasher.update(TACTIC_MACRO_DISCOVERY_SCHEMA_V3.as_bytes());
+    hasher.update(TACTIC_MACRO_DISCOVERY_SCHEMA_V4.as_bytes());
     hasher.update((encoded.len() as u64).to_le_bytes());
     hasher.update(encoded);
     hasher.update((components.len() as u64).to_le_bytes());
@@ -545,7 +604,7 @@ fn macro_candidate_sha256(
 
 fn comparison_sha256(evidence: &MacroComparisonEvidence) -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(TACTIC_MACRO_DISCOVERY_SCHEMA_V3.as_bytes());
+    hasher.update(TACTIC_MACRO_DISCOVERY_SCHEMA_V4.as_bytes());
     hasher.update(evidence.candidate_sha256.0);
     hasher.update(evidence.seed.to_le_bytes());
     hasher.update(evidence.frontier_state_sha256.0);
@@ -569,7 +628,7 @@ fn short_digest(digest: Digest) -> String {
 
 struct MacroBucket {
     tape: InputTape,
-    components: Vec<OptionActionDescriptor>,
+    components: Vec<TacticMacroComponent>,
     sources: BTreeMap<Digest, MacroSourceProvenance>,
     terminal_sources: usize,
 }
@@ -590,15 +649,17 @@ mod tests {
     }
 
     fn observation(seed: u64, state: u8, transition: u8) -> MacroDiscoveryObservation {
+        let tape = tape(80, 8);
+        let entry = TacticCatalogEntry::new(
+            "family/move",
+            TacticAssetSource::RecordedTape(tape.clone()),
+        )
+        .unwrap();
         MacroDiscoveryObservation {
             seed,
             frontier_state_sha256: Digest([state; 32]),
             transition_sha256: Digest([transition; 32]),
-            action: OptionActionDescriptor {
-                option_id: "family/move".into(),
-                option_type: crate::option_execution::OptionType::Move,
-                parameters: BTreeMap::new(),
-            },
+            component: TacticMacroComponent::from_catalog_entry(&entry).unwrap(),
             entry: MacroEntryObservation {
                 stage: "F_SP103".into(),
                 room: 1,
@@ -606,7 +667,7 @@ mod tests {
                 player_contacts: Some(1),
                 goal_distance_f32_bits: (100.0 + f32::from(state)).to_bits(),
             },
-            tape: tape(80, 8),
+            tape,
             reward: -0.08,
             goal_progress: -16.0,
             terminal: false,
@@ -621,7 +682,10 @@ mod tests {
         let longest = &candidates[0];
         assert_eq!(longest.tape.frames.len(), 8);
         assert_eq!(longest.sources.len(), 2);
-        assert_eq!(longest.components, vec![observation(17, 3, 5).action]);
+        assert_eq!(
+            longest.components,
+            vec![observation(17, 3, 5).component]
+        );
         assert!(
             longest
                 .sources
@@ -665,8 +729,12 @@ mod tests {
     fn identical_tapes_from_different_typed_actions_do_not_claim_one_composition() {
         let left = observation(11, 1, 3);
         let mut right = observation(13, 2, 4);
-        right.action.option_id = "family/roll".into();
-        right.action.option_type = crate::option_execution::OptionType::Roll;
+        let entry = TacticCatalogEntry::new(
+            "family/roll",
+            TacticAssetSource::RecordedTape(right.tape.clone()),
+        )
+        .unwrap();
+        right.component = TacticMacroComponent::from_catalog_entry(&entry).unwrap();
 
         assert!(discover_replay_macros(&[left, right]).unwrap().is_empty());
     }
@@ -676,8 +744,8 @@ mod tests {
         let candidate = replay_macro_candidate(
             tape(80, 16),
             vec![
-                observation(11, 1, 3).action,
-                observation(11, 2, 4).action,
+                observation(11, 1, 3).component,
+                observation(11, 2, 4).component,
             ],
             vec![
                 MacroSourceProvenance {

@@ -163,10 +163,14 @@ pub struct NativeTacticMacroDiscoveryReport {
     pub demoted_count: u64,
     pub validation_state_count: u64,
     pub comparison_count: u64,
-    /// Primitive outcomes reused from the proposal batch already evaluated at
-    /// the exact authenticated decision frontier.
+    /// Legacy field from the invalid best-single-primitive comparison.
+    /// New reports always set this to zero.
     #[serde(default)]
     pub reused_primitive_baseline_count: u64,
+    /// Full retained primitive-component sequences executed natively from the
+    /// same held-out frontier and horizon as their macro candidates.
+    #[serde(default)]
+    pub executed_component_baseline_count: u64,
     pub validation_native_ticks: u64,
     pub validation_wall_micros: u64,
     pub validation_native_simulation_micros: u64,
@@ -742,6 +746,8 @@ pub struct NativeTacticProposalTrace {
 #[serde(deny_unknown_fields)]
 pub(super) struct NativeTacticProposalRecord {
     pub(super) trace: NativeTacticProposalTrace,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) component: Option<TacticMacroComponent>,
     /// Legacy content-store reference retained for exact replay of existing
     /// journals.
     #[serde(default, skip_serializing_if = "Option::is_none")]

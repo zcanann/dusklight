@@ -83,7 +83,7 @@ impl NativeTacticObservationAudit {
         corpora: &[(Digest, TacticQTrainingCorpus)],
     ) -> Result<Self, NativeTacticRouteRunError> {
         request.validate().map_err(route_error)?;
-        if route.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36
+        if route.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
             || route.optimization_request_sha256 != request.content_sha256
             || route.execution_plan_sha256 == Digest::ZERO
             || route.feature_schema_sha256 == Digest::ZERO

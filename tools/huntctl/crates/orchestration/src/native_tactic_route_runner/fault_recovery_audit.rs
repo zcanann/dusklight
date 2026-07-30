@@ -77,13 +77,13 @@ pub fn audit_native_tactic_fault_recovery(
         serde_json::from_slice(&control_bytes).map_err(route_error)?;
     let recovered: NativeTacticRouteReport =
         serde_json::from_slice(&recovered_bytes).map_err(route_error)?;
-    if control.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36
-        || recovered.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36
+    if control.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
+        || recovered.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
         || control.seeds.len() != 1
         || recovered.seeds.len() != 1
     {
         return Err(route_message(
-            "fault recovery requires matched single-seed v36 native tactic reports",
+            "fault recovery requires matched single-seed v37 native tactic reports",
         ));
     }
     let marker = read_fault_marker(recovered_report_path)?;
