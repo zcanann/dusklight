@@ -1393,6 +1393,21 @@ fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
             }],
         },
     };
+    let primitive_proposals = parameterized_catalog_for_state(
+        11,
+        3,
+        &snapshot,
+        &encoder,
+        40,
+        None,
+        Digest([8; 32]),
+    )
+    .unwrap();
+    let primitive_descriptors = primitive_proposals
+        .catalog
+        .option_descriptors()
+        .map(|descriptor| (descriptor.option_id.clone(), descriptor.clone()))
+        .collect::<BTreeMap<_, _>>();
     let proposals = parameterized_catalog_for_state_with_promoted(
         11,
         3,
@@ -1404,6 +1419,21 @@ fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
         std::slice::from_ref(&imported),
     )
     .unwrap();
+    let combined_descriptors = proposals
+        .catalog
+        .option_descriptors()
+        .map(|descriptor| (descriptor.option_id.clone(), descriptor.clone()))
+        .collect::<BTreeMap<_, _>>();
+    assert!(primitive_descriptors.iter().all(|(option_id, descriptor)| {
+        combined_descriptors.get(option_id) == Some(descriptor)
+    }));
+    assert_eq!(
+        combined_descriptors
+            .iter()
+            .filter(|descriptor| descriptor.option_id.starts_with("family/"))
+            .count(),
+        primitive_descriptors.len()
+    );
     assert!(
         proposals
             .catalog
@@ -1424,6 +1454,14 @@ fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
         std::slice::from_ref(&imported),
     )
     .unwrap();
+    assert_eq!(
+        proposals
+            .catalog
+            .option_descriptors()
+            .map(|descriptor| (descriptor.option_id.clone(), descriptor.clone()))
+            .collect::<BTreeMap<_, _>>(),
+        primitive_descriptors
+    );
     assert!(
         proposals
             .catalog
