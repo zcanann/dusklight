@@ -1,12 +1,16 @@
 use super::scratch_discovery::route_report_sha256;
 use super::*;
-use crate::state_graph::{ActionExpansionStatus, ExpansionEvidenceAuthority, StateGraph};
+use crate::state_graph::{
+    ActionExpansionStatus, ExactStateId, ExpansionEvidenceAuthority, StateGraph,
+};
 use crate::tactic_q_campaign::{TacticQCampaign, TacticScheduledExpansionEvidence};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V1: &str =
     "dusklight-native-tactic-post-terminal-control/v1";
+pub const NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V2: &str =
+    "dusklight-native-tactic-post-terminal-control/v2";
 const CONTROL_SEED: u64 = 0x5054_434f_4e54_0001;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -54,6 +58,14 @@ pub struct NativeTacticPostTerminalDecisionControl {
 pub struct NativeTacticPostTerminalSeedControl {
     pub seed: u64,
     pub state_graph_sha256: Digest,
+    /// Every executable, non-root, nonterminal exact node on any
+    /// authenticated terminal tape in the final graph.
+    pub supported_interior_nodes: Vec<ExactStateId>,
+    /// Supported interiors that actually sourced at least one evaluated graph
+    /// lease in the retained decision trace.
+    pub leased_supported_interior_nodes: Vec<ExactStateId>,
+    pub unleased_supported_interior_nodes: Vec<ExactStateId>,
+    pub complete_supported_interior_coverage: bool,
     pub optimization_decisions: usize,
     pub comparable_decisions: usize,
     pub exhaustive_complete_decisions: usize,
@@ -73,6 +85,9 @@ pub struct NativeTacticPostTerminalControlReport {
     pub execution_plan_sha256: Digest,
     pub objective_sha256: Digest,
     pub control_seed: u64,
+    pub supported_interior_nodes: usize,
+    pub leased_supported_interior_nodes: usize,
+    pub seeds_with_complete_supported_interior_coverage: usize,
     pub optimization_decisions: usize,
     pub comparable_decisions: usize,
     pub exhaustive_complete_decisions: usize,
@@ -108,12 +123,24 @@ impl NativeTacticPostTerminalControlReport {
         }
         seeds.sort_by_key(|seed| seed.seed);
         let mut report = Self {
-            schema: NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V1.into(),
+            schema: NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
             route_report_sha256: route_report_sha256(route)?,
             execution_plan_sha256: route.execution_plan_sha256,
             objective_sha256: route.objective_sha256,
             control_seed: CONTROL_SEED,
+            supported_interior_nodes: seeds
+                .iter()
+                .map(|seed| seed.supported_interior_nodes.len())
+                .sum(),
+            leased_supported_interior_nodes: seeds
+                .iter()
+                .map(|seed| seed.leased_supported_interior_nodes.len())
+                .sum(),
+            seeds_with_complete_supported_interior_coverage: seeds
+                .iter()
+                .filter(|seed| seed.complete_supported_interior_coverage)
+                .count(),
             optimization_decisions: seeds.iter().map(|seed| seed.optimization_decisions).sum(),
             comparable_decisions: seeds.iter().map(|seed| seed.comparable_decisions).sum(),
             exhaustive_complete_decisions: seeds
@@ -140,7 +167,7 @@ impl NativeTacticPostTerminalControlReport {
             .iter()
             .map(|seed| seed.seed)
             .collect::<BTreeSet<_>>();
-        if self.schema != NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V1
+        if self.schema != NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V2
             || self.content_sha256 == Digest::ZERO
             || self.route_report_sha256 == Digest::ZERO
             || self.execution_plan_sha256 == Digest::ZERO
@@ -153,6 +180,24 @@ impl NativeTacticPostTerminalControlReport {
                 .windows(2)
                 .all(|pair| pair[0].seed < pair[1].seed)
             || self.seeds.iter().any(|seed| !seed_control_is_valid(seed))
+            || self.supported_interior_nodes
+                != self
+                    .seeds
+                    .iter()
+                    .map(|seed| seed.supported_interior_nodes.len())
+                    .sum::<usize>()
+            || self.leased_supported_interior_nodes
+                != self
+                    .seeds
+                    .iter()
+                    .map(|seed| seed.leased_supported_interior_nodes.len())
+                    .sum::<usize>()
+            || self.seeds_with_complete_supported_interior_coverage
+                != self
+                    .seeds
+                    .iter()
+                    .filter(|seed| seed.complete_supported_interior_coverage)
+                    .count()
             || self.optimization_decisions
                 != self
                     .seeds
@@ -218,6 +263,9 @@ impl NativeTacticPostTerminalControlReport {
             self.execution_plan_sha256,
             self.objective_sha256,
             self.control_seed,
+            self.supported_interior_nodes,
+            self.leased_supported_interior_nodes,
+            self.seeds_with_complete_supported_interior_coverage,
             self.optimization_decisions,
             self.comparable_decisions,
             self.exhaustive_complete_decisions,
@@ -229,7 +277,7 @@ impl NativeTacticPostTerminalControlReport {
         ))
         .map_err(route_error)?;
         let mut hasher = Sha256::new();
-        hasher.update(NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V1.as_bytes());
+        hasher.update(NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V2.as_bytes());
         hasher.update((payload.len() as u64).to_le_bytes());
         hasher.update(payload);
         Ok(Digest(hasher.finalize().into()))
@@ -240,6 +288,37 @@ fn seed_control(
     seed: &NativeTacticSeedResult,
     graph: &StateGraph,
 ) -> Result<NativeTacticPostTerminalSeedControl, NativeTacticRouteRunError> {
+    let supported_interior_nodes = graph
+        .exact_terminal_returns()
+        .map_err(route_error)?
+        .into_keys()
+        .filter(|node| {
+            *node != graph.root()
+                && graph
+                    .node(*node)
+                    .is_some_and(|node| !node.terminal && node.restoration.executable)
+        })
+        .collect::<BTreeSet<_>>();
+    let mut leased_supported_interior_nodes = BTreeSet::new();
+    for trace in &seed.trace {
+        let Some(decision) = &trace.scheduler_decision else {
+            continue;
+        };
+        for expansion_sha256 in &decision.evaluated_expansion_sha256 {
+            let expansion = graph.expansion(*expansion_sha256).ok_or_else(|| {
+                route_message("post-terminal trace expansion is absent from its final graph")
+            })?;
+            if supported_interior_nodes.contains(&expansion.source) {
+                leased_supported_interior_nodes.insert(expansion.source);
+            }
+        }
+    }
+    let unleased_supported_interior_nodes = supported_interior_nodes
+        .difference(&leased_supported_interior_nodes)
+        .copied()
+        .collect::<Vec<_>>();
+    let complete_supported_interior_coverage =
+        !supported_interior_nodes.is_empty() && unleased_supported_interior_nodes.is_empty();
     let outcomes = exact_expansion_total_ticks(graph)?;
     let mut decisions = seed
         .trace
@@ -275,6 +354,10 @@ fn seed_control(
     Ok(NativeTacticPostTerminalSeedControl {
         seed: seed.seed,
         state_graph_sha256: seed.state_graph_sha256,
+        supported_interior_nodes: supported_interior_nodes.into_iter().collect(),
+        leased_supported_interior_nodes: leased_supported_interior_nodes.into_iter().collect(),
+        unleased_supported_interior_nodes,
+        complete_supported_interior_coverage,
         optimization_decisions: decisions.len(),
         comparable_decisions: comparable.len(),
         exhaustive_complete_decisions: exhaustive.len(),
@@ -483,6 +566,25 @@ fn ranking(
 }
 
 fn seed_control_is_valid(seed: &NativeTacticPostTerminalSeedControl) -> bool {
+    let supported_interior_nodes = seed
+        .supported_interior_nodes
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let leased_supported_interior_nodes = seed
+        .leased_supported_interior_nodes
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let unleased_supported_interior_nodes = seed
+        .unleased_supported_interior_nodes
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let expected_unleased = supported_interior_nodes
+        .difference(&leased_supported_interior_nodes)
+        .copied()
+        .collect::<BTreeSet<_>>();
     let comparable = seed
         .decisions
         .iter()
@@ -494,6 +596,26 @@ fn seed_control_is_valid(seed: &NativeTacticPostTerminalSeedControl) -> bool {
         .filter(|decision| decision.exhaustive_surface_complete && decision.candidate_count >= 2)
         .collect::<Vec<_>>();
     seed.state_graph_sha256 != Digest::ZERO
+        && supported_interior_nodes.len() == seed.supported_interior_nodes.len()
+        && leased_supported_interior_nodes.len() == seed.leased_supported_interior_nodes.len()
+        && unleased_supported_interior_nodes.len() == seed.unleased_supported_interior_nodes.len()
+        && leased_supported_interior_nodes.is_subset(&supported_interior_nodes)
+        && unleased_supported_interior_nodes == expected_unleased
+        && seed.complete_supported_interior_coverage
+            == (!seed.supported_interior_nodes.is_empty()
+                && seed.unleased_supported_interior_nodes.is_empty())
+        && seed
+            .supported_interior_nodes
+            .windows(2)
+            .all(|pair| pair[0] < pair[1])
+        && seed
+            .leased_supported_interior_nodes
+            .windows(2)
+            .all(|pair| pair[0] < pair[1])
+        && seed
+            .unleased_supported_interior_nodes
+            .windows(2)
+            .all(|pair| pair[0] < pair[1])
         && seed.optimization_decisions == seed.decisions.len()
         && seed.comparable_decisions == comparable.len()
         && seed.exhaustive_complete_decisions == exhaustive.len()
@@ -619,6 +741,13 @@ fn confined_checkpoint(
 mod tests {
     use super::*;
 
+    fn exact_state(route: u8, state: u8) -> ExactStateId {
+        ExactStateId {
+            route_checkpoint_sha256: Digest([route; 32]),
+            state_sha256: Digest([state; 32]),
+        }
+    }
+
     fn candidate(id: u8, predicted: Option<u64>, visits: u64) -> TacticScheduledExpansionEvidence {
         TacticScheduledExpansionEvidence {
             expansion_sha256: Digest([id; 32]),
@@ -693,5 +822,34 @@ mod tests {
         assert!(!report.exhaustive_surface_complete);
         assert_eq!(report.exhaustive_local_evaluations, None);
         assert!(decision_control_is_valid(11, &report));
+    }
+
+    #[test]
+    fn seed_control_retains_the_exact_unleased_supported_interior_set() {
+        let first = exact_state(1, 2);
+        let second = exact_state(3, 4);
+        let mut seed = NativeTacticPostTerminalSeedControl {
+            seed: 11,
+            state_graph_sha256: Digest([9; 32]),
+            supported_interior_nodes: vec![first, second],
+            leased_supported_interior_nodes: vec![first],
+            unleased_supported_interior_nodes: vec![second],
+            complete_supported_interior_coverage: false,
+            optimization_decisions: 0,
+            comparable_decisions: 0,
+            exhaustive_complete_decisions: 0,
+            learned_top_wins: 0,
+            visit_top_wins: 0,
+            random_top_wins: 0,
+            learned_oracle_recoveries_with_fewer_evaluations: 0,
+            decisions: Vec::new(),
+        };
+        assert!(seed_control_is_valid(&seed));
+
+        seed.complete_supported_interior_coverage = true;
+        assert!(!seed_control_is_valid(&seed));
+        seed.complete_supported_interior_coverage = false;
+        seed.unleased_supported_interior_nodes.clear();
+        assert!(!seed_control_is_valid(&seed));
     }
 }

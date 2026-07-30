@@ -13,22 +13,25 @@ pub(super) fn first_demonstration_intervention(
         && acquisition.is_some_and(|acquisition| acquisition.expansion_count == 0)
 }
 
-pub(super) fn should_periodically_branch(
+pub(super) fn should_schedule_branch(
     decision_index: u64,
     branch_every_decisions: u64,
     terminal_restart: bool,
+    terminal_support_acquisition: bool,
 ) -> bool {
-    terminal_restart || (decision_index > 0 && decision_index % branch_every_decisions == 0)
+    terminal_restart
+        || terminal_support_acquisition
+        || (decision_index > 0 && decision_index % branch_every_decisions == 0)
 }
 
 pub(super) fn prefer_root_for_periodic_branch(
-    terminal_restart: bool,
+    force_scheduled_frontier: bool,
     root_refresh_due: bool,
 ) -> bool {
-    // A terminal boundary cannot continue, but the graph now owns its exact
-    // successful path. Hand that path to the scheduled frontier immediately;
-    // root refresh remains an independent cadence for ordinary branching.
-    !terminal_restart && root_refresh_due
+    // Terminal and rank-zero support acquisitions own exact graph work. Root
+    // refresh remains an independent cadence for ordinary exploration
+    // branches and must not consume supported-interior optimization slots.
+    !force_scheduled_frontier && root_refresh_due
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -291,14 +294,20 @@ pub(super) fn run_seed(
             }
         }
         let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
+        let planned_acquisition_rank = lane.acquisition.rank(campaign.decision_index);
+        let terminal_support_acquisition = campaign
+            .graph_terminal_path_available()
+            .map_err(route_error)?
+            && planned_acquisition_rank == 0;
         let demonstration_coverage_pending = demonstration_curriculum
             && first_demonstration_expansions < demonstration_frontier_count;
-        let periodic_branch = should_periodically_branch(
+        let scheduled_branch = should_schedule_branch(
             campaign.decision_index,
             config.execution_plan.branch_every_decisions,
             terminal_restart,
+            terminal_support_acquisition,
         );
-        if !campaign.replay().is_empty() && periodic_branch {
+        if !campaign.replay().is_empty() && scheduled_branch {
             let branch_started = Instant::now();
             episode = episode
                 .checked_add(1)
@@ -308,6 +317,8 @@ pub(super) fn run_seed(
             )
             .map_err(route_error)?;
             let [root, frontier] = if demonstration_coverage_pending
+                && !terminal_restart
+                && !terminal_support_acquisition
                 && config.execution_plan.proposal_policy == TacticProposalPolicy::Learned
             {
                 campaign.sample_root_and_ranked_frontier(
@@ -332,16 +343,21 @@ pub(super) fn run_seed(
                     },
                 )
             } else {
+                let acquisition_rank = if terminal_restart || terminal_support_acquisition {
+                    0
+                } else {
+                    lane.acquisition.rank(episode)
+                };
                 campaign.graph_scheduled_root_and_frontier(
                     seed,
                     frontier_sampling_round(episode),
-                    lane.acquisition.rank(episode),
+                    acquisition_rank,
                     maximum_frontier_frames,
                 )
             }
             .map_err(route_error)?;
             let prefer_root = prefer_root_for_periodic_branch(
-                terminal_restart,
+                terminal_restart || terminal_support_acquisition,
                 lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
             );
             let selected_branch = if prefer_root { &root } else { &frontier };
@@ -484,6 +500,8 @@ pub(super) fn run_seed(
             )
             .map_err(route_error)?;
             let [root, frontier] = if demonstration_coverage_pending
+                && !terminal_restart
+                && !terminal_support_acquisition
                 && config.execution_plan.proposal_policy == TacticProposalPolicy::Learned
             {
                 campaign.sample_root_and_ranked_frontier(
@@ -508,16 +526,23 @@ pub(super) fn run_seed(
                     },
                 )
             } else {
+                let acquisition_rank = if terminal_restart || terminal_support_acquisition {
+                    0
+                } else {
+                    lane.acquisition.rank(episode)
+                };
                 campaign.graph_scheduled_root_and_frontier(
                     seed,
                     frontier_sampling_round(episode),
-                    lane.acquisition.rank(episode),
+                    acquisition_rank,
                     maximum_frontier_frames,
                 )
             }
             .map_err(route_error)?;
-            let prefer_root =
-                lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence);
+            let prefer_root = prefer_root_for_periodic_branch(
+                terminal_restart || terminal_support_acquisition,
+                lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
+            );
             let selected_branch = if prefer_root { &root } else { &frontier };
             if demonstration_coverage_pending
                 && selected_branch

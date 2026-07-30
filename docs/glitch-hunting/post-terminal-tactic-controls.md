@@ -18,6 +18,14 @@ The audit joins two authorities without allowing either to rewrite the other:
 - the seed's final binary graph checkpoint supplies completed executable
   expansions and exact authenticated continuations to terminal.
 
+Report v2 also proves scheduler coverage rather than inferring it from decision
+counts. For each seed it derives every executable, non-root, nonterminal
+interior on every authenticated terminal tape from the final graph, resolves
+every evaluated lease in the retained trace back to its exact source node, and
+retains the supported, leased, and unleased node sets. A seed reports
+`complete_supported_interior_coverage` only when the supported set is nonempty
+and the exact unleased set is empty.
+
 For each successful-path source queue, the report compares:
 
 - predicted total root-to-terminal ticks;

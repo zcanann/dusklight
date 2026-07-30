@@ -235,7 +235,8 @@ pub use observation_audit::{
 };
 mod post_terminal_controls;
 pub use post_terminal_controls::{
-    NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V1, NativeTacticPostTerminalControl,
+    NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V1,
+    NATIVE_TACTIC_POST_TERMINAL_CONTROL_SCHEMA_V2, NativeTacticPostTerminalControl,
     NativeTacticPostTerminalControlReport, NativeTacticPostTerminalDecisionControl,
     NativeTacticPostTerminalRanking, NativeTacticPostTerminalSeedControl,
 };
