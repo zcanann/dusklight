@@ -1650,11 +1650,12 @@ fn durable_graph_and_exported_report_share_one_content_identity() {
 
 #[test]
 fn restoration_plan_requires_the_complete_typed_state_before_execution() {
-    let (graph, _, _) = graph_and_transition();
+    let (mut graph, transition, route) = graph_and_transition();
     let plan = graph.restoration_plan(graph.root()).unwrap();
     let expected = graph.node(graph.root()).unwrap().state.as_ref().clone();
     let receipt = graph.validate_restored_state(&plan, &expected).unwrap();
 
+    assert_eq!(plan.schema, GRAPH_RESTORATION_PLAN_SCHEMA_V2);
     assert_eq!(receipt.restoration_plan_sha256, plan.plan_sha256);
     assert_eq!(receipt.node, graph.root());
     assert_eq!(
@@ -1666,10 +1667,72 @@ fn restoration_plan_requires_the_complete_typed_state_before_execution() {
     wrong_state.state_identity[0] ^= 1;
     wrong_state.validate().unwrap();
     assert!(graph.validate_restored_state(&plan, &wrong_state).is_err());
+    assert!(
+        graph
+            .validate_prehashed_restored_state(
+                &plan,
+                &wrong_state,
+                wrong_state.content_sha256().unwrap(),
+            )
+            .is_err()
+    );
 
-    let mut tampered_plan = plan;
+    let mut tampered_plan = plan.clone();
     tampered_plan.route.tape_frames += 1;
     assert!(graph.restoration_route(&tampered_plan).is_err());
+
+    graph
+        .admit_completed_expansion(
+            transition,
+            route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+    assert_eq!(
+        graph.restoration_route(&plan).unwrap(),
+        graph.route(graph.root().route_checkpoint_sha256).unwrap(),
+        "unrelated outgoing graph growth must not invalidate an immutable node plan"
+    );
+    assert!(
+        graph
+            .validate_prehashed_restored_state(
+                &plan,
+                graph.node(graph.root()).unwrap().state.as_ref(),
+                graph.root().state_sha256,
+            )
+            .is_ok()
+    );
+
+    let mut detached_authority = plan;
+    detached_authority.dispatch_graph_sha256.0[0] ^= 1;
+    assert!(graph.restoration_route(&detached_authority).is_err());
+}
+
+#[test]
+fn legacy_whole_graph_restoration_plan_remains_valid() {
+    let (graph, _, _) = graph_and_transition();
+    let mut legacy = graph.restoration_plan(graph.root()).unwrap();
+    legacy.schema = GRAPH_RESTORATION_PLAN_SCHEMA_V1.into();
+    legacy.dispatch_graph_sha256 = graph.content_sha256().unwrap();
+    legacy.plan_sha256 = super::restoration::restoration_plan_sha256(
+        &legacy.schema,
+        legacy.dispatch_graph_sha256,
+        legacy.node,
+        legacy.expected_state_sha256,
+        legacy.route.route_checkpoint_sha256,
+        legacy.route.tape_sha256,
+        legacy.route.tape_frames,
+        legacy
+            .native_boundary
+            .as_ref()
+            .map(|boundary| (boundary.episode_shard_sha256, boundary.option_offset_ticks)),
+    );
+
+    assert_eq!(
+        graph.restoration_route(&legacy).unwrap(),
+        graph.route(graph.root().route_checkpoint_sha256).unwrap()
+    );
 }
 
 #[test]

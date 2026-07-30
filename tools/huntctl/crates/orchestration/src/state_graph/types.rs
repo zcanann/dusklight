@@ -11,6 +11,7 @@ use std::sync::Arc;
 pub const STATE_GRAPH_SCHEMA_V1: &str = "dusklight-state-graph/v1";
 pub const FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1: &str = "dusklight-future-equivalence-proof/v1";
 pub const GRAPH_RESTORATION_PLAN_SCHEMA_V1: &str = "dusklight-graph-restoration-plan/v1";
+pub const GRAPH_RESTORATION_PLAN_SCHEMA_V2: &str = "dusklight-graph-restoration-plan/v2";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -77,8 +78,9 @@ pub struct RestorationLocator {
 #[serde(deny_unknown_fields)]
 pub struct GraphRestorationPlan {
     pub schema: String,
-    /// Graph identity at dispatch time. Later independent leases may advance
-    /// the graph without invalidating this exact immutable node plan.
+    /// V1 stores a whole-graph content identity. V2 stores the exact immutable
+    /// restoration-node authority, so unrelated graph growth cannot require
+    /// serializing or invalidate this plan.
     pub dispatch_graph_sha256: Digest,
     pub node: ExactStateId,
     pub expected_state_sha256: Digest,

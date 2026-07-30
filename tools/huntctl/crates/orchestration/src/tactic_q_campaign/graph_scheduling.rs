@@ -147,7 +147,11 @@ impl TacticQCampaign {
                 "current restoration route is detached from the graph",
             ));
         }
-        let receipt = graph.validate_restored_state(&plan, &self.current.snapshot)?;
+        let receipt = graph.validate_prehashed_restored_state(
+            &plan,
+            &self.current.snapshot,
+            self.current.snapshot_sha256,
+        )?;
         Ok(TacticRestorationContract { plan, receipt })
     }
 

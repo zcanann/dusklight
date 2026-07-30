@@ -1,6 +1,7 @@
 use super::{
-    ExactStateId, GRAPH_RESTORATION_PLAN_SCHEMA_V1, GraphRestorationPlan, RestoredStateReceipt,
-    StateGraph, StateGraphError,
+    ExactStateId, GRAPH_RESTORATION_PLAN_SCHEMA_V1, GRAPH_RESTORATION_PLAN_SCHEMA_V2,
+    GraphRestorationPlan, RestoredStateReceipt, StateGraph, StateGraphError, StateGraphIdentity,
+    StateGraphNode,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
@@ -12,7 +13,6 @@ impl StateGraph {
         &self,
         node: ExactStateId,
     ) -> Result<GraphRestorationPlan, StateGraphError> {
-        self.validate()?;
         let admitted = self
             .nodes
             .get(&node)
@@ -22,11 +22,13 @@ impl StateGraph {
                 "restoration node is not executable",
             ));
         }
-        let dispatch_graph_sha256 = self.content_sha256()?;
+        let dispatch_graph_sha256 =
+            restoration_node_authority_sha256(&self.identity, admitted.as_ref());
         let plan_sha256 = restoration_plan_sha256(
+            GRAPH_RESTORATION_PLAN_SCHEMA_V2,
             dispatch_graph_sha256,
             node,
-            admitted.state.content_sha256()?,
+            admitted.id.state_sha256,
             admitted.restoration.route.route_checkpoint_sha256,
             admitted.restoration.route.tape_sha256,
             admitted.restoration.route.tape_frames,
@@ -37,10 +39,10 @@ impl StateGraph {
                 .map(|boundary| (boundary.episode_shard_sha256, boundary.option_offset_ticks)),
         );
         Ok(GraphRestorationPlan {
-            schema: GRAPH_RESTORATION_PLAN_SCHEMA_V1.into(),
+            schema: GRAPH_RESTORATION_PLAN_SCHEMA_V2.into(),
             dispatch_graph_sha256,
             node,
-            expected_state_sha256: admitted.state.content_sha256()?,
+            expected_state_sha256: admitted.id.state_sha256,
             route: admitted.restoration.route.clone(),
             native_boundary: admitted.restoration.native_boundary.clone(),
             plan_sha256,
@@ -91,6 +93,35 @@ impl StateGraph {
         })
     }
 
+    pub(crate) fn validate_prehashed_restored_state(
+        &self,
+        plan: &GraphRestorationPlan,
+        observed: &FactSnapshot,
+        observed_state_sha256: Digest,
+    ) -> Result<RestoredStateReceipt, StateGraphError> {
+        self.validate_restoration_plan(plan)?;
+        let expected = self
+            .nodes
+            .get(&plan.node)
+            .ok_or(StateGraphError::Invariant(
+                "restoration plan node disappeared",
+            ))?;
+        if observed_state_sha256 != plan.expected_state_sha256
+            || observed_state_sha256 != expected.id.state_sha256
+            || observed != expected.state.as_ref()
+        {
+            return Err(StateGraphError::Invalid(
+                "prehashed restored state does not match its exact graph node",
+            ));
+        }
+        Ok(RestoredStateReceipt {
+            restoration_plan_sha256: plan.plan_sha256,
+            node: plan.node,
+            observed_state_sha256,
+            route_checkpoint_sha256: plan.route.route_checkpoint_sha256,
+        })
+    }
+
     fn validate_restoration_plan(
         &self,
         plan: &GraphRestorationPlan,
@@ -99,7 +130,19 @@ impl StateGraph {
             .nodes
             .get(&plan.node)
             .ok_or(StateGraphError::Invalid("restoration plan node is absent"))?;
+        let expected_dispatch_sha256 = match plan.schema.as_str() {
+            GRAPH_RESTORATION_PLAN_SCHEMA_V1 => plan.dispatch_graph_sha256,
+            GRAPH_RESTORATION_PLAN_SCHEMA_V2 => {
+                restoration_node_authority_sha256(&self.identity, node.as_ref())
+            }
+            _ => {
+                return Err(StateGraphError::Invalid(
+                    "restoration plan schema is unsupported",
+                ));
+            }
+        };
         let expected_plan_sha256 = restoration_plan_sha256(
+            &plan.schema,
             plan.dispatch_graph_sha256,
             plan.node,
             plan.expected_state_sha256,
@@ -110,8 +153,8 @@ impl StateGraph {
                 .as_ref()
                 .map(|boundary| (boundary.episode_shard_sha256, boundary.option_offset_ticks)),
         );
-        if plan.schema != GRAPH_RESTORATION_PLAN_SCHEMA_V1
-            || plan.dispatch_graph_sha256 == Digest::ZERO
+        if plan.dispatch_graph_sha256 == Digest::ZERO
+            || plan.dispatch_graph_sha256 != expected_dispatch_sha256
             || plan.plan_sha256 != expected_plan_sha256
             || !node.restoration.executable
             || node.id.state_sha256 != plan.expected_state_sha256
@@ -127,7 +170,8 @@ impl StateGraph {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn restoration_plan_sha256(
+pub(super) fn restoration_plan_sha256(
+    schema: &str,
     dispatch_graph_sha256: Digest,
     node: ExactStateId,
     expected_state_sha256: Digest,
@@ -137,7 +181,7 @@ fn restoration_plan_sha256(
     native_boundary: Option<(Digest, u32)>,
 ) -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(GRAPH_RESTORATION_PLAN_SCHEMA_V1.as_bytes());
+    hasher.update(schema.as_bytes());
     hasher.update(dispatch_graph_sha256.0);
     hasher.update(node.route_checkpoint_sha256.0);
     hasher.update(node.state_sha256.0);
@@ -153,5 +197,35 @@ fn restoration_plan_sha256(
         }
         None => hasher.update([0]),
     }
+    Digest(hasher.finalize().into())
+}
+
+fn restoration_node_authority_sha256(
+    identity: &StateGraphIdentity,
+    node: &StateGraphNode,
+) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-graph-restoration-node-authority/v1");
+    hasher.update(identity.execution_authority_sha256.0);
+    hasher.update(identity.future_equivalence_validator_sha256.0);
+    hasher.update(identity.feature_schema_sha256.0);
+    hasher.update(identity.objective_sha256.0);
+    hasher.update(identity.root_checkpoint_sha256.0);
+    hasher.update(node.id.route_checkpoint_sha256.0);
+    hasher.update(node.id.state_sha256.0);
+    hasher.update([u8::from(node.terminal)]);
+    hasher.update(node.root_ticks.to_le_bytes());
+    hasher.update(node.restoration.route.route_checkpoint_sha256.0);
+    hasher.update(node.restoration.route.tape_sha256.0);
+    hasher.update(node.restoration.route.tape_frames.to_le_bytes());
+    match &node.restoration.native_boundary {
+        Some(boundary) => {
+            hasher.update([1]);
+            hasher.update(boundary.episode_shard_sha256.0);
+            hasher.update(boundary.option_offset_ticks.to_le_bytes());
+        }
+        None => hasher.update([0]),
+    }
+    hasher.update([u8::from(node.restoration.executable)]);
     Digest(hasher.finalize().into())
 }
