@@ -292,8 +292,12 @@ pub struct NativeTacticThroughputCurveReport {
 
 impl NativeTacticThroughputCurveReport {
     pub fn read_and_validate(path: &Path) -> Result<Self, NativeTacticRouteRunError> {
-        let report: Self =
-            serde_json::from_slice(&fs::read(path).map_err(route_error)?).map_err(route_error)?;
+        let report: Self = serde_json::from_slice(&read_bounded_regular_file(
+            path,
+            MAX_RESUME_JSON_BYTES,
+            "native tactic throughput curve report",
+        )?)
+        .map_err(route_error)?;
         report.validate()?;
         Ok(report)
     }
@@ -564,11 +568,10 @@ pub fn run_native_tactic_throughput_curve(
     let execution_plan_sha256 = config.execution_plan.identity()?;
     let report_path = config.output_root.join(REPORT_FILE);
     prepare_curve_output(config)?;
-    if report_path.exists() {
-        let report = NativeTacticThroughputCurveReport::read_and_validate(&report_path)?;
-        validate_resumed_curve_report(config, execution_plan_sha256, &report)?;
-        return Ok(report);
-    }
+    let report_exists = regular_file_presence(
+        &report_path,
+        "native tactic throughput curve aggregate report",
+    )?;
     let progress_root = config.output_root.join(PROGRESS_DIRECTORY);
     prepare_curve_run_commit(config, &progress_root, execution_plan_sha256)?;
     let fixed_completed_decisions = config
@@ -599,6 +602,7 @@ pub fn run_native_tactic_throughput_curve(
         .copied()
         .ok_or_else(|| route_message("throughput curve worker topology is empty"))?;
     let schedule = throughput_sample_schedule(config.repetitions)?;
+    reject_detached_sample_roots(config.output_root, &schedule)?;
     let mut execution_order = Vec::new();
     let mut first_unfinished = schedule.len();
     for (index, &(ordinal, repetition, workers)) in schedule.iter().enumerate() {
@@ -617,9 +621,32 @@ pub fn run_native_tactic_throughput_curve(
             }
         }
     }
-    reject_non_prefix_progress(config, &progress_root, &schedule, first_unfinished)?;
+    reject_non_prefix_progress(
+        config.output_root,
+        &progress_root,
+        &schedule,
+        first_unfinished,
+    )?;
+    if report_exists {
+        if first_unfinished != schedule.len() {
+            return Err(route_message(
+                "completed native tactic throughput curve has incomplete sample evidence",
+            ));
+        }
+        let fleet_launch_micros =
+            read_fleet_launch_micros(&progress_root, execution_plan_sha256, fleet_workers)?;
+        let report = NativeTacticThroughputCurveReport::read_and_validate(&report_path)?;
+        validate_resumed_curve_report(
+            config,
+            execution_plan_sha256,
+            fleet_launch_micros,
+            &execution_order,
+            &report,
+        )?;
+        return Ok(report);
+    }
 
-    if first_unfinished < schedule.len() {
+    if let Some(first_unfinished) = curve_fleet_launch_start(first_unfinished, schedule.len())? {
         let fleet_root = config.output_root.join("worker-fleet");
         let fleet_config = NativeTacticRouteRunConfig {
             repository_root: config.repository_root,
@@ -725,10 +752,7 @@ pub fn run_native_tactic_throughput_curve(
     Ok(report)
 }
 
-fn publish_curve_report(
-    report_path: &Path,
-    bytes: &[u8],
-) -> Result<(), NativeTacticRouteRunError> {
+fn publish_curve_report(report_path: &Path, bytes: &[u8]) -> Result<(), NativeTacticRouteRunError> {
     let parent = report_path
         .parent()
         .ok_or_else(|| route_message("native tactic throughput report has no parent"))?;
@@ -755,15 +779,16 @@ fn publish_curve_report(
 fn prepare_curve_output(
     config: &NativeTacticThroughputCurveConfig<'_>,
 ) -> Result<(), NativeTacticRouteRunError> {
-    if config.output_root.exists() {
+    if path_exists_without_following(config.output_root)? {
         if !config.resume {
             return Err(route_message(
                 "native tactic throughput curve output already exists; pass --resume",
             ));
         }
-        if !config.output_root.is_dir() {
+        let metadata = fs::symlink_metadata(config.output_root).map_err(route_error)?;
+        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
             return Err(route_message(
-                "native tactic throughput curve output is not a directory",
+                "native tactic throughput curve output is not a physical directory",
             ));
         }
         return Ok(());
@@ -790,7 +815,15 @@ fn prepare_curve_run_commit(
 ) -> Result<(), NativeTacticRouteRunError> {
     let path = progress_root.join(RUN_COMMIT_FILE);
     let expected = NativeTacticThroughputRunCommit::new(config, execution_plan_sha256)?;
-    if path.exists() {
+    if path_exists_without_following(progress_root)? {
+        let metadata = fs::symlink_metadata(progress_root).map_err(route_error)?;
+        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+            return Err(route_message(
+                "native tactic throughput progress root is not a physical directory",
+            ));
+        }
+    }
+    if regular_file_presence(&path, "native tactic throughput run commit")? {
         let actual: NativeTacticThroughputRunCommit = read_progress_record(&path)?;
         actual.validate(config, execution_plan_sha256)?;
         if actual != expected {
@@ -819,6 +852,8 @@ fn prepare_curve_run_commit(
 fn validate_resumed_curve_report(
     config: &NativeTacticThroughputCurveConfig<'_>,
     execution_plan_sha256: Digest,
+    fleet_launch_micros: u64,
+    execution_order: &[NativeTacticThroughputCurveSample],
     report: &NativeTacticThroughputCurveReport,
 ) -> Result<(), NativeTacticRouteRunError> {
     if report.optimization_request_sha256 != config.optimization.content_sha256
@@ -826,6 +861,8 @@ fn validate_resumed_curve_report(
         || report.execution_plan_sha256 != execution_plan_sha256
         || report.repetitions != config.repetitions
         || report.worker_counts != NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS
+        || report.fleet_launch_micros != fleet_launch_micros
+        || report.execution_order != execution_order
     {
         return Err(route_message(
             "completed native tactic throughput curve is detached from resume",
@@ -867,6 +904,32 @@ fn sample_commit_path(progress_root: &Path, ordinal: u32) -> PathBuf {
     progress_root.join(format!("sample-{ordinal:02}.dtcs"))
 }
 
+fn reject_detached_sample_roots(
+    output_root: &Path,
+    schedule: &[(u32, u32, usize)],
+) -> Result<(), NativeTacticRouteRunError> {
+    for entry in fs::read_dir(output_root).map_err(route_error)? {
+        let entry = entry.map_err(route_error)?;
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
+        if !file_name.starts_with("sample-") {
+            continue;
+        }
+        let path = entry.path();
+        let expected = schedule.iter().any(|&(ordinal, repetition, workers)| {
+            sample_root(output_root, ordinal, repetition, workers) == path
+        });
+        if !expected || !entry.file_type().map_err(route_error)?.is_dir() {
+            return Err(route_message(
+                "native tactic throughput output contains a detached sample root",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn load_or_commit_completed_sample(
     config: &NativeTacticThroughputCurveConfig<'_>,
     progress_root: &Path,
@@ -878,12 +941,16 @@ fn load_or_commit_completed_sample(
     let report_path =
         sample_root(config.output_root, ordinal, repetition, workers).join("report.json");
     let commit_path = sample_commit_path(progress_root, ordinal);
-    if commit_path.exists() && !report_path.exists() {
+    let report_exists =
+        regular_file_presence(&report_path, "native tactic throughput sample route report")?;
+    let commit_exists =
+        regular_file_presence(&commit_path, "native tactic throughput sample commit")?;
+    if commit_exists && !report_exists {
         return Err(route_message(
             "native tactic throughput sample commit has no route report",
         ));
     }
-    if !report_path.exists() {
+    if !report_exists {
         return Ok(None);
     }
     let sample = read_completed_sample(
@@ -894,7 +961,7 @@ fn load_or_commit_completed_sample(
         workers,
         &report_path,
     )?;
-    if commit_path.exists() {
+    if commit_exists {
         let commit: NativeTacticThroughputSampleCommit = read_progress_record(&commit_path)?;
         commit.validate(
             execution_plan_sha256,
@@ -922,7 +989,11 @@ fn read_completed_sample(
     workers: usize,
     report_path: &Path,
 ) -> Result<NativeTacticThroughputCurveSample, NativeTacticRouteRunError> {
-    let bytes = fs::read(report_path).map_err(route_error)?;
+    let bytes = read_bounded_regular_file(
+        report_path,
+        MAX_RESUME_JSON_BYTES,
+        "native tactic throughput sample route report",
+    )?;
     let route: NativeTacticRouteReport = serde_json::from_slice(&bytes).map_err(route_error)?;
     let sample = sample_from_route_report(
         ordinal,
@@ -971,7 +1042,7 @@ fn write_sample_commit(
 }
 
 fn reject_non_prefix_progress(
-    config: &NativeTacticThroughputCurveConfig<'_>,
+    output_root: &Path,
     progress_root: &Path,
     schedule: &[(u32, u32, usize)],
     first_unfinished: usize,
@@ -989,8 +1060,13 @@ fn reject_non_prefix_progress(
         }
     }
     for &(ordinal, repetition, workers) in schedule.iter().skip(first_unfinished + 1) {
-        if sample_commit_path(progress_root, ordinal).exists()
-            || sample_root(config.output_root, ordinal, repetition, workers).exists()
+        if path_exists_without_following(&sample_commit_path(progress_root, ordinal))?
+            || path_exists_without_following(&sample_root(
+                output_root,
+                ordinal,
+                repetition,
+                workers,
+            ))?
         {
             return Err(route_message(
                 "native tactic throughput progress is not a contiguous sample prefix",
@@ -1062,17 +1138,70 @@ fn fleet_launch_commit_paths(
     Ok(paths)
 }
 
+fn path_exists_without_following(path: &Path) -> Result<bool, NativeTacticRouteRunError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(route_error(error)),
+    }
+}
+
+fn regular_file_presence(
+    path: &Path,
+    description: &str,
+) -> Result<bool, NativeTacticRouteRunError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() && !metadata.file_type().is_symlink() => {
+            Ok(true)
+        }
+        Ok(_) => Err(route_message(format!(
+            "{description} is not a physical regular file: {}",
+            path.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(route_error(error)),
+    }
+}
+
+fn read_bounded_regular_file(
+    path: &Path,
+    maximum_bytes: u64,
+    description: &str,
+) -> Result<Vec<u8>, NativeTacticRouteRunError> {
+    let metadata = fs::symlink_metadata(path).map_err(route_error)?;
+    if !metadata.file_type().is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() == 0
+        || metadata.len() > maximum_bytes
+    {
+        return Err(route_message(format!(
+            "{description} is invalid or oversized: {}",
+            path.display()
+        )));
+    }
+    let bytes = fs::read(path).map_err(route_error)?;
+    if bytes.is_empty()
+        || u64::try_from(bytes.len()).map_err(route_error)? != metadata.len()
+        || u64::try_from(bytes.len()).map_err(route_error)? > maximum_bytes
+    {
+        return Err(route_message(format!(
+            "{description} changed while it was read: {}",
+            path.display()
+        )));
+    }
+    Ok(bytes)
+}
+
 fn read_progress_record<T>(path: &Path) -> Result<T, NativeTacticRouteRunError>
 where
     T: for<'de> Deserialize<'de>,
 {
-    let metadata = fs::metadata(path).map_err(route_error)?;
-    if metadata.len() == 0 || metadata.len() > MAXIMUM_PROGRESS_RECORD_BYTES {
-        return Err(route_message(
-            "native tactic throughput progress record size is invalid",
-        ));
-    }
-    serde_cbor::from_slice(&fs::read(path).map_err(route_error)?).map_err(route_error)
+    serde_cbor::from_slice(&read_bounded_regular_file(
+        path,
+        MAXIMUM_PROGRESS_RECORD_BYTES,
+        "native tactic throughput progress record",
+    )?)
+    .map_err(route_error)
 }
 
 fn write_progress_record<T: Serialize>(
@@ -1175,8 +1304,9 @@ fn validate_curve_config(
     config: &NativeTacticThroughputCurveConfig<'_>,
 ) -> Result<(), NativeTacticRouteRunError> {
     config.execution_plan.validate()?;
+    let output_exists = path_exists_without_following(config.output_root)?;
     if !(MINIMUM_REPETITIONS..=MAXIMUM_REPETITIONS).contains(&config.repetitions)
-        || config.output_root.exists()
+        || !curve_output_mode_is_valid(output_exists, config.resume)
         || config.execution_plan.lanes.len() != 1
         || config.execution_plan.generations.len() != 1
         || config.execution_plan.proposal_width_per_decision
@@ -1212,6 +1342,22 @@ fn validate_curve_config(
     Ok(())
 }
 
+fn curve_output_mode_is_valid(output_exists: bool, resume: bool) -> bool {
+    output_exists == resume
+}
+
+fn curve_fleet_launch_start(
+    first_unfinished: usize,
+    sample_count: usize,
+) -> Result<Option<usize>, NativeTacticRouteRunError> {
+    if first_unfinished > sample_count {
+        return Err(route_message(
+            "native tactic throughput resume cursor exceeds its sample schedule",
+        ));
+    }
+    Ok((first_unfinished < sample_count).then_some(first_unfinished))
+}
+
 fn median(sorted: &[u64]) -> Result<u64, NativeTacticRouteRunError> {
     if sorted.is_empty() {
         return Err(route_message("throughput curve median has no samples"));
@@ -1228,6 +1374,31 @@ fn median(sorted: &[u64]) -> Result<u64, NativeTacticRouteRunError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct TestDirectory {
+        path: PathBuf,
+    }
+
+    impl TestDirectory {
+        fn new(label: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "dusklight-throughput-{label}-{}-{nonce}",
+                std::process::id()
+            ));
+            fs::create_dir(&path).unwrap();
+            Self { path }
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
 
     fn sample(
         ordinal: u32,
@@ -1278,6 +1449,71 @@ mod tests {
     }
 
     #[test]
+    fn throughput_output_mode_requires_explicit_resume() {
+        assert!(curve_output_mode_is_valid(false, false));
+        assert!(curve_output_mode_is_valid(true, true));
+        assert!(!curve_output_mode_is_valid(true, false));
+        assert!(!curve_output_mode_is_valid(false, true));
+    }
+
+    #[test]
+    fn completed_prefix_and_durable_partial_sample_are_resumable() {
+        let test = TestDirectory::new("durable-partial");
+        let output_root = test.path.join("curve");
+        let progress_root = output_root.join(PROGRESS_DIRECTORY);
+        fs::create_dir_all(&progress_root).unwrap();
+        let schedule = throughput_sample_schedule(2).unwrap();
+        fs::create_dir(sample_root(&output_root, 1, 1, 1)).unwrap();
+        fs::create_dir(sample_root(&output_root, 2, 1, 2)).unwrap();
+
+        reject_detached_sample_roots(&output_root, &schedule).unwrap();
+        reject_non_prefix_progress(&output_root, &progress_root, &schedule, 1).unwrap();
+        assert_eq!(
+            curve_fleet_launch_start(1, schedule.len()).unwrap(),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn detached_and_non_prefix_sample_roots_are_rejected() {
+        let detached = TestDirectory::new("detached");
+        let detached_output = detached.path.join("curve");
+        fs::create_dir(&detached_output).unwrap();
+        let schedule = throughput_sample_schedule(2).unwrap();
+        fs::create_dir(detached_output.join("sample-99-r1-w1")).unwrap();
+        assert!(reject_detached_sample_roots(&detached_output, &schedule).is_err());
+
+        let non_prefix = TestDirectory::new("non-prefix");
+        let output_root = non_prefix.path.join("curve");
+        let progress_root = output_root.join(PROGRESS_DIRECTORY);
+        fs::create_dir_all(&progress_root).unwrap();
+        fs::create_dir(sample_root(&output_root, 3, 1, 4)).unwrap();
+        assert!(reject_non_prefix_progress(&output_root, &progress_root, &schedule, 1).is_err());
+    }
+
+    #[test]
+    fn torn_or_non_file_progress_records_are_rejected() {
+        let test = TestDirectory::new("torn-progress");
+        let empty = test.path.join("empty.dtcr");
+        fs::write(&empty, b"").unwrap();
+        assert!(read_progress_record::<NativeTacticThroughputRunCommit>(&empty).is_err());
+
+        let directory = test.path.join("directory.dtcr");
+        fs::create_dir(&directory).unwrap();
+        assert!(read_progress_record::<NativeTacticThroughputRunCommit>(&directory).is_err());
+    }
+
+    #[test]
+    fn aggregate_only_resealing_requires_zero_fleet_launches() {
+        let sample_count = throughput_sample_schedule(2).unwrap().len();
+        assert_eq!(
+            curve_fleet_launch_start(sample_count, sample_count).unwrap(),
+            None
+        );
+        assert!(curve_fleet_launch_start(sample_count + 1, sample_count).is_err());
+    }
+
+    #[test]
     fn throughput_schedule_balances_worker_order_between_repetitions() {
         assert_eq!(
             throughput_sample_schedule(2).unwrap(),
@@ -1313,8 +1549,7 @@ mod tests {
     #[test]
     fn fleet_launch_commit_rejects_detached_timing() {
         let plan = Digest([4; 32]);
-        let mut commit =
-            NativeTacticThroughputFleetLaunchCommit::new(plan, 16, 5_000).unwrap();
+        let mut commit = NativeTacticThroughputFleetLaunchCommit::new(plan, 16, 5_000).unwrap();
         commit.validate(plan, 16).unwrap();
 
         commit.launch_micros += 1;
