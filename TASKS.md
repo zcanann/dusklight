@@ -470,9 +470,21 @@ Exit gate:
 - [ ] Mine parameterized action compositions from successful graph paths and
       high-value counterfactuals. Direction plus camera modifier, roll cadence,
       curved steering, and prompted actions use the same generic mechanism.
+      Checkpoint `934e92a8e1` fixes false composition support: connected tapes
+      are now bucketed across repeated occurrences and retain only each
+      occurrence's true entry state, not internal steps. The remaining format
+      must retain the complete typed primitive/parameter sequence; an exact
+      tape plus its first primitive ID is not yet a parameterized composition.
 - [ ] Learn typed entry conditions from independent source states.
+      Candidate construction now requires at least two distinct entry-state
+      identities, but this stays open until compiled tests and held-out native
+      applicability evidence validate the learned condition.
 - [ ] Promote only when a composition improves terminal/tick return on held-out
       state groups relative to executing its primitive components.
+      Replace the current best-single-primitive frontier baseline with native
+      execution of the candidate's complete retained component sequence under
+      the same source state and horizon. Until then, no retained promotion may
+      be treated as satisfying this gate.
 - [ ] Keep every valid primitive selectable after promotion.
 - [ ] Compare promotion-enabled and primitives-only search on held-out seeds
       using terminal rate, time to first terminal, time to best route, and
