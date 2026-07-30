@@ -270,8 +270,7 @@ pub fn run_native_subsystem_parity(
     config
         .execution
         .validate_files(&root, config.optimization)?;
-    fs::create_dir(config.output_root)?;
-    let output_root = config.output_root.canonicalize()?;
+    let output_root = create_output_root(config.output_root)?;
     let process_tape_path = root.join(&config.execution.process_boot_tape.path);
     let process_tape = InputTape::decode(&fs::read(&process_tape_path)?)?.tape;
     let source_frame = usize::try_from(config.optimization.route.source_boundary_index)?;
@@ -932,6 +931,11 @@ fn validate_config(config: &NativeSubsystemParityConfig<'_>) -> Result<(), Box<d
     Ok(())
 }
 
+fn create_output_root(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    fs::create_dir_all(path)?;
+    Ok(path.canonicalize()?)
+}
+
 fn phase_micros(raw: &NativeSuffixBatchResult, phase: &str) -> Result<u64, Box<dyn Error>> {
     raw.timing
         .phases
@@ -965,6 +969,7 @@ fn write_new_json(path: &Path, value: &impl Serialize) -> Result<(), Box<dyn Err
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn action_surface_context() -> NativeTacticActionSurfaceAuditContext {
         NativeTacticActionSurfaceAuditContext {
@@ -1066,5 +1071,22 @@ mod tests {
         drifted = evidence.clone();
         drifted.native_state_trajectory_sha256 = Digest([9; 32]);
         assert!(!native_evidence_matches(&evidence, &drifted));
+    }
+
+    #[test]
+    fn output_root_creation_materializes_missing_parents() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temporary_root = std::env::temp_dir().join(format!(
+            "dusklight-native-subsystem-parity-{}-{nonce}",
+            std::process::id()
+        ));
+        let nested_output = temporary_root.join("missing").join("run");
+        let resolved = create_output_root(&nested_output).unwrap();
+        assert!(resolved.is_dir());
+        assert_eq!(resolved, nested_output.canonicalize().unwrap());
+        std::fs::remove_dir_all(&temporary_root).unwrap();
     }
 }

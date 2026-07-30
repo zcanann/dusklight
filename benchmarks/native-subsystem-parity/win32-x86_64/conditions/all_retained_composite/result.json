@@ -1,0 +1,395 @@
+{
+  "audio_callback_quiesced": true,
+  "candidate_count": 1,
+  "candidates": [
+    {
+      "consumed_pad_states": null,
+      "first_hit_tick": null,
+      "id": "native-subsystem-parity",
+      "predicate_evidence": {
+        "boot": {
+          "kind": "process"
+        },
+        "boot_origin_established": true,
+        "goal": "ordon_spring_load_committed",
+        "goal_reached": false,
+        "milestones": [
+          {
+            "boundary_index": null,
+            "definition_digest": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57",
+            "evidence": null,
+            "hit": false,
+            "id": "ordon_spring_load_committed",
+            "phase": "post_sim",
+            "program_digest": "b8cbfafaa025b883cecd2db4e4bef30696c801a591ce736d1281defd8af0c169",
+            "projections": null,
+            "sim_tick": null,
+            "stable_ticks": 1,
+            "tape_frame": null
+          }
+        ],
+        "program_digest": "b8cbfafaa025b883cecd2db4e4bef30696c801a591ce736d1281defd8af0c169",
+        "schema": {
+          "name": "dusklight.automation.milestones",
+          "version": 5
+        }
+      },
+      "retained_checkpoint": null,
+      "state_sequence_digest": "f5a0d21bfdec29765a6f94be43595ae3",
+      "state_tick_digests": [
+        "c80281cf7a5405e55c1d4d4bb5b5336c",
+        "7147c81cbe5194c549fd84a670787b41",
+        "8d70d14698b23d3c391cc8bcc040823a",
+        "6016d6a211fca5baab9717710ca55911",
+        "fbcc6b05db54e137f1cd1aa9871018f8",
+        "24337acdacb34b5e29b87124eb7efe85",
+        "2b88b64ee739676fae93a54763ae11d3",
+        "8baf6278c90a9254ecb655d68d7af224",
+        "b6d8ac71242fc6a63f11ff5677712e7a",
+        "d508e9ce23031c84f577ac9e48ca845d",
+        "1811161feea79bc1a3d1f3a660f405e1",
+        "16bd9a8150c191cf3743637540fdf235",
+        "14a54d2d5282e5c2621224fa9fdc6920",
+        "9041ae6473b037d8afddb4d7821d6ce1",
+        "e19392c34670291bab8c03864718cac0",
+        "5191023391e7d356d91b50719e196f48"
+      ],
+      "success": false,
+      "terminal_boundary_fingerprint": "e4a3b5ebd9e8858aa67681ddbf39e126",
+      "terminal_observation": {
+        "camera_heading_radians": -0.9198132753372192,
+        "collision_correction": [
+          1.9073486328125e-06,
+          -7.56978988647461e-05
+        ],
+        "facing": -15996,
+        "forward_speed": 24.0,
+        "mode_flags": 33280,
+        "next_point": 1,
+        "next_room": 1,
+        "next_stage": "F_SP103",
+        "point": 1,
+        "position": [
+          267.2543640136719,
+          800.0,
+          -2313.44482421875
+        ],
+        "previous_input": {
+          "analog_a": 0,
+          "analog_b": 0,
+          "buttons": 0,
+          "connected": true,
+          "error": 0,
+          "stick_x": 77,
+          "stick_y": 101,
+          "substick_x": 0,
+          "substick_y": 0,
+          "trigger_left": 0,
+          "trigger_right": 0
+        },
+        "procedure": 14,
+        "room": 1,
+        "stage": "F_SP103",
+        "transition_pending": false,
+        "velocity": [
+          -23.983736038208008,
+          0.0,
+          0.8833764791488647
+        ]
+      },
+      "terminal_state_entry_digests": [
+        {
+          "bytes": 268435456,
+          "digest": "9fed5d3f0c13ae22bcdd4a5a45cb1974",
+          "kind": "memory_region",
+          "name": "mem1"
+        },
+        {
+          "bytes": 25165824,
+          "digest": "5d365bf4f2e43c5e14723a1f860dc1a1",
+          "kind": "memory_region",
+          "name": "aram"
+        },
+        {
+          "bytes": 18312,
+          "digest": "769d834c864b1eb9a87b0db845f6ca01",
+          "kind": "memory_region",
+          "name": "native_game_state_0"
+        },
+        {
+          "bytes": 620520,
+          "digest": "7cdfb6b0bf756f1e5ea3ed2a9e6c4401",
+          "kind": "memory_region",
+          "name": "native_game_state_1"
+        },
+        {
+          "bytes": 480464,
+          "digest": "ea3a24555d5b942b12229d353759d259",
+          "kind": "memory_region",
+          "name": "native_game_state_2"
+        },
+        {
+          "bytes": 24,
+          "digest": "a8eb97d9d6c177023af9f64fa38271b3",
+          "kind": "component",
+          "name": "aram_allocator"
+        },
+        {
+          "bytes": 40,
+          "digest": "1d57a0263cbd49c08aa1de2348d26879",
+          "kind": "component",
+          "name": "deterministic_os_time"
+        },
+        {
+          "bytes": 24,
+          "digest": "a33b3dea69b4285844cd5370a0b8143f",
+          "kind": "component",
+          "name": "emulated_vi"
+        },
+        {
+          "bytes": 8,
+          "digest": "abd94a72fef8dac6fd3a09761dfc2dd4",
+          "kind": "component",
+          "name": "gx_object_identity"
+        },
+        {
+          "bytes": 8,
+          "digest": "bcf4c7b59c8f4158cc2aaa4f76ee034b",
+          "kind": "component",
+          "name": "jkr_current_heap"
+        },
+        {
+          "bytes": 72,
+          "digest": "94b51355d68f8c62805b607ff3664f33",
+          "kind": "component",
+          "name": "jkr_resource_registries"
+        },
+        {
+          "bytes": 8,
+          "digest": "2c0a8a99dc147d5445c3b49d035665b2",
+          "kind": "component",
+          "name": "jfw_display"
+        },
+        {
+          "bytes": 24,
+          "digest": "5a13f20bd7dbb9960aba636c161d2176",
+          "kind": "component",
+          "name": "audio_pool_z2_audible"
+        },
+        {
+          "bytes": 24,
+          "digest": "9c09861454c7081c4fc1937446292ba1",
+          "kind": "component",
+          "name": "audio_pool_z2_sound_handle"
+        },
+        {
+          "bytes": 24,
+          "digest": "e2d3345eb24569d71c94b76c3406d3d4",
+          "kind": "component",
+          "name": "audio_pool_jai_se"
+        },
+        {
+          "bytes": 24,
+          "digest": "ff89c212ed563abda80232c1c00540f6",
+          "kind": "component",
+          "name": "audio_pool_jai_seq"
+        },
+        {
+          "bytes": 24,
+          "digest": "1a442b9e426f12c4cd00e7af9ba3355f",
+          "kind": "component",
+          "name": "audio_pool_jai_stream"
+        },
+        {
+          "bytes": 24,
+          "digest": "f9daab9350d42215f1be3a26bc55df83",
+          "kind": "component",
+          "name": "audio_pool_jai_sound_child"
+        },
+        {
+          "bytes": 24,
+          "digest": "fc48ef3803d8d01868a90856a3449437",
+          "kind": "component",
+          "name": "audio_pool_jas_track"
+        },
+        {
+          "bytes": 24,
+          "digest": "e27fbe42318d1be0b9364482447f0844",
+          "kind": "component",
+          "name": "audio_pool_jas_channel_mgr"
+        },
+        {
+          "bytes": 24,
+          "digest": "3ca0211fd4c63bcb9fb21791a3b1ef29",
+          "kind": "component",
+          "name": "audio_pool_jas_channel"
+        },
+        {
+          "bytes": 464,
+          "digest": "4bee2867dbbc77d8ad7960746bc5f6b9",
+          "kind": "component",
+          "name": "jut_gamepad"
+        }
+      ],
+      "ticks_executed": 16
+    }
+  ],
+  "capture_micros": 226857,
+  "checkpoint_bytes": 294721440,
+  "checkpoint_cache": null,
+  "checkpoint_validation": {
+    "actual_tick_digest": null,
+    "expected_tick_digest": null,
+    "first_divergence_tick": null,
+    "fresh_sequence_digest": "cf6fef4cbe2305e39ff389bbf2734065",
+    "kind": "recorded_replay_window",
+    "restored_sequence_digest": "cf6fef4cbe2305e39ff389bbf2734065",
+    "source_semantic_digest": "c6d6dca33dbd19fbe3ae39978458939e",
+    "ticks": 8,
+    "verified": true
+  },
+  "completed_candidates": 1,
+  "episode_shard": {
+    "action_schema": "dusklight-raw-pad-action/v2",
+    "compressed_bytes": 12781,
+    "episode_count": 1,
+    "observation_schema": "dusklight-learning-observation/v29",
+    "path": "\\\\?\\C:\\Projects\\dusklight\\build\\benchmarks\\native-subsystem-parity-windows-v2\\run\\all_retained_composite\\result.json.episodes.dseps",
+    "schema": "dusklight-native-episode-shard/v2",
+    "uncompressed_bytes": 736346
+  },
+  "error": null,
+  "maximum_ticks": 16,
+  "policy_model": null,
+  "restore_identity": "2ad850bbcf5e59d49a508472805ecfe0",
+  "restore_micros": [
+    18942,
+    26718
+  ],
+  "schema": "dusklight-suffix-batch-result/v6",
+  "source_boundary": {
+    "actual_fingerprint": "4786d70e77b31416d02864783434c7dc",
+    "expected_fingerprint": "4786d70e77b31416d02864783434c7dc",
+    "fingerprint_verified": true,
+    "milestone": null,
+    "verified": true
+  },
+  "source_frame": 506,
+  "status": "passed",
+  "timing": {
+    "accounting": {
+      "batch_boundary": "source-capture-or-rearm through sealed episode shard",
+      "nested_simulation_phases": [
+        "cpu_draw_traversal",
+        "cpu_renderer_submission"
+      ],
+      "simulation_boundary": "after PADRead through deterministic clock commit"
+    },
+    "batch_wall_micros": 8173007,
+    "candidate_ticks": 16,
+    "headless_audit": {
+      "active": true,
+      "cpu_renderer_submission": "retained_audit_comparator",
+      "deterministic_audio_emulation": "retained",
+      "game_audio_update": "retained",
+      "gameplay_draw_traversal": "retained",
+      "gpu_frame_submission": "retained_null_backend_comparator",
+      "host_audio_device": "active",
+      "host_pacing": "enabled",
+      "imgui_frame_lifecycle": "retained_audit_comparator",
+      "presentation_lifecycle": "retained_audit_comparator"
+    },
+    "phases": {
+      "audio_emulation": {
+        "micros": 3994,
+        "samples": 16,
+        "status": "measured"
+      },
+      "checkpoint_capture": {
+        "micros": 226857,
+        "session_capture_micros": 226857,
+        "status": "measured"
+      },
+      "checkpoint_restore": {
+        "micros": 45660,
+        "samples": 2,
+        "status": "measured"
+      },
+      "checkpoint_validation": {
+        "micros": 3488811,
+        "samples": 16,
+        "session_micros": 3488811,
+        "status": "measured"
+      },
+      "corpus_encoding": {
+        "compressed_bytes": 12781,
+        "episodes": 1,
+        "micros": 18741,
+        "status": "measured",
+        "uncompressed_bytes": 736346
+      },
+      "cpu_draw_traversal": {
+        "micros": 8585,
+        "samples": 16,
+        "status": "measured"
+      },
+      "cpu_renderer_submission": {
+        "micros": 19077,
+        "samples": 16,
+        "status": "measured"
+      },
+      "game_audio_update": {
+        "micros": 187,
+        "samples": 16,
+        "status": "measured"
+      },
+      "gpu_work": {
+        "created_compute_pipelines_process_total": 0,
+        "created_render_pipelines_process_total": 154,
+        "created_shader_modules_process_total": 153,
+        "direct_queue_writes_process_total": 537,
+        "discarded_frames": 0,
+        "gpu_code_creation_absent": false,
+        "gpu_queue_operations_absent": false,
+        "micros": null,
+        "reason": "Aurora exposes submission counts but no authenticated GPU timestamps",
+        "status": "timestamp_unavailable",
+        "submitted_command_buffers": 31,
+        "submitted_command_buffers_process_total": 537
+      },
+      "observation_capture": {
+        "micros": 6482,
+        "samples": 32,
+        "status": "measured"
+      },
+      "policy_application": {
+        "micros": 2,
+        "nanoseconds": 2200,
+        "samples": 16,
+        "status": "measured"
+      },
+      "policy_head_decode": {
+        "micros": null,
+        "status": "not_present"
+      },
+      "policy_inference": {
+        "micros": null,
+        "status": "not_present"
+      },
+      "simulation": {
+        "micros": 41545,
+        "samples": 16,
+        "status": "measured"
+      },
+      "state_validation": {
+        "micros": 3447841,
+        "samples": 16,
+        "status": "measured"
+      }
+    },
+    "schema": "dusklight-suffix-batch-timing/v1",
+    "verified": true
+  },
+  "verify_state_hashes": true,
+  "winner_id": null
+}

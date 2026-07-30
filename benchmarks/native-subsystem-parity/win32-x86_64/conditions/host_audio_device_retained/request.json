@@ -1,0 +1,290 @@
+{
+  "schema": "dusklight-suffix-batch/v3",
+  "source_frame": 506,
+  "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+  "checkpoint_validation": {
+    "kind": "recorded_replay_window",
+    "ticks": 8
+  },
+  "maximum_ticks": 16,
+  "verify_state_hashes": true,
+  "candidates": [
+    {
+      "id": "native-subsystem-parity",
+      "actions": [
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 256,
+            "stick_x": 127,
+            "stick_y": 2,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        },
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 0,
+            "stick_x": 126,
+            "stick_y": 12,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        },
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 0,
+            "stick_x": 125,
+            "stick_y": 23,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        },
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 0,
+            "stick_x": 122,
+            "stick_y": 34,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        },
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 0,
+            "stick_x": 120,
+            "stick_y": 42,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        },
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 0,
+            "stick_x": 117,
+            "stick_y": 50,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        },
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 0,
+            "stick_x": 113,
+            "stick_y": 58,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        },
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 0,
+            "stick_x": 110,
+            "stick_y": 64,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        },
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 0,
+            "stick_x": 106,
+            "stick_y": 71,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        },
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 0,
+            "stick_x": 102,
+            "stick_y": 76,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        },
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 0,
+            "stick_x": 97,
+            "stick_y": 82,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        },
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 0,
+            "stick_x": 93,
+            "stick_y": 86,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        },
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 0,
+            "stick_x": 89,
+            "stick_y": 91,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        },
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 0,
+            "stick_x": 85,
+            "stick_y": 95,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        },
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 0,
+            "stick_x": 81,
+            "stick_y": 98,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        },
+        {
+          "op": "pad_run",
+          "pad": {
+            "buttons": 0,
+            "stick_x": 77,
+            "stick_y": 101,
+            "substick_x": 0,
+            "substick_y": 0,
+            "trigger_left": 0,
+            "trigger_right": 0,
+            "analog_a": 0,
+            "analog_b": 0,
+            "connected": true,
+            "error": 0
+          },
+          "frames": 1
+        }
+      ]
+    }
+  ]
+}

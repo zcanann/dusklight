@@ -6,6 +6,7 @@ use super::worker_pool::recorded_demonstration_chunks;
 use super::worker_pool::*;
 use super::*;
 use crate::native_tactic_worker::TACTIC_CHECKPOINT_CACHE_ENTRIES;
+use dusklight_learning::tactic_macro_promotion::TacticMacroEntryConditionCell;
 
 #[test]
 fn unassisted_learning_requires_declared_generous_discovery_capacity() {

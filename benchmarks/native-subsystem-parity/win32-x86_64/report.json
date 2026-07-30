@@ -1,0 +1,816 @@
+{
+  "schema": "dusklight-native-subsystem-parity/v2",
+  "content_sha256": "89d1c04bc39d6aeafb2b577f6eed65e651ce3b82b7488c44fa2011524c2a1141",
+  "optimization_request_sha256": "8b6a9ba9bd5e307fb8443fe39f2ea6233bc798b3e5a81abf3824c264d8ac2d9b",
+  "execution_sha256": "a8f410ad3d2269efcc8de5de9937235350daf0dd19dd53caca6ad92a1bf6ab2a",
+  "executable_sha256": "f8d6319e3e15269be0f4262d1e19f97a0476eb5bd4810f16138e239c5f0e85fd",
+  "game_data_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814",
+  "platform_os": "windows",
+  "platform_arch": "x86_64",
+  "recorded_unix_millis": 1785435987209,
+  "source_frame": 506,
+  "candidate_ticks": 16,
+  "disabled_subsystems": [
+    "gpu_frame_submission",
+    "cpu_renderer_submission",
+    "presentation_lifecycle",
+    "imgui_frame_lifecycle",
+    "host_pacing",
+    "host_audio_device",
+    "state_hash_proof"
+  ],
+  "conditions": [
+    {
+      "condition": "production_all_disabled",
+      "reference_condition": "production_all_disabled",
+      "comparators": {
+        "gpu_frame_submission": false,
+        "cpu_renderer_submission": false,
+        "presentation_lifecycle": false,
+        "imgui_frame_lifecycle": false,
+        "host_pacing": false,
+        "host_audio_device": false
+      },
+      "verify_state_hashes": true,
+      "launch": {
+        "spawn_call_micros": 57573,
+        "handshake_micros": 53747,
+        "initial_batch_wait_micros": 17587067,
+        "artifact_validation_micros": 10762,
+        "total_micros": 17748011
+      },
+      "batch_wall_micros": 13065527,
+      "simulation_micros": 34183,
+      "cpu_renderer_submission_micros": 0,
+      "headless_audit": {
+        "active": true,
+        "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+        "deterministic_audio_emulation": "retained",
+        "game_audio_update": "retained",
+        "gameplay_draw_traversal": "retained",
+        "gpu_frame_submission": "discarded_before_encoding",
+        "host_audio_device": "suppressed",
+        "host_pacing": "disabled",
+        "imgui_frame_lifecycle": "suppressed_on_candidate_ticks",
+        "presentation_lifecycle": "suppressed"
+      },
+      "gpu_work": {
+        "created_compute_pipelines_process_total": 0,
+        "created_render_pipelines_process_total": 0,
+        "created_shader_modules_process_total": 0,
+        "direct_queue_writes_process_total": 0,
+        "discarded_frames": 31,
+        "gpu_code_creation_absent": true,
+        "gpu_queue_operations_absent": true,
+        "micros": null,
+        "reason": "simulation-only render sink created no shader or pipeline objects, issued no queue operations, and discarded every candidate frame before GPU encoding",
+        "status": "discarded",
+        "submitted_command_buffers": 0,
+        "submitted_command_buffers_process_total": 0
+      },
+      "state_validation": {
+        "micros": 5536602,
+        "samples": 16,
+        "status": "measured"
+      },
+      "evidence": {
+        "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+        "simulated_ticks": 16,
+        "native_state_trajectory_sha256": "3fbb2bc9870f73486d12eef4166e7012669e0e305855ca0564f4bae901c3d94c",
+        "episode_payload_xxh3_128": [
+          "05f99faca6e9e0a7cafc7079856d9f27"
+        ],
+        "applicable_action_surface_context": {
+          "schema": "dusklight-native-tactic-action-surface-audit-context/v1",
+          "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
+          "goal_coordinate_f32_bits": [
+            3301897890,
+            1144404323,
+            3313779060
+          ],
+          "maximum_ticks": 40,
+          "seed": 0
+        },
+        "applicable_action_surface_sha256": "cb38d790a1b3406efe69e6d8280b2b66249971aa0f5ec9afc7a3a23feb64efaf",
+        "applicable_action_surface_boundaries": 16,
+        "applicable_action_descriptors": 2672,
+        "controller_output_sha256": "67e44bab28fd7c900c29b687e3cf77f938136ae75e96f4a84e0b701ee12675f3",
+        "first_hit_ticks": [
+          null
+        ],
+        "terminal_evidence_sha256": "418d0d3750a1d38a52e685e5ee641508bb531e2f01629dac1c29a6652c62580d",
+        "terminal_boundary_fingerprints": [
+          "e4a3b5ebd9e8858aa67681ddbf39e126"
+        ],
+        "process_local_state_proof_sha256": "5bbf1e9073c70e46349d3851f8c4ddcc29cf519c26da5123af64575a73f522af"
+      },
+      "configuration_verified": true,
+      "evidence_parity": true,
+      "passed": true
+    },
+    {
+      "condition": "gpu_frame_submission_retained",
+      "reference_condition": "production_all_disabled",
+      "comparators": {
+        "gpu_frame_submission": true,
+        "cpu_renderer_submission": false,
+        "presentation_lifecycle": false,
+        "imgui_frame_lifecycle": false,
+        "host_pacing": false,
+        "host_audio_device": false
+      },
+      "verify_state_hashes": true,
+      "launch": {
+        "spawn_call_micros": 54407,
+        "handshake_micros": 47643,
+        "initial_batch_wait_micros": 17862614,
+        "artifact_validation_micros": 10887,
+        "total_micros": 18012416
+      },
+      "batch_wall_micros": 13224180,
+      "simulation_micros": 35193,
+      "cpu_renderer_submission_micros": 0,
+      "headless_audit": {
+        "active": true,
+        "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+        "deterministic_audio_emulation": "retained",
+        "game_audio_update": "retained",
+        "gameplay_draw_traversal": "retained",
+        "gpu_frame_submission": "retained_null_backend_comparator",
+        "host_audio_device": "suppressed",
+        "host_pacing": "disabled",
+        "imgui_frame_lifecycle": "suppressed_on_candidate_ticks",
+        "presentation_lifecycle": "suppressed"
+      },
+      "gpu_work": {
+        "created_compute_pipelines_process_total": 0,
+        "created_render_pipelines_process_total": 154,
+        "created_shader_modules_process_total": 153,
+        "direct_queue_writes_process_total": 0,
+        "discarded_frames": 0,
+        "gpu_code_creation_absent": false,
+        "gpu_queue_operations_absent": false,
+        "micros": null,
+        "reason": "Aurora exposes submission counts but no authenticated GPU timestamps",
+        "status": "timestamp_unavailable",
+        "submitted_command_buffers": 32,
+        "submitted_command_buffers_process_total": 537
+      },
+      "state_validation": {
+        "micros": 5520761,
+        "samples": 16,
+        "status": "measured"
+      },
+      "evidence": {
+        "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+        "simulated_ticks": 16,
+        "native_state_trajectory_sha256": "3fbb2bc9870f73486d12eef4166e7012669e0e305855ca0564f4bae901c3d94c",
+        "episode_payload_xxh3_128": [
+          "05f99faca6e9e0a7cafc7079856d9f27"
+        ],
+        "applicable_action_surface_context": {
+          "schema": "dusklight-native-tactic-action-surface-audit-context/v1",
+          "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
+          "goal_coordinate_f32_bits": [
+            3301897890,
+            1144404323,
+            3313779060
+          ],
+          "maximum_ticks": 40,
+          "seed": 0
+        },
+        "applicable_action_surface_sha256": "cb38d790a1b3406efe69e6d8280b2b66249971aa0f5ec9afc7a3a23feb64efaf",
+        "applicable_action_surface_boundaries": 16,
+        "applicable_action_descriptors": 2672,
+        "controller_output_sha256": "67e44bab28fd7c900c29b687e3cf77f938136ae75e96f4a84e0b701ee12675f3",
+        "first_hit_ticks": [
+          null
+        ],
+        "terminal_evidence_sha256": "418d0d3750a1d38a52e685e5ee641508bb531e2f01629dac1c29a6652c62580d",
+        "terminal_boundary_fingerprints": [
+          "e4a3b5ebd9e8858aa67681ddbf39e126"
+        ],
+        "process_local_state_proof_sha256": "0512c805420d79a412e078ae80d3829e11fe680732eed7a62e63beedbafc67f1"
+      },
+      "configuration_verified": true,
+      "evidence_parity": true,
+      "passed": true
+    },
+    {
+      "condition": "presentation_lifecycle_retained",
+      "reference_condition": "gpu_frame_submission_retained",
+      "comparators": {
+        "gpu_frame_submission": true,
+        "cpu_renderer_submission": false,
+        "presentation_lifecycle": true,
+        "imgui_frame_lifecycle": false,
+        "host_pacing": false,
+        "host_audio_device": false
+      },
+      "verify_state_hashes": true,
+      "launch": {
+        "spawn_call_micros": 79260,
+        "handshake_micros": 27153,
+        "initial_batch_wait_micros": 17892046,
+        "artifact_validation_micros": 9284,
+        "total_micros": 18022522
+      },
+      "batch_wall_micros": 12973536,
+      "simulation_micros": 35831,
+      "cpu_renderer_submission_micros": 0,
+      "headless_audit": {
+        "active": true,
+        "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+        "deterministic_audio_emulation": "retained",
+        "game_audio_update": "retained",
+        "gameplay_draw_traversal": "retained",
+        "gpu_frame_submission": "retained_null_backend_comparator",
+        "host_audio_device": "suppressed",
+        "host_pacing": "disabled",
+        "imgui_frame_lifecycle": "suppressed_on_candidate_ticks",
+        "presentation_lifecycle": "retained_audit_comparator"
+      },
+      "gpu_work": {
+        "created_compute_pipelines_process_total": 0,
+        "created_render_pipelines_process_total": 154,
+        "created_shader_modules_process_total": 153,
+        "direct_queue_writes_process_total": 537,
+        "discarded_frames": 0,
+        "gpu_code_creation_absent": false,
+        "gpu_queue_operations_absent": false,
+        "micros": null,
+        "reason": "Aurora exposes submission counts but no authenticated GPU timestamps",
+        "status": "timestamp_unavailable",
+        "submitted_command_buffers": 32,
+        "submitted_command_buffers_process_total": 537
+      },
+      "state_validation": {
+        "micros": 5425198,
+        "samples": 16,
+        "status": "measured"
+      },
+      "evidence": {
+        "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+        "simulated_ticks": 16,
+        "native_state_trajectory_sha256": "3fbb2bc9870f73486d12eef4166e7012669e0e305855ca0564f4bae901c3d94c",
+        "episode_payload_xxh3_128": [
+          "05f99faca6e9e0a7cafc7079856d9f27"
+        ],
+        "applicable_action_surface_context": {
+          "schema": "dusklight-native-tactic-action-surface-audit-context/v1",
+          "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
+          "goal_coordinate_f32_bits": [
+            3301897890,
+            1144404323,
+            3313779060
+          ],
+          "maximum_ticks": 40,
+          "seed": 0
+        },
+        "applicable_action_surface_sha256": "cb38d790a1b3406efe69e6d8280b2b66249971aa0f5ec9afc7a3a23feb64efaf",
+        "applicable_action_surface_boundaries": 16,
+        "applicable_action_descriptors": 2672,
+        "controller_output_sha256": "67e44bab28fd7c900c29b687e3cf77f938136ae75e96f4a84e0b701ee12675f3",
+        "first_hit_ticks": [
+          null
+        ],
+        "terminal_evidence_sha256": "418d0d3750a1d38a52e685e5ee641508bb531e2f01629dac1c29a6652c62580d",
+        "terminal_boundary_fingerprints": [
+          "e4a3b5ebd9e8858aa67681ddbf39e126"
+        ],
+        "process_local_state_proof_sha256": "f29c22f6ca62507baa2d9862d7b553c37a5994f176d83fb4e44e6e7a2aa0034e"
+      },
+      "configuration_verified": true,
+      "evidence_parity": true,
+      "passed": true
+    },
+    {
+      "condition": "imgui_frame_lifecycle_retained",
+      "reference_condition": "presentation_lifecycle_retained",
+      "comparators": {
+        "gpu_frame_submission": true,
+        "cpu_renderer_submission": false,
+        "presentation_lifecycle": true,
+        "imgui_frame_lifecycle": true,
+        "host_pacing": false,
+        "host_audio_device": false
+      },
+      "verify_state_hashes": true,
+      "launch": {
+        "spawn_call_micros": 75321,
+        "handshake_micros": 28154,
+        "initial_batch_wait_micros": 17859763,
+        "artifact_validation_micros": 9319,
+        "total_micros": 17985692
+      },
+      "batch_wall_micros": 12945685,
+      "simulation_micros": 34235,
+      "cpu_renderer_submission_micros": 0,
+      "headless_audit": {
+        "active": true,
+        "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+        "deterministic_audio_emulation": "retained",
+        "game_audio_update": "retained",
+        "gameplay_draw_traversal": "retained",
+        "gpu_frame_submission": "retained_null_backend_comparator",
+        "host_audio_device": "suppressed",
+        "host_pacing": "disabled",
+        "imgui_frame_lifecycle": "retained_audit_comparator",
+        "presentation_lifecycle": "retained_audit_comparator"
+      },
+      "gpu_work": {
+        "created_compute_pipelines_process_total": 0,
+        "created_render_pipelines_process_total": 154,
+        "created_shader_modules_process_total": 153,
+        "direct_queue_writes_process_total": 537,
+        "discarded_frames": 0,
+        "gpu_code_creation_absent": false,
+        "gpu_queue_operations_absent": false,
+        "micros": null,
+        "reason": "Aurora exposes submission counts but no authenticated GPU timestamps",
+        "status": "timestamp_unavailable",
+        "submitted_command_buffers": 32,
+        "submitted_command_buffers_process_total": 537
+      },
+      "state_validation": {
+        "micros": 5476921,
+        "samples": 16,
+        "status": "measured"
+      },
+      "evidence": {
+        "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+        "simulated_ticks": 16,
+        "native_state_trajectory_sha256": "3fbb2bc9870f73486d12eef4166e7012669e0e305855ca0564f4bae901c3d94c",
+        "episode_payload_xxh3_128": [
+          "05f99faca6e9e0a7cafc7079856d9f27"
+        ],
+        "applicable_action_surface_context": {
+          "schema": "dusklight-native-tactic-action-surface-audit-context/v1",
+          "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
+          "goal_coordinate_f32_bits": [
+            3301897890,
+            1144404323,
+            3313779060
+          ],
+          "maximum_ticks": 40,
+          "seed": 0
+        },
+        "applicable_action_surface_sha256": "cb38d790a1b3406efe69e6d8280b2b66249971aa0f5ec9afc7a3a23feb64efaf",
+        "applicable_action_surface_boundaries": 16,
+        "applicable_action_descriptors": 2672,
+        "controller_output_sha256": "67e44bab28fd7c900c29b687e3cf77f938136ae75e96f4a84e0b701ee12675f3",
+        "first_hit_ticks": [
+          null
+        ],
+        "terminal_evidence_sha256": "418d0d3750a1d38a52e685e5ee641508bb531e2f01629dac1c29a6652c62580d",
+        "terminal_boundary_fingerprints": [
+          "e4a3b5ebd9e8858aa67681ddbf39e126"
+        ],
+        "process_local_state_proof_sha256": "a9d4bdc8547f8f68d82afb2dc92f93bb35257ee0c11b2c450f32af7afde4d8b0"
+      },
+      "configuration_verified": true,
+      "evidence_parity": true,
+      "passed": true
+    },
+    {
+      "condition": "cpu_renderer_submission_retained",
+      "reference_condition": "imgui_frame_lifecycle_retained",
+      "comparators": {
+        "gpu_frame_submission": true,
+        "cpu_renderer_submission": true,
+        "presentation_lifecycle": true,
+        "imgui_frame_lifecycle": true,
+        "host_pacing": false,
+        "host_audio_device": false
+      },
+      "verify_state_hashes": true,
+      "launch": {
+        "spawn_call_micros": 70220,
+        "handshake_micros": 28994,
+        "initial_batch_wait_micros": 18180507,
+        "artifact_validation_micros": 8836,
+        "total_micros": 18300642
+      },
+      "batch_wall_micros": 13237703,
+      "simulation_micros": 62451,
+      "cpu_renderer_submission_micros": 29237,
+      "headless_audit": {
+        "active": true,
+        "cpu_renderer_submission": "retained_audit_comparator",
+        "deterministic_audio_emulation": "retained",
+        "game_audio_update": "retained",
+        "gameplay_draw_traversal": "retained",
+        "gpu_frame_submission": "retained_null_backend_comparator",
+        "host_audio_device": "suppressed",
+        "host_pacing": "disabled",
+        "imgui_frame_lifecycle": "retained_audit_comparator",
+        "presentation_lifecycle": "retained_audit_comparator"
+      },
+      "gpu_work": {
+        "created_compute_pipelines_process_total": 0,
+        "created_render_pipelines_process_total": 154,
+        "created_shader_modules_process_total": 153,
+        "direct_queue_writes_process_total": 537,
+        "discarded_frames": 0,
+        "gpu_code_creation_absent": false,
+        "gpu_queue_operations_absent": false,
+        "micros": null,
+        "reason": "Aurora exposes submission counts but no authenticated GPU timestamps",
+        "status": "timestamp_unavailable",
+        "submitted_command_buffers": 32,
+        "submitted_command_buffers_process_total": 537
+      },
+      "state_validation": {
+        "micros": 5315385,
+        "samples": 16,
+        "status": "measured"
+      },
+      "evidence": {
+        "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+        "simulated_ticks": 16,
+        "native_state_trajectory_sha256": "3fbb2bc9870f73486d12eef4166e7012669e0e305855ca0564f4bae901c3d94c",
+        "episode_payload_xxh3_128": [
+          "05f99faca6e9e0a7cafc7079856d9f27"
+        ],
+        "applicable_action_surface_context": {
+          "schema": "dusklight-native-tactic-action-surface-audit-context/v1",
+          "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
+          "goal_coordinate_f32_bits": [
+            3301897890,
+            1144404323,
+            3313779060
+          ],
+          "maximum_ticks": 40,
+          "seed": 0
+        },
+        "applicable_action_surface_sha256": "cb38d790a1b3406efe69e6d8280b2b66249971aa0f5ec9afc7a3a23feb64efaf",
+        "applicable_action_surface_boundaries": 16,
+        "applicable_action_descriptors": 2672,
+        "controller_output_sha256": "67e44bab28fd7c900c29b687e3cf77f938136ae75e96f4a84e0b701ee12675f3",
+        "first_hit_ticks": [
+          null
+        ],
+        "terminal_evidence_sha256": "418d0d3750a1d38a52e685e5ee641508bb531e2f01629dac1c29a6652c62580d",
+        "terminal_boundary_fingerprints": [
+          "e4a3b5ebd9e8858aa67681ddbf39e126"
+        ],
+        "process_local_state_proof_sha256": "bd0bf407229b2a741463a7b2bb3346147c97726f8b3a5a323c777db782d97354"
+      },
+      "configuration_verified": true,
+      "evidence_parity": true,
+      "passed": true
+    },
+    {
+      "condition": "host_pacing_retained",
+      "reference_condition": "production_all_disabled",
+      "comparators": {
+        "gpu_frame_submission": false,
+        "cpu_renderer_submission": false,
+        "presentation_lifecycle": false,
+        "imgui_frame_lifecycle": false,
+        "host_pacing": true,
+        "host_audio_device": false
+      },
+      "verify_state_hashes": true,
+      "launch": {
+        "spawn_call_micros": 88649,
+        "handshake_micros": 27020,
+        "initial_batch_wait_micros": 26476682,
+        "artifact_validation_micros": 7554,
+        "total_micros": 26613803
+      },
+      "batch_wall_micros": 8791441,
+      "simulation_micros": 23564,
+      "cpu_renderer_submission_micros": 0,
+      "headless_audit": {
+        "active": true,
+        "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+        "deterministic_audio_emulation": "retained",
+        "game_audio_update": "retained",
+        "gameplay_draw_traversal": "retained",
+        "gpu_frame_submission": "discarded_before_encoding",
+        "host_audio_device": "suppressed",
+        "host_pacing": "enabled",
+        "imgui_frame_lifecycle": "suppressed_on_candidate_ticks",
+        "presentation_lifecycle": "suppressed"
+      },
+      "gpu_work": {
+        "created_compute_pipelines_process_total": 0,
+        "created_render_pipelines_process_total": 0,
+        "created_shader_modules_process_total": 0,
+        "direct_queue_writes_process_total": 0,
+        "discarded_frames": 31,
+        "gpu_code_creation_absent": true,
+        "gpu_queue_operations_absent": true,
+        "micros": null,
+        "reason": "simulation-only render sink created no shader or pipeline objects, issued no queue operations, and discarded every candidate frame before GPU encoding",
+        "status": "discarded",
+        "submitted_command_buffers": 0,
+        "submitted_command_buffers_process_total": 0
+      },
+      "state_validation": {
+        "micros": 3565249,
+        "samples": 16,
+        "status": "measured"
+      },
+      "evidence": {
+        "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+        "simulated_ticks": 16,
+        "native_state_trajectory_sha256": "3fbb2bc9870f73486d12eef4166e7012669e0e305855ca0564f4bae901c3d94c",
+        "episode_payload_xxh3_128": [
+          "05f99faca6e9e0a7cafc7079856d9f27"
+        ],
+        "applicable_action_surface_context": {
+          "schema": "dusklight-native-tactic-action-surface-audit-context/v1",
+          "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
+          "goal_coordinate_f32_bits": [
+            3301897890,
+            1144404323,
+            3313779060
+          ],
+          "maximum_ticks": 40,
+          "seed": 0
+        },
+        "applicable_action_surface_sha256": "cb38d790a1b3406efe69e6d8280b2b66249971aa0f5ec9afc7a3a23feb64efaf",
+        "applicable_action_surface_boundaries": 16,
+        "applicable_action_descriptors": 2672,
+        "controller_output_sha256": "67e44bab28fd7c900c29b687e3cf77f938136ae75e96f4a84e0b701ee12675f3",
+        "first_hit_ticks": [
+          null
+        ],
+        "terminal_evidence_sha256": "418d0d3750a1d38a52e685e5ee641508bb531e2f01629dac1c29a6652c62580d",
+        "terminal_boundary_fingerprints": [
+          "e4a3b5ebd9e8858aa67681ddbf39e126"
+        ],
+        "process_local_state_proof_sha256": "cd397c0d10c57b44af2337057160d96877735b67cbcb93ba116cfaf99f6a86f1"
+      },
+      "configuration_verified": true,
+      "evidence_parity": true,
+      "passed": true
+    },
+    {
+      "condition": "host_audio_device_retained",
+      "reference_condition": "production_all_disabled",
+      "comparators": {
+        "gpu_frame_submission": false,
+        "cpu_renderer_submission": false,
+        "presentation_lifecycle": false,
+        "imgui_frame_lifecycle": false,
+        "host_pacing": false,
+        "host_audio_device": true
+      },
+      "verify_state_hashes": true,
+      "launch": {
+        "spawn_call_micros": 83290,
+        "handshake_micros": 27460,
+        "initial_batch_wait_micros": 14108619,
+        "artifact_validation_micros": 10735,
+        "total_micros": 14243592
+      },
+      "batch_wall_micros": 9892360,
+      "simulation_micros": 30634,
+      "cpu_renderer_submission_micros": 0,
+      "headless_audit": {
+        "active": true,
+        "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+        "deterministic_audio_emulation": "retained",
+        "game_audio_update": "retained",
+        "gameplay_draw_traversal": "retained",
+        "gpu_frame_submission": "discarded_before_encoding",
+        "host_audio_device": "active",
+        "host_pacing": "disabled",
+        "imgui_frame_lifecycle": "suppressed_on_candidate_ticks",
+        "presentation_lifecycle": "suppressed"
+      },
+      "gpu_work": {
+        "created_compute_pipelines_process_total": 0,
+        "created_render_pipelines_process_total": 0,
+        "created_shader_modules_process_total": 0,
+        "direct_queue_writes_process_total": 0,
+        "discarded_frames": 31,
+        "gpu_code_creation_absent": true,
+        "gpu_queue_operations_absent": true,
+        "micros": null,
+        "reason": "simulation-only render sink created no shader or pipeline objects, issued no queue operations, and discarded every candidate frame before GPU encoding",
+        "status": "discarded",
+        "submitted_command_buffers": 0,
+        "submitted_command_buffers_process_total": 0
+      },
+      "state_validation": {
+        "micros": 4184419,
+        "samples": 16,
+        "status": "measured"
+      },
+      "evidence": {
+        "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+        "simulated_ticks": 16,
+        "native_state_trajectory_sha256": "3fbb2bc9870f73486d12eef4166e7012669e0e305855ca0564f4bae901c3d94c",
+        "episode_payload_xxh3_128": [
+          "05f99faca6e9e0a7cafc7079856d9f27"
+        ],
+        "applicable_action_surface_context": {
+          "schema": "dusklight-native-tactic-action-surface-audit-context/v1",
+          "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
+          "goal_coordinate_f32_bits": [
+            3301897890,
+            1144404323,
+            3313779060
+          ],
+          "maximum_ticks": 40,
+          "seed": 0
+        },
+        "applicable_action_surface_sha256": "cb38d790a1b3406efe69e6d8280b2b66249971aa0f5ec9afc7a3a23feb64efaf",
+        "applicable_action_surface_boundaries": 16,
+        "applicable_action_descriptors": 2672,
+        "controller_output_sha256": "67e44bab28fd7c900c29b687e3cf77f938136ae75e96f4a84e0b701ee12675f3",
+        "first_hit_ticks": [
+          null
+        ],
+        "terminal_evidence_sha256": "418d0d3750a1d38a52e685e5ee641508bb531e2f01629dac1c29a6652c62580d",
+        "terminal_boundary_fingerprints": [
+          "e4a3b5ebd9e8858aa67681ddbf39e126"
+        ],
+        "process_local_state_proof_sha256": "2d397c6e1e43629f0c66b183a9a0a76fb8401f3737d2d878734f18278ce625dd"
+      },
+      "configuration_verified": true,
+      "evidence_parity": true,
+      "passed": true
+    },
+    {
+      "condition": "all_retained_composite",
+      "reference_condition": "production_all_disabled",
+      "comparators": {
+        "gpu_frame_submission": true,
+        "cpu_renderer_submission": true,
+        "presentation_lifecycle": true,
+        "imgui_frame_lifecycle": true,
+        "host_pacing": true,
+        "host_audio_device": true
+      },
+      "verify_state_hashes": true,
+      "launch": {
+        "spawn_call_micros": 94314,
+        "handshake_micros": 32269,
+        "initial_batch_wait_micros": 26044714,
+        "artifact_validation_micros": 8860,
+        "total_micros": 26193839
+      },
+      "batch_wall_micros": 8173007,
+      "simulation_micros": 41545,
+      "cpu_renderer_submission_micros": 19077,
+      "headless_audit": {
+        "active": true,
+        "cpu_renderer_submission": "retained_audit_comparator",
+        "deterministic_audio_emulation": "retained",
+        "game_audio_update": "retained",
+        "gameplay_draw_traversal": "retained",
+        "gpu_frame_submission": "retained_null_backend_comparator",
+        "host_audio_device": "active",
+        "host_pacing": "enabled",
+        "imgui_frame_lifecycle": "retained_audit_comparator",
+        "presentation_lifecycle": "retained_audit_comparator"
+      },
+      "gpu_work": {
+        "created_compute_pipelines_process_total": 0,
+        "created_render_pipelines_process_total": 154,
+        "created_shader_modules_process_total": 153,
+        "direct_queue_writes_process_total": 537,
+        "discarded_frames": 0,
+        "gpu_code_creation_absent": false,
+        "gpu_queue_operations_absent": false,
+        "micros": null,
+        "reason": "Aurora exposes submission counts but no authenticated GPU timestamps",
+        "status": "timestamp_unavailable",
+        "submitted_command_buffers": 31,
+        "submitted_command_buffers_process_total": 537
+      },
+      "state_validation": {
+        "micros": 3447841,
+        "samples": 16,
+        "status": "measured"
+      },
+      "evidence": {
+        "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+        "simulated_ticks": 16,
+        "native_state_trajectory_sha256": "3fbb2bc9870f73486d12eef4166e7012669e0e305855ca0564f4bae901c3d94c",
+        "episode_payload_xxh3_128": [
+          "05f99faca6e9e0a7cafc7079856d9f27"
+        ],
+        "applicable_action_surface_context": {
+          "schema": "dusklight-native-tactic-action-surface-audit-context/v1",
+          "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
+          "goal_coordinate_f32_bits": [
+            3301897890,
+            1144404323,
+            3313779060
+          ],
+          "maximum_ticks": 40,
+          "seed": 0
+        },
+        "applicable_action_surface_sha256": "cb38d790a1b3406efe69e6d8280b2b66249971aa0f5ec9afc7a3a23feb64efaf",
+        "applicable_action_surface_boundaries": 16,
+        "applicable_action_descriptors": 2672,
+        "controller_output_sha256": "67e44bab28fd7c900c29b687e3cf77f938136ae75e96f4a84e0b701ee12675f3",
+        "first_hit_ticks": [
+          null
+        ],
+        "terminal_evidence_sha256": "418d0d3750a1d38a52e685e5ee641508bb531e2f01629dac1c29a6652c62580d",
+        "terminal_boundary_fingerprints": [
+          "e4a3b5ebd9e8858aa67681ddbf39e126"
+        ],
+        "process_local_state_proof_sha256": "dcf3cced817451fa6d3ad3685e7bb1119d2a6c1014f83bda13bd899a017620c5"
+      },
+      "configuration_verified": true,
+      "evidence_parity": true,
+      "passed": true
+    },
+    {
+      "condition": "state_hash_proof_disabled",
+      "reference_condition": "production_all_disabled",
+      "comparators": {
+        "gpu_frame_submission": false,
+        "cpu_renderer_submission": false,
+        "presentation_lifecycle": false,
+        "imgui_frame_lifecycle": false,
+        "host_pacing": false,
+        "host_audio_device": false
+      },
+      "verify_state_hashes": false,
+      "launch": {
+        "spawn_call_micros": 0,
+        "handshake_micros": 0,
+        "initial_batch_wait_micros": 0,
+        "artifact_validation_micros": 0,
+        "total_micros": 0
+      },
+      "batch_wall_micros": 335164,
+      "simulation_micros": 27449,
+      "cpu_renderer_submission_micros": 0,
+      "headless_audit": {
+        "active": true,
+        "cpu_renderer_submission": "suppressed_on_candidate_ticks",
+        "deterministic_audio_emulation": "retained",
+        "game_audio_update": "retained",
+        "gameplay_draw_traversal": "retained",
+        "gpu_frame_submission": "discarded_before_encoding",
+        "host_audio_device": "suppressed",
+        "host_pacing": "disabled",
+        "imgui_frame_lifecycle": "suppressed_on_candidate_ticks",
+        "presentation_lifecycle": "suppressed"
+      },
+      "gpu_work": {
+        "created_compute_pipelines_process_total": 0,
+        "created_render_pipelines_process_total": 0,
+        "created_shader_modules_process_total": 0,
+        "direct_queue_writes_process_total": 0,
+        "discarded_frames": 16,
+        "gpu_code_creation_absent": true,
+        "gpu_queue_operations_absent": true,
+        "micros": null,
+        "reason": "simulation-only render sink created no shader or pipeline objects, issued no queue operations, and discarded every candidate frame before GPU encoding",
+        "status": "discarded",
+        "submitted_command_buffers": 0,
+        "submitted_command_buffers_process_total": 0
+      },
+      "state_validation": {
+        "micros": null,
+        "status": "disabled"
+      },
+      "evidence": {
+        "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+        "simulated_ticks": 16,
+        "native_state_trajectory_sha256": "3fbb2bc9870f73486d12eef4166e7012669e0e305855ca0564f4bae901c3d94c",
+        "episode_payload_xxh3_128": [
+          "05f99faca6e9e0a7cafc7079856d9f27"
+        ],
+        "applicable_action_surface_context": {
+          "schema": "dusklight-native-tactic-action-surface-audit-context/v1",
+          "action_schema_sha256": "93c3f8358e0681ed616850a0f337f7475715021b0f32425d26980c25c7a40295",
+          "goal_coordinate_f32_bits": [
+            3301897890,
+            1144404323,
+            3313779060
+          ],
+          "maximum_ticks": 40,
+          "seed": 0
+        },
+        "applicable_action_surface_sha256": "cb38d790a1b3406efe69e6d8280b2b66249971aa0f5ec9afc7a3a23feb64efaf",
+        "applicable_action_surface_boundaries": 16,
+        "applicable_action_descriptors": 2672,
+        "controller_output_sha256": "67e44bab28fd7c900c29b687e3cf77f938136ae75e96f4a84e0b701ee12675f3",
+        "first_hit_ticks": [
+          null
+        ],
+        "terminal_evidence_sha256": "418d0d3750a1d38a52e685e5ee641508bb531e2f01629dac1c29a6652c62580d",
+        "terminal_boundary_fingerprints": [
+          "e4a3b5ebd9e8858aa67681ddbf39e126"
+        ],
+        "process_local_state_proof_sha256": null
+      },
+      "configuration_verified": true,
+      "evidence_parity": true,
+      "passed": true
+    }
+  ],
+  "passed": true
+}

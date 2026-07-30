@@ -1,0 +1,183 @@
+{
+  "schema": "dusklight-native-subsystem-parity-evidence-bundle/v1",
+  "content_sha256": "f21d10b2fd0677b174e741d8ddbe59b450d2c0525b430f5691f55c9bc5dad454",
+  "optimization_request": {
+    "path": "optimization-request.json",
+    "sha256": "ef2f740a5e1244aab0ca89d91afc830d53384ecf1894243b232401d2447d25e5",
+    "bytes": 3298
+  },
+  "execution_binding": {
+    "path": "execution-binding.json",
+    "sha256": "8788ee8e0ea963fadcfa4dcf4630e717f5c2673bebe5ddaba04786d61d745a6f",
+    "bytes": 2741
+  },
+  "report": {
+    "path": "report.json",
+    "sha256": "8e42a27a2e73ca43e91b45ab68e673cb1ccbc379f544d1752ae27aa08c2c50f9",
+    "bytes": 32856
+  },
+  "conditions": [
+    {
+      "condition": "production_all_disabled",
+      "request": {
+        "path": "conditions/production_all_disabled/request.json",
+        "sha256": "0ab4061f64aad3581f7c73ee3535a3656b5d342ef1e091dd0aec9ca9dd626b5a",
+        "bytes": 6965
+      },
+      "result": {
+        "path": "conditions/production_all_disabled/result.json",
+        "sha256": "12660302d9e586b4af3cbd4a84f1499469f47bb6b4f6f16a35552335b5333ef5",
+        "bytes": 11881
+      },
+      "episode_shard": {
+        "path": "conditions/production_all_disabled/episode.dseps",
+        "sha256": "ec4b57c8028fabf8022e39eda56c60cbe92fd5aef23a07202d03efe9bfc5a953",
+        "bytes": 13667
+      }
+    },
+    {
+      "condition": "gpu_frame_submission_retained",
+      "request": {
+        "path": "conditions/gpu_frame_submission_retained/request.json",
+        "sha256": "0ab4061f64aad3581f7c73ee3535a3656b5d342ef1e091dd0aec9ca9dd626b5a",
+        "bytes": 6965
+      },
+      "result": {
+        "path": "conditions/gpu_frame_submission_retained/result.json",
+        "sha256": "33a7228c8df5e5463028f6e26621c6280263bfc325bd21bc1a4df457e974864c",
+        "bytes": 11832
+      },
+      "episode_shard": {
+        "path": "conditions/gpu_frame_submission_retained/episode.dseps",
+        "sha256": "50d047f068fb070aa9eb63642b075e45819824950931355939b68f8b6fc0b958",
+        "bytes": 13667
+      }
+    },
+    {
+      "condition": "presentation_lifecycle_retained",
+      "request": {
+        "path": "conditions/presentation_lifecycle_retained/request.json",
+        "sha256": "0ab4061f64aad3581f7c73ee3535a3656b5d342ef1e091dd0aec9ca9dd626b5a",
+        "bytes": 6965
+      },
+      "result": {
+        "path": "conditions/presentation_lifecycle_retained/result.json",
+        "sha256": "e99bb12755f0a749368f6df7dcb5d88fec75e20eadb7cf8e375e743d5b0be204",
+        "bytes": 11851
+      },
+      "episode_shard": {
+        "path": "conditions/presentation_lifecycle_retained/episode.dseps",
+        "sha256": "2d9b75be8a4655d4b5e25b7148fc41b6226ec33a78c9e1edaa50cb1a9bb6c459",
+        "bytes": 13667
+      }
+    },
+    {
+      "condition": "imgui_frame_lifecycle_retained",
+      "request": {
+        "path": "conditions/imgui_frame_lifecycle_retained/request.json",
+        "sha256": "0ab4061f64aad3581f7c73ee3535a3656b5d342ef1e091dd0aec9ca9dd626b5a",
+        "bytes": 6965
+      },
+      "result": {
+        "path": "conditions/imgui_frame_lifecycle_retained/result.json",
+        "sha256": "0c1d5d171c250613879502e25104921f37793099da5a362ab32acc3af6bca557",
+        "bytes": 11846
+      },
+      "episode_shard": {
+        "path": "conditions/imgui_frame_lifecycle_retained/episode.dseps",
+        "sha256": "bd51769a7d8b1a00e841c890855822dee1403c6b217b75ccd70567db4edd74e3",
+        "bytes": 13667
+      }
+    },
+    {
+      "condition": "cpu_renderer_submission_retained",
+      "request": {
+        "path": "conditions/cpu_renderer_submission_retained/request.json",
+        "sha256": "0ab4061f64aad3581f7c73ee3535a3656b5d342ef1e091dd0aec9ca9dd626b5a",
+        "bytes": 6965
+      },
+      "result": {
+        "path": "conditions/cpu_renderer_submission_retained/result.json",
+        "sha256": "fcfb3a63249bb506860f0be682f5c810ec9cd6acd4640419a29b49de047af967",
+        "bytes": 11848
+      },
+      "episode_shard": {
+        "path": "conditions/cpu_renderer_submission_retained/episode.dseps",
+        "sha256": "7b45bedde1df47f1c98f911058a04bb93c25def2a009a2383f26d7a8c13f683d",
+        "bytes": 13667
+      }
+    },
+    {
+      "condition": "host_pacing_retained",
+      "request": {
+        "path": "conditions/host_pacing_retained/request.json",
+        "sha256": "0ab4061f64aad3581f7c73ee3535a3656b5d342ef1e091dd0aec9ca9dd626b5a",
+        "bytes": 6965
+      },
+      "result": {
+        "path": "conditions/host_pacing_retained/result.json",
+        "sha256": "ef07ee1fae45240d156574d4dc4524b8328cbb6625d8bda4664b27476f7dd387",
+        "bytes": 11874
+      },
+      "episode_shard": {
+        "path": "conditions/host_pacing_retained/episode.dseps",
+        "sha256": "6c03876d5c19c7f4af8797c11c6677885f44206c22454a48a5b33086cba851b0",
+        "bytes": 13667
+      }
+    },
+    {
+      "condition": "host_audio_device_retained",
+      "request": {
+        "path": "conditions/host_audio_device_retained/request.json",
+        "sha256": "0ab4061f64aad3581f7c73ee3535a3656b5d342ef1e091dd0aec9ca9dd626b5a",
+        "bytes": 6965
+      },
+      "result": {
+        "path": "conditions/host_audio_device_retained/result.json",
+        "sha256": "4a828449292ab8c4d9757032461b9c30fbf0886304c6a45352fc24f514c55ff6",
+        "bytes": 11879
+      },
+      "episode_shard": {
+        "path": "conditions/host_audio_device_retained/episode.dseps",
+        "sha256": "29296d523198055406725112eda837bc444757f7d7d8869cfc2be4f61ab50f16",
+        "bytes": 13667
+      }
+    },
+    {
+      "condition": "all_retained_composite",
+      "request": {
+        "path": "conditions/all_retained_composite/request.json",
+        "sha256": "0ab4061f64aad3581f7c73ee3535a3656b5d342ef1e091dd0aec9ca9dd626b5a",
+        "bytes": 6965
+      },
+      "result": {
+        "path": "conditions/all_retained_composite/result.json",
+        "sha256": "d3c88d8c619a12d8ec31f2c43ee1cf6ba787d9c7fb1165aabac712f6c982d16f",
+        "bytes": 11830
+      },
+      "episode_shard": {
+        "path": "conditions/all_retained_composite/episode.dseps",
+        "sha256": "b2aa1585595e8924d9e9e50dc3a3128de1b2f2d6c935610f926f4961e7352a71",
+        "bytes": 13667
+      }
+    },
+    {
+      "condition": "state_hash_proof_disabled",
+      "request": {
+        "path": "conditions/state_hash_proof_disabled/request.json",
+        "sha256": "33c58e90c93e3e6c1a1a880318baa5d96a02274e5e0c6e2fe0d98e1776099133",
+        "bytes": 6966
+      },
+      "result": {
+        "path": "conditions/state_hash_proof_disabled/result.json",
+        "sha256": "b16602488933a75a836f81374cadb4e39a7649d4d95dc0bb009bb040b52221bf",
+        "bytes": 7332
+      },
+      "episode_shard": {
+        "path": "conditions/state_hash_proof_disabled/episode.dseps",
+        "sha256": "ec4b57c8028fabf8022e39eda56c60cbe92fd5aef23a07202d03efe9bfc5a953",
+        "bytes": 13667
+      }
+    }
+  ]
+}

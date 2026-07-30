@@ -223,8 +223,16 @@ impl NativeTacticScratchCampaignAudit {
     }
 
     pub fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
-        if self.schema != NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3
-            || self.content_sha256 == Digest::ZERO
+        let seed_is_valid: fn(&NativeTacticScratchSeedAudit) -> bool = match self.schema.as_str() {
+            NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2 => seed_is_valid_v2,
+            NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3 => seed_is_valid_v3,
+            _ => {
+                return Err(route_message(
+                    "scratch campaign audit schema is unsupported",
+                ));
+            }
+        };
+        if self.content_sha256 == Digest::ZERO
             || self.route_report_sha256 == Digest::ZERO
             || self.execution_plan_sha256 == Digest::ZERO
             || self.objective_sha256 == Digest::ZERO
@@ -741,7 +749,7 @@ fn stop_reasons(
     reasons
 }
 
-fn seed_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
+fn seed_is_valid_v3(seed: &NativeTacticScratchSeedAudit) -> bool {
     let Some(total_proposals) = seed.decisions.iter().try_fold(0_u64, |total, decision| {
         total.checked_add(decision.proposal_count)
     }) else {
@@ -801,6 +809,82 @@ fn seed_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
             .all(|pair| pair[0] <= pair[1])
         && seed.best_authenticated_tick == seed.terminal_path_ticks.first().copied()
         && terminal_improvement_timeline_is_valid(seed)
+}
+
+fn seed_is_valid_v2(seed: &NativeTacticScratchSeedAudit) -> bool {
+    let Some(total_proposals) = seed.decisions.iter().try_fold(0_u64, |total, decision| {
+        total.checked_add(decision.proposal_count)
+    }) else {
+        return false;
+    };
+    let first_terminal_valid = match (
+        seed.terminal_discovered,
+        seed.first_terminal_decision_index,
+        seed.time_to_first_terminal_micros,
+        seed.proposal_expansions_to_first_terminal,
+        seed.best_authenticated_tick,
+    ) {
+        (true, Some(decision), Some(_), Some(expansions), Some(_)) => {
+            expansions > 0
+                && seed
+                    .decisions
+                    .iter()
+                    .any(|row| row.decision_index == decision && row.terminal_proposal_count > 0)
+        }
+        (false, None, None, None, None) => true,
+        _ => false,
+    };
+    seed.decisions
+        .windows(2)
+        .all(|pair| pair[0].decision_index < pair[1].decision_index)
+        && !seed.stop_reasons.is_empty()
+        && total_proposals == seed.total_proposal_expansions
+        && seed.completed_graph_leases == total_proposals
+        && seed.proposal_dispatches
+            == seed
+                .completed_graph_leases
+                .saturating_add(seed.retryable_graph_leases)
+                .saturating_add(seed.cancelled_graph_leases)
+                .saturating_add(seed.failed_graph_leases)
+                .saturating_add(seed.unresolved_graph_leases)
+        && seed.unresolved_graph_leases == 0
+        && (!seed.action_surface_timeline_complete
+            || seed.decisions.iter().all(|decision| {
+                !decision.applicable_tactics.is_empty()
+                    && decision
+                        .applicable_tactics
+                        .iter()
+                        .filter(|tactic| tactic.selected)
+                        .count()
+                        == 1
+                    && decision.applicable_tactics.iter().any(|tactic| {
+                        tactic.selected && tactic.option_id == decision.selected_option_id
+                    })
+            }))
+        && (!seed.scheduler_timeline_complete
+            || seed.decisions.iter().all(|decision| {
+                decision
+                    .scheduler_decision
+                    .as_ref()
+                    .is_some_and(|scheduler| {
+                        scheduler.learner_model_sha256 == decision.learner_snapshot_sha256
+                            && scheduler.validate().is_ok()
+                    })
+            }))
+        && first_terminal_valid
+        && seed.terminal_discovered == !seed.terminal_path_ticks.is_empty()
+        && seed.best_authenticated_tick == seed.terminal_path_ticks.first().copied()
+        && (!seed.terminal_improvement_timing_complete
+            || (seed.best_terminal_decision_index.is_some() == seed.terminal_discovered
+                && seed.time_to_best_terminal_micros.is_some() == seed.terminal_discovered
+                && seed.proposal_expansions_to_best_terminal.is_some() == seed.terminal_discovered
+                && seed.useful_graph_expansions_to_best_terminal.is_some()
+                    == seed.terminal_discovered
+                && seed
+                    .terminal_improvements
+                    .last()
+                    .map(|row| row.authenticated_tick)
+                    == seed.best_authenticated_tick))
 }
 
 fn first_terminal_evidence_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
@@ -1143,7 +1227,7 @@ mod tests {
         let seed = valid_terminal_seed_audit();
         assert!(first_terminal_evidence_is_valid(&seed));
         assert!(terminal_improvement_timeline_is_valid(&seed));
-        assert!(seed_is_valid(&seed));
+        assert!(seed_is_valid_v3(&seed));
 
         let mut detached_wall = seed.clone();
         detached_wall.time_to_first_terminal_micros = Some(11);
@@ -1180,7 +1264,7 @@ mod tests {
                 authenticated_tick: 8,
             });
         assert!(terminal_improvement_timeline_is_valid(&seed));
-        assert!(seed_is_valid(&seed));
+        assert!(seed_is_valid_v3(&seed));
 
         let mut non_improving = seed.clone();
         non_improving.terminal_improvements[1].authenticated_tick = 9;
@@ -1207,5 +1291,14 @@ mod tests {
         seed.useful_graph_expansions_to_best_terminal = None;
         seed.terminal_improvement_timing_complete = false;
         assert!(!terminal_improvement_timeline_is_valid(&seed));
+    }
+
+    #[test]
+    fn legacy_v2_validation_does_not_fabricate_v3_timeline_completeness() {
+        let mut seed = valid_terminal_seed_audit();
+        seed.useful_graph_expansions_to_first_terminal = None;
+        seed.terminal_improvement_timing_complete = false;
+        assert!(seed_is_valid_v2(&seed));
+        assert!(!seed_is_valid_v3(&seed));
     }
 }
