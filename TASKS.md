@@ -49,7 +49,7 @@ The incoming 2026-07-29 work made substantial, useful progress:
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 319 tests.
+  orchestration suite is hermetic and passes all 322 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
   tape/result, source-authority evidence, and a content-bound campaign audit.
@@ -203,6 +203,17 @@ The incoming 2026-07-29 work made substantial, useful progress:
   incremental persistence head to remain unchanged. This is a source-level
   bottleneck fix, not retained curve evidence; rerun a matched cell before
   claiming an end-to-end improvement.
+- The exact matched one-worker treatment at checkpoint `d6f386d62f` preserved
+  the request, execution plan, 16 decisions, 256 useful expansions, 5,096
+  native ticks, five learner updates, 256 replay rows, and useful-expansion-set
+  identity. Structurally shared ordered graph indexes and incremental learner
+  projection reduced duplicate graph admission by 99.2%, campaign admission by
+  39.7%, orchestration by 38.6%, and wall time by 9.3%, raising useful
+  expansion throughput from about `0.149` to `0.164` per second. The remaining
+  measured costs are about 337 seconds of persistence, 326 seconds of tactic
+  execution including restore/capture, 196 seconds in the first authoritative
+  batch admission, and 178 seconds of model update. The local committed sample
+  is matched diagnostic evidence, not the required sealed ten-cell curve.
 
 That campaign proves bounded terminal discovery under its exact conditions. It
 does not prove practical discovery, useful native learning, route
@@ -452,9 +463,15 @@ Exit gate:
       history-dependent coordinator cost despite only `36.3` seconds of native
       simulation in roughly `1,717.4` wall seconds. Checkpoint `e7803326dc`
       removes a duplicate whole-graph clone, admission, projection, and dirty
-      persistence mark from each retained selected outcome; all 319
-      orchestration tests pass. The matched treatment and remaining v4 cells
-      must still identify the steady-state saturation point.
+      persistence mark from each retained selected outcome. Checkpoint
+      `d6f386d62f` makes the remaining atomic graph transaction structurally
+      shared and merges only newly admitted learner rows while preserving
+      byte-identical graph serialization. All 322 orchestration tests and the
+      clean-checkout evidence audit pass. The exact matched cell reduced graph
+      admission 99.2% and wall time 9.3%, but still spent about 196 seconds in
+      authoritative batch admission. Remove that measured path cost before
+      spending the remaining v4 cells; the curve must still identify the
+      steady-state saturation point.
 - [x] Preserve native state, applicable actions, controller output, terminal
       evidence, and first-hit tick for every disabled presentation subsystem.
       Source checkpoint `703dcdbbba` advances the parity report to v2 and
