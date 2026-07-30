@@ -312,6 +312,12 @@ Exit gate:
       to first terminal and best terminal, selected-node and selected-action
       reasons, exploration versus learned selections, restores and fallbacks,
       learner revisions consumed, terminal-path lengths, and stop reasons.
+      Source checkpoint `978f7ee3b1` advances the scratch campaign audit to
+      v3: terminal-improvement ticks are source-relative instead of absolute
+      tape frames, and every timeline proposal must resolve through its
+      retained scheduler identity to matching completed executable graph
+      evidence. This remains open pending compilation and a retained v3 audit
+      over the diagnostic campaign.
 - [ ] Compare each discovered route with the `131`-tick ordinary replay at the
       level of trajectory, velocity retention, action availability, roll/camera
       use, option duration, detour, contact-correlated slowdown, and idle or
@@ -468,7 +474,13 @@ Exit gate:
       sequence coverage.
 - [ ] Demonstrate repeated monotonic best-route improvement from the first
       terminal in at least three sealed seeds. One favorable counterfactual is
-      not proof.
+      not proof. Source checkpoint `978f7ee3b1` makes the proof contract
+      executable: scratch audit v3 binds each claimed improvement to matching
+      action, duration, target state, route length, emitted tape, reward, and
+      terminal truth in the final graph, while journal projection requires the
+      policy-selected first proposal to remain the retained result. This stays
+      open until compiled tests and three retained sealed seed timelines show
+      strict improvement.
 - [ ] Beat the `131`-tick ordinary demonstration without making it incumbent or
       policy authority.
 - [ ] Reach tick `123` or lower from scratch or optional-replay assistance,
