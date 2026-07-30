@@ -297,7 +297,12 @@ and does not stop executable engineering or experiments on another platform.
       Git history, remote branches, and the fork's GitHub Actions artifacts.
 - [ ] **macOS lane:** rerun the sealed four-seed campaign and commit its
       self-contained scratch evidence bundle. Do not accept another aggregate
-      summary without all independently validated per-seed evidence.
+      summary without all independently validated per-seed evidence. Source
+      checkpoint `ea88b71af2` fixes two blockers in that bundle path: terminal
+      tape ticks are now measured relative to the authenticated source
+      boundary, and terminal results are checked against their execution-plan
+      authority rather than the unrelated execution-binding digest. This
+      remains open pending the platform rerun and retained bundle.
 
 Exit gate:
 
@@ -491,6 +496,10 @@ Exit gate:
       ceiling, then launches at least two fresh learner-free processes from
       separately retained copies of the complete controller tape. This stays
       open pending compilation and a retained tick-`123`-or-lower proof.
+      Source checkpoint `6221b966a0` adds a portable outer bundle that nests
+      the independently validating scratch campaign plus only proof-referenced
+      replay artifacts, requires an actual tick of `123` or lower, and is
+      automatically discovered by the clean-checkout evidence gate.
 - [ ] Require identical controller bytes, first-hit tick, terminal evidence,
       game identity, fixture, source boundary, and execution fidelity.
       The checkpoint above seals every per-repetition controller artifact and
@@ -500,7 +509,10 @@ Exit gate:
       data, fixture manifest, world context, source fingerprints, fixed
       automation CVars, and headless fixed-step unpaced launch contract. Its
       offline validator re-authenticates the source campaign and every retained
-      byte; this remains open until compiled tests and native evidence pass.
+      byte. The portable bundle additionally cross-binds the proof to the
+      bundled graph-selected terminal tape/result instead of requiring paths
+      into the originating build tree. This remains open until compiled tests
+      and native evidence pass.
 
 Exit gate:
 
