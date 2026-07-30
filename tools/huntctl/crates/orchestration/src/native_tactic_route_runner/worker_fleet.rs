@@ -4,6 +4,8 @@ use super::worker_pool::{
 };
 use super::*;
 
+const MAX_CONCURRENT_TACTIC_WORKER_LAUNCHES: usize = 2;
+
 pub(super) struct NativeTacticWorkerFleet {
     senders: Vec<mpsc::Sender<NativeTacticProposalJob>>,
     worker_handles: Vec<std::thread::JoinHandle<Result<(), NativeTacticRouteRunError>>>,
@@ -48,33 +50,37 @@ impl NativeTacticWorkerFleet {
             .map(|_| reserve_attempt_root(fleet_root))
             .collect::<Result<Vec<_>, _>>()?;
         let process_launch_started = Instant::now();
-        let mut launched = std::thread::scope(|scope| {
-            let handles = attempt_roots
-                .iter()
-                .enumerate()
-                .map(|(worker_index, attempt_root)| {
-                    scope.spawn(move || {
-                        launch_tactic_route_worker(
-                            config,
-                            repository_root,
-                            attempt_root,
-                            initial_batch,
-                            terminal,
-                            card_fixture,
-                        )
-                        .map(|worker| (worker_index, worker))
+        let mut launched = Vec::with_capacity(worker_count);
+        for batch in worker_launch_batches(worker_count)? {
+            let mut batch_launched = std::thread::scope(|scope| {
+                let handles = batch
+                    .clone()
+                    .map(|worker_index| {
+                        let attempt_root = &attempt_roots[worker_index];
+                        scope.spawn(move || {
+                            launch_tactic_route_worker(
+                                config,
+                                repository_root,
+                                attempt_root,
+                                initial_batch,
+                                terminal,
+                                card_fixture,
+                            )
+                            .map(|worker| (worker_index, worker))
+                        })
                     })
-                })
-                .collect::<Vec<_>>();
-            handles
-                .into_iter()
-                .map(|handle| {
-                    handle
-                        .join()
-                        .map_err(|_| route_message("native tactic route worker launch panicked"))?
-                })
-                .collect::<Result<Vec<_>, _>>()
-        })?;
+                    .collect::<Vec<_>>();
+                handles
+                    .into_iter()
+                    .map(|handle| {
+                        handle.join().map_err(|_| {
+                            route_message("native tactic route worker launch panicked")
+                        })?
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })?;
+            launched.append(&mut batch_launched);
+        }
         let launch_micros = elapsed_micros(process_launch_started.elapsed());
         launched.sort_by_key(|(worker_index, _)| *worker_index);
 
@@ -217,6 +223,20 @@ impl Drop for NativeTacticWorkerFleet {
     fn drop(&mut self) {
         let _ = self.shutdown_inner();
     }
+}
+
+fn worker_launch_batches(
+    worker_count: usize,
+) -> Result<Vec<std::ops::Range<usize>>, NativeTacticRouteRunError> {
+    if worker_count == 0 || worker_count > MAX_ROUTE_WORKERS {
+        return Err(route_message("native tactic worker fleet size is invalid"));
+    }
+    Ok((0..worker_count)
+        .step_by(MAX_CONCURRENT_TACTIC_WORKER_LAUNCHES)
+        .map(|start| {
+            start..worker_count.min(start.saturating_add(MAX_CONCURRENT_TACTIC_WORKER_LAUNCHES))
+        })
+        .collect())
 }
 
 fn validate_fleet_checkpoint_capacity(

@@ -1,6 +1,15 @@
 use super::*;
 
 #[test]
+fn fleet_launches_in_bounded_contiguous_batches() {
+    assert_eq!(worker_launch_batches(1).unwrap(), vec![0..1]);
+    assert_eq!(worker_launch_batches(2).unwrap(), vec![0..2]);
+    assert_eq!(worker_launch_batches(5).unwrap(), vec![0..2, 2..4, 4..5]);
+    assert!(worker_launch_batches(0).is_err());
+    assert!(worker_launch_batches(MAX_ROUTE_WORKERS + 1).is_err());
+}
+
+#[test]
 fn fleet_rejects_a_cache_that_cannot_retain_one_native_checkpoint() {
     assert_eq!(
         validate_fleet_checkpoint_capacity(300, &[295, 295]).unwrap(),
