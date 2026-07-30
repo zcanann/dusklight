@@ -45,11 +45,11 @@ The incoming 2026-07-29 work made substantial, useful progress:
   suppression parity, phase timing, and checkpoint-owner locality are
   implemented. A short macOS fixed-work treatment reports a 15.54x steady-state
   speedup over relaunching the same topology.
-- The Rust source-quality gate has zero debt exemptions and all 543 production
+- The Rust source-quality gate has zero debt exemptions and all 552 production
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 315 tests.
+  orchestration suite is hermetic and passes all 318 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
   tape/result, source-authority evidence, and a content-bound campaign audit.
@@ -415,7 +415,8 @@ Exit gate:
       completed-prefix skipping, a durable partial sample, detached and
       non-prefix progress, torn records, and aggregate-only zero-launch
       resealing. Source checkpoint `97cd210747` compiles and passes all of
-      those focused cases in the complete 315-test orchestration suite.
+      those focused cases; the complete suite passes all 318 tests at
+      checkpoint `3d6d9b4fe7`.
 - [ ] Retain a sealed long-campaign v2 resource audit proving the declared
       memory and fitted-model staleness bounds while reporting replay fallback
       and checkpoint-owner skew. Use the hard-loss injector before dispatch,
@@ -426,7 +427,7 @@ Exit gate:
 - [ ] Remove the measured end-to-end saturation bottleneck until the reference
       workstation sustains enough useful evidence to meet the P4 wall-time
       gate. Prefer reducing restore/replay and idle time before adding capacity.
-- [ ] Preserve native state, applicable actions, controller output, terminal
+- [x] Preserve native state, applicable actions, controller output, terminal
       evidence, and first-hit tick for every disabled presentation subsystem.
       Source checkpoint `703dcdbbba` advances the parity report to v2 and
       makes those authorities explicit: it separately binds the native state
@@ -443,8 +444,17 @@ Exit gate:
       validation reconstructs all five authorities from bundled native bytes,
       and the clean-checkout audit automatically discovers committed manifests.
       Source checkpoint `97cd210747` compiles this path in the passing complete
-      orchestration suite. The gate still requires one retained passing v2
-      native bundle.
+      orchestration suite. Checkpoint `5a1e3e8f25` retains the passing
+      `win32-x86_64` v2 report and portable bundle. All nine legal
+      retained/suppressed conditions reproduce the exact native state
+      trajectory, complete primitive action surfaces, controller bytes,
+      first-hit vector, terminal projection/evidence, and binary episode.
+      Report identity
+      `89d1c04bc39d6aeafb2b577f6eed65e651ce3b82b7488c44fa2011524c2a1141`;
+      bundle identity
+      `f21d10b2fd0677b174e741d8ddbe59b450d2c0525b430f5691f55c9bc5dad454`.
+      The clean-checkout audit validates the bundle at checkpoint
+      `3d6d9b4fe7`.
 
 Exit gate:
 
