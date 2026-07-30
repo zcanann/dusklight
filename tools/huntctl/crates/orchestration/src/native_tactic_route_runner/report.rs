@@ -1,5 +1,9 @@
 use super::*;
 
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
 #[derive(Clone, Debug)]
 pub struct NativeTacticRouteRunConfig<'a> {
     pub repository_root: &'a Path,
@@ -169,7 +173,7 @@ pub struct NativeTacticMacroDiscoveryReport {
     pub reused_primitive_baseline_count: u64,
     /// Full retained primitive-component sequences executed natively from the
     /// same held-out frontier and horizon as their macro candidates.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub executed_component_baseline_count: u64,
     pub validation_native_ticks: u64,
     pub validation_wall_micros: u64,

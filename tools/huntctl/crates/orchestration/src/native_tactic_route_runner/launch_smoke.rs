@@ -446,7 +446,7 @@ fn validate_smoke_sources(
             ));
         }
     };
-    if route.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
+    if !launch_smoke_route_schema_is_supported(&route.schema)
         || route.optimization_request_sha256 != request.content_sha256
         || route.execution_binding_sha256 != execution.content_sha256
         || route.execution_plan_sha256 != plan.identity()?
@@ -529,6 +529,13 @@ fn validate_smoke_sources(
         compact_persistent_control: true,
         resource_audit_passed: true,
     })
+}
+
+fn launch_smoke_route_schema_is_supported(schema: &str) -> bool {
+    matches!(
+        schema,
+        NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36 | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
+    )
 }
 
 struct SmokeSourcePaths {
@@ -810,5 +817,18 @@ mod tests {
             NATIVE_TACTIC_LAUNCH_SMOKE_BUNDLE_SCHEMA_V1,
             NATIVE_TACTIC_SCRATCH_EVIDENCE_BUNDLE_SCHEMA_V2
         );
+    }
+
+    #[test]
+    fn retained_and_current_route_schemas_are_supported() {
+        assert!(launch_smoke_route_schema_is_supported(
+            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36
+        ));
+        assert!(launch_smoke_route_schema_is_supported(
+            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
+        ));
+        assert!(!launch_smoke_route_schema_is_supported(
+            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V35
+        ));
     }
 }
