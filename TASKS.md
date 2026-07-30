@@ -227,8 +227,19 @@ The incoming 2026-07-29 work made substantial, useful progress:
   authenticated while constructing its rewarded outcome, but batch graph
   admission repeated that complete large-snapshot pass. Checkpoint
   `68e37a31ef` carries an immutable authenticated-transition receipt into graph
-  admission and preserves the existing JSON/CBOR transition wire shape. It is
-  source-level treatment awaiting the same one-worker measurement.
+  admission and preserves the existing JSON/CBOR transition wire shape. The
+  exact matched diagnostic at checkpoint `9bdb52bd69` again preserved all 16
+  selected options, all 256 emitted proposal tapes, the useful-expansion-set
+  identity, 5,096 native ticks, five learner updates, and 256 replay rows.
+  Relative to `354f11a46d`, campaign admission fell 12.2% to about `162.0`
+  seconds, complete wall fell 9.8% to about `1,473.3` seconds, and useful
+  expansion throughput rose 10.8% to about `0.174` per second. Relative to
+  `d6f386d62f`, admission is down 17.5%, complete wall is down 5.4%, and
+  throughput is up 5.7%. This validates the receipt reuse but does not close
+  P3: authoritative admission still consumes about 11% of total wall, while
+  tactic execution, persistence, and model update consume about `341.4`,
+  `360.1`, and `200.8` seconds respectively. Profile those remaining paths
+  before launching another curve cell.
 
 That campaign proves bounded terminal discovery under its exact conditions. It
 does not prove practical discovery, useful native learning, route
@@ -488,8 +499,11 @@ Exit gate:
       checkpoint `68e37a31ef` now reuses the immutable validation/identity
       receipt created during rewarded-outcome evaluation instead of
       re-authenticating every large transition during batch graph admission.
-      Rerun the exact one-worker cell and require the measured admission path,
-      not merely a unit microbenchmark, to fall materially before spending the
+      The exact checkpoint `9bdb52bd69` treatment reduced admission another
+      12.2% and total wall 9.8% with identical selected actions, proposal
+      tapes, and useful graph work, but still spent about 162 seconds in
+      admission. Profile and remove the remaining measured coordinator,
+      persistence, model-update, and restore/capture growth before spending the
       remaining v4 cells; the curve must still identify the steady-state
       saturation point.
 - [x] Preserve native state, applicable actions, controller output, terminal
