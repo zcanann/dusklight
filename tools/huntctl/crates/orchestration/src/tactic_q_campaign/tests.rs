@@ -1149,7 +1149,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         restored.route_tape.frames.len() as u64
     );
     let [scheduled_root, scheduled_frontier] = restored
-        .graph_scheduled_root_and_frontier(5, 0, usize::MAX)
+        .graph_scheduled_root_and_frontier(5, 0, 0, usize::MAX)
         .unwrap();
     assert_eq!(scheduled_root, root_branch);
     assert_eq!(
@@ -1167,7 +1167,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     let restarted_node_schedule = TacticQCampaign::resume(restored.checkpoint().unwrap()).unwrap();
     assert_eq!(
         restarted_node_schedule
-            .graph_scheduled_root_and_frontier(5, 0, usize::MAX)
+            .graph_scheduled_root_and_frontier(5, 0, 0, usize::MAX)
             .unwrap(),
         [scheduled_root, scheduled_frontier]
     );

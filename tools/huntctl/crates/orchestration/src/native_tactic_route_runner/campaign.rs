@@ -325,6 +325,7 @@ pub(super) fn run_seed(
                 campaign.graph_scheduled_root_and_frontier(
                     seed,
                     frontier_sampling_round(episode),
+                    lane.acquisition.rank(episode),
                     maximum_frontier_frames,
                 )
             }
@@ -498,6 +499,7 @@ pub(super) fn run_seed(
                 campaign.graph_scheduled_root_and_frontier(
                     seed,
                     frontier_sampling_round(episode),
+                    lane.acquisition.rank(episode),
                     maximum_frontier_frames,
                 )
             }

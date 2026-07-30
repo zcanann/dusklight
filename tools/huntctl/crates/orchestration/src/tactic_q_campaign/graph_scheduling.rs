@@ -155,6 +155,7 @@ impl TacticQCampaign {
         &self,
         seed: u64,
         generation: u64,
+        acquisition_rank: u64,
         maximum_route_frames: usize,
     ) -> Result<[TacticCampaignBranch; 2], TacticQCampaignError> {
         let graph = self
@@ -164,18 +165,25 @@ impl TacticQCampaign {
                 "node scheduling requires a bound state graph",
             ))?;
         let root = graph_root_branch(graph)?;
-        let regime = if graph.best_terminal_path().is_some() {
-            SearchRegime::Optimization
-        } else {
-            SearchRegime::Discovery
-        };
-        let Some(selected) =
-            rank_schedulable_nodes(graph, regime, maximum_route_frames as u64, seed, generation)?
-                .into_iter()
-                .next()
-        else {
+        let terminal_supported = graph.best_terminal_path().is_some();
+        let (regime, selected_rank) =
+            graph_node_acquisition(terminal_supported, acquisition_rank);
+        let ranked =
+            rank_schedulable_nodes(graph, regime, maximum_route_frames as u64, seed, generation)?;
+        if ranked.is_empty() {
             return Ok([root.clone(), root]);
-        };
+        }
+        // Rank zero is the terminal-support lane. Nonzero ranks are a sealed
+        // broad-exploration share: after terminal discovery they deliberately
+        // use discovery ordering rather than becoming weaker copies of the
+        // incumbent-path optimizer.
+        let ranked_len = u64::try_from(ranked.len()).map_err(|_| {
+            TacticQCampaignError::InvalidState("scheduled graph node count overflows")
+        })?;
+        let selected_rank = usize::try_from(selected_rank % ranked_len).map_err(|_| {
+            TacticQCampaignError::InvalidState("scheduled graph node rank overflows")
+        })?;
+        let selected = ranked[selected_rank];
         let node = graph
             .node(selected.node)
             .ok_or(TacticQCampaignError::InvalidState(
@@ -202,7 +210,7 @@ impl TacticQCampaign {
             maximum_ensemble_variance: None,
             generalized_nearest_distance: None,
             discovery_spatial_novelty: Some(selected.reachability_novelty),
-            novelty_rank: 0,
+            novelty_rank: selected_rank as u64,
             replayed_prefix_ticks: selected.root_ticks,
         };
         let frontier = TacticCampaignBranch {
@@ -504,6 +512,22 @@ impl TacticQCampaign {
     }
 }
 
+fn graph_node_acquisition(
+    terminal_supported: bool,
+    acquisition_rank: u64,
+) -> (SearchRegime, u64) {
+    if terminal_supported && acquisition_rank == 0 {
+        (SearchRegime::Optimization, 0)
+    } else if terminal_supported {
+        (
+            SearchRegime::Discovery,
+            acquisition_rank.saturating_sub(1),
+        )
+    } else {
+        (SearchRegime::Discovery, acquisition_rank)
+    }
+}
+
 fn tactic_scheduler_queue_sha256(
     graph_sha256: Digest,
     learner_model_sha256: Digest,
@@ -541,6 +565,31 @@ fn tactic_scheduler_queue_sha256(
         hasher.update(candidate.source_queue_rank.to_le_bytes());
     }
     Digest(hasher.finalize().into())
+}
+
+#[cfg(test)]
+mod graph_node_acquisition_tests {
+    use super::*;
+
+    #[test]
+    fn post_terminal_rank_zero_optimizes_and_other_ranks_explore_broadly() {
+        assert_eq!(
+            graph_node_acquisition(true, 0),
+            (SearchRegime::Optimization, 0)
+        );
+        assert_eq!(
+            graph_node_acquisition(true, 1),
+            (SearchRegime::Discovery, 0)
+        );
+        assert_eq!(
+            graph_node_acquisition(true, 4),
+            (SearchRegime::Discovery, 3)
+        );
+        assert_eq!(
+            graph_node_acquisition(false, 2),
+            (SearchRegime::Discovery, 2)
+        );
+    }
 }
 
 fn tactic_scheduler_decision_sha256(
