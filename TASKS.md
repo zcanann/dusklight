@@ -499,7 +499,11 @@ Exit gate:
       from offsetting slower terminal routes in aggregate tick sums. This stays
       open until compiled tests and a sealed native report prove every
       promotion comparison used that path.
-- [ ] Keep every valid primitive selectable after promotion.
+- [ ] Keep every valid primitive selectable after promotion. Source checkpoint
+      `f350c40a73` compares the complete descriptor map before and after
+      promotion, proves every primitive remains byte-for-byte identical, and
+      proves an inapplicable promoted macro leaves the primitive catalog
+      exactly unchanged. This stays open pending compiled and native evidence.
 - [ ] Compare promotion-enabled and primitives-only search on held-out seeds
       using terminal rate, time to first terminal, time to best route, and
       unique useful expansions per second.
