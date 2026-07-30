@@ -1,0 +1,121 @@
+{
+  "schema": "dusklight-tactic-route-checkpoint-v6-benchmark/v1",
+  "date": "2026-07-29",
+  "claim": "On the exact-plan one-worker fixed-work treatment, checkpoint v6 preserved 16 decisions, 256 unique useful graph expansions, 4512 native ticks, five learner updates, and four replay refreshes while reducing complete campaign wall time by 81.3%, persistence time by 96.2%, and output bytes by 86.4% relative to the single-auth checkpoint-v5 predecessor.",
+  "bindings": {
+    "optimization_request_sha256": "8b6a9ba9bd5e307fb8443fe39f2ea6233bc798b3e5a81abf3824c264d8ac2d9b",
+    "execution_binding_sha256": "571fa210778e319e343e313de71b5be96979bb25323e3fc8de4696cb43c235ef",
+    "exact_plan_sha256": "aaa90cd8bf1940184338c67434197d84ea8e87ab04471c99a803a6f9fe09ad02",
+    "seed": 155921
+  },
+  "configuration": {
+    "workers": 1,
+    "lanes_per_generation": 1,
+    "decisions_per_seed": 16,
+    "proposals_per_decision": 16,
+    "branch_every_decisions": 8,
+    "refit_every_decisions": 4,
+    "epsilon_per_million": 350000,
+    "maximum_stale_replay_revisions": 64,
+    "memory_bytes": 335544320,
+    "proposal_policy": "learned",
+    "value_treatment": "goal_relabeled_fitted_q_knn_v2",
+    "execution_strategy": "native_controller"
+  },
+  "metric_scope": {
+    "wall_micros": "Complete successful huntctl campaign invocation for fresh runs.",
+    "seed_wall_micros": "Durable seed coordinator wall time.",
+    "persistence_micros": "Checkpoint, journal, retained-evidence, and persistence occupancy reported by the route runner.",
+    "output_bytes": "Recursive size of all regular files below the completed campaign output root.",
+    "semantic_work": "All treatments completed 16 decisions, 256 unique useful graph expansions, and 4512 native ticks."
+  },
+  "treatments": [
+    {
+      "id": "whole-history-untreated",
+      "report_sha256": "d2f8265465c85ec7da33930afc5ae49a040bd6fb0591bac0767ec866632b3089",
+      "execution_plan_sha256": "5758962e6198f87c8ff7ee0cb5602a056ded7eb69ded5d7e3d6eaa30e4d3affb",
+      "plan_difference": "The historical untreated cell used a 5368709120-byte memory bound. Its seed, policy, value treatment, topology, decision/proposal counts, cadence, semantic work, request, and execution binding match; exact-plan speedup claims use the later single-auth predecessor instead.",
+      "wall_micros": 3750995121,
+      "seed_wall_micros": 3724980402,
+      "persistence_micros": 2253785270,
+      "native_simulation_micros": 39515002,
+      "graph_admission_micros": 76064077,
+      "output_bytes": 3716789658,
+      "output_files": 3644,
+      "decisions": 16,
+      "unique_useful_graph_expansions": 256,
+      "native_ticks": 4512
+    },
+    {
+      "id": "content-reference-cache",
+      "report_sha256": "58918dd06ef01909473314fa8f3e7dd3916f6c45891e02b6558f536ae3d8180e",
+      "execution_plan_sha256": "aaa90cd8bf1940184338c67434197d84ea8e87ab04471c99a803a6f9fe09ad02",
+      "wall_micros": 2601228830,
+      "seed_wall_micros": 2553168866,
+      "persistence_micros": 1232719565,
+      "native_simulation_micros": 37480974,
+      "graph_admission_micros": 62455855,
+      "output_bytes": 3751672320,
+      "output_files": 3653,
+      "decisions": 16,
+      "unique_useful_graph_expansions": 256,
+      "native_ticks": 4512
+    },
+    {
+      "id": "single-auth-checkpoint-v5",
+      "report_sha256": "82983e7f829d63ff1de99376e24476379e8faaa1abdfa992fc920c7ba2dd6a97",
+      "execution_plan_sha256": "aaa90cd8bf1940184338c67434197d84ea8e87ab04471c99a803a6f9fe09ad02",
+      "wall_micros": 2152534626,
+      "seed_wall_micros": 2103235942,
+      "persistence_micros": 777594788,
+      "native_simulation_micros": 37121725,
+      "graph_admission_micros": 63078682,
+      "output_bytes": 3751672605,
+      "output_files": 3653,
+      "decisions": 16,
+      "unique_useful_graph_expansions": 256,
+      "native_ticks": 4512
+    },
+    {
+      "id": "bounded-checkpoint-v6",
+      "report_sha256": "d33f3c487e2c54cd270c69951cfbdc071f3f552c1c309e50ae0a8476b1b5710e",
+      "execution_plan_sha256": "aaa90cd8bf1940184338c67434197d84ea8e87ab04471c99a803a6f9fe09ad02",
+      "wall_micros": 402950565,
+      "seed_wall_micros": 393265001,
+      "persistence_micros": 29347022,
+      "native_simulation_micros": 36769550,
+      "graph_admission_micros": 2735735,
+      "output_bytes": 509847715,
+      "output_files": 3670,
+      "decisions": 16,
+      "unique_useful_graph_expansions": 256,
+      "native_ticks": 4512,
+      "learner_updates": 5,
+      "replay_refreshes": 4,
+      "replay_revision": 256
+    }
+  ],
+  "exact_plan_delta_from_single_auth": {
+    "semantic_work_unchanged": true,
+    "wall_micros_reduction_millionths": 812802,
+    "wall_speedup_millionths": 5342000,
+    "seed_wall_micros_reduction_millionths": 813019,
+    "seed_wall_speedup_millionths": 5348000,
+    "persistence_micros_reduction_millionths": 962259,
+    "persistence_speedup_millionths": 26497000,
+    "output_bytes_reduction_millionths": 864101,
+    "output_size_ratio_millionths": 7358000
+  },
+  "contextual_delta_from_untreated": {
+    "semantic_work_unchanged": true,
+    "wall_micros_reduction_millionths": 892575,
+    "wall_speedup_millionths": 9309000,
+    "seed_wall_micros_reduction_millionths": 894425,
+    "seed_wall_speedup_millionths": 9472000,
+    "persistence_micros_reduction_millionths": 986979,
+    "persistence_speedup_millionths": 76798000,
+    "output_bytes_reduction_millionths": 862826,
+    "output_size_ratio_millionths": 7290000
+  },
+  "conclusion": "Checkpoint persistence no longer dominates this fixed-work cell: v6 persistence is 7.46% of seed wall, versus 36.97% for the exact-plan single-auth predecessor. The next throughput experiment is the retained long-running 1/2/4/8/16-worker curve; this one-worker result does not itself establish scaling."
+}

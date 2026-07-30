@@ -175,8 +175,12 @@ The incoming 2026-07-29 work made substantial, useful progress:
   on the next write. A 129-mutation growth test proves that individual graph
   records remain within 32 bytes of the first delta after the complete graph
   has grown beyond ten times one record; two-decision replay restart tests
-  exercise the append chain. The identical native cell has not yet been rerun,
-  so another full curve is still unjustified.
+  exercise the append chain. The clean exact-plan v6 rerun completed the same
+  16 decisions, 256 unique useful expansions, and 4,512 native ticks with five
+  learner updates and four replay refreshes. Relative to the single-auth v5
+  predecessor, campaign wall fell 81.3%, persistence fell 96.2%, and output
+  bytes fell 86.4%. The retained comparison is
+  `docs/glitch-hunting/benchmarks/tactic-route-checkpoint-v6-windows-20260729.json`.
 
 That campaign proves bounded terminal discovery under its exact conditions. It
 does not prove practical discovery, useful native learning, route
@@ -264,17 +268,27 @@ journals, or learned tactics.
 
 ## P0 - Restore a truthful, auditable baseline
 
-- [ ] Add a supported-platform native campaign smoke gate that materializes a
-      current execution, launches the compact persistent worker, authenticates
-      the root probe, executes one cached tactic decision, and passes the v2
-      resource audit. It must fail clearly on stale worker capabilities,
-      detached root-cache capacity/schema, or missing native result telemetry;
-      retain at least Windows and macOS results for the same sealed request.
-- [ ] Recover the original `231`-tick macOS campaign artifacts or rerun its
-      sealed execution plan, then commit its self-contained scratch evidence
-      bundle. The existing summary contains only an unavailable child-report
-      hash and cannot be upgraded without the originating per-seed graph,
-      checkpoint, tape, and terminal-result artifacts.
+P0 is a cross-platform evidence-collection gate, not an unimplemented campaign
+subsystem. Platform-exclusive collection belongs to that platform's work lane
+and does not stop executable engineering or experiments on another platform.
+
+- [x] Implement the native campaign smoke gate. It materializes a current
+      execution, launches the compact persistent worker, authenticates the root
+      probe, executes one cached tactic decision, passes the v2 resource audit,
+      and fails clearly on stale capabilities, detached root-cache
+      capacity/schema, or missing native result telemetry.
+- [x] Retain and clean-checkout validate the Windows smoke result for the sealed
+      request and seed `155921`.
+- [ ] **macOS lane:** run and retain the matching smoke for the same sealed
+      request and seed. This is ready for platform execution; no remaining
+      smoke-gate implementation is known.
+- [x] Exhaust repository recovery of the original `231`-tick macOS campaign.
+      The aggregate summary is present, but its child report and per-seed graph,
+      checkpoint, tape, and terminal-result artifacts are absent from reachable
+      Git history, remote branches, and the fork's GitHub Actions artifacts.
+- [ ] **macOS lane:** rerun the sealed four-seed campaign and commit its
+      self-contained scratch evidence bundle. Do not accept another aggregate
+      summary without all independently validated per-seed evidence.
 
 Exit gate:
 
@@ -347,7 +361,7 @@ Exit gate:
       and install a bounded root manifest. Add a long synthetic growth test
       proving that per-decision persistence volume does not rise linearly with
       accumulated history.
-- [ ] Rerun the identical one-worker, 16-decision, 256-expansion Windows cell.
+- [x] Rerun the identical one-worker, 16-decision, 256-expansion Windows cell.
       Require persistence to stop dominating wall time and compare phase
       occupancy, useful expansions per second, native ticks, graph work, and
       artifact volume with all three retained predecessor cells before

@@ -667,7 +667,12 @@ fn run_native_tactic_route_with_optional_fleet(
     timing.tactic_preparation_and_fact_extraction_micros = timing
         .tactic_preparation_and_fact_extraction_micros
         .saturating_add(tactic_macro_discovery.validation_preparation_micros);
-    timing.wall_micros = elapsed_micros(campaign_started.elapsed());
+    // Seed timing is durable across resume. Keep report wall time at least the
+    // accumulated generation critical path so a short final invocation cannot
+    // make cumulative work appear artificially fast.
+    timing.wall_micros = elapsed_micros(campaign_started.elapsed()).max(
+        accumulated_coordinator_wall_micros(config.execution_plan, &seed_results),
+    );
     refresh_route_throughput(&mut timing, &seed_results);
     let reporting_started = Instant::now();
     let frontier_availability = seed_results
@@ -863,9 +868,9 @@ mod campaign;
 use campaign::{NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1, run_seed, tactic_graph_metrics};
 mod timing_metrics;
 use timing_metrics::{
-    aggregate_route_timing, censored_training_transitions, decision_evaluated_ticks,
-    decision_trace_is_useful, elapsed_micros, per_second_millionths, ratio_per_million,
-    refresh_route_throughput, useful_training_transitions,
+    accumulated_coordinator_wall_micros, aggregate_route_timing, censored_training_transitions,
+    decision_evaluated_ticks, decision_trace_is_useful, elapsed_micros, per_second_millionths,
+    ratio_per_million, refresh_route_throughput, useful_training_transitions,
 };
 mod candidate_retention;
 use candidate_retention::{

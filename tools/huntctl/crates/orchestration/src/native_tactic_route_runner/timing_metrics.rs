@@ -153,6 +153,40 @@ pub(super) fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> Native
     timing
 }
 
+pub(super) fn accumulated_coordinator_wall_micros(
+    execution_plan: &NativeTacticExecutionPlan,
+    seeds: &[NativeTacticSeedResult],
+) -> u64 {
+    let seed_wall_micros = seeds
+        .iter()
+        .map(|seed| seed.timing.wall_micros)
+        .collect::<Vec<_>>();
+    accumulated_parallel_wall_micros(
+        execution_plan
+            .generations
+            .iter()
+            .map(|generation| generation.lane_indices.as_slice()),
+        &seed_wall_micros,
+    )
+}
+
+fn accumulated_parallel_wall_micros<'a>(
+    generation_lane_indices: impl IntoIterator<Item = &'a [usize]>,
+    seed_wall_micros: &[u64],
+) -> u64 {
+    generation_lane_indices
+        .into_iter()
+        .map(|lane_indices| {
+            lane_indices
+                .iter()
+                .filter_map(|lane_index| seed_wall_micros.get(*lane_index))
+                .copied()
+                .max()
+                .unwrap_or(0)
+        })
+        .fold(0_u64, u64::saturating_add)
+}
+
 pub(super) fn refresh_route_throughput(
     timing: &mut NativeTacticRouteTiming,
     seeds: &[NativeTacticSeedResult],
@@ -175,13 +209,26 @@ pub(super) fn refresh_route_throughput(
 
 #[cfg(test)]
 mod tests {
-    use super::censored_episode_end_count;
+    use super::{accumulated_parallel_wall_micros, censored_episode_end_count};
 
     #[test]
     fn only_non_terminal_episode_ends_are_censored() {
         assert_eq!(
             censored_episode_end_count([(10, false), (10, true), (20, false), (30, false)]),
             2
+        );
+    }
+
+    #[test]
+    fn accumulated_wall_sums_generation_critical_paths_without_summing_parallel_lanes() {
+        let generation_zero = [0, 1];
+        let generation_one = [2];
+        assert_eq!(
+            accumulated_parallel_wall_micros(
+                [generation_zero.as_slice(), generation_one.as_slice()],
+                &[100, 150, 75],
+            ),
+            225
         );
     }
 }
