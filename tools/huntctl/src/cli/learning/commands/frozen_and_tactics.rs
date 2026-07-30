@@ -11,9 +11,10 @@ use super::{
     NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport, NativeTacticRouteReport,
     NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
     NativeTacticScratchComparisonReport, NativeTacticScratchDiscoveryReport,
-    NativeTacticScratchEvidenceBundle, NativeTacticThroughputCurveConfig, OptimizationRequest,
-    Sha256, TacticFrozenPolicy, TacticProposalPolicy, TacticQCampaign, TacticQFinalResult,
-    TacticQTrainingCorpus, audit_native_tactic_fault_recovery, cli, command_conservative_q, flag,
+    NativeTacticScratchEvidenceBundle, NativeTacticThroughputCurveConfig,
+    NativeTacticThroughputEvidenceBundle, OptimizationRequest, Sha256, TacticFrozenPolicy,
+    TacticProposalPolicy, TacticQCampaign, TacticQFinalResult, TacticQTrainingCorpus,
+    audit_native_tactic_fault_recovery, cli, command_conservative_q, flag,
     native_frozen_policy_probe_model, native_tactic_execution_plan, option,
     prove_generalized_tactic_held_out_value, realize_native_frozen_policy_tape, repeated_option,
     required_path, run_native_tactic_policy, run_native_tactic_restore_locality,
@@ -746,10 +747,11 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .map(PathBuf::from)
                     .unwrap_or(std::env::current_dir()?),
             )?;
-            let request: OptimizationRequest =
-                serde_json::from_slice(&fs::read(required_path(learn_args, "--request")?)?)?;
+            let request_path = required_path(learn_args, "--request")?;
+            let execution_path = required_path(learn_args, "--execution")?;
+            let request: OptimizationRequest = serde_json::from_slice(&fs::read(&request_path)?)?;
             let execution: NativeResidualExecutionBinding =
-                serde_json::from_slice(&fs::read(required_path(learn_args, "--execution")?)?)?;
+                serde_json::from_slice(&fs::read(&execution_path)?)?;
             let output_argument = required_path(learn_args, "--output")?;
             let output = if output_argument.is_absolute() {
                 output_argument
@@ -793,11 +795,36 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 output_root: &output,
                 repetitions: usize_option(learn_args, "--repetitions", 2)?.try_into()?,
             })?;
+            let report_path = output.join("throughput-curve.json");
+            let bundle = option(learn_args, "--bundle")
+                .map(|argument| {
+                    let argument = PathBuf::from(argument);
+                    let bundle_root = if argument.is_absolute() {
+                        argument
+                    } else {
+                        repository_root.join(argument)
+                    };
+                    NativeTacticThroughputEvidenceBundle::build(
+                        &bundle_root,
+                        &repository_root,
+                        &request_path,
+                        &execution_path,
+                        &report_path,
+                    )
+                    .map(|bundle| {
+                        json!({
+                            "path": bundle_root,
+                            "content_sha256": bundle.content_sha256,
+                        })
+                    })
+                })
+                .transpose()?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
                     "schema": report.schema,
-                    "report": output.join("throughput-curve.json"),
+                    "report": report_path,
+                    "bundle": bundle,
                     "fixed_unique_useful_graph_expansions":
                         report.fixed_unique_useful_graph_expansions,
                     "long_work_exercised": report.long_work_exercised,
@@ -808,6 +835,37 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             if !report.passed {
                 return Err("native tactic fixed-work throughput curve did not pass".into());
             }
+            Ok(())
+        }
+        Some("seal-tactic-throughput-curve") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let bundle_argument = required_path(learn_args, "--bundle")?;
+            let bundle_root = if bundle_argument.is_absolute() {
+                bundle_argument
+            } else {
+                repository_root.join(bundle_argument)
+            };
+            let bundle = NativeTacticThroughputEvidenceBundle::build(
+                &bundle_root,
+                &repository_root,
+                &required_path(learn_args, "--request")?,
+                &required_path(learn_args, "--execution")?,
+                &required_path(learn_args, "--report")?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
+            Ok(())
+        }
+        Some("validate-tactic-throughput-curve-bundle") => {
+            let bundle = NativeTacticThroughputEvidenceBundle::read_and_validate(&required_path(
+                &args[1..],
+                "--bundle",
+            )?)?;
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
             Ok(())
         }
         Some("tactic-restore-locality") => {

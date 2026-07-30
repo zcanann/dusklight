@@ -111,6 +111,13 @@ pub struct NativeTacticThroughputCurveReport {
 }
 
 impl NativeTacticThroughputCurveReport {
+    pub fn read_and_validate(path: &Path) -> Result<Self, NativeTacticRouteRunError> {
+        let report: Self =
+            serde_json::from_slice(&fs::read(path).map_err(route_error)?).map_err(route_error)?;
+        report.validate()?;
+        Ok(report)
+    }
+
     pub fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
         if self.schema != NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V4
             || self.recorded_unix_millis == 0
@@ -459,79 +466,14 @@ pub fn run_native_tactic_throughput_curve(
             let route_report_path = sample_root.join("report.json");
             let route_report_bytes = fs::read(&route_report_path).map_err(route_error)?;
             let route_report_sha256 = Digest(Sha256::digest(route_report_bytes).into());
-            let peak_worker_checkpoint_resident_bytes =
-                route_report.native_restore_accounting.peak_resident_bytes;
-            execution_order.push(NativeTacticThroughputCurveSample {
+            execution_order.push(sample_from_route_report(
                 ordinal,
                 repetition,
                 workers,
-                route_report_path: path_text(&route_report_path),
+                path_text(&route_report_path),
                 route_report_sha256,
-                state_graph_sha256s: route_report
-                    .seeds
-                    .iter()
-                    .map(|seed| seed.state_graph_sha256)
-                    .collect(),
-                useful_graph_expansion_set_sha256s: route_report
-                    .seeds
-                    .iter()
-                    .map(|seed| seed.useful_graph_expansion_set_sha256)
-                    .collect(),
-                completed_decisions: route_report.total_decisions,
-                unique_useful_graph_expansions: route_report.unique_useful_graph_expansions,
-                wall_micros: route_report.timing.wall_micros,
-                process_launch_micros: route_report.timing.process_launch_micros,
-                unique_useful_graph_expansions_per_second_millionths: route_report
-                    .timing
-                    .unique_useful_graph_expansions_per_second_millionths,
-                peak_worker_checkpoint_resident_bytes,
-                checkpoint_pool_resident_bytes_upper_bound: peak_worker_checkpoint_resident_bytes
-                    .saturating_mul(workers as u64),
-                maximum_model_replay_lag_revisions: route_report
-                    .replay_sharing
-                    .maximum_model_replay_lag_revisions,
-                learner_updates: route_report.learner_updates,
-                model_snapshots_published: route_report.learner_authority.model_snapshots_published,
-                training_replay_rows: route_report.training_replay_rows,
-                restore_samples: route_report.native_restore_accounting.restore_samples,
-                non_root_restore_requests: route_report
-                    .native_restore_accounting
-                    .direct_process_local_restore_requests
-                    .saturating_add(
-                        route_report
-                            .native_restore_accounting
-                            .direct_process_local_continuation_requests,
-                    ),
-                direct_restore_fallback_replays: route_report
-                    .native_restore_accounting
-                    .direct_restore_fallback_replays,
-                cache_evictions: route_report.native_restore_accounting.cache_evictions,
-                tactic_selection_micros: route_report.timing.tactic_selection_micros,
-                checkpoint_branching_micros: route_report.timing.checkpoint_branching_micros,
-                tactic_execution_micros: route_report.timing.tactic_execution_micros,
-                native_simulation_micros: route_report.timing.native_simulation_micros,
-                ipc_and_result_transport_micros: route_report
-                    .timing
-                    .ipc_and_result_transport_micros,
-                tactic_preparation_and_fact_extraction_micros: route_report
-                    .timing
-                    .tactic_preparation_and_fact_extraction_micros,
-                model_update_micros: route_report.timing.model_update_micros,
-                evidence_projection_micros: route_report.timing.evidence_projection_micros,
-                persistence_micros: route_report.timing.persistence_micros,
-                orchestration_micros: route_report.timing.orchestration_micros,
-                result_validation_and_fact_extraction_micros: route_report
-                    .timing
-                    .result_validation_and_fact_extraction_micros,
-                graph_admission_micros: route_report.timing.graph_admission_micros,
-                native_worker_occupancy_per_million: ratio_per_million(
-                    route_report.timing.native_simulation_micros,
-                    route_report
-                        .timing
-                        .wall_micros
-                        .saturating_mul(workers as u64),
-                ),
-            });
+                &route_report,
+            ));
         }
     }
     fleet.shutdown()?;
@@ -584,6 +526,87 @@ pub fn run_native_tactic_throughput_curve(
         &report.to_pretty_json()?,
     )?;
     Ok(report)
+}
+
+pub(super) fn sample_from_route_report(
+    ordinal: u32,
+    repetition: u32,
+    workers: usize,
+    route_report_path: String,
+    route_report_sha256: Digest,
+    route_report: &NativeTacticRouteReport,
+) -> NativeTacticThroughputCurveSample {
+    let peak_worker_checkpoint_resident_bytes =
+        route_report.native_restore_accounting.peak_resident_bytes;
+    NativeTacticThroughputCurveSample {
+        ordinal,
+        repetition,
+        workers,
+        route_report_path,
+        route_report_sha256,
+        state_graph_sha256s: route_report
+            .seeds
+            .iter()
+            .map(|seed| seed.state_graph_sha256)
+            .collect(),
+        useful_graph_expansion_set_sha256s: route_report
+            .seeds
+            .iter()
+            .map(|seed| seed.useful_graph_expansion_set_sha256)
+            .collect(),
+        completed_decisions: route_report.total_decisions,
+        unique_useful_graph_expansions: route_report.unique_useful_graph_expansions,
+        wall_micros: route_report.timing.wall_micros,
+        process_launch_micros: route_report.timing.process_launch_micros,
+        unique_useful_graph_expansions_per_second_millionths: route_report
+            .timing
+            .unique_useful_graph_expansions_per_second_millionths,
+        peak_worker_checkpoint_resident_bytes,
+        checkpoint_pool_resident_bytes_upper_bound: peak_worker_checkpoint_resident_bytes
+            .saturating_mul(workers as u64),
+        maximum_model_replay_lag_revisions: route_report
+            .replay_sharing
+            .maximum_model_replay_lag_revisions,
+        learner_updates: route_report.learner_updates,
+        model_snapshots_published: route_report.learner_authority.model_snapshots_published,
+        training_replay_rows: route_report.training_replay_rows,
+        restore_samples: route_report.native_restore_accounting.restore_samples,
+        non_root_restore_requests: route_report
+            .native_restore_accounting
+            .direct_process_local_restore_requests
+            .saturating_add(
+                route_report
+                    .native_restore_accounting
+                    .direct_process_local_continuation_requests,
+            ),
+        direct_restore_fallback_replays: route_report
+            .native_restore_accounting
+            .direct_restore_fallback_replays,
+        cache_evictions: route_report.native_restore_accounting.cache_evictions,
+        tactic_selection_micros: route_report.timing.tactic_selection_micros,
+        checkpoint_branching_micros: route_report.timing.checkpoint_branching_micros,
+        tactic_execution_micros: route_report.timing.tactic_execution_micros,
+        native_simulation_micros: route_report.timing.native_simulation_micros,
+        ipc_and_result_transport_micros: route_report.timing.ipc_and_result_transport_micros,
+        tactic_preparation_and_fact_extraction_micros: route_report
+            .timing
+            .tactic_preparation_and_fact_extraction_micros,
+        model_update_micros: route_report.timing.model_update_micros,
+        evidence_projection_micros: route_report.timing.evidence_projection_micros,
+        persistence_micros: route_report.timing.persistence_micros,
+        orchestration_micros: route_report.timing.orchestration_micros,
+        result_validation_and_fact_extraction_micros: route_report
+            .timing
+            .result_validation_and_fact_extraction_micros,
+        graph_admission_micros: route_report.timing.graph_admission_micros,
+        native_worker_occupancy_per_million: ratio_per_million(
+            route_report.timing.native_simulation_micros,
+            route_report
+                .timing
+                .wall_micros
+                .saturating_mul(workers as u64),
+        ),
+    }
 }
 
 fn validate_curve_config(

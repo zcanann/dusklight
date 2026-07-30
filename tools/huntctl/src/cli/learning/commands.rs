@@ -102,9 +102,9 @@ use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticRouteDiagnosisReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
     NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
     NativeTacticScratchDiscoveryReport, NativeTacticScratchEvidenceBundle,
-    NativeTacticThroughputCurveConfig, audit_native_tactic_fault_recovery,
-    run_native_tactic_restore_locality, run_native_tactic_route,
-    run_native_tactic_throughput_curve, tactic_macro_registry_identity,
+    NativeTacticThroughputCurveConfig, NativeTacticThroughputEvidenceBundle,
+    audit_native_tactic_fault_recovery, run_native_tactic_restore_locality,
+    run_native_tactic_route, run_native_tactic_throughput_curve, tactic_macro_registry_identity,
 };
 use huntctl::search_evaluator::native_tactic_worker::NativeGenericExecutionStrategy;
 use huntctl::search_evaluator::optimization_request::OptimizationRequest;
@@ -422,6 +422,8 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "seal-tactic-launch-smoke"
             | "validate-tactic-launch-smoke"
             | "tactic-throughput-curve"
+            | "seal-tactic-throughput-curve"
+            | "validate-tactic-throughput-curve-bundle"
             | "tactic-restore-locality"
             | "audit-tactic-fault-recovery"
             | "audit-post-terminal-tactic-controls"

@@ -240,10 +240,16 @@ pub use post_terminal_controls::{
 mod throughput_curve;
 pub use throughput_curve::{
     NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V1, NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V2,
-    NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V3, NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS,
-    NativeTacticThroughputCurveCell, NativeTacticThroughputCurveConfig,
-    NativeTacticThroughputCurveReport, NativeTacticThroughputCurveSample,
-    run_native_tactic_throughput_curve,
+    NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V3, NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V4,
+    NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS, NativeTacticThroughputCurveCell,
+    NativeTacticThroughputCurveConfig, NativeTacticThroughputCurveReport,
+    NativeTacticThroughputCurveSample, run_native_tactic_throughput_curve,
+};
+mod throughput_evidence_bundle;
+pub use throughput_evidence_bundle::{
+    NATIVE_TACTIC_THROUGHPUT_EVIDENCE_BUNDLE_SCHEMA_V1, NATIVE_TACTIC_THROUGHPUT_EVIDENCE_MANIFEST,
+    NativeTacticThroughputCompressedArtifact, NativeTacticThroughputEvidenceBundle,
+    NativeTacticThroughputSampleEvidence,
 };
 
 mod restore_locality;

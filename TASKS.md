@@ -45,11 +45,11 @@ The incoming 2026-07-29 work made substantial, useful progress:
   suppression parity, phase timing, and checkpoint-owner locality are
   implemented. A short macOS fixed-work treatment reports a 15.54x steady-state
   speedup over relaunching the same topology.
-- The Rust source-quality gate has zero debt exemptions and all 542 production
+- The Rust source-quality gate has zero debt exemptions and all 543 production
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 282 tests.
+  orchestration suite is hermetic and passes all 284 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
   tape/result, source-authority evidence, and a content-bound campaign audit.
@@ -147,7 +147,10 @@ The incoming 2026-07-29 work made substantial, useful progress:
   must execute at least 16 decisions and prove learner updates, durable replay,
   graph admission, repeated non-root restores, persistence, and bounded-cache
   eviction. It retains the phase and occupancy counters needed to identify
-  saturation. No v4 native curve has been retained yet.
+  saturation. A portable evidence bundle now content-addresses and compresses
+  the aggregate, all sample route reports and their recomputed resource audits,
+  request, execution, plan, and source authorities; the clean gate discovers
+  committed bundles. No v4 native curve has been retained yet.
 
 That campaign proves bounded terminal discovery under its exact conditions. It
 does not prove practical discovery, useful native learning, route

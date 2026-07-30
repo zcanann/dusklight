@@ -403,6 +403,12 @@ orchestration phase times. Native worker occupancy is derived against
 native work that did not occupy them. The historical one-decision measurements
 above cannot validate as v4 evidence.
 
+The v4 aggregate and all ten sample reports can be sealed into a compressed,
+content-addressed portable bundle. The clean-checkout gate reconstructs every
+sample and recomputes the aggregate rather than trusting paths into an ignored
+build directory. See
+[`native-tactic-throughput-evidence.md`](native-tactic-throughput-evidence.md).
+
 Throughput report v4 carries forward v3's corrected staleness accounting: the
 number of fitted snapshots a lane skipped before refreshing is pressure, not
 model lag. The gate uses the fitted model's actual lag behind durable replay.
