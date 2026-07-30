@@ -494,8 +494,11 @@ Exit gate:
       shortcut and executes the complete retained component sequence natively
       from the same held-out frontier under the same horizon; route report v37
       counts those executions separately and leaves the legacy shortcut count
-      at zero. This stays open until compiled tests and a sealed native report
-      prove every promotion comparison used that path.
+      at zero. Source checkpoint `b23d9453a7` additionally requires paired
+      dominance in every supporting held-out state, preventing cheap failures
+      from offsetting slower terminal routes in aggregate tick sums. This stays
+      open until compiled tests and a sealed native report prove every
+      promotion comparison used that path.
 - [ ] Keep every valid primitive selectable after promotion.
 - [ ] Compare promotion-enabled and primitives-only search on held-out seeds
       using terminal rate, time to first terminal, time to best route, and
