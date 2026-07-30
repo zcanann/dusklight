@@ -444,8 +444,11 @@ Exit gate:
       fixes the remaining terminal handoff: a terminal-triggered branch now
       restores the scheduled frontier immediately instead of unconditionally
       restarting from root, and a campaign-level test requires rank-zero
-      acquisition to select the supported successful-path interior. This
-      remains open until focused tests compile and retained native traces prove
+      acquisition to select the supported successful-path interior. Source
+      checkpoint `e72f47009c` makes authenticated rank-zero support acquire a
+      scheduled frontier every decision, while periodic root and demonstration
+      refreshes remain confined to ordinary exploration branches. This remains
+      open until focused tests compile and retained native traces prove
       post-terminal work and improvement rather than merely continued
       execution.
 - [ ] Schedule counterfactuals across the complete interior-state sequence of
@@ -456,9 +459,13 @@ Exit gate:
       `62aac70a51` removes best-route-only node support, schedules interiors
       from every authenticated terminal route, and prevents validated
       transposition canonicalization from erasing a route-specific supported
-      interior. Keep this open until the focused tests compile and retained
-      native traces show the scheduler actually leases counterfactuals across
-      the complete sequence.
+      interior. Source checkpoint `e72f47009c` removes the eight-decision
+      counterfactual cadence bottleneck and advances the post-terminal control
+      report to v2: each seed now retains the exact supported, leased, and
+      unleased interior-node sets and can claim complete coverage only for a
+      nonempty supported set with no missing lease source. Keep this open until
+      the focused tests compile and a retained native v2 report proves complete
+      sequence coverage.
 - [ ] Demonstrate repeated monotonic best-route improvement from the first
       terminal in at least three sealed seeds. One favorable counterfactual is
       not proof.
