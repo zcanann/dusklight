@@ -413,7 +413,7 @@ Throughput report v4 carries forward v3's corrected staleness accounting: the
 number of fitted snapshots a lane skipped before refreshing is pressure, not
 model lag. The gate uses the fitted model's actual lag behind durable replay.
 Native worker cache capacity is derived from the sealed aggregate memory budget
-instead of always requesting 640 MiB per worker; scratch campaign audit v2
+instead of always requesting 640 MiB per worker; scratch campaign audit v3
 recomputes both bounds from the route and execution plan.
 
 The ignored evidence root is

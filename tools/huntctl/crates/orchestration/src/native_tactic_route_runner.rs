@@ -212,7 +212,8 @@ pub use scratch_evidence_bundle::{
 };
 mod scratch_campaign_audit;
 pub use scratch_campaign_audit::{
-    NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2, NativeTacticCampaignResourceAudit,
+    NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2,
+    NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3, NativeTacticCampaignResourceAudit,
     NativeTacticScratchCampaignAudit, NativeTacticScratchDecisionAudit,
     NativeTacticScratchSeedAudit, NativeTacticScratchStopReason,
     NativeTacticScratchTerminalImprovementAudit,

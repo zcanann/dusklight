@@ -730,8 +730,9 @@ pub struct NativeTacticProposalTrace {
     pub reward: f32,
     pub reward_components: TacticRewardBreakdown,
     pub realized_ticks: u32,
-    /// Exact root-derived tape length after this proposal. For terminal
-    /// proposals, subtracting one gives its authenticated first-hit tick.
+    /// Exact root-derived tape length after this proposal. A terminal
+    /// proposal's source-relative first-hit tick also requires subtracting the
+    /// campaign's root source-frame boundary.
     #[serde(default)]
     pub root_route_ticks: u64,
     #[serde(default)]

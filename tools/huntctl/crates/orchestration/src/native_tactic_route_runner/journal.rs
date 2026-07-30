@@ -608,6 +608,7 @@ pub(super) fn project_tactic_decision_record(
             .filter(|proposal| proposal.retained)
             .count()
             != 1
+            || !proposal_batch[0].retained
             || !record.proposal_batch.iter().any(|proposal| {
                 proposal.trace.retained
                     && journal_transition_sha256(
@@ -647,9 +648,11 @@ pub(super) fn project_tactic_decision_record(
     }
     if let Some(scheduler_decision) = &record.scheduler_decision {
         scheduler_decision.validate().map_err(route_error)?;
-        if scheduler_decision.learner_model_sha256 != record.learner_snapshot_sha256 {
+        if scheduler_decision.learner_model_sha256 != record.learner_snapshot_sha256
+            || scheduler_decision.evaluated_expansion_sha256.len() != proposal_batch.len()
+        {
             return Err(route_message(
-                "tactic scheduler decision is detached from its learner model",
+                "tactic scheduler decision is detached from its learner model or proposal batch",
             ));
         }
     }

@@ -1,7 +1,13 @@
 # Native tactic campaign resource bounds
 
-Native tactic route report v36 and scratch campaign audit v2 make four
+Native tactic route report v37 and scratch campaign audit v3 make four
 long-campaign resource dimensions explicit.
+
+Audit v3 additionally authenticates its terminal-improvement timeline against
+the final graph expansion behind each proposal and computes first-hit ticks
+relative to the campaign source boundary. Absolute tape frames can no longer
+masquerade as route ticks or make a valid nonzero-source campaign fail its own
+monotonic-improvement audit.
 
 ## Checkpoint memory
 

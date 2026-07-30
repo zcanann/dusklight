@@ -620,6 +620,12 @@ fn journal_projects_graph_and_materializes_routes_from_content_objects() {
     detached.proposal_batch[0].trace.emitted_tape_sha256 = Digest([0xff; 32]);
     assert!(project_tactic_decision_record(&store, detached).is_err());
     let mut detached = record.clone();
+    let mut sibling = detached.proposal_batch[0].clone();
+    detached.proposal_batch[0].trace.retained = false;
+    sibling.trace.retained = true;
+    detached.proposal_batch.push(sibling);
+    assert!(project_tactic_decision_record(&store, detached).is_err());
+    let mut detached = record.clone();
     let mut component_frame = InputFrame::default();
     component_frame.owned_ports = 1;
     detached.proposal_batch[0].component = Some(

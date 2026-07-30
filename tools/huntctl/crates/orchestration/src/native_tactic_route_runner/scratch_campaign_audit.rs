@@ -1,12 +1,14 @@
 use super::scratch_discovery::route_report_sha256;
 use super::*;
-use crate::state_graph::StateGraph;
+use crate::state_graph::{ActionExpansionStatus, ExpansionEvidenceAuthority, StateGraph};
 use crate::tactic_q_campaign::TacticQCampaign;
 use dusklight_learning::tactic_exploration::TacticSelectionReason;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2: &str =
     "dusklight-native-tactic-scratch-campaign-audit/v2";
+pub const NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3: &str =
+    "dusklight-native-tactic-scratch-campaign-audit/v3";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -202,7 +204,7 @@ impl NativeTacticScratchCampaignAudit {
         }
         let resources = resource_audit(route, &plan)?;
         let mut audit = Self {
-            schema: NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2.into(),
+            schema: NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3.into(),
             content_sha256: Digest::ZERO,
             route_report_sha256: route_report_sha256(route)?,
             execution_plan_sha256: route.execution_plan_sha256,
@@ -220,7 +222,7 @@ impl NativeTacticScratchCampaignAudit {
     }
 
     pub fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
-        if self.schema != NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2
+        if self.schema != NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3
             || self.content_sha256 == Digest::ZERO
             || self.route_report_sha256 == Digest::ZERO
             || self.execution_plan_sha256 == Digest::ZERO
@@ -487,6 +489,7 @@ fn seed_audit(
     let mut terminal_improvements = Vec::new();
     let mut terminal_improvement_timing_complete = true;
     let mut best_observed_terminal_tick = None;
+    let source_frame = seed.trace.first().map(|trace| trace.before.tape_frame);
     let mut decisions = Vec::with_capacity(seed.trace.len());
     for trace in &seed.trace {
         let unique_action_ids = trace
@@ -509,6 +512,14 @@ fn seed_audit(
         scheduler_timeline_complete &= trace.scheduler_decision.as_ref().is_some_and(|scheduler| {
             scheduler.learner_model_sha256 == trace.learner_snapshot_sha256
                 && scheduler.validate().is_ok()
+                && scheduler.evaluated_expansion_sha256.len() == trace.proposal_batch.len()
+                && trace
+                    .proposal_batch
+                    .iter()
+                    .enumerate()
+                    .all(|(index, proposal)| {
+                        proposal_matches_graph_expansion(graph, scheduler, index, proposal)
+                    })
         });
         for tactic in &trace.applicable_tactics {
             *action_availability_counts
@@ -531,12 +542,29 @@ fn seed_audit(
         if trace.learner_snapshot_sha256 != Digest::ZERO {
             learner_snapshots.insert(trace.learner_snapshot_sha256);
         }
-        for proposal in &trace.proposal_batch {
+        for (proposal_index, proposal) in trace.proposal_batch.iter().enumerate() {
             *proposal_selection_counts
                 .entry(selection_reason_key(proposal.selection_reason)?)
                 .or_default() += 1;
             if proposal.terminal {
-                let Some(authenticated_tick) = proposal.root_route_ticks.checked_sub(1) else {
+                let graph_authenticated = trace
+                    .scheduler_decision
+                    .as_ref()
+                    .is_some_and(|scheduler| {
+                        proposal_matches_graph_expansion(
+                            graph,
+                            scheduler,
+                            proposal_index,
+                            proposal,
+                        )
+                    });
+                if !graph_authenticated {
+                    terminal_improvement_timing_complete = false;
+                    continue;
+                }
+                let Some(authenticated_tick) = source_frame.and_then(|source_frame| {
+                    route_frames_first_hit_tick(proposal.root_route_ticks, source_frame)
+                }) else {
                     terminal_improvement_timing_complete = false;
                     continue;
                 };
@@ -770,6 +798,53 @@ fn seed_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
                     .last()
                     .map(|row| row.authenticated_tick)
                     == seed.best_authenticated_tick))
+}
+
+fn proposal_matches_graph_expansion(
+    graph: &StateGraph,
+    scheduler: &crate::tactic_q_campaign::TacticSchedulerDecisionTrace,
+    proposal_index: usize,
+    proposal: &NativeTacticProposalTrace,
+) -> bool {
+    let Some(expansion_sha256) = scheduler
+        .evaluated_expansion_sha256
+        .get(proposal_index)
+        .copied()
+    else {
+        return false;
+    };
+    let Some(expansion) = graph.expansion(expansion_sha256) else {
+        return false;
+    };
+    let (
+        ActionExpansionStatus::Completed {
+            authority: ExpansionEvidenceAuthority::Executable,
+            evidence,
+            ..
+        },
+        Some(target),
+        Some(execution),
+    ) = (&expansion.status, expansion.target, expansion.execution.as_ref())
+    else {
+        return false;
+    };
+    let Some(target_node) = graph.node(target) else {
+        return false;
+    };
+    expansion.action.option_id == proposal.option_id
+        && execution.duration.realized_ticks == proposal.realized_ticks
+        && target_node.terminal == proposal.terminal
+        && target_node.id.state_sha256 == proposal.after_snapshot_sha256
+        && target_node.restoration.route.tape_frames == proposal.root_route_ticks
+        && evidence.values().any(|row| {
+            row.authority == ExpansionEvidenceAuthority::Executable
+                && row.transition.after_state_sha256 == proposal.after_snapshot_sha256
+                && row.transition.value_sample.action.option_id == proposal.option_id
+                && row.transition.value_sample.realized_tape_sha256
+                    == proposal.emitted_tape_sha256
+                && row.transition.value_sample.reward.to_bits() == proposal.reward.to_bits()
+                && row.transition.value_sample.terminal == proposal.terminal
+        })
 }
 
 fn selection_reason_key(
