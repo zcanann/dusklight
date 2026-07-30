@@ -247,6 +247,49 @@ impl NativeTacticReplaySharingTelemetry {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticCampaignAdmissionTiming {
+    pub terminal_projection_micros: u64,
+    pub batch_graph_admission_micros: u64,
+    pub next_action_catalog_micros: u64,
+    pub selected_outcome_retention_micros: u64,
+    pub frontier_retention_micros: u64,
+    pub unattributed_micros: u64,
+}
+
+impl NativeTacticCampaignAdmissionTiming {
+    pub(super) fn total_micros(self) -> u64 {
+        self.terminal_projection_micros
+            .saturating_add(self.batch_graph_admission_micros)
+            .saturating_add(self.next_action_catalog_micros)
+            .saturating_add(self.selected_outcome_retention_micros)
+            .saturating_add(self.frontier_retention_micros)
+            .saturating_add(self.unattributed_micros)
+    }
+
+    pub(super) fn merge(&mut self, other: Self) {
+        self.terminal_projection_micros = self
+            .terminal_projection_micros
+            .saturating_add(other.terminal_projection_micros);
+        self.batch_graph_admission_micros = self
+            .batch_graph_admission_micros
+            .saturating_add(other.batch_graph_admission_micros);
+        self.next_action_catalog_micros = self
+            .next_action_catalog_micros
+            .saturating_add(other.next_action_catalog_micros);
+        self.selected_outcome_retention_micros = self
+            .selected_outcome_retention_micros
+            .saturating_add(other.selected_outcome_retention_micros);
+        self.frontier_retention_micros = self
+            .frontier_retention_micros
+            .saturating_add(other.frontier_retention_micros);
+        self.unattributed_micros = self
+            .unattributed_micros
+            .saturating_add(other.unattributed_micros);
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticRouteTiming {
@@ -288,6 +331,8 @@ pub struct NativeTacticRouteTiming {
     pub result_validation_and_fact_extraction_micros: u64,
     #[serde(default)]
     pub campaign_admission_micros: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub campaign_admission_breakdown: Option<NativeTacticCampaignAdmissionTiming>,
     #[serde(default)]
     pub graph_admission_micros: u64,
     /// Candidate-only artifact generation after native terminal admission.

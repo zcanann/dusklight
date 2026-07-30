@@ -150,8 +150,9 @@ use report::{
     NativeTacticProposalRecord, NativeTacticSeedPerformance,
 };
 pub use report::{
-    NativeTacticDecisionTrace, NativeTacticDemonstrationReport, NativeTacticFrontierAvailability,
-    NativeTacticGraphMetrics, NativeTacticImportedMacroReport, NativeTacticLearnerAuthorityReport,
+    NativeTacticCampaignAdmissionTiming, NativeTacticDecisionTrace,
+    NativeTacticDemonstrationReport, NativeTacticFrontierAvailability, NativeTacticGraphMetrics,
+    NativeTacticImportedMacroReport, NativeTacticLearnerAuthorityReport,
     NativeTacticMacroDiscoveryReport, NativeTacticMacroReuseReport, NativeTacticMeasurementTrace,
     NativeTacticProposalTrace, NativeTacticReplaySharingTelemetry, NativeTacticRestoreAccounting,
     NativeTacticRestoreSource, NativeTacticRouteReport, NativeTacticRouteRunConfig,

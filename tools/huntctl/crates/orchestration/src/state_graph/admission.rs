@@ -104,7 +104,7 @@ impl StateGraph {
         let (transition, authenticated_evidence_sha256) = transition.into_parts();
         debug_assert_eq!(evidence_sha256, authenticated_evidence_sha256);
         let (option_start, option_end) =
-            self.validate_authenticated_transition(&transition, &route)?;
+            self.validate_authenticated_transition(transition.as_ref(), &route)?;
         let source_route = self.prepare_route(tape_prefix(&route, option_start)?)?;
         let target_route = self.prepare_route(tape_prefix(&route, option_end)?)?;
         let full_tape_sha256 = if option_end == route.frames.len() {
@@ -169,7 +169,7 @@ impl StateGraph {
                     CompletedExpansionEvidence {
                         episode_group,
                         authority,
-                        transition: Box::new(transition),
+                        transition,
                     },
                 );
             }
@@ -342,7 +342,7 @@ impl StateGraph {
                         CompletedExpansionEvidence {
                             episode_group,
                             authority,
-                            transition: Box::new(transition),
+                            transition,
                         },
                     )]),
                 },

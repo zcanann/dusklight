@@ -152,6 +152,45 @@ fn shared_node_state_preserves_legacy_serialization_bytes() {
     );
 }
 
+#[test]
+fn shared_completed_evidence_preserves_legacy_serialization_bytes() {
+    #[derive(serde::Serialize)]
+    struct LegacyCompletedExpansionEvidence<'a> {
+        episode_group: u64,
+        authority: ExpansionEvidenceAuthority,
+        transition: &'a OptionTransitionSample,
+    }
+
+    let (mut graph, transition, route) = graph_and_transition();
+    let admission = graph
+        .admit_completed_expansion(
+            transition,
+            route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+    let expansion = graph.expansion(admission.expansion_sha256).unwrap();
+    let ActionExpansionStatus::Completed { evidence, .. } = &expansion.status else {
+        panic!("admitted expansion is not complete");
+    };
+    let shared = evidence.get(&admission.evidence_sha256).unwrap();
+    let legacy = LegacyCompletedExpansionEvidence {
+        episode_group: shared.episode_group,
+        authority: shared.authority,
+        transition: shared.transition.as_ref(),
+    };
+
+    assert_eq!(
+        serde_cbor::to_vec(shared).unwrap(),
+        serde_cbor::to_vec(&legacy).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_vec(shared).unwrap(),
+        serde_json::to_vec(&legacy).unwrap()
+    );
+}
+
 fn terminalize(transition: &mut OptionTransitionSample) {
     transition.after.terminal.reached = Some(true);
     transition.after.terminal.reason =

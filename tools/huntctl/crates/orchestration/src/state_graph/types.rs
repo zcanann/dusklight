@@ -146,7 +146,7 @@ pub enum ActionExpansionStatus {
 pub struct CompletedExpansionEvidence {
     pub episode_group: u64,
     pub authority: ExpansionEvidenceAuthority,
-    pub transition: Box<OptionTransitionSample>,
+    pub transition: Arc<OptionTransitionSample>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -11,6 +11,7 @@ use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
 use std::ops::Deref;
+use std::sync::Arc;
 
 pub const OPTION_TRANSITION_SAMPLE_SCHEMA_V1: &str = "dusklight-option-transition-sample/v1";
 pub const MAX_OPTION_INTERMEDIATE_BOUNDARIES: usize = 256;
@@ -57,7 +58,7 @@ pub struct OptionTransitionSample {
 /// preserves the existing transition wire shape.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AuthenticatedOptionTransition {
-    transition: OptionTransitionSample,
+    transition: Arc<OptionTransitionSample>,
     replay_identity_sha256: Digest,
 }
 
@@ -65,7 +66,7 @@ impl AuthenticatedOptionTransition {
     pub fn new(transition: OptionTransitionSample) -> Result<Self, OptionTransitionError> {
         let replay_identity_sha256 = transition.validate_and_replay_identity_sha256()?;
         Ok(Self {
-            transition,
+            transition: Arc::new(transition),
             replay_identity_sha256,
         })
     }
@@ -74,14 +75,14 @@ impl AuthenticatedOptionTransition {
         self.replay_identity_sha256
     }
 
-    pub fn into_parts(self) -> (OptionTransitionSample, Digest) {
+    pub fn into_parts(self) -> (Arc<OptionTransitionSample>, Digest) {
         (self.transition, self.replay_identity_sha256)
     }
 }
 
 impl AsRef<OptionTransitionSample> for AuthenticatedOptionTransition {
     fn as_ref(&self) -> &OptionTransitionSample {
-        &self.transition
+        self.transition.as_ref()
     }
 }
 
@@ -89,7 +90,7 @@ impl Deref for AuthenticatedOptionTransition {
     type Target = OptionTransitionSample;
 
     fn deref(&self) -> &Self::Target {
-        &self.transition
+        self.transition.as_ref()
     }
 }
 
@@ -98,7 +99,7 @@ impl Serialize for AuthenticatedOptionTransition {
     where
         S: serde::Serializer,
     {
-        self.transition.serialize(serializer)
+        self.transition.as_ref().serialize(serializer)
     }
 }
 
@@ -624,7 +625,13 @@ mod tests {
         assert_eq!(authenticated.replay_identity_sha256(), expected_identity);
         assert_eq!(serde_json::to_vec(&authenticated).unwrap(), expected_json);
         assert_eq!(serde_cbor::to_vec(&authenticated).unwrap(), expected_cbor);
-        assert_eq!(authenticated.into_parts(), (row, expected_identity));
+        let cloned = authenticated.clone();
+        let (shared, receipt) = authenticated.into_parts();
+        let (cloned_shared, cloned_receipt) = cloned.into_parts();
+        assert!(Arc::ptr_eq(&shared, &cloned_shared));
+        assert_eq!(shared.as_ref(), &row);
+        assert_eq!(receipt, expected_identity);
+        assert_eq!(cloned_receipt, expected_identity);
     }
 
     #[test]

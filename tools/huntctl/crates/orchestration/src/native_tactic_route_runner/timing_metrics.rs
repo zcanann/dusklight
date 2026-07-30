@@ -139,6 +139,12 @@ pub(super) fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> Native
         timing.campaign_admission_micros = timing
             .campaign_admission_micros
             .saturating_add(seed.timing.campaign_admission_micros);
+        if let Some(admission_breakdown) = seed.timing.campaign_admission_breakdown {
+            timing
+                .campaign_admission_breakdown
+                .get_or_insert_default()
+                .merge(admission_breakdown);
+        }
         timing.graph_admission_micros = timing
             .graph_admission_micros
             .saturating_add(seed.timing.graph_admission_micros);

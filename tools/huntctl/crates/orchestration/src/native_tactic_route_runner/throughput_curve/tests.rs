@@ -69,6 +69,8 @@ fn sample(
         orchestration_micros: 100,
         result_validation_and_fact_extraction_micros: 100,
         graph_admission_micros: 100,
+        campaign_admission_micros: None,
+        campaign_admission_breakdown: None,
         native_worker_occupancy_per_million: 500_000,
     }
 }
@@ -79,6 +81,37 @@ fn throughput_output_mode_requires_explicit_resume() {
     assert!(curve_output_mode_is_valid(true, true));
     assert!(!curve_output_mode_is_valid(true, false));
     assert!(!curve_output_mode_is_valid(false, true));
+}
+
+#[test]
+fn admission_breakdown_is_exact_and_legacy_samples_remain_wire_compatible() {
+    let mut current = sample(1, 1, 1, 1_000);
+    let legacy_json = serde_json::to_value(&current).unwrap();
+    assert!(
+        legacy_json.get("campaign_admission_micros").is_none()
+            && legacy_json.get("campaign_admission_breakdown").is_none()
+    );
+    assert!(sample_admission_timing_is_valid(&current));
+
+    current.campaign_admission_micros = Some(21);
+    current.campaign_admission_breakdown = Some(NativeTacticCampaignAdmissionTiming {
+        terminal_projection_micros: 1,
+        batch_graph_admission_micros: 2,
+        next_action_catalog_micros: 3,
+        selected_outcome_retention_micros: 4,
+        frontier_retention_micros: 5,
+        unattributed_micros: 6,
+    });
+    assert!(sample_admission_timing_is_valid(&current));
+    assert!(
+        serde_json::to_value(&current)
+            .unwrap()
+            .get("campaign_admission_breakdown")
+            .is_some()
+    );
+
+    current.campaign_admission_micros = Some(22);
+    assert!(!sample_admission_timing_is_valid(&current));
 }
 
 #[test]

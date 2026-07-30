@@ -928,6 +928,14 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
             orchestration_micros: 50_000,
             result_validation_and_fact_extraction_micros: 20_000,
             campaign_admission_micros: 20_000,
+            campaign_admission_breakdown: Some(NativeTacticCampaignAdmissionTiming {
+                terminal_projection_micros: 1_000,
+                batch_graph_admission_micros: 2_000,
+                next_action_catalog_micros: 3_000,
+                selected_outcome_retention_micros: 4_000,
+                frontier_retention_micros: 5_000,
+                unattributed_micros: 5_000,
+            }),
             graph_admission_micros: 15_000,
             reporting_micros: 25_000,
             ..NativeTacticRouteTiming::default()
@@ -961,6 +969,17 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
     assert_eq!(timing.orchestration_micros, 50_000);
     assert_eq!(timing.result_validation_and_fact_extraction_micros, 20_000);
     assert_eq!(timing.campaign_admission_micros, 20_000);
+    assert_eq!(
+        timing.campaign_admission_breakdown,
+        Some(NativeTacticCampaignAdmissionTiming {
+            terminal_projection_micros: 1_000,
+            batch_graph_admission_micros: 2_000,
+            next_action_catalog_micros: 3_000,
+            selected_outcome_retention_micros: 4_000,
+            frontier_retention_micros: 5_000,
+            unattributed_micros: 5_000,
+        })
+    );
     assert_eq!(timing.process_launch_micros, 30_000);
     assert_eq!(timing.ipc_and_result_transport_micros, 40_000);
     assert_eq!(timing.native_observation_capture_micros, 50_000);

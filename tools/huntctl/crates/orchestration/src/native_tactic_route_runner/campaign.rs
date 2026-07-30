@@ -823,6 +823,7 @@ pub(super) fn run_seed(
             .orchestration_micros
             .saturating_add(result_validation_micros);
         let admission_orchestration_started = Instant::now();
+        let terminal_projection_started = Instant::now();
         let terminal_candidates = evaluated
             .iter()
             .filter(|proposal| proposal.outcome.terminal)
@@ -832,6 +833,7 @@ pub(super) fn run_seed(
                     .map_err(route_error)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let terminal_projection_micros = elapsed_micros(terminal_projection_started.elapsed());
         // The policy-selected proposal is authoritative. Sibling proposals are
         // native training and candidate evidence, not an outcome-peeking beam
         // search that replaces the learner's action after observing results.
@@ -847,6 +849,7 @@ pub(super) fn run_seed(
                 proposal.outcome.execution.duration.realized_ticks,
             ))
         });
+        let batch_graph_admission_started = Instant::now();
         let newly_admitted_training_rows = match campaign.admit_leased_evaluated_replay(
             &evaluated,
             &evaluated_episode_groups,
@@ -858,10 +861,12 @@ pub(super) fn run_seed(
                 return Err(error.into());
             }
         };
+        let batch_graph_admission_micros = elapsed_micros(batch_graph_admission_started.elapsed());
         let duplicate_training_transitions = evaluated
             .len()
             .saturating_sub(newly_admitted_training_rows as usize)
             as u64;
+        let next_action_catalog_started = Instant::now();
         let next_proposals = parameterized_catalog_for_state_with_promoted(
             seed,
             campaign
@@ -875,6 +880,7 @@ pub(super) fn run_seed(
             action_schema_sha256,
             promoted_tactics,
         )?;
+        let next_action_catalog_micros = elapsed_micros(next_action_catalog_started.elapsed());
         let graph_admission_started = Instant::now();
         let step = campaign
             .retain_and_refit_rewarded(
@@ -889,9 +895,11 @@ pub(super) fn run_seed(
                 false,
             )
             .map_err(route_error)?;
+        let selected_outcome_retention_micros = elapsed_micros(graph_admission_started.elapsed());
         timing.graph_admission_micros = timing
             .graph_admission_micros
-            .saturating_add(elapsed_micros(graph_admission_started.elapsed()));
+            .saturating_add(selected_outcome_retention_micros);
+        let frontier_retention_started = Instant::now();
         if step.step.transition != *expected_transition
             || step.reward != evaluated[winner_index].reward
         {
@@ -946,7 +954,22 @@ pub(super) fn run_seed(
                 ));
             }
         };
+        let frontier_retention_micros = elapsed_micros(frontier_retention_started.elapsed());
         let campaign_admission_micros = elapsed_micros(admission_orchestration_started.elapsed());
+        let mut admission_breakdown = NativeTacticCampaignAdmissionTiming {
+            terminal_projection_micros,
+            batch_graph_admission_micros,
+            next_action_catalog_micros,
+            selected_outcome_retention_micros,
+            frontier_retention_micros,
+            unattributed_micros: 0,
+        };
+        admission_breakdown.unattributed_micros =
+            campaign_admission_micros.saturating_sub(admission_breakdown.total_micros());
+        timing
+            .campaign_admission_breakdown
+            .get_or_insert_default()
+            .merge(admission_breakdown);
         timing.campaign_admission_micros = timing
             .campaign_admission_micros
             .saturating_add(campaign_admission_micros);

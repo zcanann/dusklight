@@ -70,6 +70,10 @@ pub struct NativeTacticThroughputCurveSample {
     pub orchestration_micros: u64,
     pub result_validation_and_fact_extraction_micros: u64,
     pub graph_admission_micros: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub campaign_admission_micros: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub campaign_admission_breakdown: Option<NativeTacticCampaignAdmissionTiming>,
     pub native_worker_occupancy_per_million: u64,
 }
 
@@ -378,6 +382,7 @@ impl NativeTacticThroughputCurveReport {
                         sample.native_simulation_micros,
                         sample.wall_micros.saturating_mul(sample.workers as u64),
                     )
+                || !sample_admission_timing_is_valid(sample)
             {
                 return Err(route_message(
                     "native tactic throughput curve sample is invalid",
@@ -1019,6 +1024,12 @@ fn validate_completed_sample(
         || route.execution_plan_sha256 != execution_plan_sha256
         || route.workers != sample.workers
         || route.timing.process_launch_micros != 0
+        || route
+            .timing
+            .campaign_admission_breakdown
+            .is_some_and(|breakdown| {
+                breakdown.total_micros() != route.timing.campaign_admission_micros
+            })
     {
         return Err(route_message(
             "native tactic throughput route sample is detached",
@@ -1290,6 +1301,8 @@ pub(super) fn sample_from_route_report(
             .timing
             .result_validation_and_fact_extraction_micros,
         graph_admission_micros: route_report.timing.graph_admission_micros,
+        campaign_admission_micros: Some(route_report.timing.campaign_admission_micros),
+        campaign_admission_breakdown: route_report.timing.campaign_admission_breakdown,
         native_worker_occupancy_per_million: ratio_per_million(
             route_report.timing.native_simulation_micros,
             route_report
@@ -1297,6 +1310,17 @@ pub(super) fn sample_from_route_report(
                 .wall_micros
                 .saturating_mul(workers as u64),
         ),
+    }
+}
+
+fn sample_admission_timing_is_valid(sample: &NativeTacticThroughputCurveSample) -> bool {
+    match (
+        sample.campaign_admission_micros,
+        sample.campaign_admission_breakdown,
+    ) {
+        (None, None) => true,
+        (Some(total), Some(breakdown)) => total > 0 && breakdown.total_micros() == total,
+        _ => false,
     }
 }
 

@@ -70,6 +70,10 @@ pub struct NativeTacticScratchEfficiencyMetrics {
     pub rust_state_extraction_micros: u64,
     pub tactic_preparation_and_fact_extraction_micros: u64,
     pub graph_admission_micros: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub campaign_admission_micros: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub campaign_admission_breakdown: Option<NativeTacticCampaignAdmissionTiming>,
     pub model_update_micros: u64,
     pub evidence_projection_micros: u64,
     pub persistence_micros: u64,
@@ -477,6 +481,8 @@ fn efficiency_metrics(
         tactic_preparation_and_fact_extraction_micros: timing
             .tactic_preparation_and_fact_extraction_micros,
         graph_admission_micros: timing.graph_admission_micros,
+        campaign_admission_micros: Some(timing.campaign_admission_micros),
+        campaign_admission_breakdown: timing.campaign_admission_breakdown,
         model_update_micros: timing.model_update_micros,
         evidence_projection_micros: timing.evidence_projection_micros,
         persistence_micros: timing.persistence_micros,
@@ -525,6 +531,11 @@ fn metrics_valid(metrics: &NativeTacticScratchEfficiencyMetrics, workers: usize)
                     .tactic_execution_micros
                     .saturating_mul(workers as u64),
             )
+        && metrics
+            .campaign_admission_breakdown
+            .is_none_or(|breakdown| {
+                metrics.campaign_admission_micros == Some(breakdown.total_micros())
+            })
         && (metrics.terminal_seed_count != 0 || metrics.best_authenticated_tick.is_none())
         && (metrics.terminal_seed_count != 0
             || (metrics.median_time_to_first_terminal_micros.is_none()
