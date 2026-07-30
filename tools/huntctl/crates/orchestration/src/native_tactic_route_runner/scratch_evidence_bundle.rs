@@ -1,3 +1,4 @@
+use super::candidate_retention::route_frames_first_hit_tick;
 use super::scratch_discovery::route_report_sha256;
 use super::*;
 use crate::native_residual_campaign::NativeResidualExecutionBinding;
@@ -214,7 +215,13 @@ impl NativeTacticScratchEvidenceBundle {
 
         let mut seeds = Vec::with_capacity(route.seeds.len());
         for seed in &route.seeds {
-            seeds.push(bundle_seed(&store, &repository_root, route, seed)?);
+            seeds.push(bundle_seed(
+                &store,
+                &repository_root,
+                request.route.source_boundary_index,
+                route,
+                seed,
+            )?);
         }
         seeds.sort_by_key(|seed| seed.seed);
 
@@ -354,7 +361,14 @@ impl NativeTacticScratchEvidenceBundle {
                 .ok_or_else(|| {
                     route_message("scratch bundled seed is absent from campaign audit")
                 })?;
-            validate_seed(bundle_root, &route, reported, bundled, audited)?;
+            validate_seed(
+                bundle_root,
+                request.route.source_boundary_index,
+                &route,
+                reported,
+                bundled,
+                audited,
+            )?;
         }
         Ok(())
     }
@@ -397,6 +411,7 @@ impl NativeTacticScratchEvidenceBundle {
 fn bundle_seed(
     store: &ContentStore,
     repository_root: &Path,
+    source_boundary_index: u64,
     route: &NativeTacticRouteReport,
     seed: &NativeTacticSeedResult,
 ) -> Result<NativeTacticScratchSeedEvidence, NativeTacticRouteRunError> {
@@ -468,13 +483,13 @@ fn bundle_seed(
                 let result = TacticQFinalResult::read(&result_path).map_err(route_error)?;
                 if result.route_tape != tape
                     || result.objective_sha256 != route.objective_sha256
-                    || result.execution_authority_sha256 != route.execution_binding_sha256
+                    || result.execution_authority_sha256 != route.execution_plan_sha256
                     || Some(result.terminal_state_sha256) != seed.best_terminal_state_sha256
                     || Some(
                         route_checkpoint(result.root_checkpoint_sha256, &tape)
                             .map_err(route_error)?,
                     ) != seed.best_terminal_route_checkpoint_sha256
-                    || tape.frames.len().checked_sub(1).map(|tick| tick as u64)
+                    || terminal_tape_first_hit_tick(&tape, source_boundary_index)
                         != seed.best_authenticated_tick
                 {
                     return Err(route_message(
@@ -524,6 +539,7 @@ fn bundle_seed(
 
 fn validate_seed(
     bundle_root: &Path,
+    source_boundary_index: u64,
     route: &NativeTacticRouteReport,
     reported: &NativeTacticSeedResult,
     bundled: &NativeTacticScratchSeedEvidence,
@@ -606,12 +622,12 @@ fn validate_seed(
                     .logical_identity_sha256
                 || result.route_tape != tape
                 || result.objective_sha256 != route.objective_sha256
-                || result.execution_authority_sha256 != route.execution_binding_sha256
+                || result.execution_authority_sha256 != route.execution_plan_sha256
                 || Some(result.terminal_state_sha256) != bundled.best_terminal_state_sha256
                 || Some(
                     route_checkpoint(result.root_checkpoint_sha256, &tape).map_err(route_error)?,
                 ) != bundled.best_terminal_route_checkpoint_sha256
-                || tape.frames.len().checked_sub(1).map(|tick| tick as u64)
+                || terminal_tape_first_hit_tick(&tape, source_boundary_index)
                     != bundled.best_authenticated_tick
             {
                 return Err(route_message(
@@ -627,6 +643,12 @@ fn validate_seed(
         }
     }
     Ok(())
+}
+
+fn terminal_tape_first_hit_tick(tape: &InputTape, source_boundary_index: u64) -> Option<u64> {
+    u64::try_from(tape.frames.len())
+        .ok()
+        .and_then(|frames| route_frames_first_hit_tick(frames, source_boundary_index))
 }
 
 fn bundle_authority(
@@ -894,5 +916,15 @@ mod tests {
         }
         assert!(!output.exists());
         assert!(parent.0.exists());
+    }
+
+    #[test]
+    fn terminal_tape_ticks_are_relative_to_the_authenticated_source_boundary() {
+        let tape = InputTape {
+            frames: vec![InputFrame::default(); 506 + 123 + 1],
+            ..InputTape::default()
+        };
+        assert_eq!(terminal_tape_first_hit_tick(&tape, 506), Some(123));
+        assert_eq!(terminal_tape_first_hit_tick(&tape, 630), None);
     }
 }
