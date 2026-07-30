@@ -1,6 +1,7 @@
 use super::{ExactStateId, FutureEquivalenceProof, StateGraph, StateGraphError};
 use dusklight_automation_contracts::artifact::Digest;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Arc;
 
 impl StateGraph {
     /// Admit externally authenticated native future-equivalence evidence.
@@ -38,7 +39,7 @@ impl StateGraph {
             ));
         }
         match self.future_equivalence_proofs.get(&proof.proof_sha256) {
-            Some(existing) if existing == &proof => return Ok(false),
+            Some(existing) if existing.as_ref() == &proof => return Ok(false),
             Some(_) => {
                 return Err(StateGraphError::DigestCollision(
                     "future-equivalence proof identity names different evidence",
@@ -47,7 +48,8 @@ impl StateGraph {
             None => {}
         }
         let identity = proof.proof_sha256;
-        self.future_equivalence_proofs.insert(identity, proof);
+        self.future_equivalence_proofs
+            .insert(identity, Arc::new(proof));
         if let Err(error) = self.validate() {
             self.future_equivalence_proofs.remove(&identity);
             return Err(error);
@@ -57,7 +59,7 @@ impl StateGraph {
     }
 
     pub fn future_equivalence_proofs(&self) -> impl Iterator<Item = &FutureEquivalenceProof> {
-        self.future_equivalence_proofs.values()
+        self.future_equivalence_proofs.values().map(Arc::as_ref)
     }
 
     pub fn equivalent_nodes(

@@ -193,6 +193,7 @@ impl TacticQCampaign {
         fit_model: bool,
     ) -> Result<Self, TacticQCampaignError> {
         validate_checkpoint(&checkpoint)?;
+        let training_projection_keys = graph_training_projection(&checkpoint.state_graph)?.keys;
         let model = if fit_model {
             replay_model(
                 checkpoint.feature_schema_sha256,
@@ -244,6 +245,7 @@ impl TacticQCampaign {
             training_replay: checkpoint.training_replay,
             training_replay_routes: checkpoint.training_replay_routes,
             training_episode_groups: checkpoint.training_episode_groups,
+            training_projection_keys,
             frontier_archive,
             model_config: checkpoint.model_config,
             exploration: checkpoint.exploration,

@@ -28,11 +28,12 @@ use dusklight_control::option_execution::OptionExecutionError;
 use dusklight_learning::fact_snapshot::{FactSnapshot, FactSnapshotError};
 use dusklight_learning::option_transition::{OptionTransitionError, OptionTransitionSample};
 use dusklight_learning::option_values::{OptionActionDescriptor, OptionValueError};
+use im::OrdMap;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 
 const ROUTE_CHECKPOINT_SCHEMA_V1: &[u8] = b"dusklight-route-checkpoint/v1";
 const EXECUTABLE_EXPANSION_SET_SCHEMA_V1: &[u8] = b"dusklight-executable-expansion-set/v1";
@@ -44,12 +45,12 @@ pub struct StateGraph {
     pub identity: StateGraphIdentity,
     root: ExactStateId,
     root_route_frames: u64,
-    nodes: BTreeMap<ExactStateId, StateGraphNode>,
-    expansions: BTreeMap<Digest, ActionExpansion>,
-    segments: BTreeMap<Digest, ObservedSegment>,
-    routes: BTreeMap<Digest, InputTape>,
+    nodes: OrdMap<ExactStateId, Arc<StateGraphNode>>,
+    expansions: OrdMap<Digest, Arc<ActionExpansion>>,
+    segments: OrdMap<Digest, Arc<ObservedSegment>>,
+    routes: OrdMap<Digest, Arc<InputTape>>,
     #[serde(default)]
-    future_equivalence_proofs: BTreeMap<Digest, FutureEquivalenceProof>,
+    future_equivalence_proofs: OrdMap<Digest, Arc<FutureEquivalenceProof>>,
     best_terminal: Option<TerminalPath>,
     #[serde(skip)]
     persistence: persistence::StateGraphPersistence,
@@ -106,11 +107,11 @@ impl StateGraph {
             identity,
             root,
             root_route_frames: root_route.frames.len() as u64,
-            nodes: BTreeMap::from([(root, node)]),
-            expansions: BTreeMap::new(),
-            segments: BTreeMap::new(),
-            routes: BTreeMap::from([(root_route_checkpoint, root_route)]),
-            future_equivalence_proofs: BTreeMap::new(),
+            nodes: OrdMap::unit(root, Arc::new(node)),
+            expansions: OrdMap::new(),
+            segments: OrdMap::new(),
+            routes: OrdMap::unit(root_route_checkpoint, Arc::new(root_route)),
+            future_equivalence_proofs: OrdMap::new(),
             best_terminal,
             persistence: Default::default(),
         })
@@ -121,19 +122,19 @@ impl StateGraph {
     }
 
     pub fn node(&self, id: ExactStateId) -> Option<&StateGraphNode> {
-        self.nodes.get(&id)
+        self.nodes.get(&id).map(Arc::as_ref)
     }
 
     pub fn expansion(&self, identity_sha256: Digest) -> Option<&ActionExpansion> {
-        self.expansions.get(&identity_sha256)
+        self.expansions.get(&identity_sha256).map(Arc::as_ref)
     }
 
     pub fn segment(&self, identity_sha256: Digest) -> Option<&ObservedSegment> {
-        self.segments.get(&identity_sha256)
+        self.segments.get(&identity_sha256).map(Arc::as_ref)
     }
 
     pub fn route(&self, route_checkpoint_sha256: Digest) -> Option<&InputTape> {
-        self.routes.get(&route_checkpoint_sha256)
+        self.routes.get(&route_checkpoint_sha256).map(Arc::as_ref)
     }
 
     pub fn node_count(&self) -> usize {
@@ -141,7 +142,7 @@ impl StateGraph {
     }
 
     pub fn nodes(&self) -> impl Iterator<Item = &StateGraphNode> {
-        self.nodes.values()
+        self.nodes.values().map(Arc::as_ref)
     }
 
     pub fn expansion_count(&self) -> usize {
@@ -202,7 +203,7 @@ impl StateGraph {
     }
 
     pub fn expansions(&self) -> impl Iterator<Item = &ActionExpansion> {
-        self.expansions.values()
+        self.expansions.values().map(Arc::as_ref)
     }
 
     pub fn segment_count(&self) -> usize {
@@ -257,7 +258,10 @@ impl StateGraph {
                     route_checkpoint_sha256,
                     evidence,
                     ..
-                } => (self.routes.get(route_checkpoint_sha256), Some(evidence)),
+                } => (
+                    self.routes.get(route_checkpoint_sha256).map(Arc::as_ref),
+                    Some(evidence),
+                ),
                 _ => (None, None),
             };
             route.into_iter().flat_map(move |route| {

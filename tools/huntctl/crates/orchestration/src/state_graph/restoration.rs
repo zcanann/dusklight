@@ -54,6 +54,7 @@ impl StateGraph {
         self.validate_restoration_plan(plan)?;
         self.routes
             .get(&plan.route.route_checkpoint_sha256)
+            .map(AsRef::as_ref)
             .ok_or(StateGraphError::Invariant(
                 "restoration plan route is absent",
             ))

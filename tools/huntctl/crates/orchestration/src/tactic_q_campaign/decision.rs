@@ -596,11 +596,25 @@ impl TacticQCampaign {
                 admitted += 1;
             }
         }
-        let projection = graph_training_projection(&state_graph)?;
+        let projection_rows = graph_training_projection_rows(
+            &state_graph,
+            evaluated.iter().map(|evaluated| &evaluated.transition),
+        )?;
+        validate_graph_training_projection_merge(
+            &self.training_projection_keys,
+            &self.training_replay,
+            &self.training_replay_routes,
+            &self.training_episode_groups,
+            &projection_rows,
+        )?;
         self.state_graph = Some(state_graph);
-        self.training_replay = projection.transitions;
-        self.training_replay_routes = projection.routes;
-        self.training_episode_groups = projection.episode_groups;
+        merge_graph_training_projection(
+            &mut self.training_projection_keys,
+            &mut self.training_replay,
+            &mut self.training_replay_routes,
+            &mut self.training_episode_groups,
+            projection_rows,
+        );
         self.frontier_archive = frontier_archive;
         Ok(admitted)
     }
@@ -931,6 +945,7 @@ impl TacticQCampaign {
             self.state_graph = Some(state_graph);
         }
         if let Some(projection) = projection_update {
+            self.training_projection_keys = projection.keys;
             self.training_replay = projection.transitions;
             self.training_replay_routes = projection.routes;
             self.training_episode_groups = projection.episode_groups;

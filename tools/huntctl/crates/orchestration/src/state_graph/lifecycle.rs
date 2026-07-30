@@ -4,6 +4,7 @@ use super::{
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_learning::option_values::OptionActionDescriptor;
+use std::sync::Arc;
 
 impl StateGraph {
     pub fn register_action_expansion(
@@ -31,7 +32,7 @@ impl StateGraph {
         }
         self.expansions.insert(
             identity_sha256,
-            ActionExpansion {
+            Arc::new(ActionExpansion {
                 identity_sha256,
                 source,
                 target: None,
@@ -39,10 +40,11 @@ impl StateGraph {
                 execution: None,
                 observed_segments: Vec::new(),
                 status: ActionExpansionStatus::Untried,
-            },
+            }),
         );
         self.nodes
             .get_mut(&source)
+            .map(Arc::make_mut)
             .ok_or(StateGraphError::Invariant(
                 "registered expansion source disappeared",
             ))?
@@ -68,6 +70,7 @@ impl StateGraph {
         let expansion = self
             .expansions
             .get_mut(&expansion_sha256)
+            .map(Arc::make_mut)
             .ok_or(StateGraphError::Invalid("leased expansion is absent"))?;
         let available = match expansion.status {
             ActionExpansionStatus::Untried | ActionExpansionStatus::Retryable { .. } => true,
@@ -155,6 +158,7 @@ impl StateGraph {
         let expansion = self
             .expansions
             .get_mut(&expansion_sha256)
+            .map(Arc::make_mut)
             .ok_or(StateGraphError::Invalid("leased expansion is absent"))?;
         if !matches!(
             expansion.status,

@@ -142,6 +142,145 @@ fn one_selected_action_owns_all_observed_interior_segments() {
 }
 
 #[test]
+fn graph_transaction_clone_shares_immutable_storage_and_isolates_mutation() {
+    let (graph, transition, route) = graph_and_transition();
+    let mut transaction = graph.clone();
+
+    assert!(graph.nodes.ptr_eq(&transaction.nodes));
+    assert!(graph.expansions.ptr_eq(&transaction.expansions));
+    assert!(graph.segments.ptr_eq(&transaction.segments));
+    assert!(graph.routes.ptr_eq(&transaction.routes));
+    assert!(
+        graph
+            .future_equivalence_proofs
+            .ptr_eq(&transaction.future_equivalence_proofs)
+    );
+
+    transaction
+        .admit_completed_expansion(
+            transition,
+            route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+
+    assert_eq!(graph.node_count(), 1);
+    assert_eq!(graph.expansion_count(), 0);
+    assert_eq!(graph.segment_count(), 0);
+    assert!(!graph.nodes.ptr_eq(&transaction.nodes));
+    assert!(!graph.expansions.ptr_eq(&transaction.expansions));
+    assert!(!graph.segments.ptr_eq(&transaction.segments));
+    assert!(!graph.routes.ptr_eq(&transaction.routes));
+    assert!(
+        graph
+            .future_equivalence_proofs
+            .ptr_eq(&transaction.future_equivalence_proofs),
+        "an untouched graph collection must remain structurally shared"
+    );
+    graph.validate().unwrap();
+    transaction.validate().unwrap();
+}
+
+#[test]
+fn grown_graph_transaction_clone_remains_structurally_constant() {
+    let (mut graph, template, route) = graph_and_transition();
+    for index in 0..33 {
+        let mut transition = template.clone();
+        let option_id = format!("move-{index:03}");
+        transition.execution.option_id.clone_from(&option_id);
+        transition.value_sample.action.option_id = option_id;
+        transition.validate().unwrap();
+        graph
+            .admit_completed_expansion(
+                transition,
+                route.clone(),
+                index + 1,
+                ExpansionEvidenceAuthority::Executable,
+            )
+            .unwrap();
+    }
+    assert_eq!(graph.expansion_count(), 33);
+    assert_eq!(graph.segment_count(), 66);
+
+    let transaction = graph.clone();
+    assert!(graph.nodes.ptr_eq(&transaction.nodes));
+    assert!(graph.expansions.ptr_eq(&transaction.expansions));
+    assert!(graph.segments.ptr_eq(&transaction.segments));
+    assert!(graph.routes.ptr_eq(&transaction.routes));
+    assert!(
+        graph
+            .future_equivalence_proofs
+            .ptr_eq(&transaction.future_equivalence_proofs)
+    );
+    assert_eq!(graph, transaction);
+}
+
+#[test]
+fn structurally_shared_graph_preserves_btree_serialization_bytes() {
+    #[derive(serde::Serialize)]
+    struct BTreeBackedStateGraph<'a> {
+        schema: &'a str,
+        identity: &'a StateGraphIdentity,
+        root: ExactStateId,
+        root_route_frames: u64,
+        nodes: BTreeMap<ExactStateId, StateGraphNode>,
+        expansions: BTreeMap<Digest, ActionExpansion>,
+        segments: BTreeMap<Digest, ObservedSegment>,
+        routes: BTreeMap<Digest, InputTape>,
+        future_equivalence_proofs: BTreeMap<Digest, FutureEquivalenceProof>,
+        best_terminal: &'a Option<TerminalPath>,
+    }
+
+    let (mut graph, transition, route) = graph_and_transition();
+    graph
+        .admit_completed_expansion(
+            transition,
+            route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+    let legacy = BTreeBackedStateGraph {
+        schema: &graph.schema,
+        identity: &graph.identity,
+        root: graph.root,
+        root_route_frames: graph.root_route_frames,
+        nodes: graph
+            .nodes
+            .iter()
+            .map(|(key, value)| (*key, value.as_ref().clone()))
+            .collect(),
+        expansions: graph
+            .expansions
+            .iter()
+            .map(|(key, value)| (*key, value.as_ref().clone()))
+            .collect(),
+        segments: graph
+            .segments
+            .iter()
+            .map(|(key, value)| (*key, value.as_ref().clone()))
+            .collect(),
+        routes: graph
+            .routes
+            .iter()
+            .map(|(key, value)| (*key, value.as_ref().clone()))
+            .collect(),
+        future_equivalence_proofs: graph
+            .future_equivalence_proofs
+            .iter()
+            .map(|(key, value)| (*key, value.as_ref().clone()))
+            .collect(),
+        best_terminal: &graph.best_terminal,
+    };
+
+    assert_eq!(
+        graph.encode().unwrap(),
+        serde_cbor::to_vec(&legacy).unwrap()
+    );
+}
+
+#[test]
 fn forty_tick_option_exposes_and_executes_every_four_tick_counterfactual() {
     let before = fixture_state();
     let root_route = InputTape {

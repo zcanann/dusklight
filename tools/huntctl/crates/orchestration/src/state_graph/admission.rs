@@ -11,6 +11,7 @@ use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::option_transition::OptionTransitionSample;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 impl StateGraph {
     pub fn admit_completed_expansion(
@@ -70,7 +71,10 @@ impl StateGraph {
         let expansion_sha256 =
             action_expansion_identity(source.id, &transition.value_sample.action)?;
         let evidence_sha256 = transition.replay_identity_sha256()?;
-        if let Some(existing) = self.expansions.get_mut(&expansion_sha256)
+        if let Some(existing) = self
+            .expansions
+            .get_mut(&expansion_sha256)
+            .map(Arc::make_mut)
             && let ActionExpansionStatus::Completed {
                 authority: existing_authority,
                 route_checkpoint_sha256: _,
@@ -128,7 +132,7 @@ impl StateGraph {
                 authority_promoted,
             });
         }
-        match self.expansions.get(&expansion_sha256) {
+        match self.expansions.get(&expansion_sha256).map(Arc::as_ref) {
             Some(ActionExpansion {
                 status:
                     ActionExpansionStatus::Leased {
@@ -213,18 +217,24 @@ impl StateGraph {
                 option_start_offset_ticks: start_offset,
                 option_end_offset_ticks: end_offset,
             };
-            if self.segments.insert(identity_sha256, segment).is_some() {
+            if self
+                .segments
+                .insert(identity_sha256, Arc::new(segment))
+                .is_some()
+            {
                 return Err(StateGraphError::Invariant(
                     "new expansion produced a duplicate observed segment",
                 ));
             }
             self.nodes
                 .get_mut(&target.id)
+                .map(Arc::make_mut)
                 .ok_or(StateGraphError::Invariant("segment target is absent"))?
                 .incoming_segments
                 .insert(identity_sha256);
             self.nodes
                 .get_mut(&source.id)
+                .map(Arc::make_mut)
                 .ok_or(StateGraphError::Invariant("segment source is absent"))?
                 .outgoing_segments
                 .insert(identity_sha256);
@@ -236,12 +246,13 @@ impl StateGraph {
 
         self.nodes
             .get_mut(&source.id)
+            .map(Arc::make_mut)
             .ok_or(StateGraphError::Invariant("expansion source is absent"))?
             .outgoing_expansions
             .insert(expansion_sha256);
         self.expansions.insert(
             expansion_sha256,
-            ActionExpansion {
+            Arc::new(ActionExpansion {
                 identity_sha256: expansion_sha256,
                 source: source.id,
                 target: Some(target.id),
@@ -260,7 +271,7 @@ impl StateGraph {
                         },
                     )]),
                 },
-            },
+            }),
         );
         self.mark_outgoing_expansion_persistence_added(source.id, expansion_sha256);
         self.mark_expansion_persistence_dirty(expansion_sha256);
@@ -336,14 +347,14 @@ impl StateGraph {
                 "node route precedes the graph root",
             ))?;
         match self.routes.get(&route_checkpoint_sha256) {
-            Some(existing) if existing != &route => {
+            Some(existing) if existing.as_ref() != &route => {
                 return Err(StateGraphError::DigestCollision(
                     "route checkpoint names different tapes",
                 ));
             }
             Some(_) => {}
             None => {
-                self.routes.insert(route_checkpoint_sha256, route);
+                self.routes.insert(route_checkpoint_sha256, Arc::new(route));
                 self.mark_route_persistence_dirty(route_checkpoint_sha256);
             }
         }
@@ -352,7 +363,7 @@ impl StateGraph {
             native_boundary,
             executable,
         };
-        if let Some(existing) = self.nodes.get_mut(&id) {
+        if let Some(existing) = self.nodes.get_mut(&id).map(Arc::make_mut) {
             if existing.state != state
                 || existing.terminal != terminal
                 || existing.root_ticks != root_ticks
@@ -383,7 +394,7 @@ impl StateGraph {
         }
         self.nodes.insert(
             id,
-            StateGraphNode {
+            Arc::new(StateGraphNode {
                 id,
                 state,
                 terminal,
@@ -392,7 +403,7 @@ impl StateGraph {
                 incoming_segments: BTreeSet::new(),
                 outgoing_segments: BTreeSet::new(),
                 outgoing_expansions: BTreeSet::new(),
-            },
+            }),
         );
         self.mark_node_persistence_dirty(id);
         Ok(NodeAdmission { id, inserted: true })
@@ -405,6 +416,7 @@ impl StateGraph {
         let expansion = self
             .expansions
             .get_mut(&expansion_sha256)
+            .map(Arc::make_mut)
             .ok_or(StateGraphError::Invariant("promoted expansion is absent"))?;
         let ActionExpansionStatus::Completed {
             authority,
@@ -438,6 +450,7 @@ impl StateGraph {
         for node in nodes {
             self.nodes
                 .get_mut(&node)
+                .map(Arc::make_mut)
                 .ok_or(StateGraphError::Invariant(
                     "promoted expansion node is absent",
                 ))?

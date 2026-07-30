@@ -5,8 +5,10 @@ use super::{
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_learning::fact_snapshot::FactSnapshot;
+use im::OrdMap;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+use std::sync::Arc;
 
 const STATE_GRAPH_PERSISTENCE_BASE_SCHEMA_V1: &str = "dusklight-state-graph-persistence-base/v1";
 const STATE_GRAPH_PERSISTENCE_DELTA_SCHEMA_V1: &str = "dusklight-state-graph-persistence-delta/v1";
@@ -135,7 +137,7 @@ impl StateGraph {
                 .map(|identity| {
                     self.nodes
                         .get(identity)
-                        .map(PersistedStateGraphNode::from)
+                        .map(|node| PersistedStateGraphNode::from(node.as_ref()))
                         .ok_or(StateGraphError::Invariant("dirty graph node is absent"))
                 })
                 .collect::<Result<Vec<_>, _>>()?,
@@ -148,7 +150,7 @@ impl StateGraph {
                 .map(|identity| {
                     self.routes
                         .get(identity)
-                        .cloned()
+                        .map(|route| route.as_ref().clone())
                         .map(|route| (*identity, route))
                         .ok_or(StateGraphError::Invariant("dirty graph route is absent"))
                 })
@@ -247,6 +249,7 @@ impl StateGraph {
             for node in nodes {
                 match graph.nodes.get_mut(&node.id) {
                     Some(existing) => {
+                        let existing = Arc::make_mut(existing);
                         existing.state = node.state;
                         existing.terminal = node.terminal;
                         existing.root_ticks = node.root_ticks;
@@ -255,7 +258,7 @@ impl StateGraph {
                     None => {
                         graph.nodes.insert(
                             node.id,
-                            StateGraphNode {
+                            Arc::new(StateGraphNode {
                                 id: node.id,
                                 state: node.state,
                                 terminal: node.terminal,
@@ -264,7 +267,7 @@ impl StateGraph {
                                 incoming_segments: BTreeSet::new(),
                                 outgoing_segments: BTreeSet::new(),
                                 outgoing_expansions: BTreeSet::new(),
-                            },
+                            }),
                         );
                     }
                 }
@@ -276,7 +279,7 @@ impl StateGraph {
                 segment.identity_sha256
             })?;
             for (identity, route) in routes {
-                graph.routes.insert(identity, route);
+                graph.routes.insert(identity, Arc::new(route));
             }
             upsert(
                 &mut graph.future_equivalence_proofs,
@@ -381,11 +384,11 @@ fn decode_record(bytes: &[u8]) -> Result<StateGraphPersistenceRecord, StateGraph
 }
 
 fn collect_dirty<K, V>(
-    values: &BTreeMap<K, V>,
+    values: &OrdMap<K, Arc<V>>,
     dirty: &BTreeSet<K>,
 ) -> Result<Vec<V>, StateGraphError>
 where
-    K: Ord,
+    K: Clone + Ord,
     V: Clone,
 {
     dirty
@@ -393,29 +396,30 @@ where
         .map(|identity| {
             values
                 .get(identity)
-                .cloned()
+                .map(|value| value.as_ref().clone())
                 .ok_or(StateGraphError::Invariant("dirty graph object is absent"))
         })
         .collect()
 }
 
 fn upsert<K, V, F>(
-    destination: &mut BTreeMap<K, V>,
+    destination: &mut OrdMap<K, Arc<V>>,
     values: Vec<V>,
     identity: F,
 ) -> Result<(), StateGraphError>
 where
-    K: Ord,
+    K: Clone + Ord,
+    V: Clone,
     F: Fn(&V) -> K,
 {
     for value in values {
-        destination.insert(identity(&value), value);
+        destination.insert(identity(&value), Arc::new(value));
     }
     Ok(())
 }
 
 fn apply_node_set_additions<F>(
-    nodes: &mut BTreeMap<ExactStateId, StateGraphNode>,
+    nodes: &mut OrdMap<ExactStateId, Arc<StateGraphNode>>,
     additions: Vec<(ExactStateId, Digest)>,
     field: F,
 ) -> Result<(), StateGraphError>
@@ -423,9 +427,9 @@ where
     F: Fn(&mut StateGraphNode) -> &mut BTreeSet<Digest>,
 {
     for (node, value) in additions {
-        field(nodes.get_mut(&node).ok_or(StateGraphError::Invariant(
-            "graph journal edge names an absent node",
-        ))?)
+        field(Arc::make_mut(nodes.get_mut(&node).ok_or(
+            StateGraphError::Invariant("graph journal edge names an absent node"),
+        )?))
         .insert(value);
     }
     Ok(())

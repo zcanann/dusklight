@@ -1,9 +1,12 @@
 //! Online option-Q campaign over authenticated learner states and native tactic
 //! boundaries.
 
-pub(crate) use self::graph_projection::graph_training_projection;
 use self::graph_projection::{
     graph_frontier_entries, graph_root_branch, validate_training_projection,
+};
+pub(crate) use self::graph_projection::{
+    graph_training_projection, graph_training_projection_rows, merge_graph_training_projection,
+    validate_graph_training_projection_merge,
 };
 use crate::native_tactic_worker::{
     NativeTacticWorkerError, NativeTacticWorkerOutcome, NativeTacticWorkerPaths,
@@ -403,6 +406,7 @@ pub struct TacticQCampaign {
     training_replay: Vec<OptionTransitionSample>,
     training_replay_routes: Vec<InputTape>,
     training_episode_groups: Vec<u64>,
+    training_projection_keys: Vec<(Digest, Digest)>,
     // Scheduler indexes only. Neither collection grants exact-state or
     // terminal authority; that belongs to `state_graph`.
     frontier_archive: BehaviorArchive,
@@ -561,6 +565,7 @@ impl TacticQCampaign {
             training_replay: Vec::new(),
             training_replay_routes: Vec::new(),
             training_episode_groups: Vec::new(),
+            training_projection_keys: Vec::new(),
             frontier_archive: BehaviorArchive::default(),
             model_config,
             exploration,
@@ -882,6 +887,7 @@ impl TacticQCampaign {
         self.training_replay = projection.transitions;
         self.training_replay_routes = projection.routes;
         self.training_episode_groups = projection.episode_groups;
+        self.training_projection_keys = projection.keys;
         self.frontier_archive = frontier_archive;
         self.visited_states = visited_states;
         if let Some(model) = model {

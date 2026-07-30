@@ -1,10 +1,20 @@
 use super::*;
-use crate::state_graph::{ActionExpansionStatus, ExpansionEvidenceAuthority};
+use crate::state_graph::{
+    ActionExpansionStatus, ExactStateId, ExpansionEvidenceAuthority, action_expansion_identity,
+};
 
 pub(crate) struct GraphTrainingProjection {
+    pub keys: Vec<(Digest, Digest)>,
     pub transitions: Vec<OptionTransitionSample>,
     pub routes: Vec<InputTape>,
     pub episode_groups: Vec<u64>,
+}
+
+pub(crate) struct GraphTrainingProjectionRow {
+    key: (Digest, Digest),
+    transition: OptionTransitionSample,
+    route: InputTape,
+    episode_group: u64,
 }
 
 pub(crate) fn graph_training_projection(
@@ -14,23 +24,146 @@ pub(crate) fn graph_training_projection(
     let mut transitions = Vec::with_capacity(graph.expansion_count());
     let mut routes = Vec::with_capacity(graph.expansion_count());
     let mut episode_groups = Vec::with_capacity(graph.expansion_count());
+    let mut keys = Vec::with_capacity(graph.expansion_count());
     let mut identities = BTreeSet::new();
-    for (transition, route, episode_group) in graph.completed_evidence() {
-        let identity = transition.replay_identity_sha256()?;
-        if !identities.insert(identity) {
-            return Err(TacticQCampaignError::InvalidState(
-                "state graph contains duplicate completed evidence",
-            ));
+    for expansion in graph.expansions() {
+        let ActionExpansionStatus::Completed {
+            route_checkpoint_sha256,
+            evidence,
+            ..
+        } = &expansion.status
+        else {
+            continue;
+        };
+        let route =
+            graph
+                .route(*route_checkpoint_sha256)
+                .ok_or(TacticQCampaignError::InvalidState(
+                    "completed graph evidence route is absent",
+                ))?;
+        for (evidence_sha256, row) in evidence {
+            let identity = row.transition.replay_identity_sha256()?;
+            if identity != *evidence_sha256 || !identities.insert(identity) {
+                return Err(TacticQCampaignError::InvalidState(
+                    "state graph contains duplicate completed evidence",
+                ));
+            }
+            keys.push((expansion.identity_sha256, *evidence_sha256));
+            transitions.push(row.transition.as_ref().clone());
+            routes.push(route.clone());
+            episode_groups.push(row.episode_group);
         }
-        transitions.push(transition.clone());
-        routes.push(route.clone());
-        episode_groups.push(episode_group);
     }
     Ok(GraphTrainingProjection {
+        keys,
         transitions,
         routes,
         episode_groups,
     })
+}
+
+pub(crate) fn graph_training_projection_rows<'a>(
+    graph: &StateGraph,
+    transitions: impl IntoIterator<Item = &'a OptionTransitionSample>,
+) -> Result<Vec<GraphTrainingProjectionRow>, TacticQCampaignError> {
+    let mut requested = BTreeSet::new();
+    for transition in transitions {
+        requested.insert((
+            action_expansion_identity(
+                ExactStateId {
+                    route_checkpoint_sha256: transition.source_checkpoint_sha256,
+                    state_sha256: transition.before_state_sha256,
+                },
+                &transition.value_sample.action,
+            )?,
+            transition.replay_identity_sha256()?,
+        ));
+    }
+    let mut rows = Vec::with_capacity(requested.len());
+    for (expansion_sha256, evidence_sha256) in requested {
+        let expansion =
+            graph
+                .expansion(expansion_sha256)
+                .ok_or(TacticQCampaignError::InvalidState(
+                    "admitted graph expansion is absent",
+                ))?;
+        let ActionExpansionStatus::Completed {
+            route_checkpoint_sha256,
+            evidence,
+            ..
+        } = &expansion.status
+        else {
+            return Err(TacticQCampaignError::InvalidState(
+                "admitted graph expansion is not completed",
+            ));
+        };
+        let evidence = evidence
+            .get(&evidence_sha256)
+            .ok_or(TacticQCampaignError::InvalidState(
+                "admitted graph evidence is absent",
+            ))?;
+        let route =
+            graph
+                .route(*route_checkpoint_sha256)
+                .ok_or(TacticQCampaignError::InvalidState(
+                    "admitted graph evidence route is absent",
+                ))?;
+        rows.push(GraphTrainingProjectionRow {
+            key: (expansion_sha256, evidence_sha256),
+            transition: evidence.transition.as_ref().clone(),
+            route: route.clone(),
+            episode_group: evidence.episode_group,
+        });
+    }
+    Ok(rows)
+}
+
+pub(crate) fn validate_graph_training_projection_merge(
+    keys: &[(Digest, Digest)],
+    transitions: &[OptionTransitionSample],
+    routes: &[InputTape],
+    episode_groups: &[u64],
+    rows: &[GraphTrainingProjectionRow],
+) -> Result<(), TacticQCampaignError> {
+    if keys.len() != transitions.len()
+        || keys.len() != routes.len()
+        || keys.len() != episode_groups.len()
+        || !keys.windows(2).all(|pair| pair[0] < pair[1])
+    {
+        return Err(TacticQCampaignError::InvalidState(
+            "cached graph learner projection has invalid shape or order",
+        ));
+    }
+    for row in rows {
+        if let Ok(index) = keys.binary_search(&row.key)
+            && (transitions[index] != row.transition
+                || routes[index] != row.route
+                || episode_groups[index] != row.episode_group)
+        {
+            return Err(TacticQCampaignError::InvalidState(
+                "cached graph learner projection conflicts with admitted evidence",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn merge_graph_training_projection(
+    keys: &mut Vec<(Digest, Digest)>,
+    transitions: &mut Vec<OptionTransitionSample>,
+    routes: &mut Vec<InputTape>,
+    episode_groups: &mut Vec<u64>,
+    rows: Vec<GraphTrainingProjectionRow>,
+) {
+    for row in rows {
+        let Err(index) = keys.binary_search(&row.key) else {
+            continue;
+        };
+        keys.insert(index, row.key);
+        transitions.insert(index, row.transition);
+        routes.insert(index, row.route);
+        episode_groups.insert(index, row.episode_group);
+    }
 }
 
 pub(super) fn validate_training_projection(

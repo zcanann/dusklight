@@ -729,6 +729,11 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         1
     );
     assert_eq!(campaign.training_replay_len(), 1);
+    let projection = graph_training_projection(campaign.state_graph.as_ref().unwrap()).unwrap();
+    assert_eq!(campaign.training_projection_keys, projection.keys);
+    assert_eq!(campaign.training_replay, projection.transitions);
+    assert_eq!(campaign.training_replay_routes, projection.routes);
+    assert_eq!(campaign.training_episode_groups, projection.episode_groups);
     let incremental_directory = std::env::temp_dir().join(format!(
         "dusklight-tactic-q-incremental-checkpoint-{}",
         std::process::id()
