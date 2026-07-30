@@ -381,6 +381,13 @@ Exit gate:
       content-bound sample reports and v4 aggregate, including phase occupancy
       and saturation counters. A one-decision warm-fleet microbenchmark is
       necessary but not sufficient.
+- [ ] Make the multi-sample curve resumable before another full launch.
+      Commit each completed sample by ordinal, repetition, worker count,
+      execution-plan identity, report identity, and useful-expansion set.
+      Resume must independently validate and skip complete samples, continue a
+      durable partial route sample, reject a torn or detached sample, and never
+      relaunch native work merely because final aggregate sealing was
+      interrupted.
 - [ ] Retain a sealed long-campaign v2 resource audit proving the declared
       memory and fitted-model staleness bounds while reporting replay fallback
       and checkpoint-owner skew. Use the hard-loss injector before dispatch,

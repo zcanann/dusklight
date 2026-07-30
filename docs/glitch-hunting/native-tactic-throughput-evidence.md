@@ -30,6 +30,18 @@ huntctl learn tactic-throughput-curve \
   --bundle benchmarks/native-tactic-throughput/PLATFORM
 ```
 
+`--memory-bytes` is the aggregate checkpoint-pool bound at the widest
+16-worker cell, not a per-worker allowance. It must provide every fleet member
+enough space to retain at least one measured native checkpoint. Fleet launch
+measures the root checkpoint independently on every worker, requires identical
+nonzero sizes, and rejects an undersized cache before beginning sample 1.
+
+For the retained Windows execution on 2026-07-29, one checkpoint was
+`294,721,440` bytes. The minimum 16-worker aggregate was therefore
+`4,715,543,040` bytes; the curve uses `5,368,709,120` bytes (5 GiB), or
+`335,544,320` bytes per worker. Passing only `335,544,320` bytes as the
+aggregate gives each worker `20,971,520` bytes and is invalid.
+
 An existing curve can be sealed later:
 
 ```text
