@@ -503,3 +503,27 @@ per-candidate first-hit vector and terminal projection. Action-surface
 derivation uses a fixed audit seed, no campaign feedback, and no promoted
 actions, so every retained/suppressed condition issues the same reproducible
 query against its own typed native state. A retained v2 run is still required.
+
+The v2 output must be sealed as a portable bundle rather than cited from an
+ignored build directory:
+
+```powershell
+huntctl benchmark seal-native-subsystem-parity-bundle `
+  --request build/native-parity/request.json `
+  --execution build/native-parity/execution.json `
+  --report build/native-parity/report.json `
+  --run-root build/native-parity/run `
+  --bundle benchmarks/native-subsystem-parity/PLATFORM-ARCH
+
+huntctl benchmark validate-native-subsystem-parity-bundle `
+  --bundle benchmarks/native-subsystem-parity/PLATFORM-ARCH
+```
+
+The bundle carries each condition's exact batch request, native result, and
+binary episode shard together with the optimization request, execution binding,
+and report. Its offline validator revalidates each request/result pair and
+reconstructs the state trajectory, applicable-action surface, controller
+output, first-hit vector, and terminal evidence from the bundled native bytes.
+It rejects unlisted files, symlinks, path escapes, detached condition order,
+and content drift. Every committed bundle manifest is automatically discovered
+by `ci/source_quality/audit_learning_framework.py`.

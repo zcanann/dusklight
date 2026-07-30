@@ -434,6 +434,12 @@ Exit gate:
       historical ignored v1 report only compared opaque episode payloads and
       cannot close this gate. Keep this open until focused tests compile and a
       retained v2 native report passes.
+      Source checkpoint `0f4d6e6831` adds the portable evidence path: it bundles
+      every condition's exact batch request, result, and binary episode shard
+      with the sealed optimization, execution binding, and report. Offline
+      validation reconstructs all five authorities from bundled native bytes,
+      and the clean-checkout audit automatically discovers committed manifests.
+      The gate still requires compilation and one retained passing v2 bundle.
 
 Exit gate:
 
