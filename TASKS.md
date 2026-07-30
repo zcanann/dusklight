@@ -49,7 +49,7 @@ The incoming 2026-07-29 work made substantial, useful progress:
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 322 tests.
+  orchestration suite is hermetic and passes all 325 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
   tape/result, source-authority evidence, and a content-bound campaign audit.
@@ -214,6 +214,21 @@ The incoming 2026-07-29 work made substantial, useful progress:
   execution including restore/capture, 196 seconds in the first authoritative
   batch admission, and 178 seconds of model update. The local committed sample
   is matched diagnostic evidence, not the required sealed ten-cell curve.
+- A second exact matched one-worker diagnostic at checkpoint `354f11a46d`
+  preserved all 16 selected option identities, every emitted proposal tape,
+  the 256-member useful-expansion set, 5,096 native ticks, five learner
+  updates, and 256 replay rows. Combining transition validation with replay
+  identity, reusing prepared route identities, and sharing immutable node
+  facts reduced campaign admission only from about `196.3` to `184.5` seconds
+  (6.0%). Complete wall time regressed from about `1,556.8` to `1,632.8`
+  seconds as model update and persistence varied upward, so this is diagnostic
+  evidence, not a throughput win and not permission to launch the full curve.
+  Inspection then found that every proposal transition had already been fully
+  authenticated while constructing its rewarded outcome, but batch graph
+  admission repeated that complete large-snapshot pass. Checkpoint
+  `68e37a31ef` carries an immutable authenticated-transition receipt into graph
+  admission and preserves the existing JSON/CBOR transition wire shape. It is
+  source-level treatment awaiting the same one-worker measurement.
 
 That campaign proves bounded terminal discovery under its exact conditions. It
 does not prove practical discovery, useful native learning, route
@@ -466,12 +481,17 @@ Exit gate:
       persistence mark from each retained selected outcome. Checkpoint
       `d6f386d62f` makes the remaining atomic graph transaction structurally
       shared and merges only newly admitted learner rows while preserving
-      byte-identical graph serialization. All 322 orchestration tests and the
-      clean-checkout evidence audit pass. The exact matched cell reduced graph
+      byte-identical graph serialization. The exact matched cell reduced graph
       admission 99.2% and wall time 9.3%, but still spent about 196 seconds in
-      authoritative batch admission. Remove that measured path cost before
-      spending the remaining v4 cells; the curve must still identify the
-      steady-state saturation point.
+      authoritative batch admission. Checkpoint `354f11a46d` reduced that path
+      only 6.0%, to about 184.5 seconds, while total wall regressed 4.9%;
+      checkpoint `68e37a31ef` now reuses the immutable validation/identity
+      receipt created during rewarded-outcome evaluation instead of
+      re-authenticating every large transition during batch graph admission.
+      Rerun the exact one-worker cell and require the measured admission path,
+      not merely a unit microbenchmark, to fall materially before spending the
+      remaining v4 cells; the curve must still identify the steady-state
+      saturation point.
 - [x] Preserve native state, applicable actions, controller output, terminal
       evidence, and first-hit tick for every disabled presentation subsystem.
       Source checkpoint `703dcdbbba` advances the parity report to v2 and

@@ -5,7 +5,9 @@ use dusklight_control::option_execution::{
 };
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
 use dusklight_learning::fact_snapshot::{FactPhase, FactSnapshot};
-use dusklight_learning::option_transition::{OptionIntermediateBoundary, OptionTransitionSample};
+use dusklight_learning::option_transition::{
+    AuthenticatedOptionTransition, OptionIntermediateBoundary, OptionTransitionSample,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -244,6 +246,42 @@ fn graph_transaction_clone_shares_immutable_storage_and_isolates_mutation() {
     );
     graph.validate().unwrap();
     transaction.validate().unwrap();
+}
+
+#[test]
+fn authenticated_admission_is_content_identical_to_raw_admission() {
+    let (graph, transition, route) = graph_and_transition();
+    let mut raw_graph = graph.clone();
+    let mut authenticated_graph = graph;
+    let authenticated = AuthenticatedOptionTransition::new(transition.clone()).unwrap();
+
+    let raw_admission = raw_graph
+        .admit_completed_expansion(
+            transition,
+            route.clone(),
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+    let authenticated_admission = authenticated_graph
+        .admit_authenticated_completed_expansion(
+            authenticated,
+            route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+
+    assert_eq!(authenticated_admission, raw_admission);
+    assert_eq!(authenticated_graph, raw_graph);
+    assert_eq!(
+        authenticated_graph.encode().unwrap(),
+        raw_graph.encode().unwrap()
+    );
+    assert_eq!(
+        authenticated_graph.content_sha256().unwrap(),
+        raw_graph.content_sha256().unwrap()
+    );
 }
 
 #[test]
