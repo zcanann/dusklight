@@ -485,8 +485,22 @@ Exit gate:
       policy authority.
 - [ ] Reach tick `123` or lower from scratch or optional-replay assistance,
       then cold-replay the complete tape twice with the learner out of loop.
+      Source checkpoint `b43c547045` adds a tactic-route-specific cold replay
+      command and offline validator. It requires the selected seed to be the
+      report's graph-selected campaign best and at or below the sealed tick
+      ceiling, then launches at least two fresh learner-free processes from
+      separately retained copies of the complete controller tape. This stays
+      open pending compilation and a retained tick-`123`-or-lower proof.
 - [ ] Require identical controller bytes, first-hit tick, terminal evidence,
       game identity, fixture, source boundary, and execution fidelity.
+      The checkpoint above seals every per-repetition controller artifact and
+      milestone result, requires identical exact boundary fingerprints and
+      first-hit frames, and binds the request, execution plan, route report,
+      graph/result identities, executable plus runtime dependencies, game
+      data, fixture manifest, world context, source fingerprints, fixed
+      automation CVars, and headless fixed-step unpaced launch contract. Its
+      offline validator re-authenticates the source campaign and every retained
+      byte; this remains open until compiled tests and native evidence pass.
 
 Exit gate:
 
