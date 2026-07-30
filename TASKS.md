@@ -49,7 +49,7 @@ The incoming 2026-07-29 work made substantial, useful progress:
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 327 tests.
+  orchestration suite is hermetic and passes all 328 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
   tape/result, source-authority evidence, and a content-bound campaign audit.
@@ -245,16 +245,35 @@ The incoming 2026-07-29 work made substantial, useful progress:
   also publishes an exact wire-compatible admission breakdown for terminal
   projection, batch graph admission, next-action catalog construction,
   selected-outcome retention, frontier retention, and unattributed work in
-  route reports, curve samples, and matched comparisons. All 327 orchestration
-  and 430 learning tests pass. This is source-level treatment awaiting a
-  matched measurement; the breakdown must identify the dominant remaining
-  subphase before another optimization is accepted.
+  route reports, curve samples, and matched comparisons. The exact matched
+  diagnostic at source checkpoint `de63af15e5` preserved the request,
+  execution plan, all 16 selected option identities, every emitted proposal
+  tape, the 256-member useful-expansion set, 5,096 native ticks, five learner
+  updates, and 256 replay rows. Complete wall time nevertheless regressed to
+  about `1,956.6` seconds and useful throughput fell to about `0.131`
+  expansions per second, so immutable sharing is not an end-to-end throughput
+  win. The new attribution is decisive: terminal projection used `51`
+  microseconds, batch graph admission `3.23` seconds, next-action catalog
+  construction `0.55` seconds, selected-outcome retention `0.65` seconds,
+  frontier retention `219.64` seconds, and unattributed work `0.001` seconds.
+  Frontier retention therefore consumed 98.0% of measured admission. It was
+  repeatedly constructing a restoration contract by validating, hashing, and
+  serializing the complete accumulated graph even though restoration targets
+  one immutable exact node. Checkpoint `f74b193f96` replaces that false
+  whole-graph dependency with a v2 node-scoped restoration authority, retains
+  validation support for v1 plans, and uses the campaign's already
+  authenticated state digest without trusting a stale digest over changed
+  typed facts. All 328 orchestration tests pass. This is a source-level
+  treatment awaiting one exact matched diagnostic; do not infer an end-to-end
+  win from the unit tests.
 
 That campaign proves bounded terminal discovery under its exact conditions. It
 does not prove practical discovery, useful native learning, route
 optimization, cross-platform parity, or a generic framework.
 
-The current evidence cannot yet tell whether the limiting factor is:
+The latest diagnostic identifies whole-graph restoration-contract construction
+as the immediate coordinator bottleneck. After measuring that treatment, the
+remaining acceptance evidence must still distinguish:
 
 - poor expansion ranking or insufficient exploration;
 - too few useful expansions per second;
@@ -518,9 +537,22 @@ Exit gate:
       clone of each authenticated proposal on entry to batch admission and
       makes the next report attribute every admission microsecond among
       terminal projection, batch graph admission, action-catalog construction,
-      selected retention, frontier retention, and unaccounted overhead. Use
-      that evidence to select the next treatment; do not infer another
-      bottleneck from the aggregate timer.
+      selected retention, frontier retention, and unaccounted overhead. The
+      exact source checkpoint `de63af15e5` diagnostic preserved every semantic
+      identity and all useful work but regressed to about `1,956.6` wall
+      seconds. Its attribution disproved the aggregate-timer hypothesis:
+      batch graph admission used only about `3.23` seconds, while frontier
+      retention used about `219.64` seconds, or 98.0% of campaign admission.
+      Checkpoint `f74b193f96` removes the resulting false whole-graph
+      dependency from restoration contracts. V2 binds graph identity plus the
+      exact immutable node, route, native boundary, terminal state, and
+      executability; v1 plans remain readable. The campaign path reuses its
+      authenticated state digest but also compares the complete typed facts,
+      preventing a stale digest from authorizing mutated state. Run exactly one
+      matched one-worker diagnostic and require semantic identity before
+      accepting the treatment. If frontier retention collapses, choose the
+      next treatment from the new phase occupancy rather than launching the
+      remaining curve cells.
 - [x] Preserve native state, applicable actions, controller output, terminal
       evidence, and first-hit tick for every disabled presentation subsystem.
       Source checkpoint `703dcdbbba` advances the parity report to v2 and
