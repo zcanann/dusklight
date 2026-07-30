@@ -158,9 +158,15 @@ The incoming 2026-07-29 work made substantial, useful progress:
   seconds, or 60% of wall time. Each decision serialized and reverified the
   whole accumulated replay twice. The remaining curve cells were stopped in
   accordance with experiment discipline. A process-local content-reference
-  cache and single-pass recovery commit now preserve the same authenticated
-  durable format without rereading every immutable object; the identical
-  fixed-work cell still has to prove the treatment before another full curve.
+  cache and single-pass recovery commit preserve the same authenticated
+  durable format without rereading every immutable object. The matched
+  one-worker treatment completed the same 16 decisions, 256 expansions, and
+  4,512 native ticks in about `2,601.2` seconds: wall time fell 30.7%,
+  persistence fell 45.3%, and useful expansion throughput rose 44.2%.
+  Persistence still consumed about `1,232.7` seconds, or 47.4% of wall time,
+  because every decision still clones, serializes, hashes, and repeatedly
+  validates its whole accumulated checkpoint. Another full curve is not yet
+  justified.
 
 That campaign proves bounded terminal discovery under its exact conditions. It
 does not prove practical discovery, useful native learning, route
@@ -324,11 +330,12 @@ Exit gate:
 
 ## P3 - Make real-campaign throughput scale
 
-- [ ] Rerun the one-worker, 16-decision Windows diagnostic after the
-      checkpoint-store treatment. Require a material reduction in persistence
-      wall time and total wall time at identical native work before spending a
-      full curve; otherwise profile checkpoint projection and filesystem sync
-      rather than increasing campaign volume.
+- [ ] Remove repeated full-history checkpoint projection and validation from
+      each recovery transaction. A durable decision must authenticate newly
+      admitted graph/replay content once and reuse prior immutable identities;
+      checkpoint cost must not grow linearly with accumulated history. Rerun
+      the identical one-worker cell and require persistence to stop dominating
+      wall time before spending a full curve.
 - [ ] Run fixed-work curves at 1, 2, 4, 8, and 16 workers over enough decisions
       to exercise graph growth, repeated restores, learner updates,
       persistence, and bounded checkpoint eviction. Retain the complete

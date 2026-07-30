@@ -598,15 +598,18 @@ pub(crate) fn write_checkpoint(
         ));
     }
     let store = TacticQContentStore::initialize(content_root).map_err(checkpoint_store_error)?;
-    write_checkpoint_to_store(checkpoint, directory, &store)
+    validate_checkpoint(checkpoint)?;
+    write_validated_checkpoint_to_store(checkpoint, directory, &store)
 }
 
-pub(crate) fn write_checkpoint_to_store(
+/// Writes a checkpoint already constructed and validated by
+/// `TacticQCampaign::checkpoint`. Freshly decoded or externally supplied
+/// checkpoints must use `write_checkpoint`.
+pub(crate) fn write_validated_checkpoint_to_store(
     checkpoint: &TacticQCampaignCheckpoint,
     directory: &Path,
     store: &TacticQContentStore,
 ) -> Result<PathBuf, TacticQCampaignError> {
-    validate_checkpoint(checkpoint)?;
     if store
         .store
         .root()

@@ -9,12 +9,6 @@ impl TacticQCampaign {
             .ok_or(TacticQCampaignError::InvalidState(
                 "checkpoint requires a bound state graph",
             ))?;
-        validate_training_projection(
-            &state_graph,
-            &self.training_replay,
-            &self.training_replay_routes,
-            &self.training_episode_groups,
-        )?;
         let mut checkpoint = TacticQCampaignCheckpoint {
             schema: TACTIC_Q_CHECKPOINT_SCHEMA_V5.into(),
             content_sha256: Digest::ZERO,
@@ -37,8 +31,13 @@ impl TacticQCampaign {
             model_config: self.model_config.clone(),
             exploration: self.exploration,
         };
+        validate_checkpoint_payload(&checkpoint)?;
         checkpoint.content_sha256 = checkpoint_digest(&checkpoint)?;
-        validate_checkpoint(&checkpoint)?;
+        if checkpoint.content_sha256 == Digest::ZERO {
+            return Err(TacticQCampaignError::InvalidState(
+                "campaign checkpoint content identity is invalid",
+            ));
+        }
         Ok(checkpoint)
     }
 
@@ -118,8 +117,11 @@ impl TacticQCampaign {
         store: &tactic_q_checkpoint_store::TacticQContentStore,
     ) -> Result<(PathBuf, TacticQCampaignCheckpoint), TacticQCampaignError> {
         let checkpoint = self.checkpoint()?;
-        let path =
-            tactic_q_checkpoint_store::write_checkpoint_to_store(&checkpoint, directory, store)?;
+        let path = tactic_q_checkpoint_store::write_validated_checkpoint_to_store(
+            &checkpoint,
+            directory,
+            store,
+        )?;
         Ok((path, checkpoint))
     }
 

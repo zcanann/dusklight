@@ -3,6 +3,19 @@ use super::*;
 pub(crate) fn validate_checkpoint(
     checkpoint: &TacticQCampaignCheckpoint,
 ) -> Result<(), TacticQCampaignError> {
+    if checkpoint.content_sha256 == Digest::ZERO
+        || checkpoint.content_sha256 != checkpoint_digest(checkpoint)?
+    {
+        return Err(TacticQCampaignError::InvalidState(
+            "campaign checkpoint content identity is invalid",
+        ));
+    }
+    validate_checkpoint_payload(checkpoint)
+}
+
+pub(crate) fn validate_checkpoint_payload(
+    checkpoint: &TacticQCampaignCheckpoint,
+) -> Result<(), TacticQCampaignError> {
     checkpoint.current.validate()?;
     checkpoint
         .route_tape
@@ -12,8 +25,6 @@ pub(crate) fn validate_checkpoint(
     checkpoint.state_graph.validate()?;
     let graph_identity = &checkpoint.state_graph.identity;
     if !current
-        || checkpoint.content_sha256 == Digest::ZERO
-        || checkpoint.content_sha256 != checkpoint_digest(checkpoint)?
         || checkpoint.feature_schema_sha256 == Digest::ZERO
         || checkpoint.objective_sha256 == Digest::ZERO
         || checkpoint.root_checkpoint_sha256 == Digest::ZERO
