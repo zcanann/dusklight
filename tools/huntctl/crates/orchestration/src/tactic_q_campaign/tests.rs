@@ -729,6 +729,20 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         1
     );
     assert_eq!(campaign.training_replay_len(), 1);
+    let incremental_directory = std::env::temp_dir().join(format!(
+        "dusklight-tactic-q-incremental-checkpoint-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&incremental_directory);
+    let incremental_store =
+        TacticQContentStore::initialize(incremental_directory.join("objects")).unwrap();
+    let zero_incremental = campaign
+        .write_checkpoint_with_content_store(
+            &incremental_directory.join("decision-0"),
+            &incremental_store,
+        )
+        .unwrap();
+    assert_eq!(zero_incremental.persistence.replay_rows, 0);
     let retained = campaign
         .retain_and_refit_rewarded(
             decision,
@@ -742,6 +756,13 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             true,
         )
         .unwrap();
+    let first_incremental = campaign
+        .write_checkpoint_with_content_store(
+            &incremental_directory.join("decision-1"),
+            &incremental_store,
+        )
+        .unwrap();
+    assert_eq!(first_incremental.persistence.replay_rows, 1);
 
     assert_eq!(evaluated.transition, retained.step.transition);
     assert_eq!(evaluated.reward, retained.reward);
@@ -1355,20 +1376,6 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     // tape, and final proof identities rather than only decoding.
     let mut uninterrupted = campaign;
     let mut resumed = from_file;
-    let incremental_directory = std::env::temp_dir().join(format!(
-        "dusklight-tactic-q-incremental-checkpoint-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&incremental_directory);
-    let incremental_store =
-        TacticQContentStore::initialize(incremental_directory.join("objects")).unwrap();
-    let first_incremental = resumed
-        .write_checkpoint_with_content_store(
-            &incremental_directory.join("decision-1"),
-            &incremental_store,
-        )
-        .unwrap();
-    assert_eq!(first_incremental.persistence.replay_rows, 1);
     let uninterrupted_decision = uninterrupted.decide(&catalog, &[], &encode).unwrap();
     let resumed_decision = resumed.decide(&catalog, &[], &encode).unwrap();
     assert_eq!(uninterrupted_decision, resumed_decision);
@@ -1471,7 +1478,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             true,
         )
         .unwrap();
-    let second_incremental = resumed
+    let second_incremental = uninterrupted
         .write_checkpoint_with_content_store(
             &incremental_directory.join("decision-2"),
             &incremental_store,

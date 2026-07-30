@@ -364,7 +364,7 @@ fn load_checkpoint_index(
             || index.transitions.len() != index.routes.len()
             || index.transitions.len() != index.episode_groups.len()
             || index.parent_rows.checked_add(appended_rows) != Some(rows)
-            || index.parent.is_some() == (index.parent_rows == 0)
+            || (index.parent.is_none() && index.parent_rows != 0)
             || (index.parent.is_some() && appended_rows == 0)
         {
             return Err(TacticQCampaignError::InvalidState(

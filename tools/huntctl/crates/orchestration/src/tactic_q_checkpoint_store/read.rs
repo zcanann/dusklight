@@ -29,18 +29,20 @@ pub(crate) fn read_checkpoint(
         let parent = path.parent().ok_or(TacticQCampaignError::InvalidState(
             "checkpoint path has no parent",
         ))?;
+        let mut last_error = None;
         for ancestor in parent.ancestors() {
             let content_root = ancestor.join(CONTENT_DIRECTORY);
             let Ok(store) = TacticQContentStore::open(&content_root) else {
                 continue;
             };
-            if let Ok(checkpoint) = v6::load_checkpoint(&manifest, &store) {
-                return Ok(checkpoint);
+            match v6::load_checkpoint(&manifest, &store) {
+                Ok(checkpoint) => return Ok(checkpoint),
+                Err(error) => last_error = Some(error),
             }
         }
-        return Err(TacticQCampaignError::InvalidState(
-            "checkpoint v6 content objects are unavailable or invalid",
-        ));
+        return Err(last_error.unwrap_or(TacticQCampaignError::InvalidState(
+            "checkpoint v6 content objects are unavailable",
+        )));
     }
     let manifest: StoredCheckpointManifest = decode_cbor(&raw).map_err(checkpoint_store_error)?;
     let parent = path.parent().ok_or(TacticQCampaignError::InvalidState(
