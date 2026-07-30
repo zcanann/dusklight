@@ -96,9 +96,7 @@ pub(super) fn mine_and_store_tactic_macros(
     for candidate in candidates {
         match deduplicated.remove(&candidate.candidate_sha256) {
             Some(existing) => {
-                if existing.tape != candidate.tape
-                    || existing.components != candidate.components
-                {
+                if existing.tape != candidate.tape || existing.components != candidate.components {
                     return Err(route_message(
                         "tactic macro candidate identity collides across different content",
                     ));
@@ -327,15 +325,14 @@ pub(super) fn mine_connected_tactic_macro_compositions(
     connected_macro_candidates(occurrences)
 }
 
-pub(super) type ConnectedMacroOccurrences =
-    BTreeMap<
-        Vec<u8>,
-        (
-            InputTape,
-            Vec<TacticMacroComponent>,
-            BTreeMap<Vec<Digest>, MacroSourceProvenance>,
-        ),
-    >;
+pub(super) type ConnectedMacroOccurrences = BTreeMap<
+    Vec<u8>,
+    (
+        InputTape,
+        Vec<TacticMacroComponent>,
+        BTreeMap<Vec<Digest>, MacroSourceProvenance>,
+    ),
+>;
 
 fn connected_macro_occurrence_key(
     tape: &InputTape,
@@ -735,12 +732,15 @@ fn run_tactic_macro_validation_job(
 fn tactic_macro_component_maximum_ticks(
     candidate: &DiscoveredMacroCandidate,
 ) -> Result<u32, NativeTacticRouteRunError> {
-    candidate.components.iter().try_fold(0_u32, |total, component| {
-        let entry = component.catalog_entry().map_err(route_error)?;
-        total
-            .checked_add(entry.description().duration.maximum_ticks)
-            .ok_or_else(|| route_message("tactic macro component duration overflows"))
-    })
+    candidate
+        .components
+        .iter()
+        .try_fold(0_u32, |total, component| {
+            let entry = component.catalog_entry().map_err(route_error)?;
+            total
+                .checked_add(entry.description().duration.maximum_ticks)
+                .ok_or_else(|| route_message("tactic macro component duration overflows"))
+        })
 }
 
 fn evaluate_tactic_macro_component_sequence(
@@ -792,8 +792,7 @@ fn evaluate_tactic_macro_component_sequence(
         merge_tactic_macro_validation_accounting(accounting, &evaluated);
         if evaluated.outcome.selected.descriptor != component.action
             || evaluated.outcome.route_tape.frames.len() < route_tape.frames.len()
-            || evaluated.outcome.route_tape.frames[..route_tape.frames.len()]
-                != route_tape.frames
+            || evaluated.outcome.route_tape.frames[..route_tape.frames.len()] != route_tape.frames
         {
             return Err(route_message(
                 "macro primitive-component outcome is detached from its source sequence",

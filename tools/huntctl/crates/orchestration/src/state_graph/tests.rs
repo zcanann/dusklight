@@ -220,6 +220,7 @@ fn forty_tick_option_exposes_and_executes_every_four_tick_counterfactual() {
         .collect::<Vec<_>>();
     assert_eq!(interior.len(), 9);
 
+    let mut counterfactual_targets = Vec::with_capacity(interior.len());
     for (index, source) in interior.iter().copied().enumerate() {
         let before = graph.node(source).unwrap().state.clone();
         let mut route = graph.route(source.route_checkpoint_sha256).unwrap().clone();
@@ -264,6 +265,7 @@ fn forty_tick_option_exposes_and_executes_every_four_tick_counterfactual() {
             )
             .unwrap();
         assert_eq!(counterfactual.source, source);
+        counterfactual_targets.push(counterfactual.target);
     }
 
     for source in &interior {
@@ -285,17 +287,22 @@ fn forty_tick_option_exposes_and_executes_every_four_tick_counterfactual() {
         1,
     )
     .unwrap();
+    let scheduled_with_exact_return = scheduled
+        .iter()
+        .filter(|entry| entry.exact_terminal_ticks_to_go.is_some())
+        .count();
     assert_eq!(
-        scheduled
-            .iter()
-            .filter(|entry| entry.exact_terminal_ticks_to_go.is_some())
-            .count(),
-        interior.len()
+        scheduled_with_exact_return,
+        interior.len() + counterfactual_targets.len()
     );
     assert!(interior.iter().all(|source| {
         scheduled.iter().any(|entry| {
-            entry.node == *source
-                && entry.exact_terminal_ticks_to_go == Some(40 - entry.root_ticks)
+            entry.node == *source && entry.exact_terminal_ticks_to_go == Some(40 - entry.root_ticks)
+        })
+    }));
+    assert!(counterfactual_targets.iter().all(|target| {
+        scheduled.iter().any(|entry| {
+            entry.node == *target && entry.exact_terminal_ticks_to_go == Some(40 - entry.root_ticks)
         })
     }));
     graph.validate().unwrap();
@@ -335,7 +342,10 @@ fn optimization_schedules_interiors_from_every_authenticated_terminal_route() {
         .unwrap();
 
     let before = graph.node(graph.root()).unwrap().state.clone();
-    let mut alternate_route = graph.route(graph.root().route_checkpoint_sha256).unwrap().clone();
+    let mut alternate_route = graph
+        .route(graph.root().route_checkpoint_sha256)
+        .unwrap()
+        .clone();
     let mut alternate_frames = vec![InputFrame::default(); 12];
     alternate_frames[0].owned_ports = 1;
     alternate_route.frames.extend(alternate_frames);
@@ -432,7 +442,10 @@ fn optimization_keeps_terminal_interior_when_transposition_prefers_another_route
         .id;
 
     let before = graph.node(graph.root()).unwrap().state.clone();
-    let mut alternate_route = graph.route(graph.root().route_checkpoint_sha256).unwrap().clone();
+    let mut alternate_route = graph
+        .route(graph.root().route_checkpoint_sha256)
+        .unwrap()
+        .clone();
     alternate_route.frames.extend([
         InputFrame {
             owned_ports: 1,

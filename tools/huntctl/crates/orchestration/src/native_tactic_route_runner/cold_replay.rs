@@ -6,7 +6,7 @@ use dusklight_automation_contracts::native_fidelity::FIXED_AUTOMATION_CVARS;
 use dusklight_harness_contracts::evaluation::BoundaryFingerprint;
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
 use dusklight_harness_contracts::run_contract::HarnessFidelityMode;
-use sha2::{Digest as _, Sha256};
+use sha2::Sha256;
 use std::path::Component;
 use std::process::{Command, Stdio};
 use std::thread;

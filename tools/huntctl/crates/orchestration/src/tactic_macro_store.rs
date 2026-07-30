@@ -385,11 +385,9 @@ mod tests {
             frames: vec![frame; 8],
             ..InputTape::default()
         };
-        let entry = TacticCatalogEntry::new(
-            "family/seek",
-            TacticAssetSource::RecordedTape(tape.clone()),
-        )
-        .unwrap();
+        let entry =
+            TacticCatalogEntry::new("family/seek", TacticAssetSource::RecordedTape(tape.clone()))
+                .unwrap();
         MacroDiscoveryObservation {
             seed,
             frontier_state_sha256: Digest([identity; 32]),

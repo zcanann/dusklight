@@ -166,8 +166,7 @@ impl TacticQCampaign {
             ))?;
         let root = graph_root_branch(graph)?;
         let terminal_supported = graph.best_terminal_path().is_some();
-        let (regime, selected_rank) =
-            graph_node_acquisition(terminal_supported, acquisition_rank);
+        let (regime, selected_rank) = graph_node_acquisition(terminal_supported, acquisition_rank);
         let ranked =
             rank_schedulable_nodes(graph, regime, maximum_route_frames as u64, seed, generation)?;
         if ranked.is_empty() {
@@ -512,17 +511,11 @@ impl TacticQCampaign {
     }
 }
 
-fn graph_node_acquisition(
-    terminal_supported: bool,
-    acquisition_rank: u64,
-) -> (SearchRegime, u64) {
+fn graph_node_acquisition(terminal_supported: bool, acquisition_rank: u64) -> (SearchRegime, u64) {
     if terminal_supported && acquisition_rank == 0 {
         (SearchRegime::Optimization, 0)
     } else if terminal_supported {
-        (
-            SearchRegime::Discovery,
-            acquisition_rank.saturating_sub(1),
-        )
+        (SearchRegime::Discovery, acquisition_rank.saturating_sub(1))
     } else {
         (SearchRegime::Discovery, acquisition_rank)
     }

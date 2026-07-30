@@ -1,3 +1,4 @@
+use super::candidate_retention::route_frames_first_hit_tick;
 use super::scratch_discovery::route_report_sha256;
 use super::*;
 use crate::state_graph::{ActionExpansionStatus, ExpansionEvidenceAuthority, StateGraph};
@@ -1001,6 +1002,82 @@ fn confined_checkpoint(
 mod tests {
     use super::*;
 
+    fn terminal_decision(
+        decision_index: u64,
+        cumulative_wall_micros: u64,
+        completed_executable_graph_expansions: u64,
+    ) -> NativeTacticScratchDecisionAudit {
+        NativeTacticScratchDecisionAudit {
+            decision_index,
+            cumulative_wall_micros,
+            learner_snapshot_sha256: Digest::ZERO,
+            replay_rows_at_decision: 0,
+            replay_generation: 0,
+            acquisition_rank: 0,
+            frontier_identity: Digest::ZERO,
+            source_route_ticks: 0,
+            checkpoint_owner_worker_slot: None,
+            proposal_worker_slots: Vec::new(),
+            restore_source: None,
+            selected_option_id: "walk".to_owned(),
+            selection_reason: TacticSelectionReason::GoalReachability,
+            applicable_tactics: Vec::new(),
+            scheduler_decision: None,
+            branch_acquisition: None,
+            proposal_count: 1,
+            terminal_proposal_count: 1,
+            retained_proposal_count: 1,
+            completed_executable_graph_expansions,
+            terminal: true,
+        }
+    }
+
+    fn valid_terminal_seed_audit() -> NativeTacticScratchSeedAudit {
+        NativeTacticScratchSeedAudit {
+            seed: 7,
+            stop_reasons: vec![NativeTacticScratchStopReason::DecisionBudgetExhausted],
+            terminal_discovered: true,
+            best_authenticated_tick: Some(9),
+            first_terminal_decision_index: Some(0),
+            time_to_first_terminal_micros: Some(10),
+            proposal_expansions_to_first_terminal: Some(1),
+            useful_graph_expansions_to_first_terminal: Some(1),
+            terminal_improvement_timing_complete: true,
+            terminal_improvements: vec![NativeTacticScratchTerminalImprovementAudit {
+                decision_index: 0,
+                cumulative_wall_micros: 10,
+                cumulative_proposal_expansions: 1,
+                cumulative_useful_graph_expansions: 1,
+                authenticated_tick: 9,
+            }],
+            best_terminal_decision_index: Some(0),
+            time_to_best_terminal_micros: Some(10),
+            proposal_expansions_to_best_terminal: Some(1),
+            useful_graph_expansions_to_best_terminal: Some(1),
+            total_proposal_expansions: 1,
+            native_ticks: 9,
+            unique_useful_graph_expansions: 1,
+            graph_expansion_timeline_complete: true,
+            action_surface_timeline_complete: false,
+            scheduler_timeline_complete: false,
+            action_availability_counts: BTreeMap::new(),
+            unsupported_action_availability_counts: BTreeMap::new(),
+            proposal_dispatches: 1,
+            completed_graph_leases: 1,
+            retryable_graph_leases: 0,
+            cancelled_graph_leases: 0,
+            failed_graph_leases: 0,
+            unresolved_graph_leases: 0,
+            terminal_path_ticks: vec![9],
+            selection_counts: BTreeMap::new(),
+            proposal_selection_counts: BTreeMap::new(),
+            learner_snapshots_consumed: vec![Digest::ZERO],
+            native_restore_accounting: NativeTacticRestoreAccounting::default(),
+            timing: NativeTacticRouteTiming::default(),
+            decisions: vec![terminal_decision(0, 10, 1)],
+        }
+    }
+
     #[test]
     fn selection_reason_keys_use_the_stable_wire_names() {
         assert_eq!(
@@ -1059,5 +1136,76 @@ mod tests {
         resources.maximum_model_replay_lag_revisions = 1;
         resources.observed_checkpoint_pool_resident_upper_bound_bytes = 599;
         assert!(!resource_audit_is_valid(&resources, 2, &[]));
+    }
+
+    #[test]
+    fn terminal_timeline_recomputes_first_and_best_evidence_from_decisions() {
+        let seed = valid_terminal_seed_audit();
+        assert!(first_terminal_evidence_is_valid(&seed));
+        assert!(terminal_improvement_timeline_is_valid(&seed));
+        assert!(seed_is_valid(&seed));
+
+        let mut detached_wall = seed.clone();
+        detached_wall.time_to_first_terminal_micros = Some(11);
+        assert!(!first_terminal_evidence_is_valid(&detached_wall));
+
+        let mut detached_work = seed.clone();
+        detached_work.proposal_expansions_to_first_terminal = Some(2);
+        assert!(!first_terminal_evidence_is_valid(&detached_work));
+
+        let mut detached_useful_work = seed;
+        detached_useful_work.useful_graph_expansions_to_first_terminal = Some(2);
+        assert!(!first_terminal_evidence_is_valid(&detached_useful_work));
+    }
+
+    #[test]
+    fn terminal_improvements_must_strictly_improve_and_match_decision_totals() {
+        let mut seed = valid_terminal_seed_audit();
+        seed.best_authenticated_tick = Some(8);
+        seed.best_terminal_decision_index = Some(1);
+        seed.time_to_best_terminal_micros = Some(20);
+        seed.proposal_expansions_to_best_terminal = Some(2);
+        seed.useful_graph_expansions_to_best_terminal = Some(2);
+        seed.total_proposal_expansions = 2;
+        seed.proposal_dispatches = 2;
+        seed.completed_graph_leases = 2;
+        seed.terminal_path_ticks = vec![8, 9];
+        seed.decisions.push(terminal_decision(1, 20, 2));
+        seed.terminal_improvements
+            .push(NativeTacticScratchTerminalImprovementAudit {
+                decision_index: 1,
+                cumulative_wall_micros: 20,
+                cumulative_proposal_expansions: 2,
+                cumulative_useful_graph_expansions: 2,
+                authenticated_tick: 8,
+            });
+        assert!(terminal_improvement_timeline_is_valid(&seed));
+        assert!(seed_is_valid(&seed));
+
+        let mut non_improving = seed.clone();
+        non_improving.terminal_improvements[1].authenticated_tick = 9;
+        non_improving.best_authenticated_tick = Some(9);
+        assert!(!terminal_improvement_timeline_is_valid(&non_improving));
+
+        let mut detached_work = seed;
+        detached_work.terminal_improvements[1].cumulative_proposal_expansions = 1;
+        assert!(!terminal_improvement_timeline_is_valid(&detached_work));
+    }
+
+    #[test]
+    fn absent_terminal_rejects_improvement_claims_even_when_timing_is_incomplete() {
+        let mut seed = valid_terminal_seed_audit();
+        seed.terminal_discovered = false;
+        seed.best_authenticated_tick = None;
+        seed.first_terminal_decision_index = None;
+        seed.time_to_first_terminal_micros = None;
+        seed.proposal_expansions_to_first_terminal = None;
+        seed.useful_graph_expansions_to_first_terminal = None;
+        seed.best_terminal_decision_index = None;
+        seed.time_to_best_terminal_micros = None;
+        seed.proposal_expansions_to_best_terminal = None;
+        seed.useful_graph_expansions_to_best_terminal = None;
+        seed.terminal_improvement_timing_complete = false;
+        assert!(!terminal_improvement_timeline_is_valid(&seed));
     }
 }

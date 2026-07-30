@@ -10,6 +10,7 @@ use crate::tactic_asset::{
     EncodedTacticAssetSource, TacticAssetError, TacticAssetSource, TacticCatalogEntry,
 };
 use crate::tape::InputTape;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -209,10 +210,7 @@ impl DiscoveredMacroCandidate {
 
     pub fn entry_condition(&self) -> Result<TacticMacroEntryCondition, &'static str> {
         validate_candidate(self)?;
-        let mut cells = BTreeMap::<
-            (String, i8, Option<u16>, Option<u8>),
-            (f32, f32),
-        >::new();
+        let mut cells = BTreeMap::<(String, i8, Option<u16>, Option<u8>), (f32, f32)>::new();
         for source in &self.sources {
             let distance = f32::from_bits(source.entry.goal_distance_f32_bits);
             let range = cells
@@ -694,11 +692,9 @@ mod tests {
 
     fn observation(seed: u64, state: u8, transition: u8) -> MacroDiscoveryObservation {
         let tape = tape(80, 8);
-        let entry = TacticCatalogEntry::new(
-            "family/move",
-            TacticAssetSource::RecordedTape(tape.clone()),
-        )
-        .unwrap();
+        let entry =
+            TacticCatalogEntry::new("family/move", TacticAssetSource::RecordedTape(tape.clone()))
+                .unwrap();
         MacroDiscoveryObservation {
             seed,
             frontier_state_sha256: Digest([state; 32]),
@@ -726,10 +722,7 @@ mod tests {
         let longest = &candidates[0];
         assert_eq!(longest.tape.frames.len(), 8);
         assert_eq!(longest.sources.len(), 2);
-        assert_eq!(
-            longest.components,
-            vec![observation(17, 3, 5).component]
-        );
+        assert_eq!(longest.components, vec![observation(17, 3, 5).component]);
         assert!(
             longest
                 .sources

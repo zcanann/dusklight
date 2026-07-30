@@ -1120,8 +1120,7 @@ pub(super) fn run_seed(
                 let retain_component = trace.retained
                     || trace.terminal
                     || trace.reward > 0.0
-                    || trace.goal_distance_after
-                        < before_features[encoder.goal_distance_feature()];
+                    || trace.goal_distance_after < before_features[encoder.goal_distance_feature()];
                 let component = if retain_component {
                     let entry = proposal_catalog
                         .entry(&proposal.outcome.selected.descriptor.option_id)

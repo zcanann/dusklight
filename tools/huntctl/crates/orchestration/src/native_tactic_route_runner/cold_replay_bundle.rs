@@ -6,7 +6,7 @@ use super::scratch_evidence_bundle::{blob_path, read_blob, read_json_blob};
 use super::*;
 use crate::native_residual_campaign::NativeResidualExecutionBinding;
 use crate::tactic_q_campaign::TacticQFinalResult;
-use sha2::{Digest as _, Sha256};
+use sha2::Sha256;
 use std::collections::{BTreeSet, VecDeque};
 use std::path::Component;
 

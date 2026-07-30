@@ -33,8 +33,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const TACTIC_ASSET_ADAPTER_SCHEMA_V1: &str = "dusklight-tactic-asset-adapter/v1";
-pub const ENCODED_TACTIC_ASSET_SOURCE_SCHEMA_V1: &str =
-    "dusklight-encoded-tactic-asset-source/v1";
+pub const ENCODED_TACTIC_ASSET_SOURCE_SCHEMA_V1: &str = "dusklight-encoded-tactic-asset-source/v1";
 pub const MAX_TACTIC_CATALOG_ENTRIES: usize = 512;
 pub const MAX_ENCODED_TACTIC_ASSET_SOURCE_BYTES: usize = 4 * 1024 * 1024;
 

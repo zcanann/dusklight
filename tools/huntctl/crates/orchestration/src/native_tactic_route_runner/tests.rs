@@ -81,9 +81,7 @@ fn graph_branch_schedule_prioritizes_terminal_support_and_retains_discovery_cade
     assert!(campaign::should_schedule_branch(256, 8, false, false));
     assert!(campaign::should_schedule_branch(3, 8, true, false));
     assert!(campaign::should_schedule_branch(3, 8, false, true));
-    assert!(
-        (0..32).all(|decision| campaign::should_schedule_branch(decision, 8, false, true))
-    );
+    assert!((0..32).all(|decision| campaign::should_schedule_branch(decision, 8, false, true)));
     assert!(!campaign::prefer_root_for_periodic_branch(true, false));
     assert!(!campaign::prefer_root_for_periodic_branch(true, true));
     assert!(!campaign::prefer_root_for_periodic_branch(false, false));
@@ -1135,11 +1133,8 @@ fn connected_macro_needs_repeated_occurrences_not_internal_steps() {
     };
     let component = |option_id: &str| {
         TacticMacroComponent::from_catalog_entry(
-            &TacticCatalogEntry::new(
-                option_id,
-                TacticAssetSource::RecordedTape(tape.clone()),
-            )
-            .unwrap(),
+            &TacticCatalogEntry::new(option_id, TacticAssetSource::RecordedTape(tape.clone()))
+                .unwrap(),
         )
         .unwrap()
     };
@@ -1164,8 +1159,7 @@ fn connected_macro_needs_repeated_occurrences_not_internal_steps() {
             .is_empty()
     );
     let candidates =
-        connected_macro_candidates(occurrences(vec![source(11, 1, 3), source(13, 2, 4)]))
-            .unwrap();
+        connected_macro_candidates(occurrences(vec![source(11, 1, 3), source(13, 2, 4)])).unwrap();
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].components, components);
     assert_eq!(candidates[0].sources.len(), 2);
@@ -1407,16 +1401,9 @@ fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
             }],
         },
     };
-    let primitive_proposals = parameterized_catalog_for_state(
-        11,
-        3,
-        &snapshot,
-        &encoder,
-        40,
-        None,
-        Digest([8; 32]),
-    )
-    .unwrap();
+    let primitive_proposals =
+        parameterized_catalog_for_state(11, 3, &snapshot, &encoder, 40, None, Digest([8; 32]))
+            .unwrap();
     let primitive_descriptors = primitive_proposals
         .catalog
         .option_descriptors()
@@ -1441,13 +1428,12 @@ fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
     assert!(primitive_descriptors.iter().all(|(option_id, descriptor)| {
         combined_descriptors.get(option_id) == Some(descriptor)
     }));
-    assert_eq!(
-        combined_descriptors
-            .iter()
-            .filter(|descriptor| descriptor.option_id.starts_with("family/"))
-            .count(),
-        primitive_descriptors.len()
-    );
+    let promoted_descriptors = combined_descriptors
+        .iter()
+        .filter(|(option_id, _)| !primitive_descriptors.contains_key(*option_id))
+        .collect::<Vec<_>>();
+    assert_eq!(promoted_descriptors.len(), 1);
+    assert!(promoted_descriptors[0].1.option_id.starts_with("promoted/"));
     assert!(
         proposals
             .catalog
@@ -1457,6 +1443,13 @@ fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
     );
     let mut wrong_room = snapshot.clone();
     wrong_room.world.room = wrong_room.world.room.saturating_add(1);
+    let wrong_room_primitive_descriptors =
+        parameterized_catalog_for_state(11, 3, &wrong_room, &encoder, 40, None, Digest([8; 32]))
+            .unwrap()
+            .catalog
+            .option_descriptors()
+            .map(|descriptor| (descriptor.option_id.clone(), descriptor.clone()))
+            .collect::<BTreeMap<_, _>>();
     let proposals = parameterized_catalog_for_state_with_promoted(
         11,
         3,
@@ -1474,7 +1467,7 @@ fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
             .option_descriptors()
             .map(|descriptor| (descriptor.option_id.clone(), descriptor.clone()))
             .collect::<BTreeMap<_, _>>(),
-        primitive_descriptors
+        wrong_room_primitive_descriptors
     );
     assert!(
         proposals
