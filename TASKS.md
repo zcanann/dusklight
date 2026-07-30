@@ -388,6 +388,11 @@ Exit gate:
       durable partial route sample, reject a torn or detached sample, and never
       relaunch native work merely because final aggregate sealing was
       interrupted.
+      Source checkpoint `fa2770a794c5` implements the protocol but does not
+      close this gate: compile it, run the focused pure tests, and retain
+      interruption tests covering a completed prefix, a durable partial
+      sample, detached/torn progress, and aggregate-only resealing with zero
+      native launches.
 - [ ] Retain a sealed long-campaign v2 resource audit proving the declared
       memory and fitted-model staleness bounds while reporting replay fallback
       and checkpoint-owner skew. Use the hard-loss injector before dispatch,
