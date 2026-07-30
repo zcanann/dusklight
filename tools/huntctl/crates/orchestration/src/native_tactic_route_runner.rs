@@ -906,7 +906,7 @@ use campaign_persistence::{
 };
 mod journal;
 use journal::{
-    append_tactic_decision_record, compact_tactic_decision_journal, decision_record,
+    TacticDecisionJournalAppender, compact_tactic_decision_journal, decision_record,
     journal_transition, journal_transition_sha256, load_tactic_journal_replay,
     read_tactic_decision_records,
 };

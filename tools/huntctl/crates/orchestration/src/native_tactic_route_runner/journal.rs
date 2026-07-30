@@ -703,46 +703,112 @@ pub(super) fn project_tactic_decision_record(
     })
 }
 
+pub(super) struct TacticDecisionJournalAppender {
+    seed_root: PathBuf,
+    path: PathBuf,
+    compacted_count: u64,
+    active_count: u64,
+    valid_bytes: usize,
+}
+
+impl TacticDecisionJournalAppender {
+    pub(super) fn open(seed_root: &Path) -> Result<Self, NativeTacticRouteRunError> {
+        fs::create_dir_all(seed_root).map_err(route_error)?;
+        let path = tactic_decision_journal_path(seed_root);
+        ensure_tactic_decision_journal(&path)?;
+        let compacted_count = compacted_tactic_decision_count(seed_root)?;
+        let bytes = fs::read(&path).map_err(route_error)?;
+        let decoded = decode_tactic_decision_journal(&bytes)?;
+        let active_count = decoded
+            .records
+            .iter()
+            .filter(|record| record.decision_index >= compacted_count)
+            .count() as u64;
+        let next_decision_index = compacted_count
+            .checked_add(active_count)
+            .ok_or_else(|| route_message("tactic decision journal index overflows"))?;
+        if decoded
+            .records
+            .iter()
+            .filter(|record| record.decision_index >= compacted_count)
+            .enumerate()
+            .any(|(offset, record)| {
+                record.decision_index != compacted_count.saturating_add(offset as u64)
+            })
+        {
+            return Err(route_message(
+                "tactic decision journal active records are detached",
+            ));
+        }
+        if decoded.valid_bytes != bytes.len() {
+            OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .and_then(|file| file.set_len(decoded.valid_bytes as u64))
+                .map_err(route_error)?;
+        }
+        let appender = Self {
+            seed_root: seed_root.to_path_buf(),
+            path,
+            compacted_count,
+            active_count,
+            valid_bytes: decoded.valid_bytes,
+        };
+        if appender.next_decision_index() != next_decision_index {
+            return Err(route_message("tactic decision journal cursor is detached"));
+        }
+        Ok(appender)
+    }
+
+    pub(super) fn next_decision_index(&self) -> u64 {
+        self.compacted_count.saturating_add(self.active_count)
+    }
+
+    pub(super) fn append(
+        &mut self,
+        decision: &NativeTacticDecisionRecord,
+    ) -> Result<(), NativeTacticRouteRunError> {
+        if self.next_decision_index() != decision.decision_index {
+            return Err(route_message(
+                "tactic decision journal append index is detached",
+            ));
+        }
+        let record = encode_tactic_decision_record(decision)?;
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(&self.path)
+            .map_err(route_error)?;
+        file.write_all(&record)
+            .and_then(|_| file.sync_data())
+            .map_err(route_error)?;
+        drop(file);
+        self.valid_bytes = self
+            .valid_bytes
+            .checked_add(record.len())
+            .ok_or_else(|| route_message("tactic decision journal length overflows"))?;
+        self.active_count = self
+            .active_count
+            .checked_add(1)
+            .ok_or_else(|| route_message("tactic decision journal count overflows"))?;
+        if self.active_count >= NATIVE_TACTIC_DECISION_COMPACTION_RECORDS {
+            compact_tactic_decision_journal(&self.seed_root)?;
+            self.compacted_count = self
+                .compacted_count
+                .checked_add(self.active_count)
+                .ok_or_else(|| route_message("tactic decision compacted count overflows"))?;
+            self.active_count = 0;
+            self.valid_bytes = NATIVE_TACTIC_DECISION_JOURNAL_HEADER_SIZE;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 pub(super) fn append_tactic_decision_record(
     seed_root: &Path,
     decision: &NativeTacticDecisionRecord,
 ) -> Result<(), NativeTacticRouteRunError> {
-    fs::create_dir_all(seed_root).map_err(route_error)?;
-    let path = tactic_decision_journal_path(seed_root);
-    ensure_tactic_decision_journal(&path)?;
-    let compacted_count = compacted_tactic_decision_count(seed_root)?;
-    let bytes = fs::read(&path).map_err(route_error)?;
-    let decoded = decode_tactic_decision_journal(&bytes)?;
-    let active_count = decoded
-        .records
-        .iter()
-        .filter(|record| record.decision_index >= compacted_count)
-        .count() as u64;
-    if compacted_count.saturating_add(active_count) != decision.decision_index {
-        return Err(route_message(
-            "tactic decision journal append index is detached",
-        ));
-    }
-    if decoded.valid_bytes != bytes.len() {
-        OpenOptions::new()
-            .write(true)
-            .open(&path)
-            .and_then(|file| file.set_len(decoded.valid_bytes as u64))
-            .map_err(route_error)?;
-    }
-    let record = encode_tactic_decision_record(decision)?;
-    let mut file = OpenOptions::new()
-        .append(true)
-        .open(&path)
-        .map_err(route_error)?;
-    file.write_all(&record)
-        .and_then(|_| file.sync_data())
-        .map_err(route_error)?;
-    drop(file);
-    if active_count.saturating_add(1) >= NATIVE_TACTIC_DECISION_COMPACTION_RECORDS {
-        compact_tactic_decision_journal(seed_root)?;
-    }
-    Ok(())
+    TacticDecisionJournalAppender::open(seed_root)?.append(decision)
 }
 
 pub(super) fn ensure_tactic_decision_journal(path: &Path) -> Result<(), NativeTacticRouteRunError> {

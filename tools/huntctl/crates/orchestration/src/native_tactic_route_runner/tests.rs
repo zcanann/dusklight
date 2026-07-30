@@ -414,8 +414,13 @@ fn tactic_decision_journal_round_trips_and_recovers_a_truncated_tail() {
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&root);
-    append_tactic_decision_record(&root, &journal_record(0)).unwrap();
-    append_tactic_decision_record(&root, &journal_record(1)).unwrap();
+    let mut appender = TacticDecisionJournalAppender::open(&root).unwrap();
+    assert_eq!(appender.next_decision_index(), 0);
+    appender.append(&journal_record(0)).unwrap();
+    appender.append(&journal_record(1)).unwrap();
+    assert_eq!(appender.next_decision_index(), 2);
+    assert!(appender.append(&journal_record(3)).is_err());
+    drop(appender);
     let records = read_tactic_decision_records(&root).unwrap();
     assert_eq!(records.len(), 2);
     assert_eq!(records[1].decision_index, 1);
@@ -428,7 +433,9 @@ fn tactic_decision_journal_round_trips_and_recovers_a_truncated_tail() {
         .write_all(&[7, 8, 9])
         .unwrap();
     assert_eq!(read_tactic_decision_records(&root).unwrap().len(), 2);
-    append_tactic_decision_record(&root, &journal_record(2)).unwrap();
+    let mut resumed = TacticDecisionJournalAppender::open(&root).unwrap();
+    assert_eq!(resumed.next_decision_index(), 2);
+    resumed.append(&journal_record(2)).unwrap();
     assert_eq!(read_tactic_decision_records(&root).unwrap().len(), 3);
 
     let mut bytes = fs::read(&path).unwrap();

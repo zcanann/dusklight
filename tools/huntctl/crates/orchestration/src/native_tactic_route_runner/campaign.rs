@@ -271,6 +271,12 @@ pub(super) fn run_seed(
             },
         )?;
     }
+    let mut decision_journal = TacticDecisionJournalAppender::open(&seed_root)?;
+    if decision_journal.next_decision_index() != campaign.decision_index {
+        return Err(route_message(
+            "tactic decision journal cursor is detached from campaign recovery",
+        ));
+    }
 
     while campaign.decision_index < config.execution_plan.budgets.decisions_per_lane
         && native_ticks < config.optimization.budgets.simulated_tick_budget
@@ -1176,19 +1182,16 @@ pub(super) fn run_seed(
             decision_index,
             &seed_root,
         )?;
-        append_tactic_decision_record(
-            &seed_root,
-            &decision_record(
-                &decision_trace,
-                campaign.episode_group,
-                campaign.root_checkpoint_sha256,
-                root_tape_ref,
-                Some(source_route_tape_ref),
-                None,
-                Some(transition),
-                proposal_records,
-            ),
-        )?;
+        decision_journal.append(&decision_record(
+            &decision_trace,
+            campaign.episode_group,
+            campaign.root_checkpoint_sha256,
+            root_tape_ref,
+            Some(source_route_tape_ref),
+            None,
+            Some(transition),
+            proposal_records,
+        ))?;
         inject_tactic_fault(
             config,
             NativeTacticFaultPoint::AfterDecisionCommit,
