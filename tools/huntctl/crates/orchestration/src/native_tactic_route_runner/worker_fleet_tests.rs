@@ -1,6 +1,17 @@
 use super::*;
 
 #[test]
+fn fleet_rejects_a_cache_that_cannot_retain_one_native_checkpoint() {
+    assert_eq!(
+        validate_fleet_checkpoint_capacity(300, &[295, 295]).unwrap(),
+        295
+    );
+    assert!(validate_fleet_checkpoint_capacity(294, &[295, 295]).is_err());
+    assert!(validate_fleet_checkpoint_capacity(300, &[295, 296]).is_err());
+    assert!(validate_fleet_checkpoint_capacity(300, &[]).is_err());
+}
+
+#[test]
 fn persistent_fleet_views_select_a_bounded_prefix_and_reset_dispatch_order() {
     let (senders, _receivers): (Vec<_>, Vec<_>) = (0..4)
         .map(|_| mpsc::channel::<NativeTacticProposalJob>())

@@ -11,7 +11,7 @@ pub(super) fn launch_tactic_route_worker(
     initial_batch: &NativeSuffixBatch,
     terminal: &NativeTerminalBinding,
     card_fixture: &Path,
-) -> Result<(NativeSuffixWorkerSession, FactSnapshot, Digest), NativeTacticRouteRunError> {
+) -> Result<(NativeSuffixWorkerSession, FactSnapshot, Digest, u64), NativeTacticRouteRunError> {
     let initial_root = attempt_root.join("initial");
     fs::create_dir_all(&initial_root).map_err(route_error)?;
     let initial_batch_path = initial_root.join("request.json");
@@ -49,7 +49,12 @@ pub(super) fn launch_tactic_route_worker(
     let facts = initial_facts(&initial)?;
     let root_checkpoint_sha256 =
         tactic_root_checkpoint_sha256(worker.identity()).map_err(route_error)?;
-    Ok((worker, facts, root_checkpoint_sha256))
+    Ok((
+        worker,
+        facts,
+        root_checkpoint_sha256,
+        initial.checkpoint_bytes,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]

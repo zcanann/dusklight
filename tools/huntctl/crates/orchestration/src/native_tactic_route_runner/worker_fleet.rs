@@ -81,11 +81,17 @@ impl NativeTacticWorkerFleet {
         let mut sessions = Vec::with_capacity(worker_count);
         let mut worker_initial_facts = Vec::with_capacity(worker_count);
         let mut worker_root_checkpoints = Vec::with_capacity(worker_count);
-        for (_, (worker, facts, root_checkpoint_sha256)) in launched {
+        let mut worker_checkpoint_bytes = Vec::with_capacity(worker_count);
+        for (_, (worker, facts, root_checkpoint_sha256, checkpoint_bytes)) in launched {
             sessions.push(worker);
             worker_initial_facts.push(facts);
             worker_root_checkpoints.push(root_checkpoint_sha256);
+            worker_checkpoint_bytes.push(checkpoint_bytes);
         }
+        validate_fleet_checkpoint_capacity(
+            checkpoint_cache_capacity_bytes,
+            &worker_checkpoint_bytes,
+        )?;
         let initial_facts = worker_initial_facts
             .first()
             .cloned()
@@ -211,6 +217,33 @@ impl Drop for NativeTacticWorkerFleet {
     fn drop(&mut self) {
         let _ = self.shutdown_inner();
     }
+}
+
+fn validate_fleet_checkpoint_capacity(
+    checkpoint_cache_capacity_bytes: usize,
+    worker_checkpoint_bytes: &[u64],
+) -> Result<u64, NativeTacticRouteRunError> {
+    let checkpoint_bytes = worker_checkpoint_bytes
+        .first()
+        .copied()
+        .filter(|bytes| *bytes > 0)
+        .ok_or_else(|| route_message("native tactic worker fleet reported no root checkpoint"))?;
+    if worker_checkpoint_bytes
+        .iter()
+        .any(|bytes| *bytes != checkpoint_bytes)
+    {
+        return Err(route_message(
+            "native tactic worker fleet root checkpoint sizes differ",
+        ));
+    }
+    let capacity_bytes = u64::try_from(checkpoint_cache_capacity_bytes).map_err(route_error)?;
+    if capacity_bytes < checkpoint_bytes {
+        return Err(route_message(format!(
+            "native tactic worker fleet checkpoint cache is too small: \
+             {capacity_bytes} bytes per worker cannot retain a {checkpoint_bytes}-byte checkpoint"
+        )));
+    }
+    Ok(checkpoint_bytes)
 }
 
 fn proposal_pool_view(

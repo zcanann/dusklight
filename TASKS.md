@@ -181,6 +181,15 @@ The incoming 2026-07-29 work made substantial, useful progress:
   predecessor, campaign wall fell 81.3%, persistence fell 96.2%, and output
   bytes fell 86.4%. The retained comparison is
   `docs/glitch-hunting/benchmarks/tactic-route-checkpoint-v6-windows-20260729.json`.
+  The first full-curve launch then exposed an invalid memory configuration
+  before completing its first sample: a `294,721,440`-byte native checkpoint
+  could not fit in the `20,971,520` bytes available to each member of a
+  16-worker fleet under a `335,544,320`-byte aggregate bound. Fleet launch now
+  requires every worker to report the same nonzero root-checkpoint size and
+  rejects any per-worker cache that cannot retain one checkpoint, with the
+  required and available byte counts. The balanced curve must use a bounded
+  aggregate budget large enough for all 16 workers; it must not reinterpret a
+  late missing-retention result as request detachment.
 
 That campaign proves bounded terminal discovery under its exact conditions. It
 does not prove practical discovery, useful native learning, route
