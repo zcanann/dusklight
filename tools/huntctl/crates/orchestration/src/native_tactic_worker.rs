@@ -68,7 +68,7 @@ pub const NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V2: &str =
     "dusklight-native-tactic-worker-outcome/v2";
 pub(crate) const TACTIC_CHECKPOINT_CACHE_BYTES: usize = 640 * 1024 * 1024;
 pub(crate) const TACTIC_CHECKPOINT_CACHE_ENTRIES: usize = 2;
-const TACTIC_INTERMEDIATE_BOUNDARY_STRIDE: usize = 4;
+pub(crate) const TACTIC_INTERMEDIATE_BOUNDARY_STRIDE: usize = 4;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]

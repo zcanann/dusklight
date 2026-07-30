@@ -11,6 +11,7 @@ use crate::native_tactic_worker::{
     NativeGenericExecutionStrategy, NativeTacticCheckpointRetention, NativeTacticCheckpointSource,
     NativeTacticCheckpointStorage, NativeTacticWorkerError, NativeTacticWorkerOutcome,
     NativeTacticWorkerPaths, PersistentTacticBatchWorker, TACTIC_CHECKPOINT_CACHE_BYTES,
+    TACTIC_INTERMEDIATE_BOUNDARY_STRIDE,
     execute_selected_tactic_with_checkpoint_retention_and_strategy,
     materialize_tactic_frontier_with_cache_capacity, tactic_checkpoint_cache_request,
     tactic_root_checkpoint_sha256,
@@ -1122,6 +1123,12 @@ pub(crate) fn initial_facts(
     FactSnapshot::from_native_learning(observation, &[], None, Vec::new()).map_err(route_error)
 }
 
+fn maximum_demonstration_chunk_ticks(horizon: u64) -> Result<u32, NativeTacticRouteRunError> {
+    Ok(goal_tactic_maximum_ticks(horizon)?.min(
+        u32::try_from(TACTIC_INTERMEDIATE_BOUNDARY_STRIDE).map_err(route_error)?,
+    ))
+}
+
 fn validate_config(
     config: &NativeTacticRouteRunConfig<'_>,
 ) -> Result<(), NativeTacticRouteRunError> {
@@ -1131,8 +1138,9 @@ fn validate_config(
         config.execution_plan.budgets.memory_bytes,
         config.workers,
     )?;
-    let maximum_demonstration_chunk_ticks =
-        goal_tactic_maximum_ticks(config.optimization.budgets.exploration_horizon_ticks)?;
+    let maximum_demonstration_chunk_ticks = maximum_demonstration_chunk_ticks(
+        config.optimization.budgets.exploration_horizon_ticks,
+    )?;
     if config.workers == 0
         || config.workers > MAX_ROUTE_WORKERS
         || config.execution_plan.budgets.decisions_per_lane > MAX_ROUTE_DECISIONS

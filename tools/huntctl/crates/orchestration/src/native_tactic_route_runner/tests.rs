@@ -149,6 +149,14 @@ fn demonstration_chunks_preserve_the_bounded_authenticated_suffix() {
 }
 
 #[test]
+fn demonstration_chunks_never_skip_branchable_interior_boundaries() {
+    assert_eq!(maximum_demonstration_chunk_ticks(160).unwrap(), 4);
+    assert_eq!(maximum_demonstration_chunk_ticks(3).unwrap(), 1);
+    assert_eq!(maximum_demonstration_chunk_ticks(1_000).unwrap(), 4);
+    assert!(maximum_demonstration_chunk_ticks(0).is_err());
+}
+
+#[test]
 fn demonstration_chunks_reject_empty_or_detached_sources() {
     let process_tape = InputTape {
         frames: vec![InputFrame::default(); 4],

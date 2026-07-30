@@ -460,7 +460,7 @@ mod tests {
             refit_every_decisions: 4,
             root_refresh_cadence: 4,
             epsilon_per_million: 350_000,
-            demonstration_chunk_ticks: Some(8),
+            demonstration_chunk_ticks: Some(4),
             replay_sharing: NativeTacticReplaySharingPlan::GenerationBarrier,
             budgets: NativeTacticPlanBudgets {
                 decisions_per_lane: 256,

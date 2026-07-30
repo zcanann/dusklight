@@ -200,6 +200,7 @@ fn forty_tick_option_exposes_and_executes_every_four_tick_counterfactual() {
             }
         })
         .collect();
+    terminalize(&mut long_transition);
     long_transition.validate().unwrap();
     let long = graph
         .admit_completed_expansion(
@@ -265,8 +266,8 @@ fn forty_tick_option_exposes_and_executes_every_four_tick_counterfactual() {
         assert_eq!(counterfactual.source, source);
     }
 
-    for source in interior {
-        let node = graph.node(source).unwrap();
+    for source in &interior {
+        let node = graph.node(*source).unwrap();
         assert_eq!(node.outgoing_expansions.len(), 1);
         let expansion = graph
             .expansion(*node.outgoing_expansions.first().unwrap())
@@ -276,6 +277,27 @@ fn forty_tick_option_exposes_and_executes_every_four_tick_counterfactual() {
             ActionExpansionStatus::Completed { .. }
         ));
     }
+    let scheduled = crate::scheduler::rank_schedulable_nodes(
+        &graph,
+        crate::scheduler::SearchRegime::Optimization,
+        u64::MAX,
+        7,
+        1,
+    )
+    .unwrap();
+    assert_eq!(
+        scheduled
+            .iter()
+            .filter(|entry| entry.exact_terminal_ticks_to_go.is_some())
+            .count(),
+        interior.len()
+    );
+    assert!(interior.iter().all(|source| {
+        scheduled.iter().any(|entry| {
+            entry.node == *source
+                && entry.exact_terminal_ticks_to_go == Some(40 - entry.root_ticks)
+        })
+    }));
     graph.validate().unwrap();
 }
 
