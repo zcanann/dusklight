@@ -49,7 +49,7 @@ The incoming 2026-07-29 work made substantial, useful progress:
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 318 tests.
+  orchestration suite is hermetic and passes all 319 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
   tape/result, source-authority evidence, and a content-bound campaign audit.
@@ -427,6 +427,16 @@ Exit gate:
 - [ ] Remove the measured end-to-end saturation bottleneck until the reference
       workstation sustains enough useful evidence to meet the P4 wall-time
       gate. Prefer reducing restore/replay and idle time before adding capacity.
+      The first current resumable Windows curve launch exposed a separate
+      startup-pressure defect: all 16 native workers booted concurrently,
+      consuming 16 cores before any sample began. Checkpoint `9d5d929294`
+      launches the identical persistent fleet in contiguous batches of at most
+      two, retains total fleet-launch time outside sample wall time, and passes
+      the complete 319-test orchestration suite. A five-second live startup
+      interval used `10.05` native CPU-seconds with exactly two active boots.
+      This bounds launch pressure but does not close the end-to-end throughput
+      gate; the resumed v4 curve must identify the steady-state saturation
+      point.
 - [x] Preserve native state, applicable actions, controller output, terminal
       evidence, and first-hit tick for every disabled presentation subsystem.
       Source checkpoint `703dcdbbba` advances the parity report to v2 and
