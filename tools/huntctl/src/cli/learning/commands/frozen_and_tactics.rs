@@ -5,19 +5,20 @@ use super::{
     MAX_LEARN_INPUT_CORPORA, NativeEpisodeShard, NativeFactorizedPolicyBatchConfig,
     NativeFactorizedPolicySuffixBatch, NativeFrozenPolicyReinferenceReport,
     NativeFrozenPolicySuffixBatch, NativeGenericExecutionStrategy, NativeResidualExecutionBinding,
-    NativeTacticDemonstrationReport, NativeTacticFaultInjector, NativeTacticLaunchSmokeBundle,
-    NativeTacticObservationAudit, NativeTacticPolicyRunConfig,
-    NativeTacticPostTerminalControlReport, NativeTacticRestoreLocalityConfig,
-    NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport, NativeTacticRouteReport,
-    NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
-    NativeTacticScratchComparisonReport, NativeTacticScratchDiscoveryReport,
-    NativeTacticScratchEvidenceBundle, NativeTacticThroughputCurveConfig,
-    NativeTacticThroughputEvidenceBundle, OptimizationRequest, Sha256, TacticFrozenPolicy,
-    TacticProposalPolicy, TacticQCampaign, TacticQFinalResult, TacticQTrainingCorpus,
-    audit_native_tactic_fault_recovery, cli, command_conservative_q, flag,
+    NativeTacticColdReplayConfig, NativeTacticDemonstrationReport, NativeTacticExecutionPlan,
+    NativeTacticFaultInjector, NativeTacticLaunchSmokeBundle, NativeTacticObservationAudit,
+    NativeTacticPolicyRunConfig, NativeTacticPostTerminalControlReport,
+    NativeTacticRestoreLocalityConfig, NativeTacticRestoreLocalityReport,
+    NativeTacticRouteDiagnosisReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
+    NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
+    NativeTacticScratchDiscoveryReport, NativeTacticScratchEvidenceBundle,
+    NativeTacticThroughputCurveConfig, NativeTacticThroughputEvidenceBundle, OptimizationRequest,
+    Sha256, TacticFrozenPolicy, TacticProposalPolicy, TacticQCampaign, TacticQFinalResult,
+    TacticQTrainingCorpus, audit_native_tactic_fault_recovery, cli, command_conservative_q, flag,
     native_frozen_policy_probe_model, native_tactic_execution_plan, option,
-    prove_generalized_tactic_held_out_value, realize_native_frozen_policy_tape, repeated_option,
-    required_path, run_native_tactic_policy, run_native_tactic_restore_locality,
+    prove_generalized_tactic_held_out_value, read_and_validate_native_tactic_cold_replay,
+    realize_native_frozen_policy_tape, repeated_option, required_path,
+    run_native_tactic_cold_replay, run_native_tactic_policy, run_native_tactic_restore_locality,
     run_native_tactic_route, run_native_tactic_throughput_curve, tactic_macro_registry_identity,
     u64_option, usage_error, usize_option, verify_native_frozen_policy_cold_replay,
     verify_native_frozen_policy_reinference,
@@ -27,6 +28,7 @@ use sha2::Digest as _;
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
@@ -628,6 +630,88 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "demonstration_transitions": report.demonstration_transitions,
                 }))?
             );
+            Ok(())
+        }
+        Some("prove-tactic-route-cold-replay") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let request: OptimizationRequest =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--request")?)?)?;
+            let execution: NativeResidualExecutionBinding =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--execution")?)?)?;
+            let execution_plan =
+                NativeTacticExecutionPlan::read(&required_path(learn_args, "--plan")?)?;
+            let route: NativeTacticRouteReport =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            let output_argument = required_path(learn_args, "--output")?;
+            let output = if output_argument.is_absolute() {
+                output_argument
+            } else {
+                repository_root.join(output_argument)
+            };
+            let repetitions = u32::try_from(u64_option(learn_args, "--repetitions", 2)?)?;
+            let timeout_seconds = u64_option(learn_args, "--timeout-seconds", 120)?;
+            let seed = option(learn_args, "--seed")
+                .ok_or("prove-tactic-route-cold-replay requires --seed")?
+                .parse::<u64>()?;
+            let proof = run_native_tactic_cold_replay(&NativeTacticColdReplayConfig {
+                repository_root: &repository_root,
+                optimization: &request,
+                execution: &execution,
+                execution_plan: &execution_plan,
+                route_report: &route,
+                seed,
+                maximum_first_hit_tick: u64_option(learn_args, "--maximum-first-hit-tick", 123)?,
+                repetitions,
+                timeout: Duration::from_secs(timeout_seconds),
+                output_root: &output,
+            })?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": proof.schema,
+                    "proof": output.join("proof.json"),
+                    "content_sha256": proof.content_sha256,
+                    "seed": proof.seed,
+                    "first_hit_tick": proof.first_hit_tick,
+                    "controller_tape_sha256": proof.controller_tape.sha256,
+                    "repetitions": proof.attempts.len(),
+                    "terminal_boundary_fingerprint": proof
+                        .attempts
+                        .first()
+                        .map(|attempt| &attempt.boundary_fingerprint),
+                }))?
+            );
+            Ok(())
+        }
+        Some("validate-tactic-route-cold-replay") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let request: OptimizationRequest =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--request")?)?)?;
+            let execution: NativeResidualExecutionBinding =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--execution")?)?)?;
+            let execution_plan =
+                NativeTacticExecutionPlan::read(&required_path(learn_args, "--plan")?)?;
+            let route: NativeTacticRouteReport =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            let proof = read_and_validate_native_tactic_cold_replay(
+                &repository_root,
+                &request,
+                &execution,
+                &execution_plan,
+                &route,
+                &required_path(learn_args, "--proof-root")?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&proof)?);
             Ok(())
         }
         Some("run-tactic-launch-smoke") => {

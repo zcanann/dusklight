@@ -95,16 +95,18 @@ use huntctl::search_evaluator::native_tactic_policy_runner::{
     NativeTacticPolicyRunConfig, run_native_tactic_policy,
 };
 use huntctl::search_evaluator::native_tactic_route_runner::{
-    NativeTacticDemonstrationReport, NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest,
-    NativeTacticFaultInjector, NativeTacticLaunchSmokeBundle, NativeTacticObservationAudit,
-    NativeTacticPlanBudgets, NativeTacticPostTerminalControlReport, NativeTacticResourceLimit,
-    NativeTacticRestoreLocalityConfig, NativeTacticRestoreLocalityReport,
-    NativeTacticRouteDiagnosisReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
-    NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
-    NativeTacticScratchDiscoveryReport, NativeTacticScratchEvidenceBundle,
-    NativeTacticThroughputCurveConfig, NativeTacticThroughputEvidenceBundle,
-    audit_native_tactic_fault_recovery, run_native_tactic_restore_locality,
-    run_native_tactic_route, run_native_tactic_throughput_curve, tactic_macro_registry_identity,
+    NativeTacticColdReplayConfig, NativeTacticDemonstrationReport, NativeTacticExecutionPlan,
+    NativeTacticExecutionPlanRequest, NativeTacticFaultInjector, NativeTacticLaunchSmokeBundle,
+    NativeTacticObservationAudit, NativeTacticPlanBudgets, NativeTacticPostTerminalControlReport,
+    NativeTacticResourceLimit, NativeTacticRestoreLocalityConfig,
+    NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport, NativeTacticRouteReport,
+    NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
+    NativeTacticScratchComparisonReport, NativeTacticScratchDiscoveryReport,
+    NativeTacticScratchEvidenceBundle, NativeTacticThroughputCurveConfig,
+    NativeTacticThroughputEvidenceBundle, audit_native_tactic_fault_recovery,
+    read_and_validate_native_tactic_cold_replay, run_native_tactic_cold_replay,
+    run_native_tactic_restore_locality, run_native_tactic_route,
+    run_native_tactic_throughput_curve, tactic_macro_registry_identity,
 };
 use huntctl::search_evaluator::native_tactic_worker::NativeGenericExecutionStrategy;
 use huntctl::search_evaluator::optimization_request::OptimizationRequest;
@@ -418,6 +420,8 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "execute-tactic-policy"
             | "prove-generalized-tactics"
             | "tactic-route"
+            | "prove-tactic-route-cold-replay"
+            | "validate-tactic-route-cold-replay"
             | "run-tactic-launch-smoke"
             | "seal-tactic-launch-smoke"
             | "validate-tactic-launch-smoke"
@@ -495,6 +499,8 @@ mod tests {
             "compare-tactic-scratch-campaigns",
             "diagnose-tactic-terminal-routes",
             "validate-tactic-scratch-bundle",
+            "prove-tactic-route-cold-replay",
+            "validate-tactic-route-cold-replay",
             "run-tactic-launch-smoke",
             "seal-tactic-launch-smoke",
             "validate-tactic-launch-smoke",

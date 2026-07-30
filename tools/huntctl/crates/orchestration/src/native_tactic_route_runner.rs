@@ -184,6 +184,13 @@ pub use launch_smoke::{
     NATIVE_TACTIC_LAUNCH_SMOKE_BUNDLE_SCHEMA_V1, NATIVE_TACTIC_LAUNCH_SMOKE_MANIFEST,
     NativeTacticLaunchSmokeBundle, NativeTacticLaunchSmokeSummary,
 };
+mod cold_replay;
+pub use cold_replay::{
+    NATIVE_TACTIC_COLD_REPLAY_PROOF_FILE, NATIVE_TACTIC_COLD_REPLAY_PROOF_SCHEMA_V1,
+    NativeTacticColdReplayArtifact, NativeTacticColdReplayAttempt, NativeTacticColdReplayConfig,
+    NativeTacticColdReplayFidelity, NativeTacticColdReplayProof,
+    read_and_validate_native_tactic_cold_replay, run_native_tactic_cold_replay,
+};
 
 mod execution_plan;
 pub use execution_plan::{
