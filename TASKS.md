@@ -445,6 +445,11 @@ Exit gate:
       improvement rather than merely continued execution.
 - [ ] Schedule counterfactuals across the complete interior-state sequence of
       every newly successful path, not option endpoints alone.
+      Source checkpoint `c9bfb90865` aligns native and optional-replay
+      boundaries to at most four ticks and requires terminal-path interior
+      nodes to retain exact optimization-scheduler support. Keep this open
+      until the focused tests compile and retained native traces show the
+      scheduler actually leases counterfactuals across the complete sequence.
 - [ ] Demonstrate repeated monotonic best-route improvement from the first
       terminal in at least three sealed seeds. One favorable counterfactual is
       not proof.
