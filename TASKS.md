@@ -438,6 +438,11 @@ Exit gate:
 - [ ] Continue useful work after first terminal instead of treating discovery
       as campaign completion. Hand the exact successful graph path and terminal
       returns directly to the optimization scheduler.
+      Source checkpoint `3dbf335b7d` keeps rank-zero terminal-support lanes on
+      exact-return optimization while sealed nonzero acquisition ranks retain
+      discovery-ordered broad exploration. This remains open until focused
+      tests compile and retained native traces prove post-terminal work and
+      improvement rather than merely continued execution.
 - [ ] Schedule counterfactuals across the complete interior-state sequence of
       every newly successful path, not option endpoints alone.
 - [ ] Demonstrate repeated monotonic best-route improvement from the first
