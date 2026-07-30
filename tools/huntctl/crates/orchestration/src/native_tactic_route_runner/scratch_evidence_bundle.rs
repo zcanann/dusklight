@@ -750,14 +750,14 @@ fn bundle_bytes(
     })
 }
 
-fn read_json_blob<T: serde::de::DeserializeOwned>(
+pub(super) fn read_json_blob<T: serde::de::DeserializeOwned>(
     bundle_root: &Path,
     artifact: &NativeTacticScratchBundleArtifact,
 ) -> Result<T, NativeTacticRouteRunError> {
     serde_json::from_slice(&read_blob(bundle_root, artifact)?).map_err(route_error)
 }
 
-fn read_blob(
+pub(super) fn read_blob(
     bundle_root: &Path,
     artifact: &NativeTacticScratchBundleArtifact,
 ) -> Result<Vec<u8>, NativeTacticRouteRunError> {
@@ -767,7 +767,7 @@ fn read_blob(
         .map_err(route_error)
 }
 
-fn blob_path(bundle_root: &Path, blob: &ContentBlob) -> PathBuf {
+pub(super) fn blob_path(bundle_root: &Path, blob: &ContentBlob) -> PathBuf {
     bundle_root.join(&blob.relative_path)
 }
 

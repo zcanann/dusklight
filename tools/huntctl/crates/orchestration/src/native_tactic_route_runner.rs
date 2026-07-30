@@ -191,6 +191,11 @@ pub use cold_replay::{
     NativeTacticColdReplayFidelity, NativeTacticColdReplayProof,
     read_and_validate_native_tactic_cold_replay, run_native_tactic_cold_replay,
 };
+mod cold_replay_bundle;
+pub use cold_replay_bundle::{
+    NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V1,
+    NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_MANIFEST, NativeTacticColdReplayEvidenceBundle,
+};
 
 mod execution_plan;
 pub use execution_plan::{

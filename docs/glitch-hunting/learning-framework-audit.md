@@ -14,9 +14,13 @@ The command checks:
 - the complete `huntctl` workspace build;
 - every `dusklight-orchestration` unit and documentation test; and
 - every tracked native scratch evidence bundle whose manifest uses
-  `dusklight-native-tactic-scratch-evidence-bundle/v2`; and
+  `dusklight-native-tactic-scratch-evidence-bundle/v2`;
 - every tracked supported-platform launch smoke whose manifest uses
-  `dusklight-native-tactic-launch-smoke-bundle/v1`.
+  `dusklight-native-tactic-launch-smoke-bundle/v1`;
+- every tracked long-running throughput bundle whose manifest uses
+  `dusklight-native-tactic-throughput-evidence-bundle/v1`; and
+- every tracked exact final-route replay bundle whose manifest uses
+  `dusklight-native-tactic-cold-replay-evidence-bundle/v1`.
 
 The launch smoke bundles are produced and validated with:
 
@@ -66,6 +70,38 @@ independently:
 ```text
 huntctl learn validate-tactic-scratch-bundle --bundle BUNDLE-DIR
 ```
+
+After a campaign reaches the accepted tick ceiling, produce exact learner-free
+replay evidence and combine it with that campaign's scratch bundle:
+
+```text
+huntctl learn prove-tactic-route-cold-replay \
+  --request OPTIMIZATION.json \
+  --execution EXECUTION.json \
+  --plan PLAN.dtp \
+  --report ROUTE-REPORT.json \
+  --seed N \
+  --output REPLAY-EVIDENCE
+
+huntctl learn seal-tactic-cold-replay-bundle \
+  --scratch-bundle SCRATCH-BUNDLE \
+  --proof-root REPLAY-EVIDENCE \
+  --bundle FINAL-ROUTE-BUNDLE
+
+huntctl learn validate-tactic-cold-replay-bundle \
+  --bundle FINAL-ROUTE-BUNDLE
+```
+
+The replay command requires the selected seed to be the graph-selected
+campaign best and tick `123` or lower by default. It launches at least two
+fresh processes with no learner or controller policy in the loop and retains a
+separate copy of the exact controller tape and milestone result for each
+repetition. The outer bundle nests the independently validated campaign and
+only the referenced replay artifacts. Its clean-checkout validator requires
+identical first-hit ticks and exact terminal boundary fingerprints, then
+cross-binds the request, execution plan, route report, graph, terminal result,
+game identities, fixture manifest, source boundary, and fixed execution
+fidelity.
 
 An existing route report can also be audited before acceptance:
 

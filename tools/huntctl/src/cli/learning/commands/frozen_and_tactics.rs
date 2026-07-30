@@ -5,16 +5,17 @@ use super::{
     MAX_LEARN_INPUT_CORPORA, NativeEpisodeShard, NativeFactorizedPolicyBatchConfig,
     NativeFactorizedPolicySuffixBatch, NativeFrozenPolicyReinferenceReport,
     NativeFrozenPolicySuffixBatch, NativeGenericExecutionStrategy, NativeResidualExecutionBinding,
-    NativeTacticColdReplayConfig, NativeTacticDemonstrationReport, NativeTacticExecutionPlan,
-    NativeTacticFaultInjector, NativeTacticLaunchSmokeBundle, NativeTacticObservationAudit,
-    NativeTacticPolicyRunConfig, NativeTacticPostTerminalControlReport,
-    NativeTacticRestoreLocalityConfig, NativeTacticRestoreLocalityReport,
-    NativeTacticRouteDiagnosisReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
-    NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
-    NativeTacticScratchDiscoveryReport, NativeTacticScratchEvidenceBundle,
-    NativeTacticThroughputCurveConfig, NativeTacticThroughputEvidenceBundle, OptimizationRequest,
-    Sha256, TacticFrozenPolicy, TacticProposalPolicy, TacticQCampaign, TacticQFinalResult,
-    TacticQTrainingCorpus, audit_native_tactic_fault_recovery, cli, command_conservative_q, flag,
+    NativeTacticColdReplayConfig, NativeTacticColdReplayEvidenceBundle,
+    NativeTacticDemonstrationReport, NativeTacticExecutionPlan, NativeTacticFaultInjector,
+    NativeTacticLaunchSmokeBundle, NativeTacticObservationAudit, NativeTacticPolicyRunConfig,
+    NativeTacticPostTerminalControlReport, NativeTacticRestoreLocalityConfig,
+    NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport, NativeTacticRouteReport,
+    NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
+    NativeTacticScratchComparisonReport, NativeTacticScratchDiscoveryReport,
+    NativeTacticScratchEvidenceBundle, NativeTacticThroughputCurveConfig,
+    NativeTacticThroughputEvidenceBundle, OptimizationRequest, Sha256, TacticFrozenPolicy,
+    TacticProposalPolicy, TacticQCampaign, TacticQFinalResult, TacticQTrainingCorpus,
+    audit_native_tactic_fault_recovery, cli, command_conservative_q, flag,
     native_frozen_policy_probe_model, native_tactic_execution_plan, option,
     prove_generalized_tactic_held_out_value, read_and_validate_native_tactic_cold_replay,
     realize_native_frozen_policy_tape, repeated_option, required_path,
@@ -712,6 +713,24 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 &required_path(learn_args, "--proof-root")?,
             )?;
             println!("{}", serde_json::to_string_pretty(&proof)?);
+            Ok(())
+        }
+        Some("seal-tactic-cold-replay-bundle") => {
+            let learn_args = &args[1..];
+            let bundle = NativeTacticColdReplayEvidenceBundle::build(
+                &required_path(learn_args, "--bundle")?,
+                &required_path(learn_args, "--scratch-bundle")?,
+                &required_path(learn_args, "--proof-root")?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
+            Ok(())
+        }
+        Some("validate-tactic-cold-replay-bundle") => {
+            let bundle = NativeTacticColdReplayEvidenceBundle::read_and_validate(&required_path(
+                &args[1..],
+                "--bundle",
+            )?)?;
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
             Ok(())
         }
         Some("run-tactic-launch-smoke") => {

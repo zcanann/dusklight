@@ -17,6 +17,10 @@ LAUNCH_SMOKE_SCHEMA = "dusklight-native-tactic-launch-smoke-bundle/v1"
 LAUNCH_SMOKE_SCHEMA_PREFIX = "dusklight-native-tactic-launch-smoke-bundle/"
 THROUGHPUT_BUNDLE_SCHEMA = "dusklight-native-tactic-throughput-evidence-bundle/v1"
 THROUGHPUT_BUNDLE_SCHEMA_PREFIX = "dusklight-native-tactic-throughput-evidence-bundle/"
+COLD_REPLAY_BUNDLE_SCHEMA = "dusklight-native-tactic-cold-replay-evidence-bundle/v1"
+COLD_REPLAY_BUNDLE_SCHEMA_PREFIX = (
+    "dusklight-native-tactic-cold-replay-evidence-bundle/"
+)
 
 
 def run(command: list[str], cwd: Path) -> None:
@@ -24,7 +28,9 @@ def run(command: list[str], cwd: Path) -> None:
     subprocess.run(command, cwd=cwd, check=True)
 
 
-def tracked_evidence_bundles() -> tuple[list[Path], list[Path], list[Path]]:
+def tracked_evidence_bundles() -> tuple[
+    list[Path], list[Path], list[Path], list[Path]
+]:
     output = subprocess.check_output(
         ["git", "ls-files", "--", "*.json"],
         cwd=REPOSITORY_ROOT,
@@ -33,6 +39,7 @@ def tracked_evidence_bundles() -> tuple[list[Path], list[Path], list[Path]]:
     bundles: list[Path] = []
     launch_smokes: list[Path] = []
     throughput_bundles: list[Path] = []
+    cold_replay_bundles: list[Path] = []
     for relative in output.splitlines():
         path = REPOSITORY_ROOT / relative
         try:
@@ -60,10 +67,17 @@ def tracked_evidence_bundles() -> tuple[list[Path], list[Path], list[Path]]:
             raise RuntimeError(
                 f"unsupported committed throughput evidence bundle schema in {relative}: {schema}"
             )
+        elif schema == COLD_REPLAY_BUNDLE_SCHEMA:
+            cold_replay_bundles.append(path.parent)
+        elif isinstance(schema, str) and schema.startswith(COLD_REPLAY_BUNDLE_SCHEMA_PREFIX):
+            raise RuntimeError(
+                f"unsupported committed cold replay evidence bundle schema in {relative}: {schema}"
+            )
     return (
         sorted(set(bundles)),
         sorted(set(launch_smokes)),
         sorted(set(throughput_bundles)),
+        sorted(set(cold_replay_bundles)),
     )
 
 
@@ -73,7 +87,9 @@ def main() -> int:
     run(["cargo", "check", "--workspace"], HUNTCTL_ROOT)
     run(["cargo", "test", "-p", "dusklight-orchestration"], HUNTCTL_ROOT)
 
-    bundles, launch_smokes, throughput_bundles = tracked_evidence_bundles()
+    bundles, launch_smokes, throughput_bundles, cold_replay_bundles = (
+        tracked_evidence_bundles()
+    )
     for bundle in bundles:
         run(
             [
@@ -116,11 +132,26 @@ def main() -> int:
             ],
             HUNTCTL_ROOT,
         )
+    for bundle in cold_replay_bundles:
+        run(
+            [
+                "cargo",
+                "run",
+                "--quiet",
+                "--",
+                "learn",
+                "validate-tactic-cold-replay-bundle",
+                "--bundle",
+                str(bundle),
+            ],
+            HUNTCTL_ROOT,
+        )
     print(
         "Learning-framework audit passed "
         f"({len(bundles)} committed scratch evidence bundles and "
         f"{len(launch_smokes)} native launch smoke bundles and "
-        f"{len(throughput_bundles)} throughput evidence bundles validated)."
+        f"{len(throughput_bundles)} throughput evidence bundles and "
+        f"{len(cold_replay_bundles)} cold replay evidence bundles validated)."
     )
     return 0
 

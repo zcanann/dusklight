@@ -192,7 +192,7 @@ impl NativeTacticColdReplayProof {
         Ok(proof)
     }
 
-    fn validate_shape(&self) -> Result<(), NativeTacticRouteRunError> {
+    pub(super) fn validate_shape(&self) -> Result<(), NativeTacticRouteRunError> {
         let first = self.attempts.first();
         let expected_tape_frame = self
             .source_boundary_index
@@ -332,7 +332,14 @@ pub fn run_native_tactic_cold_replay(
             .join(NATIVE_TACTIC_COLD_REPLAY_PROOF_FILE),
         &proof.to_pretty_json()?,
     )?;
-    validate_proof_artifacts(config.output_root, &proof, config.optimization, &authority)?;
+    validate_native_tactic_cold_replay_artifacts(
+        config.output_root,
+        &proof,
+        config.optimization,
+        &authority.tape,
+        &authority.tape_bytes,
+        authority.first_hit_tick,
+    )?;
     Ok(proof)
 }
 
@@ -462,7 +469,14 @@ pub fn read_and_validate_native_tactic_cold_replay(
         proof.maximum_first_hit_tick,
     )?;
     validate_proof_authorities(&proof, optimization, execution, &authority, proof.seed)?;
-    validate_proof_artifacts(proof_root, &proof, optimization, &authority)?;
+    validate_native_tactic_cold_replay_artifacts(
+        proof_root,
+        &proof,
+        optimization,
+        &authority.tape,
+        &authority.tape_bytes,
+        authority.first_hit_tick,
+    )?;
     Ok(proof)
 }
 
@@ -635,16 +649,18 @@ fn validate_proof_authorities(
     Ok(())
 }
 
-fn validate_proof_artifacts(
+pub(super) fn validate_native_tactic_cold_replay_artifacts(
     proof_root: &Path,
     proof: &NativeTacticColdReplayProof,
     optimization: &OptimizationRequest,
-    authority: &ValidatedRouteAuthority,
+    expected_tape: &InputTape,
+    expected_tape_bytes: &[u8],
+    expected_first_hit_tick: u64,
 ) -> Result<(), NativeTacticRouteRunError> {
     proof.validate_shape()?;
     let tape_bytes = read_proof_artifact(proof_root, &proof.controller_tape)?;
     let tape = InputTape::decode(&tape_bytes).map_err(route_error)?.tape;
-    if tape_bytes != authority.tape_bytes || tape != authority.tape {
+    if tape_bytes != expected_tape_bytes || &tape != expected_tape {
         return Err(route_message(
             "cold replay controller bytes differ from the graph-selected route",
         ));
@@ -657,7 +673,7 @@ fn validate_proof_artifacts(
         let parsed = parse_attempt(
             optimization,
             &tape,
-            authority.first_hit_tick,
+            expected_first_hit_tick,
             retained.repetition,
             retained.controller_tape.clone(),
             retained.milestone_result.clone(),
