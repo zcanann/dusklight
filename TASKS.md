@@ -163,10 +163,13 @@ The incoming 2026-07-29 work made substantial, useful progress:
   one-worker treatment completed the same 16 decisions, 256 expansions, and
   4,512 native ticks in about `2,601.2` seconds: wall time fell 30.7%,
   persistence fell 45.3%, and useful expansion throughput rose 44.2%.
-  Persistence still consumed about `1,232.7` seconds, or 47.4% of wall time,
-  because every decision still clones, serializes, hashes, and repeatedly
-  validates its whole accumulated checkpoint. Another full curve is not yet
-  justified.
+  Removing duplicate whole-checkpoint authentication reduced the same cell to
+  about `2,152.5` seconds with `777.6` seconds in persistence. Relative to the
+  untreated cell, wall time fell 42.6%, persistence fell 65.5%, and useful
+  expansion throughput rose 74.3% to about `0.119` expansions per second.
+  Persistence still consumes 36.1% of wall time because checkpoint v5 clones,
+  hashes, validates, and projects the complete accumulated graph and replay at
+  least once per decision. Another full curve is not yet justified.
 
 That campaign proves bounded terminal discovery under its exact conditions. It
 does not prove practical discovery, useful native learning, route
@@ -330,12 +333,14 @@ Exit gate:
 
 ## P3 - Make real-campaign throughput scale
 
-- [ ] Remove repeated full-history checkpoint projection and validation from
-      each recovery transaction. A durable decision must authenticate newly
-      admitted graph/replay content once and reuse prior immutable identities;
-      checkpoint cost must not grow linearly with accumulated history. Rerun
-      the identical one-worker cell and require persistence to stop dominating
-      wall time before spending a full curve.
+- [ ] Replace checkpoint v5's whole-payload identity and eager campaign clone
+      with a versioned manifest over immutable graph/replay objects and
+      append-only authenticated summaries. Preserve v5 read/migration support,
+      but make each durable decision authenticate newly admitted content once
+      and install a bounded root manifest. Add a long synthetic growth test
+      proving that per-decision persistence cost does not rise linearly with
+      accumulated history. Rerun the identical one-worker cell and require
+      persistence to stop dominating wall time before spending a full curve.
 - [ ] Run fixed-work curves at 1, 2, 4, 8, and 16 workers over enough decisions
       to exercise graph growth, repeated restores, learner updates,
       persistence, and bounded checkpoint eviction. Retain the complete
