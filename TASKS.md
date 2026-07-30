@@ -190,6 +190,19 @@ The incoming 2026-07-29 work made substantial, useful progress:
   required and available byte counts. The balanced curve must use a bounded
   aggregate budget large enough for all 16 workers; it must not reinterpret a
   late missing-retention result as request detachment.
+- The corrected Windows curve completed its first one-worker v4 sample before
+  the run was stopped: 16 decisions, 256 useful expansions, 5,096 native
+  ticks, and about 28.6 wall minutes. Native simulation used only 36.3 seconds;
+  campaign admission, graph admission, persistence, and restore/capture work
+  consumed most of the measured time. Per-decision wall time rose from about
+  33.6 seconds over the first four decisions to 148.5 seconds over the last
+  four. Code inspection found that each native batch cloned the complete
+  accumulated graph and rebuilt its learner projection, after which retaining
+  the selected result cloned and projected that same graph again. Checkpoint
+  `e7803326dc` removes the redundant second admission and requires its
+  incremental persistence head to remain unchanged. This is a source-level
+  bottleneck fix, not retained curve evidence; rerun a matched cell before
+  claiming an end-to-end improvement.
 
 That campaign proves bounded terminal discovery under its exact conditions. It
 does not prove practical discovery, useful native learning, route
@@ -435,8 +448,13 @@ Exit gate:
       the complete 319-test orchestration suite. A five-second live startup
       interval used `10.05` native CPU-seconds with exactly two active boots.
       This bounds launch pressure but does not close the end-to-end throughput
-      gate; the resumed v4 curve must identify the steady-state saturation
-      point.
+      gate. The first corrected one-worker sample then showed strong
+      history-dependent coordinator cost despite only `36.3` seconds of native
+      simulation in roughly `1,717.4` wall seconds. Checkpoint `e7803326dc`
+      removes a duplicate whole-graph clone, admission, projection, and dirty
+      persistence mark from each retained selected outcome; all 319
+      orchestration tests pass. The matched treatment and remaining v4 cells
+      must still identify the steady-state saturation point.
 - [x] Preserve native state, applicable actions, controller output, terminal
       evidence, and first-hit tick for every disabled presentation subsystem.
       Source checkpoint `703dcdbbba` advances the parity report to v2 and
