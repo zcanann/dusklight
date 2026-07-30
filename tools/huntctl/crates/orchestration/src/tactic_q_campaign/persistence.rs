@@ -112,6 +112,17 @@ impl TacticQCampaign {
         tactic_q_checkpoint_store::write_checkpoint(&checkpoint, directory, content_root)
     }
 
+    pub(crate) fn write_checkpoint_with_content_store(
+        &self,
+        directory: &Path,
+        store: &tactic_q_checkpoint_store::TacticQContentStore,
+    ) -> Result<(PathBuf, TacticQCampaignCheckpoint), TacticQCampaignError> {
+        let checkpoint = self.checkpoint()?;
+        let path =
+            tactic_q_checkpoint_store::write_checkpoint_to_store(&checkpoint, directory, store)?;
+        Ok((path, checkpoint))
+    }
+
     pub fn read_checkpoint(path: &Path) -> Result<Self, TacticQCampaignError> {
         Self::resume(Self::read_checkpoint_payload(path)?)
     }

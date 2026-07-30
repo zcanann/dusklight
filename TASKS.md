@@ -151,6 +151,16 @@ The incoming 2026-07-29 work made substantial, useful progress:
   the aggregate, all sample route reports and their recomputed resource audits,
   request, execution, plan, and source authorities; the clean gate discovers
   committed bundles. No v4 native curve has been retained yet.
+- The first current-build Windows v4 cell exposed a real architectural
+  bottleneck before the curve completed: one worker required about `62.5`
+  minutes for 16 decisions and 256 native expansions. Native simulation used
+  about `39.5` seconds, while checkpoint persistence used about `2,253.8`
+  seconds, or 60% of wall time. Each decision serialized and reverified the
+  whole accumulated replay twice. The remaining curve cells were stopped in
+  accordance with experiment discipline. A process-local content-reference
+  cache and single-pass recovery commit now preserve the same authenticated
+  durable format without rereading every immutable object; the identical
+  fixed-work cell still has to prove the treatment before another full curve.
 
 That campaign proves bounded terminal discovery under its exact conditions. It
 does not prove practical discovery, useful native learning, route
@@ -314,6 +324,11 @@ Exit gate:
 
 ## P3 - Make real-campaign throughput scale
 
+- [ ] Rerun the one-worker, 16-decision Windows diagnostic after the
+      checkpoint-store treatment. Require a material reduction in persistence
+      wall time and total wall time at identical native work before spending a
+      full curve; otherwise profile checkpoint projection and filesystem sync
+      rather than increasing campaign volume.
 - [ ] Run fixed-work curves at 1, 2, 4, 8, and 16 workers over enough decisions
       to exercise graph growth, repeated restores, learner updates,
       persistence, and bounded checkpoint eviction. Retain the complete

@@ -25,11 +25,13 @@ use dusklight_learning::option_values::{
 use dusklight_learning::tactic_exploration::TacticExplorationConfig;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 const FACT_OBJECT_SCHEMA_V1: &str = "dusklight-tactic-q-fact-object/v1";
@@ -94,18 +96,30 @@ pub(crate) struct StoredTransitionObjects {
 #[derive(Clone, Debug)]
 pub(crate) struct TacticQContentStore {
     store: ContentStore,
+    fact_references: Arc<Mutex<BTreeMap<Digest, StoredContentRef>>>,
+    tactic_references: Arc<Mutex<BTreeMap<Digest, StoredContentRef>>>,
+    tape_references: Arc<Mutex<BTreeMap<Digest, StoredContentRef>>>,
+    transition_references: Arc<Mutex<BTreeMap<(Digest, Digest), StoredContentRef>>>,
 }
 
 impl TacticQContentStore {
     pub fn initialize(root: impl Into<PathBuf>) -> Result<Self, TacticQContentStoreError> {
         Ok(Self {
             store: ContentStore::initialize(root).map_err(TacticQContentStoreError::Store)?,
+            fact_references: Arc::default(),
+            tactic_references: Arc::default(),
+            tape_references: Arc::default(),
+            transition_references: Arc::default(),
         })
     }
 
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, TacticQContentStoreError> {
         Ok(Self {
             store: ContentStore::open(root).map_err(TacticQContentStoreError::Store)?,
+            fact_references: Arc::default(),
+            tactic_references: Arc::default(),
+            tape_references: Arc::default(),
+            transition_references: Arc::default(),
         })
     }
 
@@ -129,15 +143,26 @@ impl TacticQContentStore {
         transition: &OptionTransitionSample,
         route: &InputTape,
     ) -> Result<StoredContentRef, TacticQContentStoreError> {
+        let transition_identity = transition
+            .replay_identity_sha256()
+            .map_err(TacticQContentStoreError::domain)?;
+        let route_bytes = route.encode().map_err(TacticQContentStoreError::domain)?;
+        let route_identity = Digest(Sha256::digest(&route_bytes).into());
+        let key = (transition_identity, route_identity);
+        if let Some(reference) = cached_reference(&self.transition_references, &key)? {
+            return Ok(reference);
+        }
         let stored =
             encode_transition(transition, route, self).map_err(TacticQContentStoreError::domain)?;
         let raw = serde_cbor::to_vec(&stored).map_err(TacticQContentStoreError::domain)?;
-        Ok(StoredContentRef::from(
+        let reference = StoredContentRef::from(
             &self
                 .store
                 .put_bytes(&raw, ContentKind::TacticTransition)
                 .map_err(TacticQContentStoreError::Store)?,
-        ))
+        );
+        cache_reference(&self.transition_references, key, reference)?;
+        Ok(reference)
     }
 
     pub fn load_option_transition(
@@ -181,13 +206,21 @@ impl TacticQContentStore {
         // one file per actor for every proposal. The canonical snapshot still
         // retains the complete typed actor population and its authenticated
         // identity; `load_fact` continues to accept the legacy split layout.
+        let identity = snapshot
+            .content_sha256()
+            .map_err(TacticQContentStoreError::domain)?;
+        if let Some(reference) = cached_reference(&self.fact_references, &identity)? {
+            return Ok(reference);
+        }
         let raw = serde_cbor::to_vec(snapshot).map_err(TacticQContentStoreError::domain)?;
-        Ok(StoredContentRef::from(
+        let reference = StoredContentRef::from(
             &self
                 .store
                 .put_bytes(&raw, ContentKind::FactSnapshot)
                 .map_err(TacticQContentStoreError::Store)?,
-        ))
+        );
+        cache_reference(&self.fact_references, identity, reference)?;
+        Ok(reference)
     }
 
     pub fn load_fact(
@@ -260,12 +293,18 @@ impl TacticQContentStore {
             .validate()
             .map_err(TacticQContentStoreError::domain)?;
         let raw = serde_cbor::to_vec(tactic).map_err(TacticQContentStoreError::domain)?;
-        Ok(StoredContentRef::from(
+        let identity = Digest(Sha256::digest(&raw).into());
+        if let Some(reference) = cached_reference(&self.tactic_references, &identity)? {
+            return Ok(reference);
+        }
+        let reference = StoredContentRef::from(
             &self
                 .store
                 .put_bytes(&raw, ContentKind::TacticDefinition)
                 .map_err(TacticQContentStoreError::Store)?,
-        ))
+        );
+        cache_reference(&self.tactic_references, identity, reference)?;
+        Ok(reference)
     }
 
     pub fn load_tactic(
@@ -333,12 +372,18 @@ impl TacticQContentStore {
     ) -> Result<StoredContentRef, TacticQContentStoreError> {
         tape.validate().map_err(TacticQContentStoreError::domain)?;
         let raw = tape.encode().map_err(TacticQContentStoreError::domain)?;
-        Ok(StoredContentRef::from(
+        let identity = Digest(Sha256::digest(&raw).into());
+        if let Some(reference) = cached_reference(&self.tape_references, &identity)? {
+            return Ok(reference);
+        }
+        let reference = StoredContentRef::from(
             &self
                 .store
                 .put_bytes(&raw, ContentKind::InputTape)
                 .map_err(TacticQContentStoreError::Store)?,
-        ))
+        );
+        cache_reference(&self.tape_references, identity, reference)?;
+        Ok(reference)
     }
 
     pub fn load_tape(
@@ -376,6 +421,34 @@ impl TacticQContentStore {
             .read_bytes(&blob)
             .map_err(TacticQContentStoreError::Store)
     }
+}
+
+fn cached_reference<K: Ord>(
+    cache: &Mutex<BTreeMap<K, StoredContentRef>>,
+    key: &K,
+) -> Result<Option<StoredContentRef>, TacticQContentStoreError> {
+    Ok(cache
+        .lock()
+        .map_err(|_| TacticQContentStoreError::Invalid("content reference cache is poisoned"))?
+        .get(key)
+        .copied())
+}
+
+fn cache_reference<K: Ord>(
+    cache: &Mutex<BTreeMap<K, StoredContentRef>>,
+    key: K,
+    reference: StoredContentRef,
+) -> Result<(), TacticQContentStoreError> {
+    let previous = cache
+        .lock()
+        .map_err(|_| TacticQContentStoreError::Invalid("content reference cache is poisoned"))?
+        .insert(key, reference);
+    if previous.is_some_and(|previous| previous != reference) {
+        return Err(TacticQContentStoreError::Invalid(
+            "content reference cache identity changed",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -519,14 +592,33 @@ pub(crate) fn write_checkpoint(
     directory: &Path,
     content_root: &Path,
 ) -> Result<PathBuf, TacticQCampaignError> {
-    validate_checkpoint(checkpoint)?;
     if content_root.file_name().and_then(|name| name.to_str()) != Some(CONTENT_DIRECTORY) {
         return Err(TacticQCampaignError::InvalidState(
             "checkpoint content root must use the discoverable objects directory",
         ));
     }
-    fs::create_dir_all(directory).map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
     let store = TacticQContentStore::initialize(content_root).map_err(checkpoint_store_error)?;
+    write_checkpoint_to_store(checkpoint, directory, &store)
+}
+
+pub(crate) fn write_checkpoint_to_store(
+    checkpoint: &TacticQCampaignCheckpoint,
+    directory: &Path,
+    store: &TacticQContentStore,
+) -> Result<PathBuf, TacticQCampaignError> {
+    validate_checkpoint(checkpoint)?;
+    if store
+        .store
+        .root()
+        .file_name()
+        .and_then(|name| name.to_str())
+        != Some(CONTENT_DIRECTORY)
+    {
+        return Err(TacticQCampaignError::InvalidState(
+            "checkpoint content root must use the discoverable objects directory",
+        ));
+    }
+    fs::create_dir_all(directory).map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
     let manifest = store_checkpoint_manifest(checkpoint, &store)?;
     let raw = serde_cbor::to_vec(&manifest)
         .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
@@ -1349,124 +1441,5 @@ impl Error for TacticQContentStoreError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
-    use dusklight_learning::fact_snapshot::FactSnapshot;
-    use dusklight_learning::option_values::OptionActionDescriptor;
-    use std::collections::BTreeMap;
-    use std::fs;
-
-    fn fact() -> FactSnapshot {
-        let shard = NativeEpisodeShard::decode(include_bytes!(
-            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
-        ))
-        .unwrap();
-        FactSnapshot::from_native_learning(
-            &shard.episodes[0].steps[0].pre_input,
-            &[],
-            None,
-            Vec::new(),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn shared_store_round_trips_whole_facts_and_reads_legacy_split_objects() {
-        let root = std::env::temp_dir().join(format!(
-            "dusklight-tactic-shared-content-store-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        let store = TacticQContentStore::initialize(&root).unwrap();
-        let first = fact();
-        let mut second = first.clone();
-        second.boundary_index += 1;
-        second.simulation_tick += 1;
-        second.tape_frame += 1;
-        let first_ref = store.store_fact(&first).unwrap();
-        let second_ref = store.store_fact(&second).unwrap();
-        assert_ne!(first_ref, second_ref);
-        assert_eq!(
-            first_ref.sha256,
-            Digest(Sha256::digest(serde_cbor::to_vec(&first).unwrap()).into())
-        );
-        assert_eq!(store.load_fact(first_ref).unwrap(), first);
-        assert_eq!(store.load_fact(second_ref).unwrap(), second);
-
-        let tactic = OptionActionDescriptor {
-            option_id: "move.east".into(),
-            option_type: dusklight_control::option_execution::OptionType::Move,
-            parameters: BTreeMap::new(),
-        };
-        let tactic_ref = store.store_tactic(&tactic).unwrap();
-        assert_eq!(store.load_tactic(tactic_ref).unwrap(), tactic);
-        let tape = InputTape::default();
-        let tape_ref = store.store_tape(&tape).unwrap();
-        assert_eq!(store.load_tape(tape_ref).unwrap(), tape);
-
-        let actors = first
-            .actors
-            .iter()
-            .map(|actor| store.store_actor(actor).unwrap())
-            .collect::<Vec<_>>();
-        let mut snapshot_without_actors = first.clone();
-        snapshot_without_actors.actors.clear();
-        let legacy_raw = serde_cbor::to_vec(&StoredFactSnapshot {
-            schema: FACT_OBJECT_SCHEMA_V1.into(),
-            snapshot_sha256: first.content_sha256().unwrap(),
-            actors,
-            snapshot_without_actors,
-        })
-        .unwrap();
-        let legacy_ref = StoredContentRef::from(
-            &ContentStore::open(&root)
-                .unwrap()
-                .put_bytes(&legacy_raw, ContentKind::FactSnapshot)
-                .unwrap(),
-        );
-        assert_eq!(store.load_fact(legacy_ref).unwrap(), first);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn inline_training_corpus_reader_accepts_legacy_reference_envelopes() {
-        let root = std::env::temp_dir().join(format!(
-            "dusklight-tactic-training-corpus-legacy-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        let content_root = root.join(CONTENT_DIRECTORY);
-        TacticQContentStore::initialize(&content_root).unwrap();
-        let expected = TacticQTrainingCorpus {
-            execution_authority_sha256: Digest::ZERO,
-            feature_schema_sha256: Digest([1; 32]),
-            objective_sha256: Digest([2; 32]),
-            root_checkpoint_sha256: Digest([3; 32]),
-            transitions: Vec::new(),
-            routes: Vec::new(),
-            episode_groups: Vec::new(),
-        };
-        let legacy = StoredTrainingCorpusManifest {
-            schema: TRAINING_CORPUS_MANIFEST_SCHEMA_V1.into(),
-            execution_authority_sha256: Digest::ZERO,
-            feature_schema_sha256: expected.feature_schema_sha256,
-            objective_sha256: expected.objective_sha256,
-            root_checkpoint_sha256: expected.root_checkpoint_sha256,
-            transitions: Vec::new(),
-            routes: Vec::new(),
-            episode_groups: Vec::new(),
-        };
-        let envelope = encode_binary_envelope(
-            &serde_cbor::to_vec(&legacy).unwrap(),
-            TRAINING_CORPUS_MAGIC,
-            TRAINING_CORPUS_FORMAT_VERSION_V1,
-        )
-        .unwrap();
-        let path = root.join("legacy.dtqc");
-        fs::create_dir_all(&root).unwrap();
-        fs::write(&path, envelope).unwrap();
-        assert_eq!(read_training_corpus(&path).unwrap(), expected);
-        fs::remove_dir_all(root).unwrap();
-    }
-}
+#[path = "tactic_q_checkpoint_store/tests.rs"]
+mod tests;

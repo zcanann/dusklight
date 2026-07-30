@@ -247,7 +247,7 @@ pub(super) fn run_seed(
         persist_tactic_recovery_point(
             &seed_root,
             &campaign,
-            &checkpoint_content_root,
+            &decision_content_store,
             NativeTacticSeedPerformance {
                 schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2.into(),
                 decisions: campaign.decision_index,
@@ -1098,7 +1098,7 @@ pub(super) fn run_seed(
         persist_tactic_recovery_point(
             &seed_root,
             &campaign,
-            &checkpoint_content_root,
+            &decision_content_store,
             NativeTacticSeedPerformance {
                 schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2.into(),
                 decisions: campaign.decision_index,
@@ -1250,13 +1250,12 @@ pub(super) fn run_seed(
     let imported_training_replay_rows = campaign
         .training_replay_len()
         .saturating_sub(generated_training.transitions.len());
-    let final_checkpoint_path = campaign
-        .write_checkpoint_with_store(
+    let (final_checkpoint_path, final_campaign_checkpoint) = campaign
+        .write_checkpoint_with_content_store(
             &seed_root.join("final-checkpoint"),
-            &checkpoint_content_root,
+            &decision_content_store,
         )
         .map_err(route_error)?;
-    let final_campaign_checkpoint = campaign.checkpoint().map_err(route_error)?;
     let unique_useful_graph_expansions = u64::try_from(
         final_campaign_checkpoint
             .state_graph

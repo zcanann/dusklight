@@ -58,7 +58,7 @@ pub(super) fn has_tactic_recovery_point(
 pub(super) fn persist_tactic_recovery_point(
     seed_root: &Path,
     campaign: &TacticQCampaign,
-    content_root: &Path,
+    content_store: &TacticQContentStore,
     performance: NativeTacticSeedPerformance,
 ) -> Result<PathBuf, NativeTacticRouteRunError> {
     if performance.decisions != campaign.decision_index {
@@ -81,11 +81,9 @@ pub(super) fn persist_tactic_recovery_point(
         remove_recovery_directory(&recovery_root, &partial_directory)?;
     }
     fs::create_dir(&partial_directory).map_err(route_error)?;
-    let checkpoint_path = campaign
-        .write_checkpoint_with_store(&partial_directory, content_root)
+    let (checkpoint_path, checkpoint) = campaign
+        .write_checkpoint_with_content_store(&partial_directory, content_store)
         .map_err(route_error)?;
-    let checkpoint =
-        TacticQCampaign::read_checkpoint_payload(&checkpoint_path).map_err(route_error)?;
     let checkpoint_file = checkpoint_path
         .file_name()
         .and_then(|name| name.to_str())
@@ -491,7 +489,8 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let campaign = campaign();
         let content_root = root.join("objects");
-        persist_tactic_recovery_point(&root, &campaign, &content_root, performance(0)).unwrap();
+        let content_store = TacticQContentStore::initialize(&content_root).unwrap();
+        persist_tactic_recovery_point(&root, &campaign, &content_store, performance(0)).unwrap();
         assert!(has_tactic_recovery_point(&root).unwrap());
         let loaded = load_tactic_recovery_point(&root, 0).unwrap();
         let checkpoint = TacticQCampaign::read_checkpoint_payload(&loaded.checkpoint_path).unwrap();
