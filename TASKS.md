@@ -404,6 +404,16 @@ Exit gate:
       interruption tests covering a completed prefix, a durable partial
       sample, detached/torn progress, and aggregate-only resealing with zero
       native launches.
+      Source checkpoint `52101efb3d` fixes a fatal entry bug in the earlier
+      implementation: an existing output was rejected before `--resume` could
+      be honored. Resume now revalidates the physical sample roots, complete
+      contiguous sample evidence, fleet-launch journal, and exact aggregate
+      execution order; it rejects non-files, detached/future samples, and
+      torn records. Focused pure regression sources cover fresh/resume mode,
+      completed-prefix skipping, a durable partial sample, detached and
+      non-prefix progress, torn records, and aggregate-only zero-launch
+      resealing. This gate remains open pending compilation and execution of
+      those focused tests.
 - [ ] Retain a sealed long-campaign v2 resource audit proving the declared
       memory and fitted-model staleness bounds while reporting replay fallback
       and checkpoint-owner skew. Use the hard-loss injector before dispatch,
