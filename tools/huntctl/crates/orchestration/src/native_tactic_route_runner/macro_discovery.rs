@@ -195,7 +195,8 @@ pub(super) fn mine_connected_tactic_macro_compositions(
     exploration_seeds: &[u64],
     encoder: &GoalConditionedTacticFeatureEncoder,
 ) -> Result<Vec<DiscoveredMacroCandidate>, NativeTacticRouteRunError> {
-    let mut candidates = Vec::new();
+    let mut occurrences =
+        BTreeMap::<Vec<u8>, (InputTape, BTreeMap<Digest, MacroSourceProvenance>)>::new();
     for (seed_index, seed) in exploration_seeds.iter().copied().enumerate() {
         let seed_root = output_root.join(format!("seed-{seed_index:03}-{seed}"));
         let replay = load_tactic_journal_replay(&seed_root)?;
@@ -206,7 +207,18 @@ pub(super) fn mine_connected_tactic_macro_compositions(
             .map_err(route_error)?;
         for start in 0..replay.transitions.len() {
             let mut frames = Vec::new();
-            let mut sources = Vec::new();
+            let source_transition = &replay.transitions[start];
+            let source_record = &replay.records[start];
+            let source = MacroSourceProvenance {
+                seed,
+                frontier_state_sha256: source_transition.before_state_sha256,
+                transition_sha256: journal_transition_sha256(
+                    source_record.transition,
+                    source_record.inline_transition.as_ref(),
+                )?,
+                option_id: source_transition.value_sample.action.option_id.clone(),
+                entry: macro_entry_observation(&source_transition.before, encoder)?,
+            };
             for end in start..replay.transitions.len() {
                 if end > start {
                     let prior = &replay.transitions[end - 1];
@@ -226,35 +238,46 @@ pub(super) fn mine_connected_tactic_macro_compositions(
                     break;
                 }
                 frames.extend_from_slice(&transition.execution.emitted_raw_actions);
-                let record = &replay.records[end];
-                sources.push(MacroSourceProvenance {
-                    seed,
-                    frontier_state_sha256: transition.before_state_sha256,
-                    transition_sha256: journal_transition_sha256(
-                        record.transition,
-                        record.inline_transition.as_ref(),
-                    )?,
-                    option_id: transition.value_sample.action.option_id.clone(),
-                    entry: macro_entry_observation(&transition.before, encoder)?,
-                });
-                if sources.len() >= 2 {
-                    candidates.push(
-                        replay_macro_candidate(
-                            InputTape {
-                                boot: root_tape.boot.clone(),
-                                tick_rate_numerator: root_tape.tick_rate_numerator,
-                                tick_rate_denominator: root_tape.tick_rate_denominator,
-                                frames: frames.clone(),
-                            },
-                            sources.clone(),
-                        )
-                        .map_err(route_error)?,
-                    );
+                if end > start {
+                    let tape = InputTape {
+                        boot: root_tape.boot.clone(),
+                        tick_rate_numerator: root_tape.tick_rate_numerator,
+                        tick_rate_denominator: root_tape.tick_rate_denominator,
+                        frames: frames.clone(),
+                    };
+                    let key = tape.encode().map_err(route_error)?;
+                    occurrences
+                        .entry(key)
+                        .or_insert_with(|| (tape, BTreeMap::new()))
+                        .1
+                        .insert(source.transition_sha256, source.clone());
                 }
             }
         }
     }
-    Ok(candidates)
+    connected_macro_candidates(occurrences)
+}
+
+pub(super) type ConnectedMacroOccurrences =
+    BTreeMap<Vec<u8>, (InputTape, BTreeMap<Digest, MacroSourceProvenance>)>;
+
+pub(super) fn connected_macro_candidates(
+    occurrences: ConnectedMacroOccurrences,
+) -> Result<Vec<DiscoveredMacroCandidate>, NativeTacticRouteRunError> {
+    occurrences
+        .into_values()
+        .filter(|(_, sources)| {
+            sources
+                .values()
+                .map(|source| source.frontier_state_sha256)
+                .collect::<BTreeSet<_>>()
+                .len()
+                >= MIN_DISCOVERY_OCCURRENCES
+        })
+        .map(|(tape, sources)| {
+            replay_macro_candidate(tape, sources.into_values().collect()).map_err(route_error)
+        })
+        .collect()
 }
 
 pub(super) fn retain_bounded_macro_observations(observations: &mut Vec<MacroDiscoveryObservation>) {

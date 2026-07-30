@@ -205,7 +205,16 @@ pub fn discover_replay_macros(
     }
     let mut candidates = buckets
         .into_iter()
-        .filter(|(_, bucket)| bucket.sources.len() >= MIN_DISCOVERY_OCCURRENCES)
+        .filter(|(_, bucket)| {
+            bucket.sources.len() >= MIN_DISCOVERY_OCCURRENCES
+                && bucket
+                    .sources
+                    .values()
+                    .map(|source| source.frontier_state_sha256)
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    >= MIN_DISCOVERY_OCCURRENCES
+        })
         .map(|(candidate_sha256, bucket)| {
             (
                 bucket.terminal_sources,
@@ -470,10 +479,16 @@ fn validate_candidate(candidate: &DiscoveredMacroCandidate) -> Result<(), &'stat
         .iter()
         .map(|source| source.transition_sha256)
         .collect::<BTreeSet<_>>();
+    let distinct_source_states = candidate
+        .sources
+        .iter()
+        .map(|source| source.frontier_state_sha256)
+        .collect::<BTreeSet<_>>();
     if candidate.candidate_sha256 == Digest::ZERO
         || candidate.option_id != format!("promoted/{}", short_digest(candidate.candidate_sha256))
         || candidate.sources.len() < MIN_DISCOVERY_OCCURRENCES
         || candidate.sources.len() != distinct_sources.len()
+        || distinct_source_states.len() < MIN_DISCOVERY_OCCURRENCES
         || candidate.sources.iter().any(|source| {
             source.frontier_state_sha256 == Digest::ZERO
                 || source.transition_sha256 == Digest::ZERO
@@ -597,7 +612,14 @@ mod tests {
     }
 
     #[test]
-    fn connected_component_provenance_can_propose_one_exact_composed_macro() {
+    fn repeated_transitions_from_one_state_do_not_teach_an_entry_condition() {
+        let left = observation(11, 1, 3);
+        let right = observation(13, 1, 4);
+        assert!(discover_replay_macros(&[left, right]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn independent_entry_states_can_propose_one_exact_composed_macro() {
         let candidate = replay_macro_candidate(
             tape(80, 16),
             vec![

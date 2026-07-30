@@ -1117,6 +1117,59 @@ fn tactic_macro_validation_waits_for_independent_seed_support() {
 }
 
 #[test]
+fn connected_macro_needs_repeated_occurrences_not_internal_steps() {
+    let tape = InputTape {
+        frames: vec![
+            InputFrame {
+                owned_ports: 1,
+                ..InputFrame::default()
+            };
+            8
+        ],
+        ..InputTape::default()
+    };
+    let source = |seed: u64, state: u8, transition: u8| MacroSourceProvenance {
+        seed,
+        frontier_state_sha256: Digest([state; 32]),
+        transition_sha256: Digest([transition; 32]),
+        option_id: "family/primitive".into(),
+        entry: MacroEntryObservation {
+            stage: "F_SP103".into(),
+            room: 1,
+            player_procedure: Some(3),
+            player_contacts: Some(1),
+            goal_distance_f32_bits: (100.0 + f32::from(state)).to_bits(),
+        },
+    };
+    let occurrences = |sources: Vec<MacroSourceProvenance>| {
+        let sources = sources
+            .into_iter()
+            .map(|source| (source.transition_sha256, source))
+            .collect::<BTreeMap<_, _>>();
+        BTreeMap::from([(tape.encode().unwrap(), (tape.clone(), sources))])
+    };
+
+    assert!(
+        connected_macro_candidates(occurrences(vec![source(11, 1, 3)]))
+            .unwrap()
+            .is_empty()
+    );
+    let candidates =
+        connected_macro_candidates(occurrences(vec![source(11, 1, 3), source(13, 2, 4)]))
+            .unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].sources.len(), 2);
+    assert_eq!(
+        candidates[0]
+            .sources
+            .iter()
+            .map(|source| source.frontier_state_sha256)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([Digest([1; 32]), Digest([2; 32])])
+    );
+}
+
+#[test]
 fn tactic_macro_entry_conditions_admit_nearby_held_out_states_only() {
     let shard = NativeEpisodeShard::decode(include_bytes!(
         "../../../../../../tests/fixtures/automation/native_episode_v28.dseps"
