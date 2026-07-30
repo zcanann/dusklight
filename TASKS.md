@@ -49,7 +49,7 @@ The incoming 2026-07-29 work made substantial, useful progress:
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 284 tests.
+  orchestration suite is hermetic and passes all 315 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
   tape/result, source-authority evidence, and a content-bound campaign audit.
@@ -317,12 +317,14 @@ Exit gate:
       to first terminal and best terminal, selected-node and selected-action
       reasons, exploration versus learned selections, restores and fallbacks,
       learner revisions consumed, terminal-path lengths, and stop reasons.
-      Source checkpoint `978f7ee3b1` advances the scratch campaign audit to
-      v3: terminal-improvement ticks are source-relative instead of absolute
-      tape frames, and every timeline proposal must resolve through its
-      retained scheduler identity to matching completed executable graph
-      evidence. This remains open pending compilation and a retained v3 audit
-      over the diagnostic campaign.
+      Source checkpoints `8abfcf2489` and `97cd210747` advance and verify the
+      scratch campaign audit v3. Terminal-improvement ticks are relative to
+      the authenticated graph root; first/best wall and work counters are
+      recomputed from the decision timeline; and every claimed terminal
+      proposal must match the graph's complete typed action, realized tape
+      range, target, route length, reward, and executable evidence. Six focused
+      audit tests and the complete 315-test orchestration suite pass. This
+      remains open only for a retained v3 audit over the diagnostic campaign.
 - [ ] Compare each discovered route with the `131`-tick ordinary replay at the
       level of trajectory, velocity retention, action availability, roll/camera
       use, option duration, detour, contact-correlated slowdown, and idle or
@@ -392,7 +394,7 @@ Exit gate:
       content-bound sample reports and v4 aggregate, including phase occupancy
       and saturation counters. A one-decision warm-fleet microbenchmark is
       necessary but not sufficient.
-- [ ] Make the multi-sample curve resumable before another full launch.
+- [x] Make the multi-sample curve resumable before another full launch.
       Commit each completed sample by ordinal, repetition, worker count,
       execution-plan identity, report identity, and useful-expansion set.
       Resume must independently validate and skip complete samples, continue a
@@ -412,8 +414,8 @@ Exit gate:
       torn records. Focused pure regression sources cover fresh/resume mode,
       completed-prefix skipping, a durable partial sample, detached and
       non-prefix progress, torn records, and aggregate-only zero-launch
-      resealing. This gate remains open pending compilation and execution of
-      those focused tests.
+      resealing. Source checkpoint `97cd210747` compiles and passes all of
+      those focused cases in the complete 315-test orchestration suite.
 - [ ] Retain a sealed long-campaign v2 resource audit proving the declared
       memory and fitted-model staleness bounds while reporting replay fallback
       and checkpoint-owner skew. Use the hard-loss injector before dispatch,
@@ -432,14 +434,17 @@ Exit gate:
       boundary, chosen and consumed controller pads, first-hit vector, and
       terminal projection for every legal retained/suppressed pair. The
       historical ignored v1 report only compared opaque episode payloads and
-      cannot close this gate. Keep this open until focused tests compile and a
-      retained v2 native report passes.
+      cannot close this gate. Focused tests compile and pass at source
+      checkpoint `97cd210747`; keep this open until a retained v2 native report
+      passes.
       Source checkpoint `0f4d6e6831` adds the portable evidence path: it bundles
       every condition's exact batch request, result, and binary episode shard
       with the sealed optimization, execution binding, and report. Offline
       validation reconstructs all five authorities from bundled native bytes,
       and the clean-checkout audit automatically discovers committed manifests.
-      The gate still requires compilation and one retained passing v2 bundle.
+      Source checkpoint `97cd210747` compiles this path in the passing complete
+      orchestration suite. The gate still requires one retained passing v2
+      native bundle.
 
 Exit gate:
 
@@ -482,10 +487,10 @@ Exit gate:
       acquisition to select the supported successful-path interior. Source
       checkpoint `e72f47009c` makes authenticated rank-zero support acquire a
       scheduled frontier every decision, while periodic root and demonstration
-      refreshes remain confined to ordinary exploration branches. This remains
-      open until focused tests compile and retained native traces prove
-      post-terminal work and improvement rather than merely continued
-      execution.
+      refreshes remain confined to ordinary exploration branches. The complete
+      315-test orchestration suite passes at source checkpoint `97cd210747`;
+      this remains open until retained native traces prove post-terminal work
+      and improvement rather than merely continued execution.
 - [ ] Schedule counterfactuals across the complete interior-state sequence of
       every newly successful path, not option endpoints alone.
       Source checkpoint `c9bfb90865` aligns native and optional-replay
@@ -498,18 +503,18 @@ Exit gate:
       counterfactual cadence bottleneck and advances the post-terminal control
       report to v2: each seed now retains the exact supported, leased, and
       unleased interior-node sets and can claim complete coverage only for a
-      nonempty supported set with no missing lease source. Keep this open until
-      the focused tests compile and a retained native v2 report proves complete
-      sequence coverage.
+      nonempty supported set with no missing lease source. Focused tests compile
+      and pass at source checkpoint `97cd210747`; keep this open until a
+      retained native v2 report proves complete sequence coverage.
 - [ ] Demonstrate repeated monotonic best-route improvement from the first
       terminal in at least three sealed seeds. One favorable counterfactual is
       not proof. Source checkpoint `978f7ee3b1` makes the proof contract
       executable: scratch audit v3 binds each claimed improvement to matching
       action, duration, target state, route length, emitted tape, reward, and
       terminal truth in the final graph, while journal projection requires the
-      policy-selected first proposal to remain the retained result. This stays
-      open until compiled tests and three retained sealed seed timelines show
-      strict improvement.
+      policy-selected first proposal to remain the retained result. The source
+      contract and focused tests pass at checkpoint `97cd210747`; this stays
+      open until three retained sealed seed timelines show strict improvement.
 - [ ] Beat the `131`-tick ordinary demonstration without making it incumbent or
       policy authority.
 - [ ] Reach tick `123` or lower from scratch or optional-replay assistance,
@@ -518,8 +523,9 @@ Exit gate:
       command and offline validator. It requires the selected seed to be the
       report's graph-selected campaign best and at or below the sealed tick
       ceiling, then launches at least two fresh learner-free processes from
-      separately retained copies of the complete controller tape. This stays
-      open pending compilation and a retained tick-`123`-or-lower proof.
+      separately retained copies of the complete controller tape. The source
+      compiles in the complete passing suite at checkpoint `97cd210747`; this
+      stays open pending a retained tick-`123`-or-lower proof.
       Source checkpoint `6221b966a0` adds a portable outer bundle that nests
       the independently validating scratch campaign plus only proof-referenced
       replay artifacts, requires an actual tick of `123` or lower, and is
@@ -535,8 +541,9 @@ Exit gate:
       offline validator re-authenticates the source campaign and every retained
       byte. The portable bundle additionally cross-binds the proof to the
       bundled graph-selected terminal tape/result instead of requiring paths
-      into the originating build tree. This remains open until compiled tests
-      and native evidence pass.
+      into the originating build tree. The compiled test portion passes at
+      source checkpoint `97cd210747`; this remains open until native evidence
+      passes.
 
 Exit gate:
 
@@ -557,15 +564,16 @@ Exit gate:
       checkpoint `79ff1f996a` advances that contract to v4, retains each
       component's bounded canonical executable source, captures those sources
       in new journals, and reconstructs legacy family actions deterministically.
-      This remains open pending compilation and native discovery evidence.
+      The source compiles in the passing complete suite at checkpoint
+      `97cd210747`; this remains open pending native discovery evidence.
 - [ ] Learn typed entry conditions from independent source states.
       Candidate construction requires at least two distinct entry-state
       identities. Source checkpoint `be0427afcd` fixes a false-generalization
       bug: stage/room, procedure, contacts, and distance evidence now remains
       in joint typed cells with per-cell distance ranges instead of fabricating
-      unsupported Cartesian combinations from independent sets. This stays
-      open until compiled tests and held-out native applicability evidence
-      validate the learned condition.
+      unsupported Cartesian combinations from independent sets. Compiled tests
+      pass at checkpoint `97cd210747`; this stays open until held-out native
+      applicability evidence validates the learned condition.
 - [ ] Promote only when a composition improves terminal/tick return on held-out
       state groups relative to executing its primitive components.
       Source checkpoint `79ff1f996a` deletes the best-single-primitive
@@ -574,14 +582,15 @@ Exit gate:
       counts those executions separately and leaves the legacy shortcut count
       at zero. Source checkpoint `b23d9453a7` additionally requires paired
       dominance in every supporting held-out state, preventing cheap failures
-      from offsetting slower terminal routes in aggregate tick sums. This stays
-      open until compiled tests and a sealed native report prove every
-      promotion comparison used that path.
-- [ ] Keep every valid primitive selectable after promotion. Source checkpoint
+      from offsetting slower terminal routes in aggregate tick sums. Compiled
+      tests pass at checkpoint `97cd210747`; this stays open until a sealed
+      native report proves every promotion comparison used that path.
+- [x] Keep every valid primitive selectable after promotion. Source checkpoint
       `f350c40a73` compares the complete descriptor map before and after
       promotion, proves every primitive remains byte-for-byte identical, and
       proves an inapplicable promoted macro leaves the primitive catalog
-      exactly unchanged. This stays open pending compiled and native evidence.
+      exactly unchanged. Source checkpoint `97cd210747` fixes the state-local
+      comparison test and passes the complete 315-test orchestration suite.
 - [ ] Compare promotion-enabled and primitives-only search on held-out seeds
       using terminal rate, time to first terminal, time to best route, and
       unique useful expansions per second.
