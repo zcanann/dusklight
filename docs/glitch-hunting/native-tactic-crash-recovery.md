@@ -94,3 +94,31 @@ retryable leases. The post-decision-commit fault must add none.
 The five one-decision Windows native cells pass this audit. That local smoke
 proves the harness and repaired transaction boundaries, but it is not the
 retained long-campaign, cross-platform evidence required by `TASKS.md`.
+
+## Portable fault evidence
+
+Seal each passing control/recovery pair into a self-contained, content-addressed
+bundle:
+
+```text
+huntctl learn seal-tactic-fault-recovery \
+  --request benchmarks/requests/OPTIMIZATION.json \
+  --execution benchmarks/executions/EXECUTION.json \
+  --control-report build/fault-control/route-report.json \
+  --recovered-report build/fault-recovered/route-report.json \
+  --bundle benchmarks/native-tactic-fault-recovery/PLATFORM/FAULT-POINT
+
+huntctl learn validate-tactic-fault-recovery-bundle \
+  --bundle benchmarks/native-tactic-fault-recovery/PLATFORM/FAULT-POINT
+```
+
+The bundle retains the exact optimization request, execution binding and plan,
+all six referenced authorities, compressed control and recovered reports,
+compressed resource audits for both campaigns, the durable fault marker, and
+the recomputable v2 recovery audit. Offline validation verifies every blob,
+reconstructs every typed record, revalidates both resource bindings, and
+recomputes the recovery audit from the bundled reports and marker.
+
+Retain one bundle for each of the five fault points. At least one pair must
+inject after the campaign has grown its state graph and learner replay; five
+one-decision bundles do not satisfy the long-campaign evidence gate.

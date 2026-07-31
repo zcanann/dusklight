@@ -97,8 +97,9 @@ use huntctl::search_evaluator::native_tactic_policy_runner::{
 use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticColdReplayConfig, NativeTacticColdReplayEvidenceBundle,
     NativeTacticDemonstrationReport, NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest,
-    NativeTacticFaultInjector, NativeTacticLaunchSmokeBundle, NativeTacticObservationAudit,
-    NativeTacticPlanBudgets, NativeTacticPostTerminalControlReport, NativeTacticResourceLimit,
+    NativeTacticFaultInjector, NativeTacticFaultRecoveryEvidenceBundle,
+    NativeTacticLaunchSmokeBundle, NativeTacticObservationAudit, NativeTacticPlanBudgets,
+    NativeTacticPostTerminalControlReport, NativeTacticResourceLimit,
     NativeTacticRestoreLocalityConfig, NativeTacticRestoreLocalityReport,
     NativeTacticRouteDiagnosisReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
     NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
@@ -433,6 +434,8 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "validate-tactic-throughput-curve-bundle"
             | "tactic-restore-locality"
             | "audit-tactic-fault-recovery"
+            | "seal-tactic-fault-recovery"
+            | "validate-tactic-fault-recovery-bundle"
             | "audit-post-terminal-tactic-controls"
             | "audit-tactic-scratch-campaign"
             | "audit-tactic-observations"
@@ -496,6 +499,8 @@ mod tests {
     fn retained_tactic_audits_are_reachable_from_the_learn_dispatcher() {
         for command in [
             "audit-tactic-fault-recovery",
+            "seal-tactic-fault-recovery",
+            "validate-tactic-fault-recovery-bundle",
             "audit-post-terminal-tactic-controls",
             "audit-tactic-scratch-campaign",
             "audit-tactic-observations",

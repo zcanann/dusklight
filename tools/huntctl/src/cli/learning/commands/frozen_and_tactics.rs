@@ -7,7 +7,8 @@ use super::{
     NativeFrozenPolicySuffixBatch, NativeGenericExecutionStrategy, NativeResidualExecutionBinding,
     NativeTacticColdReplayConfig, NativeTacticColdReplayEvidenceBundle,
     NativeTacticDemonstrationReport, NativeTacticExecutionPlan, NativeTacticFaultInjector,
-    NativeTacticLaunchSmokeBundle, NativeTacticObservationAudit, NativeTacticPolicyRunConfig,
+    NativeTacticFaultRecoveryEvidenceBundle, NativeTacticLaunchSmokeBundle,
+    NativeTacticObservationAudit, NativeTacticPolicyRunConfig,
     NativeTacticPostTerminalControlReport, NativeTacticRestoreLocalityConfig,
     NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport, NativeTacticRouteReport,
     NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
@@ -1145,6 +1146,37 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             if !audit.passed {
                 return Err("native tactic fault recovery did not preserve exact work".into());
             }
+            Ok(())
+        }
+        Some("seal-tactic-fault-recovery") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let bundle_argument = required_path(learn_args, "--bundle")?;
+            let bundle_root = if bundle_argument.is_absolute() {
+                bundle_argument
+            } else {
+                repository_root.join(bundle_argument)
+            };
+            let bundle = NativeTacticFaultRecoveryEvidenceBundle::build(
+                &bundle_root,
+                &repository_root,
+                &required_path(learn_args, "--request")?,
+                &required_path(learn_args, "--execution")?,
+                &required_path(learn_args, "--control-report")?,
+                &required_path(learn_args, "--recovered-report")?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
+            Ok(())
+        }
+        Some("validate-tactic-fault-recovery-bundle") => {
+            let bundle = NativeTacticFaultRecoveryEvidenceBundle::read_and_validate(
+                &required_path(&args[1..], "--bundle")?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
             Ok(())
         }
         Some("audit-tactic-scratch-campaign") => {

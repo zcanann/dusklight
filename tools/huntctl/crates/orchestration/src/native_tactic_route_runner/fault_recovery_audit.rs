@@ -87,10 +87,24 @@ pub fn audit_native_tactic_fault_recovery(
 ) -> Result<NativeTacticFaultRecoveryAudit, NativeTacticRouteRunError> {
     let control_bytes = fs::read(control_report_path).map_err(route_error)?;
     let recovered_bytes = fs::read(recovered_report_path).map_err(route_error)?;
+    let (_, marker) = read_fault_marker_source(recovered_report_path)?;
+    let audit = build_native_tactic_fault_recovery_audit(&control_bytes, &recovered_bytes, marker)?;
+    write_new(
+        output_path,
+        &serde_json::to_vec_pretty(&audit).map_err(route_error)?,
+    )?;
+    Ok(audit)
+}
+
+pub(super) fn build_native_tactic_fault_recovery_audit(
+    control_bytes: &[u8],
+    recovered_bytes: &[u8],
+    marker: NativeTacticFaultInjectionMarker,
+) -> Result<NativeTacticFaultRecoveryAudit, NativeTacticRouteRunError> {
     let control: NativeTacticRouteReport =
-        serde_json::from_slice(&control_bytes).map_err(route_error)?;
+        serde_json::from_slice(control_bytes).map_err(route_error)?;
     let recovered: NativeTacticRouteReport =
-        serde_json::from_slice(&recovered_bytes).map_err(route_error)?;
+        serde_json::from_slice(recovered_bytes).map_err(route_error)?;
     if control.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
         || recovered.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
         || control.seeds.len() != 1
@@ -100,7 +114,6 @@ pub fn audit_native_tactic_fault_recovery(
             "fault recovery requires matched single-seed v37 native tactic reports",
         ));
     }
-    let marker = read_fault_marker(recovered_report_path)?;
     let control_seed = &control.seeds[0];
     let recovered_seed = &recovered.seeds[0];
     if control_seed.seed != marker.seed
@@ -233,16 +246,12 @@ pub fn audit_native_tactic_fault_recovery(
     };
     audit.content_sha256 = fault_recovery_audit_digest(&audit)?;
     audit.validate()?;
-    write_new(
-        output_path,
-        &serde_json::to_vec_pretty(&audit).map_err(route_error)?,
-    )?;
     Ok(audit)
 }
 
-fn read_fault_marker(
+pub(super) fn read_fault_marker_source(
     recovered_report_path: &Path,
-) -> Result<NativeTacticFaultInjectionMarker, NativeTacticRouteRunError> {
+) -> Result<(PathBuf, NativeTacticFaultInjectionMarker), NativeTacticRouteRunError> {
     let campaign_root = recovered_report_path
         .parent()
         .ok_or_else(|| route_message("recovered report has no campaign root"))?;
@@ -257,10 +266,10 @@ fn read_fault_marker(
         let marker_path = entry.path().join(NATIVE_TACTIC_FAULT_INJECTION_FILE);
         if marker_path.is_file() {
             let marker: NativeTacticFaultInjectionMarker =
-                serde_json::from_slice(&fs::read(marker_path).map_err(route_error)?)
+                serde_json::from_slice(&fs::read(&marker_path).map_err(route_error)?)
                     .map_err(route_error)?;
             marker.validate()?;
-            markers.push(marker);
+            markers.push((marker_path, marker));
         }
     }
     if markers.len() != 1 {

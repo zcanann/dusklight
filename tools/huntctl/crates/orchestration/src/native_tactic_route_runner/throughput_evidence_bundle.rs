@@ -317,7 +317,7 @@ fn validate_route_binding(
     Ok(())
 }
 
-fn bundle_compressed(
+pub(super) fn bundle_compressed(
     store: &ContentStore,
     bytes: &[u8],
     logical_identity_sha256: Digest,
@@ -338,7 +338,7 @@ fn bundle_compressed(
     })
 }
 
-fn read_compressed(
+pub(super) fn read_compressed(
     store: &ContentStore,
     artifact: &NativeTacticThroughputCompressedArtifact,
 ) -> Result<Vec<u8>, NativeTacticRouteRunError> {

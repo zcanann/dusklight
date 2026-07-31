@@ -180,6 +180,11 @@ pub use fault_recovery_audit::{
     NativeTacticFaultRecoveryAudit, NativeTacticFaultRecoverySeedAudit,
     audit_native_tactic_fault_recovery,
 };
+mod fault_recovery_bundle;
+pub use fault_recovery_bundle::{
+    NATIVE_TACTIC_FAULT_RECOVERY_EVIDENCE_BUNDLE_SCHEMA_V1,
+    NATIVE_TACTIC_FAULT_RECOVERY_EVIDENCE_MANIFEST, NativeTacticFaultRecoveryEvidenceBundle,
+};
 mod launch_smoke;
 pub use launch_smoke::{
     NATIVE_TACTIC_LAUNCH_SMOKE_BUNDLE_SCHEMA_V1, NATIVE_TACTIC_LAUNCH_SMOKE_MANIFEST,
