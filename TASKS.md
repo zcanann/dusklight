@@ -651,23 +651,38 @@ Exit gate:
       isolated one-worker diagnostic to reproduce the retained curve's
       16-worker fleet share without launching the other 15 workers; all 339
       orchestration tests and the 555-file source-size gate pass. The exact
-      matched native treatment used one active worker, a capacity divisor of
-      16, and the same 335,544,320-byte cache as the retained control. It
+      first cache-matched diagnostic used one active worker, a capacity divisor
+      of 16, and the same 335,544,320-byte cache as the retained control. It
       reproduced the execution plan, all learner snapshots and 16 selected
       options, all 256 proposal batches including emitted tapes and resulting
       states, before/after snapshots, applicable tactics, 5,096 native ticks,
-      and useful-expansion-set identity. Grouping reduced tactic execution
-      from about `298.22` to `125.38` seconds, prefix materializations from
-      240 to 29, and cache evictions from 233 to 28. It is not an accepted
-      end-to-end throughput win: wall regressed from about `347.19` to
-      `945.43` seconds because model update rose from about `5.93` to `191.29`
-      seconds and persistence from about `27.28` to `328.88` seconds, with
-      orchestration also rising from about `0.66` to `12.13` seconds. Profile
-      and remove this repeatable direct-campaign coordinator growth before
-      retaining a treatment bundle or spending wider curve cells. Then
-      continue from the widest cell's remaining per-decision barrier and
-      persistence occupancy because grouping cannot improve the 16-worker
-      cell when every sibling already has a worker.
+      and useful-expansion-set identity. Its performance result is invalid:
+      it accidentally used the debug coordinator, making every Rust-side
+      phase 8-32x slower even though native execution improved. The corrected
+      release treatment preserves the same exact semantics and fixed work.
+      Campaign wall falls from about `347.19` to `172.52` seconds, tactic
+      execution from about `298.22` to `110.28` seconds, prefix
+      materializations from 240 to 29, and cache evictions from 233 to 28.
+      Useful-expansion throughput rises from about `0.737` to `1.484` per
+      second, a `2.012x` end-to-end improvement; model update, orchestration,
+      and admission return to control scale.
+      Checkpoint `4ef6fbdd3f` adds a content-addressed single-cell treatment
+      bundle and offline validator, then retains this matched Windows evidence
+      at
+      `benchmarks/native-tactic-throughput-treatment/win32-x86_64/grouped-dispatch-f1a618fc78`.
+      The validator recomputes exact semantic trace, campaign/replay/learner
+      authority, fixed work, graph shape, resource contract, terminal result,
+      and all performance gates from the bundled reports. It deliberately
+      excludes physical worker placement and run-specific graph/queue seals,
+      whose opaque identities differ across the retained control repetitions.
+      Bundle identity
+      `f8dc93c3f520985af4d81fcdbf91fa038e9791f24fee85651e67a8bdc2bb58ef`;
+      all 341 orchestration tests, the 557-file source-size gate, workspace
+      check, and the complete clean-checkout evidence audit pass. Continue
+      with matched wider cells to locate the new saturation point, then attack
+      the widest cell's remaining per-decision barrier and persistence
+      occupancy because grouping cannot improve the 16-worker cell when every
+      sibling already has a worker.
 - [x] Preserve native state, applicable actions, controller output, terminal
       evidence, and first-hit tick for every disabled presentation subsystem.
       Source checkpoint `703dcdbbba` advances the parity report to v2 and
