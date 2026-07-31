@@ -42,6 +42,22 @@ fn proposal_pool(worker_count: usize) -> NativeTacticProposalPool {
     }
 }
 
+fn cached_frontier(worker_slot: usize) -> CachedTacticFrontier {
+    CachedTacticFrontier {
+        worker_slot,
+        source: NativeTacticCheckpointSource {
+            restore_identity: "a".repeat(32),
+            boundary_fingerprint: "b".repeat(32),
+            route_ticks: 40,
+            storage: NativeTacticCheckpointStorage::LiveEndpoint,
+        },
+        state_sha256: Digest([3; 32]),
+        route_frames: 546,
+        route_checkpoint_sha256: Digest([4; 32]),
+        route_tape_sha256: Digest([5; 32]),
+    }
+}
+
 #[test]
 fn missing_owner_checkpoint_is_counted_before_exact_replay_fallback() {
     let mut worker = MissingCheckpointWorker {
@@ -115,19 +131,7 @@ fn every_selected_decision_retains_a_single_use_live_endpoint() {
 
 #[test]
 fn selected_live_frontiers_remain_directly_eligible_for_wide_decisions() {
-    let frontier = CachedTacticFrontier {
-        worker_slot: 1,
-        source: NativeTacticCheckpointSource {
-            restore_identity: "a".repeat(32),
-            boundary_fingerprint: "b".repeat(32),
-            route_ticks: 40,
-            storage: NativeTacticCheckpointStorage::LiveEndpoint,
-        },
-        state_sha256: Digest([3; 32]),
-        route_frames: 546,
-        route_checkpoint_sha256: Digest([4; 32]),
-        route_tape_sha256: Digest([5; 32]),
-    };
+    let frontier = cached_frontier(1);
     assert!(proposal_pool(2).direct_frontier_eligible(&frontier));
 
     let mut portable = frontier;
@@ -146,19 +150,7 @@ fn dedicated_lane_owners_are_never_used_for_counterfactual_siblings() {
     for _ in 0..24 {
         assert!((4..16).contains(&pool.next_counterfactual_worker(Some(2))));
     }
-    let owner = CachedTacticFrontier {
-        worker_slot: 2,
-        source: NativeTacticCheckpointSource {
-            restore_identity: "a".repeat(32),
-            boundary_fingerprint: "b".repeat(32),
-            route_ticks: 40,
-            storage: NativeTacticCheckpointStorage::LiveEndpoint,
-        },
-        state_sha256: Digest([3; 32]),
-        route_frames: 546,
-        route_checkpoint_sha256: Digest([4; 32]),
-        route_tape_sha256: Digest([5; 32]),
-    };
+    let owner = cached_frontier(2);
     assert!(pool.direct_frontier_eligible(&owner));
     let mut another_lane = owner;
     another_lane.worker_slot = 1;
@@ -180,6 +172,68 @@ fn uncached_non_root_graph_expansion_materializes_before_its_action() {
     assert!(!requires_frontier_materialization(true, 0, false));
     assert!(!requires_frontier_materialization(true, 40, true));
     assert!(!requires_frontier_materialization(false, 40, false));
+}
+
+#[test]
+fn counterfactuals_share_one_frontier_materialization_per_worker() {
+    let pool = proposal_pool(2);
+    let frontier = cached_frontier(0);
+    let dispatches = pool.proposal_dispatches(16, Some(&frontier), true, 40);
+
+    assert_eq!(dispatches.len(), 2);
+    let siblings = dispatches
+        .iter()
+        .find(|dispatch| dispatch.checkpoint_source.is_none())
+        .unwrap();
+    assert_eq!(siblings.worker_slot, 1);
+    assert_eq!(siblings.proposal_indices, (1..16).collect::<Vec<_>>());
+    assert!(siblings.materialize_frontier);
+
+    let selected = dispatches
+        .iter()
+        .find(|dispatch| dispatch.checkpoint_source.is_some())
+        .unwrap();
+    assert_eq!(selected.worker_slot, 0);
+    assert_eq!(selected.proposal_indices, vec![0]);
+    assert!(!selected.materialize_frontier);
+    assert_eq!(selected.checkpoint_source, Some(frontier.source));
+}
+
+#[test]
+fn root_proposals_are_grouped_without_losing_indices_or_dispatch_balance() {
+    let pool = proposal_pool(4);
+    let dispatches = pool.proposal_dispatches(16, None, false, 0);
+
+    assert_eq!(dispatches.len(), 4);
+    assert!(
+        dispatches
+            .iter()
+            .all(|dispatch| dispatch.proposal_indices.len() == 4)
+    );
+    assert!(
+        dispatches
+            .iter()
+            .all(|dispatch| !dispatch.materialize_frontier)
+    );
+    let mut proposal_indices = dispatches
+        .iter()
+        .flat_map(|dispatch| dispatch.proposal_indices.iter().copied())
+        .collect::<Vec<_>>();
+    proposal_indices.sort_unstable();
+    assert_eq!(proposal_indices, (0..16).collect::<Vec<_>>());
+}
+
+#[test]
+fn sole_worker_keeps_direct_primary_separate_from_grouped_siblings() {
+    let pool = proposal_pool(1);
+    let frontier = cached_frontier(0);
+    let dispatches = pool.proposal_dispatches(4, Some(&frontier), true, 40);
+
+    assert_eq!(dispatches.len(), 2);
+    assert_eq!(dispatches[0].proposal_indices, vec![1, 2, 3]);
+    assert!(dispatches[0].materialize_frontier);
+    assert_eq!(dispatches[1].proposal_indices, vec![0]);
+    assert!(!dispatches[1].materialize_frontier);
 }
 
 #[test]

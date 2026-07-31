@@ -125,43 +125,37 @@ impl NativeTacticProposalPool {
                 })
             })
             .flatten();
-        let mut responses = Vec::with_capacity(proposals.len());
-        for proposal_index in (1..proposals.len()).chain(std::iter::once(0)) {
-            let selected = &proposals[proposal_index];
+        let dispatches = self.proposal_dispatches(
+            proposals.len(),
+            direct,
+            restoration.is_some(),
+            replayed_prefix,
+        );
+        let mut responses = Vec::with_capacity(dispatches.len());
+        for dispatch in dispatches {
             let (response, receiver) = mpsc::sync_channel(1);
             let (execution_started, execution_started_receiver) = mpsc::sync_channel(1);
-            let primary_source = (proposal_index == 0).then_some(direct).flatten();
-            let worker_slot = primary_source.map_or_else(
-                || {
-                    if proposal_index == 0
-                        && let Some(owner) = self.preferred_owner_slot
-                    {
-                        owner
-                    } else {
-                        self.next_counterfactual_worker(direct.map(|frontier| frontier.worker_slot))
-                    }
-                },
-                |frontier| frontier.worker_slot,
-            );
-            self.senders[worker_slot]
+            let contains_primary = dispatch.proposal_indices.contains(&0);
+            let indexed_proposals = dispatch
+                .proposal_indices
+                .iter()
+                .map(|proposal_index| IndexedNativeTacticProposal {
+                    proposal_index: *proposal_index,
+                    selected: proposals[*proposal_index].clone(),
+                })
+                .collect();
+            self.senders[dispatch.worker_slot]
                 .send(NativeTacticProposalJob {
                     execution_plan_sha256: self.execution_plan_sha256,
-                    proposals: vec![IndexedNativeTacticProposal {
-                        proposal_index,
-                        selected: selected.clone(),
-                    }],
+                    proposals: indexed_proposals,
                     proposal_catalog: Arc::clone(&proposal_catalog),
                     proposal_blueprints: Arc::clone(&proposal_blueprints),
                     source_snapshot: source_snapshot.clone(),
                     source_route_tape: source_route_tape.clone(),
                     restoration: restoration.cloned(),
-                    checkpoint_source: primary_source.map(|frontier| frontier.source.clone()),
-                    materialize_frontier: requires_frontier_materialization(
-                        restoration.is_some(),
-                        replayed_prefix,
-                        primary_source.is_some(),
-                    ),
-                    primary_retention: if proposal_index == 0 {
+                    checkpoint_source: dispatch.checkpoint_source,
+                    materialize_frontier: dispatch.materialize_frontier,
+                    primary_retention: if contains_primary {
                         primary_retention
                     } else {
                         NativeTacticCheckpointRetention::None
@@ -173,7 +167,11 @@ impl NativeTacticProposalPool {
                     response,
                 })
                 .map_err(|_| route_message("native tactic proposal pool stopped"))?;
-            responses.push((proposal_index, execution_started_receiver, receiver));
+            responses.push((
+                dispatch.proposal_indices,
+                execution_started_receiver,
+                receiver,
+            ));
         }
         for (_, execution_started, _) in &responses {
             execution_started
@@ -183,16 +181,21 @@ impl NativeTacticProposalPool {
         after_dispatch()?;
         let mut work = responses
             .into_iter()
-            .map(|(proposal_index, _, receiver)| {
-                let mut work = receiver
+            .map(|(proposal_indices, _, receiver)| {
+                let work = receiver
                     .recv()
                     .map_err(|_| route_message("native tactic proposal worker stopped"))??;
-                let work = work
-                    .pop()
-                    .ok_or_else(|| route_message("native tactic proposal result is absent"))?;
-                Ok((proposal_index, work))
+                if work.len() != proposal_indices.len() {
+                    return Err(route_message(
+                        "native tactic proposal result count does not match its dispatch",
+                    ));
+                }
+                Ok(proposal_indices.into_iter().zip(work).collect::<Vec<_>>())
             })
-            .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
+            .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
         work.sort_by_key(|(proposal_index, _)| *proposal_index);
         Ok(work.into_iter().map(|(_, work)| work).collect())
     }

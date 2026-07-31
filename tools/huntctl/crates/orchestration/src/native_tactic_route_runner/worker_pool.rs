@@ -1,5 +1,6 @@
 use super::*;
 
+mod dispatch;
 mod restoration_dispatch;
 
 use restoration_dispatch::{requires_frontier_materialization, validate_restoration_contract};
