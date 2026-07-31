@@ -26,5 +26,9 @@
 tools/route-planner/crates/engine/data/*.json    text eol=lf
 tools/route-planner/crates/engine/data/**/*.json text eol=lf
 
+# Retained evidence bundles mix compressed binary blobs with byte-addressed
+# JSON authorities. Git must preserve every stored byte on every platform.
+benchmarks/** -text
+
 # decomp-toolkit writes files with LF
 config/**/*.txt  text eol=lf

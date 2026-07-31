@@ -150,7 +150,11 @@ The incoming 2026-07-29 work made substantial, useful progress:
   saturation. A portable evidence bundle now content-addresses and compresses
   the aggregate, all sample route reports and their recomputed resource audits,
   request, execution, plan, and source authorities; the clean gate discovers
-  committed bundles. No v4 native curve has been retained yet.
+  committed bundles. The retained Windows x86-64 v4 curve passes offline
+  reconstruction under bundle identity
+  `50f1ac417f00c2946ba2cc011f48a8b8c42cb3cd2f0c3654692d5ec3b09df723`.
+  All ten samples execute the same 16 decisions and 256 useful expansions with
+  the same useful-expansion-set identity.
 - The first current-build Windows v4 cell exposed a real architectural
   bottleneck before the curve completed: one worker required about `62.5`
   minutes for 16 decisions and 256 native expansions. Native simulation used
@@ -466,12 +470,20 @@ Exit gate:
       occupancy, useful expansions per second, native ticks, graph work, and
       artifact volume with all three retained predecessor cells before
       spending a full curve.
-- [ ] Run fixed-work curves at 1, 2, 4, 8, and 16 workers over enough decisions
+- [x] Run fixed-work curves at 1, 2, 4, 8, and 16 workers over enough decisions
       to exercise graph growth, repeated restores, learner updates,
       persistence, and bounded checkpoint eviction. Retain the complete
       content-bound sample reports and v4 aggregate, including phase occupancy
       and saturation counters. A one-decision warm-fleet microbenchmark is
-      necessary but not sufficient.
+      necessary but not sufficient. The retained Windows x86-64 bundle contains
+      two balanced repetitions and validates independently. Every cell completed
+      16 decisions, 256 useful expansions, five learner updates, six model
+      snapshots, repeated non-root restoration, persistence, and cache
+      eviction. Median useful throughput rises monotonically from `0.739` at
+      one worker to `0.805`, `1.663`, `2.043`, and `2.475` expansions per
+      second at 2, 4, 8, and 16 workers. The widest cell remains below the
+      5 GiB checkpoint-pool bound at `4,715,546,880` bytes, and maximum model
+      replay lag is 48 revisions against the declared limit of 64.
 - [x] Make the multi-sample curve resumable before another full launch.
       Commit each completed sample by ordinal, repetition, worker count,
       execution-plan identity, report identity, and useful-expansion set.
@@ -592,6 +604,21 @@ Exit gate:
       now the dominant measured phase at about `298.2` seconds. Continue the
       bounded curve one durable sample at a time to locate useful-work
       saturation; do not infer multi-worker scaling from this one-worker win.
+      The completed balanced curve now locates the next bottleneck: median
+      speedup is only `1.09x`, `2.25x`, `2.76x`, and `3.35x` at 2, 4, 8, and
+      16 workers, with parallel efficiency falling to 20.9% at 16. All
+      correctness, fixed-work, memory, staleness, long-work, and strictly
+      increasing-throughput gates pass, so this is measured saturation rather
+      than semantic drift. At two workers the direct live-frontier owner is
+      reserved for the selected proposal, leaving one worker to serially
+      execute all counterfactual siblings. More generally, dispatch currently
+      creates one job per proposal even though a worker job already supports a
+      proposal vector; each such job rematerializes the same non-root frontier.
+      Group counterfactual proposals per worker and materialize each worker's
+      frontier once per decision while keeping the live-owner proposal
+      isolated. Require exact proposal order, action/tape/graph identities,
+      retry accounting, and useful-expansion evidence before accepting the
+      throughput treatment.
 - [x] Preserve native state, applicable actions, controller output, terminal
       evidence, and first-hit tick for every disabled presentation subsystem.
       Source checkpoint `703dcdbbba` advances the parity report to v2 and

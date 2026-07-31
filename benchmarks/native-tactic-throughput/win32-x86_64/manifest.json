@@ -1,0 +1,439 @@
+{
+  "schema": "dusklight-native-tactic-throughput-evidence-bundle/v1",
+  "content_sha256": "50f1ac417f00c2946ba2cc011f48a8b8c42cb3cd2f0c3654692d5ec3b09df723",
+  "curve_report": {
+    "logical_identity_sha256": "c09c47468589f2b7217abfbffea495cb11f3f74ad18a8b4fde5d0b5f1eeb910c",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "dataset_manifest",
+      "sha256": "fb645897874009d706d4899b8d102b2da9cb32e8da21b22404f76ef195adff13",
+      "size": 24877,
+      "media_type": "application/vnd.dusklight.dataset-manifest+json",
+      "relative_path": "blobs\\sha256\\fb\\645897874009d706d4899b8d102b2da9cb32e8da21b22404f76ef195adff13"
+    }
+  },
+  "optimization_request": {
+    "logical_identity_sha256": "8b6a9ba9bd5e307fb8443fe39f2ea6233bc798b3e5a81abf3824c264d8ac2d9b",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "dataset_manifest",
+      "sha256": "ef2f740a5e1244aab0ca89d91afc830d53384ecf1894243b232401d2447d25e5",
+      "size": 3298,
+      "media_type": "application/vnd.dusklight.dataset-manifest+json",
+      "relative_path": "blobs\\sha256\\ef\\2f740a5e1244aab0ca89d91afc830d53384ecf1894243b232401d2447d25e5"
+    }
+  },
+  "execution_binding": {
+    "logical_identity_sha256": "a8f410ad3d2269efcc8de5de9937235350daf0dd19dd53caca6ad92a1bf6ab2a",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "dataset_manifest",
+      "sha256": "8788ee8e0ea963fadcfa4dcf4630e717f5c2673bebe5ddaba04786d61d745a6f",
+      "size": 2741,
+      "media_type": "application/vnd.dusklight.dataset-manifest+json",
+      "relative_path": "blobs\\sha256\\87\\88ee8e0ea963fadcfa4dcf4630e717f5c2673bebe5ddaba04786d61d745a6f"
+    }
+  },
+  "execution_plan": {
+    "logical_identity_sha256": "5758962e6198f87c8ff7ee0cb5602a056ded7eb69ded5d7e3d6eaa30e4d3affb",
+    "blob": {
+      "schema": "dusklight-content-blob/v1",
+      "kind": "dataset_manifest",
+      "sha256": "02e8d8086b9f1bc4cac3dc74e88ef74eb8677cac031dcb1a658ad95aa58083c6",
+      "size": 1000,
+      "media_type": "application/vnd.dusklight.dataset-manifest+json",
+      "relative_path": "blobs\\sha256\\02\\e8d8086b9f1bc4cac3dc74e88ef74eb8677cac031dcb1a658ad95aa58083c6"
+    }
+  },
+  "execution_identity": {
+    "execution_binding_sha256": "a8f410ad3d2269efcc8de5de9937235350daf0dd19dd53caca6ad92a1bf6ab2a",
+    "executable_sha256": "f8d6319e3e15269be0f4262d1e19f97a0476eb5bd4810f16138e239c5f0e85fd",
+    "runtime_dependency_sha256s": [
+      "38c9583844842c7a78cb4d0893c36eae332c43554077eff38482f9936e20f767",
+      "4ab3d55530a44380a64cfc93679d53a8fc69a1f4da635119db1e1289e75274a4",
+      "fda4dde92222ddb8564c3173ce48faa56f7e1c7b46b0b67dada1182ee07a4123",
+      "35e65caf9ee04cfa4e40a5b4d5b1eb564f1158820eac1278d4cc04ffb6263b7d",
+      "1186486bc236e16d7cdf114bcee9e998aeb89f83b9560078c5edc42eafbcd22b",
+      "9b09c3667f41d27c984440cb49dd102bef389c8ba72cfc287c202c9bd3fef0dc",
+      "232e66ae1827edc7176b2c601543ffca760afbdb3be775b37a72ce7e6e31375a"
+    ],
+    "game_data_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814",
+    "process_boot_tape_sha256": "827cb999dfaa0038c30764e971e0bae2f0ba0d18c99f7be9285825bc650d55f8",
+    "milestone_program_sha256": "b5ef3a1440ca5a50b563b7afb7b0d9230f815d359998b3a2c403a68b5c76f653",
+    "world_context_sha256": "5417f084d4aec9812ab96f0bee6dbcbce37843be669d4f3a5e20cf771bf70dcf",
+    "card_fixture_manifest_sha256": "4781b1f1c223290af7ed25b827bc1a7199419a607246cb9d8136f1707a4f1225"
+  },
+  "authorities": [
+    {
+      "role": "card_fixture_manifest",
+      "declared_path": "routes/Glitch Exhibition/ordon-degraded-canary/benchmarks/process_boot.89e1737.fixture.json",
+      "declared_sha256": "4781b1f1c223290af7ed25b827bc1a7199419a607246cb9d8136f1707a4f1225",
+      "blob": {
+        "schema": "dusklight-content-blob/v1",
+        "kind": "dataset_manifest",
+        "sha256": "4781b1f1c223290af7ed25b827bc1a7199419a607246cb9d8136f1707a4f1225",
+        "size": 471,
+        "media_type": "application/vnd.dusklight.dataset-manifest+json",
+        "relative_path": "blobs\\sha256\\47\\81b1f1c223290af7ed25b827bc1a7199419a607246cb9d8136f1707a4f1225"
+      }
+    },
+    {
+      "role": "milestone_program",
+      "declared_path": "build/diagnostics/current-native/execution-current-v3/terminal.dmsp",
+      "declared_sha256": "b5ef3a1440ca5a50b563b7afb7b0d9230f815d359998b3a2c403a68b5c76f653",
+      "blob": {
+        "schema": "dusklight-content-blob/v1",
+        "kind": "dataset_manifest",
+        "sha256": "b5ef3a1440ca5a50b563b7afb7b0d9230f815d359998b3a2c403a68b5c76f653",
+        "size": 179,
+        "media_type": "application/vnd.dusklight.dataset-manifest+json",
+        "relative_path": "blobs\\sha256\\b5\\ef3a1440ca5a50b563b7afb7b0d9230f815d359998b3a2c403a68b5c76f653"
+      }
+    },
+    {
+      "role": "process_boot_tape",
+      "declared_path": "build/diagnostics/current-native/execution-current-v3/process-route.tape",
+      "declared_sha256": "827cb999dfaa0038c30764e971e0bae2f0ba0d18c99f7be9285825bc650d55f8",
+      "blob": {
+        "schema": "dusklight-content-blob/v1",
+        "kind": "input_tape",
+        "sha256": "827cb999dfaa0038c30764e971e0bae2f0ba0d18c99f7be9285825bc650d55f8",
+        "size": 465,
+        "media_type": "application/x-dusktape",
+        "relative_path": "blobs\\sha256\\82\\7cb999dfaa0038c30764e971e0bae2f0ba0d18c99f7be9285825bc650d55f8"
+      }
+    },
+    {
+      "role": "route_timeline",
+      "declared_path": "routes/Glitch Exhibition/ordon-degraded-canary.timeline",
+      "declared_sha256": "8dc1158912ddfdb41965d2efe4771e4961db603c6f71c745c49c4f5b33d03e23",
+      "blob": {
+        "schema": "dusklight-content-blob/v1",
+        "kind": "dataset_manifest",
+        "sha256": "8dc1158912ddfdb41965d2efe4771e4961db603c6f71c745c49c4f5b33d03e23",
+        "size": 4742,
+        "media_type": "application/vnd.dusklight.dataset-manifest+json",
+        "relative_path": "blobs\\sha256\\8d\\c1158912ddfdb41965d2efe4771e4961db603c6f71c745c49c4f5b33d03e23"
+      }
+    },
+    {
+      "role": "terminal_predicate_source",
+      "declared_path": "routes/Glitch Exhibition/intro/predicates/ordon_spring_load_committed.milestones",
+      "declared_sha256": "65e395951ce6c46f6728e3daa91ece77410f85806f9a7a83942ffcd5737770ba",
+      "blob": {
+        "schema": "dusklight-content-blob/v1",
+        "kind": "dataset_manifest",
+        "sha256": "65e395951ce6c46f6728e3daa91ece77410f85806f9a7a83942ffcd5737770ba",
+        "size": 342,
+        "media_type": "application/vnd.dusklight.dataset-manifest+json",
+        "relative_path": "blobs\\sha256\\65\\e395951ce6c46f6728e3daa91ece77410f85806f9a7a83942ffcd5737770ba"
+      }
+    },
+    {
+      "role": "world_context",
+      "declared_path": "build/world/ordon-context-current.json",
+      "declared_sha256": "5417f084d4aec9812ab96f0bee6dbcbce37843be669d4f3a5e20cf771bf70dcf",
+      "blob": {
+        "schema": "dusklight-content-blob/v1",
+        "kind": "world_context",
+        "sha256": "5417f084d4aec9812ab96f0bee6dbcbce37843be669d4f3a5e20cf771bf70dcf",
+        "size": 529,
+        "media_type": "application/vnd.dusklight.world-context+json",
+        "relative_path": "blobs\\sha256\\54\\17f084d4aec9812ab96f0bee6dbcbce37843be669d4f3a5e20cf771bf70dcf"
+      }
+    }
+  ],
+  "samples": [
+    {
+      "ordinal": 1,
+      "repetition": 1,
+      "workers": 1,
+      "route_report": {
+        "logical_identity_sha256": "aa670d4f1e4c993aa3c137ad0a57babdd732c841e5cd36ecba08d76b2cbb97c9",
+        "uncompressed_bytes": 6306297,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "b595197bc14c3ad9b8ecea565edddac8cd95c30d2ecf18aed89a2e089d442472",
+          "size": 303408,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\b5\\95197bc14c3ad9b8ecea565edddac8cd95c30d2ecf18aed89a2e089d442472"
+        }
+      },
+      "campaign_audit": {
+        "logical_identity_sha256": "957220530fff64a8c98dad2155ed3977a1b9e40962937bba4c63ca275ef08d17",
+        "uncompressed_bytes": 6176357,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "275f5e31138293261ae86d76ee417fd9d43a93f86acac5651429b0a1a777481b",
+          "size": 284397,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\27\\5f5e31138293261ae86d76ee417fd9d43a93f86acac5651429b0a1a777481b"
+        }
+      }
+    },
+    {
+      "ordinal": 2,
+      "repetition": 1,
+      "workers": 2,
+      "route_report": {
+        "logical_identity_sha256": "e4a0d2e8c80fef2640c0e16e30c110bcbbac3bbe47840cfcdb719d531cd6edc3",
+        "uncompressed_bytes": 6306295,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "1a9f843c0d794dc1591ed6c707cad1b2368662c54709e460040d2450965de070",
+          "size": 303264,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\1a\\9f843c0d794dc1591ed6c707cad1b2368662c54709e460040d2450965de070"
+        }
+      },
+      "campaign_audit": {
+        "logical_identity_sha256": "a0704ab4a44fdea263d62ce38ff1790c1242ef3fe70a6fbaa83dea4843efe70a",
+        "uncompressed_bytes": 6176358,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "410d2c012b12f068d721f9eaafa269d6812db7ad7dc3ff07d0057c39c7908aed",
+          "size": 284131,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\41\\0d2c012b12f068d721f9eaafa269d6812db7ad7dc3ff07d0057c39c7908aed"
+        }
+      }
+    },
+    {
+      "ordinal": 3,
+      "repetition": 1,
+      "workers": 4,
+      "route_report": {
+        "logical_identity_sha256": "88185009c739b1129457de16b3996bd8ea45dc4a997845bad5a3416aaa5b4ce2",
+        "uncompressed_bytes": 6306295,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "1c8963bb41eaf2985f76e2e50b00ce6da6b56651dfaf6c9a647e4222dc6a80ca",
+          "size": 303085,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\1c\\8963bb41eaf2985f76e2e50b00ce6da6b56651dfaf6c9a647e4222dc6a80ca"
+        }
+      },
+      "campaign_audit": {
+        "logical_identity_sha256": "3677dea51f5755f2c002cb3dfaeee34d4ec36b1d72b0a0ba4db57343ee07cee6",
+        "uncompressed_bytes": 6176374,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "83484543ac9b694bfedb8268634caeedf69d7b6fc48bb9765f46578a912a8ca1",
+          "size": 284527,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\83\\484543ac9b694bfedb8268634caeedf69d7b6fc48bb9765f46578a912a8ca1"
+        }
+      }
+    },
+    {
+      "ordinal": 4,
+      "repetition": 1,
+      "workers": 8,
+      "route_report": {
+        "logical_identity_sha256": "4733efa309e422aa94834fe4443bd7c02979db62bb4f312a78bc7033de47c786",
+        "uncompressed_bytes": 6306299,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "811b81e51fc022bac2128dadbded74dddbe3739dfaabf2b5e6085117f12e0135",
+          "size": 303584,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\81\\1b81e51fc022bac2128dadbded74dddbe3739dfaabf2b5e6085117f12e0135"
+        }
+      },
+      "campaign_audit": {
+        "logical_identity_sha256": "fdbaa9b75bfbcfcf9d0c9f757ec0dd6119a1debbfb107d6671d2f8b8302b8de1",
+        "uncompressed_bytes": 6176411,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "683271109732ed7a9e62eaca34c801e9940c2f29fabb885328ea8c83d58196a3",
+          "size": 284633,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\68\\3271109732ed7a9e62eaca34c801e9940c2f29fabb885328ea8c83d58196a3"
+        }
+      }
+    },
+    {
+      "ordinal": 5,
+      "repetition": 1,
+      "workers": 16,
+      "route_report": {
+        "logical_identity_sha256": "e425effc67bd58285d82a444dee78a6dfeb9f077e1a9dc8968d6803ec922304c",
+        "uncompressed_bytes": 6306400,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "2b73ef8e6f3095024b0b62d4435a6201ed9e92155fd62f991987d7b889760b8d",
+          "size": 303119,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\2b\\73ef8e6f3095024b0b62d4435a6201ed9e92155fd62f991987d7b889760b8d"
+        }
+      },
+      "campaign_audit": {
+        "logical_identity_sha256": "0baa24ae4a3b8fe996973b10e23cd557876483795c8f40d96c933d6e33f9ce30",
+        "uncompressed_bytes": 6176581,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "21836ccb21dae4c3dffbf19d9eba0c09026297a3e01cb71e40be2a0aa1b654e1",
+          "size": 284464,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\21\\836ccb21dae4c3dffbf19d9eba0c09026297a3e01cb71e40be2a0aa1b654e1"
+        }
+      }
+    },
+    {
+      "ordinal": 6,
+      "repetition": 2,
+      "workers": 16,
+      "route_report": {
+        "logical_identity_sha256": "4ff6ef92e0423a4ca0933f5bd615041a9ff31942ffc98cf7b30106d427a2d231",
+        "uncompressed_bytes": 6306403,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "20ea0e201820296441198b802dd11b6737d5dfbe18ca11dbc04aa22b8e75f732",
+          "size": 303287,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\20\\ea0e201820296441198b802dd11b6737d5dfbe18ca11dbc04aa22b8e75f732"
+        }
+      },
+      "campaign_audit": {
+        "logical_identity_sha256": "4ab12fdce0b972192e01b8e8d4550cc48ff59271e0e468f873b397a4d3791d23",
+        "uncompressed_bytes": 6176581,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "39e3bcc77352e4d29e0568bbc39cbdf631ee488d8958afdda653ec53571554ef",
+          "size": 284534,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\39\\e3bcc77352e4d29e0568bbc39cbdf631ee488d8958afdda653ec53571554ef"
+        }
+      }
+    },
+    {
+      "ordinal": 7,
+      "repetition": 2,
+      "workers": 8,
+      "route_report": {
+        "logical_identity_sha256": "e98a18ff8fd09a59f992a28b55073dfe3d3b4fc0947aac9b9d82698237374f5e",
+        "uncompressed_bytes": 6306300,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "ff1e805a546b271b817a543e8f2cf3cafda1d30d211f547e75a11d6fd32e041f",
+          "size": 303601,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\ff\\1e805a546b271b817a543e8f2cf3cafda1d30d211f547e75a11d6fd32e041f"
+        }
+      },
+      "campaign_audit": {
+        "logical_identity_sha256": "2c527e739fd62ca5e70bfaece910634255e226a57e0b83fa6a816967ab7c3868",
+        "uncompressed_bytes": 6176411,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "3ec61cd4e02d6843302154c6e9a8313b33cc1e954af06b1dd45b66376a2d1385",
+          "size": 284632,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\3e\\c61cd4e02d6843302154c6e9a8313b33cc1e954af06b1dd45b66376a2d1385"
+        }
+      }
+    },
+    {
+      "ordinal": 8,
+      "repetition": 2,
+      "workers": 4,
+      "route_report": {
+        "logical_identity_sha256": "593ca428e1ba90638a26dac645bdb1ee9c576e3bd334fb046383f11068c3a213",
+        "uncompressed_bytes": 6306295,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "2b10ef32b4a131e91e3dce2e09050824e3a513a946731944ad2083e15e8a640b",
+          "size": 303238,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\2b\\10ef32b4a131e91e3dce2e09050824e3a513a946731944ad2083e15e8a640b"
+        }
+      },
+      "campaign_audit": {
+        "logical_identity_sha256": "5778edaaea8ae603e4ab722227ff14d4c6c9c3e76bbbfc5a0428217b935aa330",
+        "uncompressed_bytes": 6176374,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "0874950b225d255a931392df88a9fab62dc26e398a5479507ef1b90fe1bdb2c0",
+          "size": 284338,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\08\\74950b225d255a931392df88a9fab62dc26e398a5479507ef1b90fe1bdb2c0"
+        }
+      }
+    },
+    {
+      "ordinal": 9,
+      "repetition": 2,
+      "workers": 2,
+      "route_report": {
+        "logical_identity_sha256": "c054b7c3cec2d30c01b4234bca1d244725a6b0f52954429d37b13750f2a7d482",
+        "uncompressed_bytes": 6306295,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "8e3efb7452bed52a4e6fa8b69029a87e51fd22e65023244dfb3ee42945c7e11d",
+          "size": 303388,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\8e\\3efb7452bed52a4e6fa8b69029a87e51fd22e65023244dfb3ee42945c7e11d"
+        }
+      },
+      "campaign_audit": {
+        "logical_identity_sha256": "af6c65e37151ca02caf455c808e7ed0009588479ac17c83c0fdbc3500337267c",
+        "uncompressed_bytes": 6176358,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "8c7f90f35b14ca2ce8c10f11b12246391ed2696fae7f712a2d83e819b383c436",
+          "size": 284290,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\8c\\7f90f35b14ca2ce8c10f11b12246391ed2696fae7f712a2d83e819b383c436"
+        }
+      }
+    },
+    {
+      "ordinal": 10,
+      "repetition": 2,
+      "workers": 1,
+      "route_report": {
+        "logical_identity_sha256": "aa5ae97c1a1becb5792f370d2cffc8f8b9e2a1f602e80862862e509328784814",
+        "uncompressed_bytes": 6306298,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "ca9600f35957917e20d5a77bf01d59e72b81765e8f5b147d85a89d69a250d7d5",
+          "size": 303327,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\ca\\9600f35957917e20d5a77bf01d59e72b81765e8f5b147d85a89d69a250d7d5"
+        }
+      },
+      "campaign_audit": {
+        "logical_identity_sha256": "1032d2ba7f8b059bd847095225a738b383cbd76dffdaa60f3943a2221369c818",
+        "uncompressed_bytes": 6176357,
+        "blob": {
+          "schema": "dusklight-content-blob/v1",
+          "kind": "crash_artifact",
+          "sha256": "f0c3d87ca4e733cada914b90f5560b2f4c68ac78f7c630b8670797c8bcaf5f69",
+          "size": 284507,
+          "media_type": "application/octet-stream",
+          "relative_path": "blobs\\sha256\\f0\\c3d87ca4e733cada914b90f5560b2f4c68ac78f7c630b8670797c8bcaf5f69"
+        }
+      }
+    }
+  ],
+  "passed": true
+}
