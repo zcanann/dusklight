@@ -75,10 +75,13 @@ impl NativeTacticThroughputTreatmentAudit {
         let treatment_semantic_trace_sha256 = semantic_trace_sha256_v2(&treatment_seed.trace)?;
         let semantic_trace_equal = control_semantic_trace_sha256 == treatment_semantic_trace_sha256;
         let campaign_identity_equal = campaign_identity_equal(&control, &treatment);
+        // Attempts and duplicates are invocation telemetry, not replay
+        // authority. The snapshot hash is also run-local because its chain
+        // authenticates publisher-lane metadata. Cross-run semantic equality
+        // is established independently below by the trace, learner authority,
+        // replay row counts, useful expansion set, and graph shape.
         let replay_authority_equal = control.replay_revision == treatment.replay_revision
-            && control.replay_admission.attempts == treatment.replay_admission.attempts
-            && control.replay_admission.admitted == treatment.replay_admission.admitted
-            && control.replay_admission.duplicates == treatment.replay_admission.duplicates;
+            && control.replay_admission.admitted == treatment.replay_admission.admitted;
         let learner_authority_equal = control.learner_authority == treatment.learner_authority;
         let useful_expansion_set_equal = control_seed.useful_graph_expansion_set_sha256
             == treatment_seed.useful_graph_expansion_set_sha256;

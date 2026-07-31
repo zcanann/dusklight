@@ -302,7 +302,7 @@ pub struct NativeTacticPersistenceTiming {
     pub decision_journal_micros: u64,
     /// Content-addressed transition and route objects shared by the decision
     /// journal and replay control plane.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub replay_content_micros: u64,
     /// Replay-control-plane publication excluding the separately reported
     /// learner model update.

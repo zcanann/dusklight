@@ -1013,6 +1013,25 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
 }
 
 #[test]
+fn legacy_persistence_timing_round_trips_without_new_zero_fields() {
+    let legacy = serde_json::json!({
+        "source_tape_micros": 1,
+        "recovery_checkpoint_micros": 2,
+        "decision_journal_micros": 3,
+        "replay_publication_micros": 4,
+        "lease_resolution_micros": 5,
+        "recovery_prune_micros": 6,
+        "retained_terminal_micros": 7,
+        "finalization_micros": 8,
+        "unattributed_micros": 9
+    });
+    let timing: NativeTacticPersistenceTiming = serde_json::from_value(legacy.clone()).unwrap();
+
+    assert_eq!(timing.replay_content_micros, 0);
+    assert_eq!(serde_json::to_value(timing).unwrap(), legacy);
+}
+
+#[test]
 fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
     let mut first = NativeTacticRestoreAccounting {
         native_requests: 4,

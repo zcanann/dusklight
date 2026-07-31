@@ -77,9 +77,6 @@ correctness rather than guessed at from a giant report.
 
 ## 3. Raise useful-evidence throughput
 
-- [ ] Close the shared-replay-content treatment: seal and audit its evidence,
-      retain it only for a demonstrated correctness or total-cost benefit, and
-      otherwise revert it. A cheaper subphase is not a throughput win.
 - [ ] Split tactic-execution time into checkpoint materialization,
       restore/capture, controller preparation, native simulation, IPC, and
       worker idle/queue time; optimize the largest measured component.

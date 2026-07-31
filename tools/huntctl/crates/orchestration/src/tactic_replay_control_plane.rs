@@ -177,6 +177,10 @@ pub struct TacticReplayAdmissionTiming {
     pub unattributed_micros: u64,
 }
 
+fn replay_admission_timing_is_default(value: &TacticReplayAdmissionTiming) -> bool {
+    *value == TacticReplayAdmissionTiming::default()
+}
+
 impl TacticReplayAdmissionTiming {
     pub fn total_micros(&self) -> u64 {
         self.validation_micros
@@ -227,6 +231,7 @@ pub struct TacticReplayAdmissionMetrics {
     pub admission_micros: u64,
     pub maximum_admission_micros: u64,
     pub mean_admission_micros: u64,
+    #[serde(default, skip_serializing_if = "replay_admission_timing_is_default")]
     pub timing: TacticReplayAdmissionTiming,
 }
 
@@ -1173,11 +1178,13 @@ mod tests {
 
     #[test]
     fn legacy_admission_metrics_default_the_timing_breakdown() {
-        let metrics: TacticReplayAdmissionMetrics = serde_json::from_str(
-            r#"{"attempts":2,"admitted":1,"duplicates":1,"admission_micros":17,"maximum_admission_micros":12,"mean_admission_micros":8}"#,
-        )
-        .unwrap();
+        let legacy = r#"{"attempts":2,"admitted":1,"duplicates":1,"admission_micros":17,"maximum_admission_micros":12,"mean_admission_micros":8}"#;
+        let metrics: TacticReplayAdmissionMetrics = serde_json::from_str(legacy).unwrap();
         assert_eq!(metrics.timing, TacticReplayAdmissionTiming::default());
+        assert_eq!(
+            serde_json::to_value(metrics).unwrap(),
+            serde_json::from_str::<serde_json::Value>(legacy).unwrap()
+        );
     }
 
     #[test]
