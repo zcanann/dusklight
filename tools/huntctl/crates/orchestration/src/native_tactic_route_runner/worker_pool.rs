@@ -34,7 +34,7 @@ pub(super) fn launch_tactic_route_worker(
         initial_result: initial_root.join("result.json"),
         initial_winner_tape: None,
     };
-    let (worker, initial) = NativeSuffixWorkerSession::launch_compact_with_prevalidated_files(
+    let (mut worker, initial) = NativeSuffixWorkerSession::launch_compact_with_prevalidated_files(
         &launch,
         NativeSuffixPrevalidatedFileIdentities {
             executable_sha256: config.execution.executable.sha256,
@@ -49,6 +49,7 @@ pub(super) fn launch_tactic_route_worker(
     let facts = initial_facts(&initial)?;
     let root_checkpoint_sha256 =
         tactic_root_checkpoint_sha256(worker.identity()).map_err(route_error)?;
+    worker.suspend_process().map_err(route_error)?;
     Ok((
         worker,
         facts,
@@ -538,6 +539,16 @@ impl<'a, W> TimedTacticWorker<'a, W> {
             .peak_live_endpoint_host_snapshot_bytes
             .max(cache.live_endpoint_resident_host_snapshot_bytes);
         Ok(())
+    }
+}
+
+impl TimedTacticWorker<'_, NativeSuffixWorkerSession> {
+    fn suspend_process(&mut self) -> Result<(), NativeTacticRouteRunError> {
+        self.inner.suspend_process().map_err(route_error)
+    }
+
+    fn resume_process(&mut self) -> Result<(), NativeTacticRouteRunError> {
+        self.inner.resume_process().map_err(route_error)
     }
 }
 

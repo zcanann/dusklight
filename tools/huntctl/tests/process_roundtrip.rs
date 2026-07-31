@@ -68,6 +68,20 @@ fn graceful_shutdown_is_acknowledged() {
 }
 
 #[test]
+fn suspended_worker_resumes_at_the_same_protocol_session() {
+    let executable = env!("CARGO_BIN_EXE_huntctl");
+    let transport = ProcessTransport::spawn(executable, &["mock-worker".into()]).unwrap();
+    let child_id = transport.child_id();
+    let mut client = WorkerClient::new(transport);
+    client.handshake().unwrap();
+
+    client.suspend_process().unwrap();
+    client.resume_process().unwrap();
+    client.ping().unwrap();
+    assert_eq!(client.into_transport().child_id(), child_id);
+}
+
+#[test]
 fn active_fidelity_profile_is_part_of_worker_identity() {
     let executable = env!("CARGO_BIN_EXE_huntctl");
     let mut observe =

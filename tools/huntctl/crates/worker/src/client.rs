@@ -1,4 +1,4 @@
-use crate::transport::Transport;
+use crate::transport::{ProcessTransport, Transport};
 pub use dusklight_automation_contracts::engine_session::{
     ENGINE_SESSION_REUSE_AUDIT_SCHEMA_V1, SessionReuseAudit, SessionReuseBlocker,
 };
@@ -527,6 +527,16 @@ impl<T: Transport> WorkerClient<T> {
             });
         }
         Ok(response)
+    }
+}
+
+impl WorkerClient<ProcessTransport> {
+    pub fn suspend_process(&mut self) -> Result<(), ClientError> {
+        self.transport.suspend_process().map_err(ClientError::Io)
+    }
+
+    pub fn resume_process(&mut self) -> Result<(), ClientError> {
+        self.transport.resume_process().map_err(ClientError::Io)
     }
 }
 

@@ -706,6 +706,7 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
     loop {
         let job = receiver.recv();
         let Ok(mut job) = job else {
+            timed_worker.resume_process()?;
             break;
         };
         let batch_started = Instant::now();
@@ -724,6 +725,10 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
                 .send(Err(route_message("native tactic proposal job is empty")));
             continue;
         };
+        if let Err(error) = timed_worker.resume_process() {
+            let _ = job.response.send(Err(route_message(error.to_string())));
+            return Err(error);
+        }
         let _ = job.execution_started.send(());
         let checkpoint_source = if job.materialize_frontier {
             materialize_job_frontier(
@@ -740,7 +745,14 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
         let mut checkpoint_source = match checkpoint_source {
             Ok(source) => source,
             Err(error) => {
-                let _ = job.response.send(Err(route_error(error)));
+                let result = Err(route_error(error));
+                if let Err(suspend_error) = timed_worker.suspend_process() {
+                    let _ = job
+                        .response
+                        .send(Err(route_message(suspend_error.to_string())));
+                    return Err(suspend_error);
+                }
+                let _ = job.response.send(result);
                 continue;
             }
         };
@@ -895,10 +907,15 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
                 }
             }
         }
-        let _ = job.response.send(match failed {
+        let result = match failed {
             Some(error) => Err(error),
             None => Ok(work),
-        });
+        };
+        if let Err(error) = timed_worker.suspend_process() {
+            let _ = job.response.send(Err(route_message(error.to_string())));
+            return Err(error);
+        }
+        let _ = job.response.send(result);
     }
     drop(timed_worker);
     worker.shutdown().map_err(route_error)

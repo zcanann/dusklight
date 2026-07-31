@@ -48,6 +48,7 @@ impl<R: BufRead, W: Write> Transport for LineTransport<R, W> {
 pub struct ProcessTransport {
     child: Child,
     lines: LineTransport<BufReader<ChildStdout>, BufWriter<ChildStdin>>,
+    suspended: bool,
 }
 
 impl ProcessTransport {
@@ -78,19 +79,65 @@ impl ProcessTransport {
         Ok(Self {
             child,
             lines: LineTransport::new(BufReader::new(stdout), BufWriter::new(stdin)),
+            suspended: false,
         })
     }
 
     pub fn child_id(&self) -> u32 {
         self.child.id()
     }
+
+    /// Stops every thread in an authenticated persistent child while its
+    /// protocol is at an idle command boundary.
+    ///
+    /// The native engine owns background threads that can continue consuming
+    /// CPU even while its main protocol thread is blocked on stdin. Suspending
+    /// the complete process preserves its in-memory checkpoint cache and
+    /// process identity without allowing unused fleet members to perturb a
+    /// smaller-worker throughput sample.
+    pub fn suspend_process(&mut self) -> std::io::Result<()> {
+        if self.suspended {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "worker process is already suspended",
+            ));
+        }
+        process_control::suspend(&self.child)?;
+        self.suspended = true;
+        Ok(())
+    }
+
+    /// Resumes a child previously stopped by [`Self::suspend_process`].
+    pub fn resume_process(&mut self) -> std::io::Result<()> {
+        if !self.suspended {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "worker process is not suspended",
+            ));
+        }
+        process_control::resume(&self.child)?;
+        self.suspended = false;
+        Ok(())
+    }
 }
 
 impl Transport for ProcessTransport {
     fn send_line(&mut self, line: &str) -> std::io::Result<()> {
+        if self.suspended {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "cannot send to a suspended worker process",
+            ));
+        }
         self.lines.send_line(line)
     }
     fn receive_line(&mut self) -> std::io::Result<Option<String>> {
+        if self.suspended {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "cannot receive from a suspended worker process",
+            ));
+        }
         self.lines.receive_line()
     }
 }
@@ -101,5 +148,113 @@ impl Drop for ProcessTransport {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
+    }
+}
+
+#[cfg(windows)]
+mod process_control {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+    use std::process::Child;
+
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        fn NtSuspendProcess(process_handle: *mut c_void) -> i32;
+        fn NtResumeProcess(process_handle: *mut c_void) -> i32;
+    }
+
+    pub(super) fn suspend(child: &Child) -> std::io::Result<()> {
+        let status = unsafe { NtSuspendProcess(child.as_raw_handle()) };
+        nt_result(status, "suspend")
+    }
+
+    pub(super) fn resume(child: &Child) -> std::io::Result<()> {
+        let status = unsafe { NtResumeProcess(child.as_raw_handle()) };
+        nt_result(status, "resume")
+    }
+
+    fn nt_result(status: i32, operation: &str) -> std::io::Result<()> {
+        if status >= 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(format!(
+                "cannot {operation} worker process: NTSTATUS 0x{:08x}",
+                status as u32
+            )))
+        }
+    }
+}
+
+#[cfg(unix)]
+mod process_control {
+    use std::process::Child;
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    const SIGSTOP: i32 = 19;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    const SIGCONT: i32 = 18;
+
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    ))]
+    const SIGSTOP: i32 = 17;
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    ))]
+    const SIGCONT: i32 = 19;
+
+    unsafe extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+
+    pub(super) fn suspend(child: &Child) -> std::io::Result<()> {
+        signal(child, SIGSTOP)
+    }
+
+    pub(super) fn resume(child: &Child) -> std::io::Result<()> {
+        signal(child, SIGCONT)
+    }
+
+    fn signal(child: &Child, signal: i32) -> std::io::Result<()> {
+        let pid = i32::try_from(child.id()).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "worker process id exceeds platform signal range",
+            )
+        })?;
+        if unsafe { kill(pid, signal) } == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
+mod process_control {
+    use std::process::Child;
+
+    pub(super) fn suspend(_: &Child) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "worker process suspension is unsupported on this platform",
+        ))
+    }
+
+    pub(super) fn resume(_: &Child) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "worker process resumption is unsupported on this platform",
+        ))
     }
 }

@@ -403,6 +403,14 @@ impl NativeSuffixWorkerSession {
         )
     }
 
+    pub(crate) fn suspend_process(&mut self) -> Result<(), NativeSuffixWorkerError> {
+        self.client.suspend_process().map_err(worker_error)
+    }
+
+    pub(crate) fn resume_process(&mut self) -> Result<(), NativeSuffixWorkerError> {
+        self.client.resume_process().map_err(worker_error)
+    }
+
     pub fn shutdown(mut self) -> Result<(), NativeSuffixWorkerError> {
         self.client.shutdown().map_err(worker_error)
     }
