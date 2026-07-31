@@ -1,102 +1,117 @@
 # Learning framework
 
-## Goal
+## Objective
 
-Build a general learning system that can discover useful behavior from
-restorable native states, observations, legal actions, transition outcomes,
-and real terminal predicates -- and do it quickly enough to iterate on.
+Build a general system that learns useful behavior from restorable native
+states, observations, legal actions, transition outcomes, and authoritative
+terminal predicates. It must learn fast enough to iterate on and remain
+auditable, deterministic, resumable, and safe to parallelize.
 
-For the current Ordon proving ground, success means:
+For Ordon, success means discovering the real load zone from scratch, beating
+matched frozen-policy and random-valid controls, reaching it within a useful
+wall-clock budget, and then improving past the 125-tick human replay to 123
+ticks or fewer. The final proof is repeating this on another native route
+without route-specific learner changes.
 
-1. discover the load zone from scratch;
-2. learn more reliably and sample-efficiently than frozen and random-valid
-   controls;
-3. reach the terminal within a practical wall-clock budget; and
-4. continue optimizing past the 125-tick human replay to 123 ticks or fewer.
+Human input may be optional experience. Authored routes, waypoints,
+route-shaped rewards, blessed tactic sequences, proxy terminals, and seed
+mining are not learning. TAS graph recording/playback and route-planner UX are
+separate product work.
 
-Human demonstrations may accelerate learning, but authored routes, waypoints,
-route-shaped rewards, blessed tactic sequences, and proxy terminals may not be
-required. Route-planner product work belongs in `TASKS_ROUTE_PLANNER.md`.
+## Current state
 
-## Current truth
+- Development seeds: `104729`, `155921`.
+- Untouched held-out seeds: `130363`, `181081`.
+- The latest matched development run reached the real terminal on both learned
+  seeds and neither control arm.
+- That result is not accepted yet: its learned report counted 500 shared-graph
+  expansions from only 256 completed proposals, so comparison validation
+  correctly rejected it.
 
-- The pinned human replay reaches the real Ordon load zone in 125 native ticks.
-- The four request-sealed seeds are split before further evaluation:
-  development uses `104729` and `155921`; untouched held-out evaluation uses
-  `130363` and `181081`.
-- Earlier scratch campaigns did not show useful learning. In the first matched
-  development run after sealing policy authority, learned reached the real
-  terminal at 262 authenticated ticks while frozen-policy and random-valid did
-  not reach it in the same 32-decision budget. The model earned deployment
-  authority at decision 16 and the terminal was discovered at decision 29.
-  This is promising single-seed evidence, not yet a repeated development or
-  held-out result.
-- Whole-source-state held-out calibration gates every current use of the
-  goal-reachability model. Untrusted predictions remain visible, while v39
-  route reports and v4 campaign summaries reject unproven action or frontier
-  policy deployment. Learned-versus-control results can now test learning
-  rather than an authority leak.
-- The immediate problem is framework correctness and learning quality -- not
-  mining more seeds or treating a near miss as success.
+## Queue
 
-## Work queue
+Complete these gates in order. When a gate fails, repair the first demonstrated
+cause instead of starting a larger campaign.
 
-Work in this order. After a failed gate, repair the first demonstrated cause
-before running another large campaign.
+### P0 - Prove that learning is real
 
-- [ ] **Show that the system actually learns.** Run matched learned,
-      frozen-policy, and random-valid treatments with identical seeds, action
-      surfaces, horizons, workers, and resource budgets. Learned must improve
-      terminal-discovery rate and time/sample-to-terminal on development seeds,
-      then repeat that result on untouched held-out seeds. If it fails, inspect
-      the causal chain and repair the first broken or uninformative link; do not
-      compensate with route-specific rewards or seed mining.
+- [ ] Fix campaign-wide useful-expansion accounting. Shared work counts once,
+      independent work remains additive, throughput uses the same authority,
+      and impossible totals remain rejected. Add multi-seed regressions.
+- [ ] Produce a valid matched development comparison with identical seeds,
+      action surfaces, horizons, workers, and resource budgets. Reuse evidence
+      only when projection does not alter what happened.
+- [ ] Audit the causal chain from restored state through observation, legal
+      action, exploration, transition, replay, update, policy deployment, and
+      terminal evidence. Every decision and discarded sample must be
+      attributable; uncalibrated predictions must have no policy authority.
+- [ ] Require learned to beat both controls in development terminal rate and
+      sample/time-to-terminal, then repeat the advantage once on the sealed
+      held-out seeds. Do not tune against, replace, or mine held-out seeds.
 
-- [ ] **Make learning fast enough to use.** Measure useful native transitions
-      per second and attribute wall time to simulation/save states, transport,
-      scheduling/idle capacity, learning, and persistence. Fix the largest
-      measured bottleneck, repeat the same workload, and retain the before/after
-      evidence. Scale workers only while throughput improves within explicit
-      CPU and memory limits. Target scratch terminal discovery in a five-minute
-      median and within fifteen minutes for every retained and held-out seed.
+### P1 - Make it fast enough to use
 
-- [ ] **Harden the active framework and orchestration path.** Separate native
-      execution, restoration, observations/actions, learning, graph search,
-      persistence, orchestration, and reporting behind testable interfaces.
-      Split oversized or mixed-responsibility modules and enforce a source-size
-      regression gate. Campaigns must directly own child processes,
-      cancellation, budgets, artifacts, and cleanup. Preserve deterministic
-      replay/resume, treatment isolation, bounded binary durable state, schema
-      migration, and clean-checkout reproduction. Add enough introspection to
-      explain every learner decision, discarded sample, stalled worker, and
-      throughput loss.
+- [ ] Attribute campaign time and utilization to native simulation, save-state
+      operations, transport, scheduling/idle time, learning, and persistence;
+      reconcile the parts with total time and useful transitions.
+- [ ] Establish a reproducible one-worker baseline and bounded scaling curve.
+      Track useful transitions/second, terminal samples/time, CPU, memory,
+      queues, duplicate work, and idle capacity.
+- [ ] Optimize the largest measured bottleneck and retain matched before/after
+      evidence. Scale only while useful throughput improves without changing
+      learning semantics.
+- [ ] Reach scratch discovery in a median of five minutes or less, with no
+      retained development or held-out seed above fifteen minutes under a
+      documented resource budget.
 
-- [ ] **Prove post-terminal optimization.** Continue learning after first
-      success, beat the 125-tick replay, and produce a route of 123 native ticks
-      or fewer. Cold-replay the final controller twice with identical bytes,
-      state identities, terminal evidence, and tick count.
+### P2 - Harden the machinery
 
-- [ ] **Prove extensibility without route scripting.** Surface legal
-      contextual actions such as roll, jump, mount, or interact when available,
-      and let the learner compose parameterized primitives such as direction,
-      camera lock, and action timing. Measure the optional human replay as
-      experience: it may improve sample efficiency, but scratch learning must
-      still work and the demonstration must not become a performance ceiling.
-      Finally, repeat discovery and optimization on a second native route
-      without changing learner logic or the observation, action, and objective
-      contracts.
+- [ ] Separate native execution, restoration, observation/actions, exploration,
+      replay/learning, graph search, persistence, orchestration, and reporting
+      behind testable boundaries. Split mixed or oversized modules and enforce
+      a source-size regression gate.
+- [ ] Give campaigns exact ownership of their child processes, limits,
+      cancellation, artifacts, and cleanup. Test interruption, timeout, child
+      failure, and resume; never discover or kill unrelated processes.
+- [ ] Make uninterrupted, replayed, and resumed runs deterministic for the same
+      initial state, seed, configuration, and checkpoint, including decisions,
+      identities, accounting, and terminal evidence.
+- [ ] Keep durable machine state bounded, versioned, binary, checksummed, and
+      migration-tested. Reject corrupt, incompatible, partial, or inconsistent
+      artifacts before they affect learning.
+- [ ] Make every campaign explainable from artifacts alone: inputs, identities,
+      legal actions, exploration, samples, updates, snapshots, worker lifecycle,
+      timing, failures, and comparison must reconcile from a clean checkout.
 
-## Operating rules
+### P3 - Prove optimization, not just discovery
 
-- The terminal predicate is authoritative. Distance, speed, straightness,
-  rolling, wall contact, and similar signals are observations or diagnostics,
-  not hand-authored substitutes for success.
-- Every experiment answers one question with the smallest matched run capable
-  of answering it. Report terminal success, native ticks, samples, wall time,
-  resource use, and uncertainty.
-- A large campaign requires a named hypothesis or a verified throughput run.
-  Repeating an unchanged failing campaign is not progress.
-- Durable machine state is versioned, bounded, and binary. JSON is limited to
-  small requests and human-facing reports.
-- Remove completed work from this file. Commit and push each natural milestone;
+- [ ] Continue learning after the first terminal while preserving exploration
+      and promoting behavior only from evidence.
+- [ ] Expose general movement state, recent trajectory, action legality/prompts,
+      analog direction, camera control, roll, and other native actions without
+      assigning route-specific rewards to them.
+- [ ] Let learned parameterized action compositions compete with primitives and
+      be retired when unhelpful; do not encode blessed tactic sequences.
+- [ ] Produce an authenticated route of 123 native ticks or fewer and cold-replay
+      it twice with identical controller bytes, state identities, terminal
+      evidence, and tick count.
+
+### P4 - Prove generality
+
+- [ ] Compare scratch and human-experience-assisted learning under matched
+      budgets. Human experience may improve sample efficiency but must be
+      optional and must not cap performance.
+- [ ] Repeat scratch discovery and post-terminal optimization on a second native
+      route without changing learner logic or the observation, action,
+      objective, persistence, or orchestration contracts.
+
+## Rules
+
+- The real terminal predicate is authoritative; intermediate signals are
+  learner inputs and diagnostics, not hand-authored claims of progress.
+- Every experiment answers one named question with the smallest matched run
+  capable of answering it. Near misses and arbitrary tick counts are not wins.
+- Do not rerun unchanged failures. Correctness and auditability precede scale;
+  measured throughput precedes long mining.
+- Remove completed work from this file. Commit and push natural milestones and
   do not leave a long-lived dirty workspace.
