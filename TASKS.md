@@ -513,7 +513,16 @@ Exit gate:
       during execution, after native completion, after recovery-point commit,
       and after decision commit, and retain all five content-bound recovery
       audits proving exact semantic work and retry accounting. Run at least one
-      fault after graph/replay growth, not only at decision zero.
+      fault after graph/replay growth, not only at decision zero. Checkpoint
+      `8901e49b8f` upgrades the recovery audit to v2 after finding that v1
+      hashed only a hand-picked trace subset and compared graph counts rather
+      than exact authorities. V2 covers the complete typed decision/proposal
+      trace while normalizing only timing and physical placement, and requires
+      exact state-graph, replay-snapshot, and learner-authority identities in
+      addition to graph/replay shape and lease accounting. Legacy v1 digest
+      validation remains compatible but cannot close this gate. All 337
+      orchestration tests pass. The task remains open for portable retention
+      and the five grown-campaign native fault cells.
 - [ ] Remove the measured end-to-end saturation bottleneck until the reference
       workstation sustains enough useful evidence to meet the P4 wall-time
       gate. Prefer reducing restore/replay and idle time before adding capacity.
