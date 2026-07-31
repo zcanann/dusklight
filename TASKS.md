@@ -728,8 +728,25 @@ Exit gate:
       end to end at 63.2% efficiency and `1.547x` in tactic execution. The
       remaining non-tactic wall is effectively fixed at about 55-57 seconds,
       including about 25-26 seconds of persistence and about 6 seconds of
-      model update. Reduce this serial occupancy before spending a wider cell;
-      then confirm the repaired saturation curve. The widest cell's
+      model update. Checkpoint `b668a16b5f` repairs that attribution: model
+      updates were timed inside persistence and then reported separately, and
+      the residual persistence path had no phase breakdown. The matched
+      two-worker report retained at
+      `benchmarks/native-tactic-throughput-treatment/win32-x86_64/persistence-attribution-b668a16b5f-w2`
+      preserves the exact 16 decisions, 5,096 native ticks, 256 useful
+      expansions, complete semantic trace, and fixed-work authorities under
+      bundle identity
+      `b8a52ba959f6fc5a5431742a25e5132fe62bc2278b9f62c78060b1a8236e73bd`.
+      Its wall is about `113.29` seconds, tactic execution `57.77` seconds,
+      and useful-expansion throughput `2.260` per second. Persistence is
+      actually `19.221` seconds exclusive of the `5.889`-second model update,
+      and its exact additive attribution is `9.081` seconds of finalization,
+      `8.334` seconds of replay publication, `1.653` seconds of recovery
+      checkpoints, `0.121` seconds of decision journaling, and less than
+      `0.032` seconds across all other persistence phases. Finalization and
+      replay publication now account for 90.6% of measured persistence.
+      Eliminate or amortize those two serial paths before spending a wider
+      cell; then confirm the repaired saturation curve. The widest cell's
       persistence occupancy remains independently relevant because grouping
       cannot improve the 16-worker cell when every sibling already has a
       worker. All 342 orchestration tests and the 557-file source-size gate
