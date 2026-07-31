@@ -159,6 +159,15 @@ pub use report::{
     NativeTacticRouteRunConfig, NativeTacticRouteTiming, NativeTacticSeedResult,
     NativeTacticSeedStopReason, NativeTacticStateTrace, NativeTacticValueTrace,
 };
+mod campaign_summary;
+pub use campaign_summary::{
+    NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE, NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V1,
+    NativeTacticCampaignCausalSummary, NativeTacticCampaignEfficiencySummary,
+    NativeTacticCampaignIdentities, NativeTacticCampaignOutcomeSummary,
+    NativeTacticCampaignResourceSummary, NativeTacticCampaignSummary,
+    NativeTacticCampaignTimingSummary, NativeTacticCampaignTreatmentSummary,
+    NativeTacticCampaignWorkSummary, NativeTacticCausalLink,
+};
 mod lease_journal;
 use lease_journal::NativeTacticLeaseLedger;
 pub use lease_journal::{NativeTacticLeaseAccounting, NativeTacticLeaseOutcome};
@@ -875,9 +884,14 @@ fn run_native_tactic_route_with_optional_fleet(
     };
     serde_json::to_writer(std::io::sink(), &report).map_err(route_error)?;
     report.timing.reporting_micros = elapsed_micros(reporting_started.elapsed());
+    let summary = NativeTacticCampaignSummary::build(&report, config.execution_plan)?;
     write_new(
         &config.output_root.join("report.json"),
         &serde_json::to_vec_pretty(&report).map_err(route_error)?,
+    )?;
+    write_new(
+        &config.output_root.join(NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE),
+        &summary.to_pretty_json()?,
     )?;
     if let Some(fleet) = owned_fleet {
         fleet.shutdown()?;

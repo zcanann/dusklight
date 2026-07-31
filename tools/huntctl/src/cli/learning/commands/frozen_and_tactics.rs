@@ -5,10 +5,10 @@ use super::{
     MAX_LEARN_INPUT_CORPORA, NativeEpisodeShard, NativeFactorizedPolicyBatchConfig,
     NativeFactorizedPolicySuffixBatch, NativeFrozenPolicyReinferenceReport,
     NativeFrozenPolicySuffixBatch, NativeGenericExecutionStrategy, NativeResidualExecutionBinding,
-    NativeTacticColdReplayConfig, NativeTacticColdReplayEvidenceBundle,
-    NativeTacticDemonstrationReport, NativeTacticExecutionPlan, NativeTacticFaultInjector,
-    NativeTacticFaultRecoveryEvidenceBundle, NativeTacticLaunchSmokeBundle,
-    NativeTacticObservationAudit, NativeTacticPolicyRunConfig,
+    NativeTacticCampaignSummary, NativeTacticColdReplayConfig,
+    NativeTacticColdReplayEvidenceBundle, NativeTacticDemonstrationReport,
+    NativeTacticExecutionPlan, NativeTacticFaultInjector, NativeTacticFaultRecoveryEvidenceBundle,
+    NativeTacticLaunchSmokeBundle, NativeTacticObservationAudit, NativeTacticPolicyRunConfig,
     NativeTacticPostTerminalControlReport, NativeTacticRestoreLocalityConfig,
     NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport, NativeTacticRouteReport,
     NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
@@ -631,6 +631,7 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 serde_json::to_string_pretty(&json!({
                     "schema": report.schema,
                     "report": output.join("report.json"),
+                    "summary": output.join("campaign-summary.json"),
                     "terminal_seeds": report.terminal_seeds,
                     "best_authenticated_tick": report.best_authenticated_tick,
                     "promotion_successful_seeds": report.promotion_successful_seeds,
@@ -645,6 +646,28 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "worst_time_to_first_terminal_micros":
                         report.worst_time_to_first_terminal_micros,
                     "demonstration_transitions": report.demonstration_transitions,
+                }))?
+            );
+            Ok(())
+        }
+        Some("validate-tactic-campaign-summary") => {
+            let learn_args = &args[1..];
+            let route: NativeTacticRouteReport =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            let plan = NativeTacticExecutionPlan::read(&required_path(learn_args, "--plan")?)?;
+            let summary: NativeTacticCampaignSummary =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--summary")?)?)?;
+            summary.validate_against(&route, &plan)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": summary.schema,
+                    "content_sha256": summary.content_sha256,
+                    "route_report_sha256": summary.route_report_sha256,
+                    "causal_chain_ready_for_matched_evaluation":
+                        summary.causal_chain.causal_chain_ready_for_matched_evaluation,
+                    "first_incomplete_link": summary.causal_chain.first_incomplete_link,
+                    "passed": true,
                 }))?
             );
             Ok(())
