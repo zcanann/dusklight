@@ -10,6 +10,16 @@ pub const NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2: &str =
     "dusklight-native-tactic-scratch-campaign-audit/v2";
 pub const NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3: &str =
     "dusklight-native-tactic-scratch-campaign-audit/v3";
+pub const NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4: &str =
+    "dusklight-native-tactic-scratch-campaign-audit/v4";
+
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
+fn is_zero_digest(value: &Digest) -> bool {
+    *value == Digest::ZERO
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -166,6 +176,12 @@ pub struct NativeTacticScratchCampaignAudit {
     pub proposal_policy: TacticProposalPolicy,
     pub value_treatment: TacticValueTreatment,
     pub resources: NativeTacticCampaignResourceAudit,
+    /// Exact union of completed executable expansion identities across every
+    /// final seed graph. Legacy audits only retained per-seed snapshot counts.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub unique_useful_graph_expansions: u64,
+    #[serde(default, skip_serializing_if = "is_zero_digest")]
+    pub useful_graph_expansion_set_sha256: Digest,
     pub seeds: Vec<NativeTacticScratchSeedAudit>,
 }
 
@@ -176,24 +192,29 @@ impl NativeTacticScratchCampaignAudit {
     ) -> Result<Self, NativeTacticRouteRunError> {
         let repository_root = repository_root.canonicalize().map_err(route_error)?;
         let mut seeds = Vec::with_capacity(route.seeds.len());
+        let mut campaign_useful_expansions = CampaignUsefulGraphExpansionSet::default();
         for seed in &route.seeds {
             let checkpoint_path =
                 confined_checkpoint(&repository_root, Path::new(&seed.final_checkpoint))?;
             let checkpoint =
                 TacticQCampaign::read_checkpoint_payload(&checkpoint_path).map_err(route_error)?;
-            if checkpoint
-                .state_graph
-                .content_sha256()
-                .map_err(route_error)?
-                != seed.state_graph_sha256
-            {
-                return Err(route_message(
-                    "scratch campaign audit checkpoint graph identity differs",
-                ));
-            }
+            validate_seed_useful_graph_accounting(seed, &checkpoint.state_graph)?;
+            campaign_useful_expansions.include_graph(&checkpoint.state_graph);
             seeds.push(seed_audit(route, seed, &checkpoint.state_graph)?);
         }
         seeds.sort_by_key(|seed| seed.seed);
+        let unique_useful_graph_expansions = campaign_useful_expansions.count()?;
+        let useful_graph_expansion_set_sha256 = campaign_useful_expansions.content_sha256();
+        if route.unique_useful_graph_expansions != unique_useful_graph_expansions
+            || route
+                .timing
+                .unique_useful_graph_expansions_per_second_millionths
+                != per_second_millionths(unique_useful_graph_expansions, route.timing.wall_micros)
+        {
+            return Err(route_message(
+                "scratch campaign route has invalid campaign-wide useful graph accounting",
+            ));
+        }
         let plan = NativeTacticExecutionPlan::read(Path::new(&route.execution_plan_path))?;
         if plan.identity()? != route.execution_plan_sha256
             || plan.budgets != route.resource_budgets
@@ -205,7 +226,7 @@ impl NativeTacticScratchCampaignAudit {
         }
         let resources = resource_audit(route, &plan)?;
         let mut audit = Self {
-            schema: NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3.into(),
+            schema: NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4.into(),
             content_sha256: Digest::ZERO,
             route_report_sha256: route_report_sha256(route)?,
             execution_plan_sha256: route.execution_plan_sha256,
@@ -215,6 +236,8 @@ impl NativeTacticScratchCampaignAudit {
             proposal_policy: route.proposal_policy,
             value_treatment: route.value_treatment,
             resources,
+            unique_useful_graph_expansions,
+            useful_graph_expansion_set_sha256,
             seeds,
         };
         audit.content_sha256 = audit.compute_content_sha256()?;
@@ -226,12 +249,26 @@ impl NativeTacticScratchCampaignAudit {
         let seed_is_valid: fn(&NativeTacticScratchSeedAudit) -> bool = match self.schema.as_str() {
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2 => seed_is_valid_v2,
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3 => seed_is_valid_v3,
+            NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4 => seed_is_valid_v3,
             _ => {
                 return Err(route_message(
                     "scratch campaign audit schema is unsupported",
                 ));
             }
         };
+        let campaign_accounting_valid =
+            if self.schema == NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4 {
+                self.useful_graph_expansion_set_sha256 != Digest::ZERO
+                    && self.unique_useful_graph_expansions
+                        <= self
+                            .seeds
+                            .iter()
+                            .map(|seed| seed.unique_useful_graph_expansions)
+                            .sum()
+            } else {
+                self.unique_useful_graph_expansions == 0
+                    && self.useful_graph_expansion_set_sha256 == Digest::ZERO
+            };
         if self.content_sha256 == Digest::ZERO
             || self.route_report_sha256 == Digest::ZERO
             || self.execution_plan_sha256 == Digest::ZERO
@@ -244,6 +281,7 @@ impl NativeTacticScratchCampaignAudit {
                 .windows(2)
                 .all(|pair| pair[0].seed < pair[1].seed)
             || self.seeds.iter().any(|seed| !seed_is_valid(seed))
+            || !campaign_accounting_valid
             || !resource_audit_is_valid(&self.resources, self.workers, &self.seeds)
             || self.compute_content_sha256()? != self.content_sha256
         {

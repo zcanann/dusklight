@@ -652,6 +652,51 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
+        Some("project-tactic-route-accounting") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let mut route: NativeTacticRouteReport =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "tactic route accounting output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let previous_unique_useful_graph_expansions = route.unique_useful_graph_expansions;
+            route.reproject_useful_graph_accounting(&repository_root)?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let mut bytes = serde_json::to_vec_pretty(&route)?;
+            bytes.push(b'\n');
+            let mut file = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&output)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": route.schema,
+                    "previous_unique_useful_graph_expansions":
+                        previous_unique_useful_graph_expansions,
+                    "unique_useful_graph_expansions": route.unique_useful_graph_expansions,
+                    "output": output,
+                }))?
+            );
+            Ok(())
+        }
         Some("project-tactic-campaign-summary") => {
             let learn_args = &args[1..];
             let route: NativeTacticRouteReport =

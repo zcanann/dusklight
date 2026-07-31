@@ -885,7 +885,7 @@ fn horizon_fit_uses_the_selected_tactic_duration() {
 }
 
 #[test]
-fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
+fn throughput_rates_use_campaign_unique_graph_work_and_sum_seed_phases() {
     let seed = NativeTacticSeedResult {
         execution_plan_sha256: Digest::ZERO,
         seed: 7,
@@ -967,12 +967,14 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
         final_result: None,
         trace: Vec::new(),
     };
-    let timing = aggregate_route_timing(&[seed]);
+    // The campaign authority may be smaller than the sum of per-seed graph
+    // snapshots when those snapshots overlap.
+    let timing = aggregate_route_timing(&[seed], 4);
 
     assert_eq!(timing.useful_decisions_per_second_millionths, 1_000_000);
     assert_eq!(
         timing.unique_useful_graph_expansions_per_second_millionths,
-        3_000_000
+        2_000_000
     );
     assert_eq!(timing.native_ticks_per_second_millionths, 15_000_000);
     assert_eq!(timing.episodes_per_second_millionths, 1_000_000);

@@ -22,11 +22,15 @@ separate product work.
 
 - Development seeds: `104729`, `155921`.
 - Untouched held-out seeds: `130363`, `181081`.
-- The latest matched development run reached the real terminal on both learned
-  seeds and neither control arm.
-- That result is not accepted yet: its learned report counted 500 shared-graph
-  expansions from only 256 completed proposals, so comparison validation
-  correctly rejected it.
+- The corrected matched development comparison is valid and causally complete
+  (`build/benchmarks/ordon-native-matched-dev-seeds104729-155921-d32-v1-comparison-accounting-v2.json`,
+  content `048c1024...6278f`). Learned reached the real terminal on 2/2 seeds;
+  frozen-policy and random-valid reached 0/2.
+- Learned required a 123.36-second median and 170 useful graph expansions to
+  first terminal. Total unique useful work was closely matched: learned 254,
+  frozen 255, random 256. This proves a development advantage, not held-out
+  generalization or route quality; the best discovered route was still 304
+  ticks versus the 125-tick human replay.
 
 ## Queue
 
@@ -35,19 +39,10 @@ cause instead of starting a larger campaign.
 
 ### P0 - Prove that learning is real
 
-- [ ] Fix campaign-wide useful-expansion accounting. Shared work counts once,
-      independent work remains additive, throughput uses the same authority,
-      and impossible totals remain rejected. Add multi-seed regressions.
-- [ ] Produce a valid matched development comparison with identical seeds,
-      action surfaces, horizons, workers, and resource budgets. Reuse evidence
-      only when projection does not alter what happened.
-- [ ] Audit the causal chain from restored state through observation, legal
-      action, exploration, transition, replay, update, policy deployment, and
-      terminal evidence. Every decision and discarded sample must be
-      attributable; uncalibrated predictions must have no policy authority.
-- [ ] Require learned to beat both controls in development terminal rate and
-      sample/time-to-terminal, then repeat the advantage once on the sealed
-      held-out seeds. Do not tune against, replace, or mine held-out seeds.
+- [ ] Repeat the matched learned, frozen-policy, and random-valid evaluation
+      once on the sealed held-out seeds. Accept the learning claim only if the
+      learned advantage repeats in terminal rate and sample/time-to-terminal.
+      Do not tune against, replace, or mine held-out seeds.
 
 ### P1 - Make it fast enough to use
 

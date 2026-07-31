@@ -84,7 +84,10 @@ pub(super) fn useful_training_transitions(
         .count() as u64
 }
 
-pub(super) fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> NativeTacticRouteTiming {
+pub(super) fn aggregate_route_timing(
+    seeds: &[NativeTacticSeedResult],
+    unique_useful_graph_expansions: u64,
+) -> NativeTacticRouteTiming {
     let mut timing = NativeTacticRouteTiming::default();
     for seed in seeds {
         timing.wall_micros = timing.wall_micros.saturating_add(seed.timing.wall_micros);
@@ -166,7 +169,7 @@ pub(super) fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> Native
             .reporting_micros
             .saturating_add(seed.timing.reporting_micros);
     }
-    refresh_route_throughput(&mut timing, seeds);
+    refresh_route_throughput(&mut timing, seeds, unique_useful_graph_expansions);
     timing
 }
 
@@ -222,12 +225,9 @@ fn accumulated_parallel_wall_micros<'a>(
 pub(super) fn refresh_route_throughput(
     timing: &mut NativeTacticRouteTiming,
     seeds: &[NativeTacticSeedResult],
+    unique_useful_graph_expansions: u64,
 ) {
     let useful_decisions = seeds.iter().map(|seed| seed.useful_decisions).sum();
-    let unique_useful_graph_expansions = seeds
-        .iter()
-        .map(|seed| seed.unique_useful_graph_expansions)
-        .sum();
     let native_ticks = seeds.iter().map(|seed| seed.native_ticks).sum();
     let episodes = seeds.iter().map(|seed| seed.episodes).sum();
     timing.useful_decisions_per_second_millionths =

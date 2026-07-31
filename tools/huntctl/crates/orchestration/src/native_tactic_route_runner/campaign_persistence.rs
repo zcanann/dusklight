@@ -203,6 +203,15 @@ pub(super) fn read_completed_seed_result(
         .state_graph
         .content_sha256()
         .map_err(route_error)?;
+    let useful_graph_expansions = u64::try_from(
+        checkpoint
+            .state_graph
+            .completed_executable_expansion_count(),
+    )
+    .map_err(route_error)?;
+    let useful_graph_expansion_set_sha256 = checkpoint
+        .state_graph
+        .completed_executable_expansion_set_sha256();
     let seed_root = Path::new(&result.final_checkpoint)
         .parent()
         .and_then(Path::parent)
@@ -226,6 +235,9 @@ pub(super) fn read_completed_seed_result(
         || checkpoint.training_replay.len() != result.training_replay_rows
         || checkpoint.state_graph.node_count() != result.visited_states
         || graph_sha256 != result.state_graph_sha256
+        || useful_graph_expansions != result.unique_useful_graph_expansions
+        || useful_graph_expansion_set_sha256 == Digest::ZERO
+        || useful_graph_expansion_set_sha256 != result.useful_graph_expansion_set_sha256
         || best_graph_terminal.is_some() != result.terminal_discovered
         || best_graph_terminal.map(|path| path.terminal.state_sha256)
             != result.best_terminal_state_sha256

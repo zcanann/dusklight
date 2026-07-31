@@ -246,8 +246,9 @@ pub use scratch_evidence_bundle::{
 mod scratch_campaign_audit;
 pub use scratch_campaign_audit::{
     NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2, NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3,
-    NativeTacticCampaignResourceAudit, NativeTacticScratchCampaignAudit,
-    NativeTacticScratchDecisionAudit, NativeTacticScratchSeedAudit, NativeTacticScratchStopReason,
+    NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4, NativeTacticCampaignResourceAudit,
+    NativeTacticScratchCampaignAudit, NativeTacticScratchDecisionAudit,
+    NativeTacticScratchSeedAudit, NativeTacticScratchStopReason,
     NativeTacticScratchTerminalImprovementAudit,
 };
 mod scratch_comparison;
@@ -675,10 +676,9 @@ fn run_native_tactic_route_with_optional_fleet(
         .map(|(_, result)| result)
         .collect::<Vec<_>>();
     let useful_decisions = seed_results.iter().map(|seed| seed.useful_decisions).sum();
-    let unique_useful_graph_expansions = seed_results
-        .iter()
-        .map(|seed| seed.unique_useful_graph_expansions)
-        .sum();
+    let campaign_useful_graph_expansions =
+        campaign_useful_graph_expansion_set(config.repository_root, &seed_results)?;
+    let unique_useful_graph_expansions = campaign_useful_graph_expansions.count()?;
     let mut native_restore_accounting = NativeTacticRestoreAccounting::default();
     for seed in &seed_results {
         native_restore_accounting.merge(&seed.native_restore_accounting);
@@ -696,7 +696,7 @@ fn run_native_tactic_route_with_optional_fleet(
     let median_time_to_first_terminal_micros =
         median_sorted_wall_micros(&time_to_first_terminal_micros);
     let worst_time_to_first_terminal_micros = time_to_first_terminal_micros.last().copied();
-    let mut timing = aggregate_route_timing(&seed_results);
+    let mut timing = aggregate_route_timing(&seed_results, unique_useful_graph_expansions);
     timing.process_launch_micros = process_launch_micros;
     if let Some(demonstration) = &demonstration {
         timing.tactic_execution_micros = timing
@@ -748,7 +748,7 @@ fn run_native_tactic_route_with_optional_fleet(
     timing.wall_micros = elapsed_micros(campaign_started.elapsed()).max(
         accumulated_coordinator_wall_micros(config.execution_plan, &seed_results),
     );
-    refresh_route_throughput(&mut timing, &seed_results);
+    refresh_route_throughput(&mut timing, &seed_results, unique_useful_graph_expansions);
     let reporting_started = Instant::now();
     let frontier_availability = seed_results
         .iter()
@@ -960,7 +960,10 @@ mod campaign;
 mod campaign_schedule;
 use campaign::{NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1, run_seed};
 mod graph_metrics;
-use graph_metrics::tactic_graph_metrics;
+use graph_metrics::{
+    CampaignUsefulGraphExpansionSet, campaign_useful_graph_expansion_set, tactic_graph_metrics,
+    validate_seed_useful_graph_accounting,
+};
 mod timing_metrics;
 use timing_metrics::{
     accumulated_coordinator_wall_micros, aggregate_route_timing, censored_training_transitions,

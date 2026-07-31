@@ -154,18 +154,23 @@ impl StateGraph {
     /// evidence. Registered, leased, retryable, validation-failed, and
     /// learner-only entries are deliberately excluded from throughput.
     pub fn completed_executable_expansion_count(&self) -> usize {
-        self.expansions
-            .values()
-            .filter(|expansion| {
-                matches!(
-                    expansion.status,
-                    ActionExpansionStatus::Completed {
-                        authority: ExpansionEvidenceAuthority::Executable,
-                        ..
-                    }
-                )
-            })
-            .count()
+        self.completed_executable_expansion_identities().count()
+    }
+
+    /// Stable identities of unique graph-owned actions backed by executable
+    /// native evidence. Callers may union these across graph snapshots without
+    /// double-counting shared campaign work.
+    pub fn completed_executable_expansion_identities(&self) -> impl Iterator<Item = Digest> + '_ {
+        self.expansions.values().filter_map(|expansion| {
+            matches!(
+                expansion.status,
+                ActionExpansionStatus::Completed {
+                    authority: ExpansionEvidenceAuthority::Executable,
+                    ..
+                }
+            )
+            .then_some(expansion.identity_sha256)
+        })
     }
 
     /// Stable semantic identity of the executable work set. This deliberately

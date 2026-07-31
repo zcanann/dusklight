@@ -365,11 +365,7 @@ fn efficiency_metrics(
         .iter()
         .filter_map(|seed| seed.best_authenticated_tick)
         .min();
-    let audited_useful_graph_expansions = audit
-        .seeds
-        .iter()
-        .map(|seed| seed.unique_useful_graph_expansions)
-        .sum::<u64>();
+    let audited_useful_graph_expansions = audit.unique_useful_graph_expansions;
     let mut reported_seeds = route.seeds.iter().map(|seed| seed.seed).collect::<Vec<_>>();
     reported_seeds.sort_unstable();
     let mut first_wall_sorted = first_wall.clone();
