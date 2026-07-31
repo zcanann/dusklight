@@ -27,8 +27,9 @@ supports them.
 
 ## P0 — Establish real learning
 
-- [ ] Fix the current tactic-Q checkpoint content-identity failure and prove
-      binary round-trip, corruption rejection, and exact interrupted resume.
+- [ ] Complete the checkpoint proof with a fault-injected native interruption
+      and show that the resumed campaign exactly matches an uninterrupted
+      control.
 - [ ] Run identical-budget learned, frozen/non-learning, and random-valid
       campaigns on development and held-out seeds. Pin all inputs and report
       terminal rate plus useful expansions and wall time to first terminal.

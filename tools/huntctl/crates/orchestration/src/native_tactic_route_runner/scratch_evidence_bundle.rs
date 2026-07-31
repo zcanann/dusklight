@@ -4,7 +4,7 @@ use super::*;
 use crate::native_residual_campaign::NativeResidualExecutionBinding;
 use crate::tactic_q_campaign::{
     TacticQCampaign, TacticQCampaignCheckpoint, TacticQFinalResult, route_checkpoint,
-    validate_checkpoint,
+    validate_checkpoint, validate_checkpoint_snapshot,
 };
 use dusklight_evidence::content_store::{ContentBlob, ContentKind, ContentStore};
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
@@ -552,7 +552,7 @@ fn validate_seed(
         NativeTacticLeaseLedger::accounting_from_bytes(&lease_journal_bytes)?;
     let checkpoint: TacticQCampaignCheckpoint =
         serde_cbor::from_slice(&snapshot_bytes).map_err(route_error)?;
-    validate_checkpoint(&checkpoint).map_err(route_error)?;
+    validate_checkpoint_snapshot(&checkpoint).map_err(route_error)?;
     let mut terminal_path_ticks = checkpoint
         .state_graph
         .nodes()

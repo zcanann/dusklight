@@ -1505,6 +1505,22 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         TacticQCampaign::read_checkpoint_payload(&second_incremental.path).unwrap();
     assert_eq!(reloaded_incremental.replay.len(), 2);
     assert_eq!(reloaded_incremental.training_replay.len(), 2);
+    let snapshot_bytes = serde_cbor::to_vec(&reloaded_incremental).unwrap();
+    let snapshot: TacticQCampaignCheckpoint = serde_cbor::from_slice(&snapshot_bytes).unwrap();
+    assert!(!snapshot.persistence_validated);
+    validate_checkpoint_snapshot(&snapshot).unwrap();
+    assert!(matches!(
+        validate_checkpoint(&snapshot),
+        Err(TacticQCampaignError::InvalidState(
+            "campaign checkpoint persistence was not authenticated"
+        ))
+    ));
+    let mut tampered_snapshot = snapshot;
+    tampered_snapshot.content_sha256 = Digest([0x5a; 32]);
+    assert!(matches!(
+        validate_checkpoint_snapshot(&tampered_snapshot),
+        Err(TacticQCampaignError::CheckpointIdentityMismatch { .. })
+    ));
     let cached_model = uninterrupted.generalized_model(0).unwrap().unwrap();
     let reused_model = uninterrupted.generalized_model(0).unwrap().unwrap();
     assert!(Arc::ptr_eq(&cached_model, &reused_model));

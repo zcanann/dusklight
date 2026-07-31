@@ -3,7 +3,9 @@ use super::*;
 use crate::compact_suffix_batch::COMPACT_SUFFIX_BATCH_MAGIC;
 use crate::native_residual_campaign::NativeResidualExecutionBinding;
 use crate::native_suffix_result::{NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V9, NativeSuffixBatchResult};
-use crate::tactic_q_campaign::{TacticQCampaign, TacticQCampaignCheckpoint, validate_checkpoint};
+use crate::tactic_q_campaign::{
+    TacticQCampaign, TacticQCampaignCheckpoint, validate_checkpoint, validate_checkpoint_snapshot,
+};
 use dusklight_evidence::content_store::{ContentKind, ContentStore};
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
 use dusklight_worker_protocol::client::HelloResponse;
@@ -104,6 +106,7 @@ impl NativeTacticLaunchSmokeBundle {
                 .map_err(route_error)?;
         let checkpoint =
             TacticQCampaign::read_checkpoint_payload(&paths.checkpoint).map_err(route_error)?;
+        validate_checkpoint(&checkpoint).map_err(route_error)?;
         let summary = validate_smoke_sources(
             &request,
             &execution,
@@ -309,6 +312,7 @@ impl NativeTacticLaunchSmokeBundle {
         }
         let checkpoint: TacticQCampaignCheckpoint =
             serde_cbor::from_slice(&checkpoint_bytes).map_err(route_error)?;
+        validate_checkpoint_snapshot(&checkpoint).map_err(route_error)?;
         let lease_bytes = store
             .read_bytes(&self.lease_journal.blob)
             .map_err(route_error)?;
@@ -404,7 +408,6 @@ fn validate_smoke_sources(
     lease_bytes: &[u8],
 ) -> Result<NativeTacticLaunchSmokeSummary, NativeTacticRouteRunError> {
     hello.validate().map_err(route_error)?;
-    validate_checkpoint(checkpoint).map_err(route_error)?;
     let terminal = NativeTerminalBinding {
         goal: request.terminal_predicate.goal.clone(),
         program_sha256: request.terminal_predicate.program_sha256,

@@ -3,13 +3,35 @@ use super::*;
 pub(crate) fn validate_checkpoint(
     checkpoint: &TacticQCampaignCheckpoint,
 ) -> Result<(), TacticQCampaignError> {
-    if checkpoint.content_sha256 == Digest::ZERO
-        || checkpoint.content_sha256 != checkpoint_digest(checkpoint)?
-        || (checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V6 && !checkpoint.persistence_validated)
-    {
+    validate_checkpoint_snapshot(checkpoint)?;
+    if checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V6 && !checkpoint.persistence_validated {
+        return Err(TacticQCampaignError::InvalidState(
+            "campaign checkpoint persistence was not authenticated",
+        ));
+    }
+    Ok(())
+}
+
+/// Validates the complete inline checkpoint payload and its content identity.
+///
+/// This is deliberately weaker than [`validate_checkpoint`]: an evidence
+/// bundle may carry a self-contained inspection snapshot without the external
+/// content store that authenticated its persistence references. Such a
+/// snapshot is safe to inspect but must not be passed to `resume`.
+pub(crate) fn validate_checkpoint_snapshot(
+    checkpoint: &TacticQCampaignCheckpoint,
+) -> Result<(), TacticQCampaignError> {
+    if checkpoint.content_sha256 == Digest::ZERO {
         return Err(TacticQCampaignError::InvalidState(
             "campaign checkpoint content identity is invalid",
         ));
+    }
+    let reconstructed = checkpoint_digest(checkpoint)?;
+    if checkpoint.content_sha256 != reconstructed {
+        return Err(TacticQCampaignError::CheckpointIdentityMismatch {
+            stored: checkpoint.content_sha256,
+            reconstructed,
+        });
     }
     validate_checkpoint_payload(checkpoint)
 }

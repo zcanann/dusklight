@@ -4,6 +4,10 @@ use std::error::Error;
 #[derive(Debug)]
 pub enum TacticQCampaignError {
     InvalidState(&'static str),
+    CheckpointIdentityMismatch {
+        stored: Digest,
+        reconstructed: Digest,
+    },
     Features(String),
     Tape(String),
     Io(String),
@@ -30,6 +34,13 @@ impl fmt::Display for TacticQCampaignError {
             Self::InvalidState(message) => {
                 write!(formatter, "tactic-Q campaign invalid: {message}")
             }
+            Self::CheckpointIdentityMismatch {
+                stored,
+                reconstructed,
+            } => write!(
+                formatter,
+                "tactic-Q checkpoint identity mismatch: stored {stored}, reconstructed {reconstructed}"
+            ),
             Self::Features(message) => write!(formatter, "tactic-Q features failed: {message}"),
             Self::Tape(message) => write!(formatter, "tactic-Q tape failed: {message}"),
             Self::Io(message) => write!(formatter, "tactic-Q checkpoint I/O failed: {message}"),
