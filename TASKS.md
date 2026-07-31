@@ -30,9 +30,6 @@ credible route-quality result.
 
 ## 1. Prove that the learner actually changes search
 
-- [ ] Trace one decision end to end: applicable actions and observations,
-      prediction, selection, native outcome, replay admission, learner update,
-      new revision, and changed ranking at a later comparable state.
 - [ ] Add tests that fail if terminal, censored, unsupported, or stale outcomes
       are trained with the wrong meaning; restart must reproduce the same
       learner state and rankings.

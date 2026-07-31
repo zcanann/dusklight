@@ -413,10 +413,11 @@ fn route_action_surface(
             .iter()
             .all(|value| value.descriptor.is_some());
         let selected = decision.applicable_tactics.iter().find(|value| {
-            value
-                .descriptor
-                .as_ref()
-                .is_some_and(|descriptor| descriptor == &transition.value_sample.action)
+            value.applicable
+                && value
+                    .descriptor
+                    .as_ref()
+                    .is_some_and(|descriptor| descriptor == &transition.value_sample.action)
         });
         if let Some(selected) = selected {
             profile.selected_action_available = profile.selected_action_available.saturating_add(1);
@@ -427,18 +428,20 @@ fn route_action_surface(
         profile.boundaries_with_roll_available = profile
             .boundaries_with_roll_available
             .saturating_add(u64::from(decision.applicable_tactics.iter().any(|value| {
-                value
-                    .descriptor
-                    .as_ref()
-                    .is_some_and(|descriptor| descriptor.option_type == OptionType::Roll)
+                value.applicable
+                    && value
+                        .descriptor
+                        .as_ref()
+                        .is_some_and(|descriptor| descriptor.option_type == OptionType::Roll)
             })));
         profile.boundaries_with_camera_modifier_available = profile
             .boundaries_with_camera_modifier_available
             .saturating_add(u64::from(decision.applicable_tactics.iter().any(|value| {
-                value
-                    .descriptor
-                    .as_ref()
-                    .is_some_and(descriptor_uses_camera_modifier)
+                value.applicable
+                    && value
+                        .descriptor
+                        .as_ref()
+                        .is_some_and(descriptor_uses_camera_modifier)
             })));
     }
     profile.typed_descriptor_timeline_complete &= profile.exact_expansion_matches

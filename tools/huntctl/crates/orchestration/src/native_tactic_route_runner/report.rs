@@ -4,6 +4,10 @@ fn is_zero_u64(value: &u64) -> bool {
     *value == 0
 }
 
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
 #[derive(Clone, Debug)]
 pub struct NativeTacticRouteRunConfig<'a> {
     pub repository_root: &'a Path,
@@ -838,9 +842,17 @@ pub struct NativeTacticValueTrace {
     /// only `option_id` and therefore cannot prove action-family availability.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub descriptor: Option<OptionActionDescriptor>,
+    /// Whether this typed action was legal at the decision boundary. Legacy
+    /// reports listed applicable actions only, so an absent field means true.
+    #[serde(default = "bool_true", skip_serializing_if = "is_true")]
+    pub applicable: bool,
     pub mean_q: Option<f64>,
     pub ensemble_variance: Option<f64>,
     pub selected: bool,
+}
+
+fn bool_true() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

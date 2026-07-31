@@ -1032,6 +1032,20 @@ fn legacy_persistence_timing_round_trips_without_new_zero_fields() {
 }
 
 #[test]
+fn legacy_action_trace_defaults_to_applicable_without_changing_its_wire_shape() {
+    let legacy = serde_json::json!({
+        "option_id": "move",
+        "mean_q": 1.0,
+        "ensemble_variance": 0.25,
+        "selected": true
+    });
+    let trace: NativeTacticValueTrace = serde_json::from_value(legacy.clone()).unwrap();
+
+    assert!(trace.applicable);
+    assert_eq!(serde_json::to_value(trace).unwrap(), legacy);
+}
+
+#[test]
 fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
     let mut first = NativeTacticRestoreAccounting {
         native_requests: 4,

@@ -547,10 +547,11 @@ fn action_surface_coverage(
         let complete = !decision.applicable_tactics.is_empty()
             && unique_ids.len() == decision.applicable_tactics.len()
             && selected_count == 1
-            && decision
-                .applicable_tactics
-                .iter()
-                .any(|tactic| tactic.selected && tactic.option_id == decision.selected_option_id);
+            && decision.applicable_tactics.iter().any(|tactic| {
+                tactic.applicable
+                    && tactic.selected
+                    && tactic.option_id == decision.selected_option_id
+            });
         coverage.complete_decisions = coverage
             .complete_decisions
             .saturating_add(u64::from(complete));
@@ -569,7 +570,6 @@ fn action_surface_coverage(
         let mut l_available = false;
         let mut l_selected = false;
         for tactic in &decision.applicable_tactics {
-            coverage.applicable_descriptors = coverage.applicable_descriptors.saturating_add(1);
             coverage.selected_descriptors = coverage
                 .selected_descriptors
                 .saturating_add(u64::from(tactic.selected));
@@ -578,6 +578,10 @@ fn action_surface_coverage(
                 continue;
             };
             unique_descriptors.insert(descriptor.content_sha256().map_err(route_error)?);
+            if !tactic.applicable {
+                continue;
+            }
+            coverage.applicable_descriptors = coverage.applicable_descriptors.saturating_add(1);
             *coverage
                 .option_type_availability
                 .entry(option_type_name(&descriptor.option_type))

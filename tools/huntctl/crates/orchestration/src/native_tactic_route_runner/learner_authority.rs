@@ -408,7 +408,12 @@ pub(super) fn lock_learner_authority(
 
 #[cfg(test)]
 mod tests {
-    use super::learner_update_required;
+    use super::*;
+    use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
+    use dusklight_control::option_execution::{OptionEndReason, OptionExecution, TapeRange};
+    use dusklight_evidence::native_episode_shard::NativeObservationPhase;
+    use dusklight_learning::fact_snapshot::FactTerminalReason;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn one_campaign_schedule_batches_updates_and_bounds_staleness() {
@@ -425,5 +430,195 @@ mod tests {
         // If decision twelve committed but its scheduled publication did not,
         // recovery performs exactly that missing cadence update.
         assert!(learner_update_required(64, 3, 12, 4, false, 64));
+    }
+
+    #[test]
+    fn admitted_native_outcome_updates_the_next_comparable_ranking() {
+        let root = std::env::temp_dir().join(format!(
+            "dusklight-learner-authority-feedback-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let execution_authority_sha256 = Digest([8; 32]);
+        let feature_schema_sha256 = Digest([1; 32]);
+        let objective_sha256 = Digest([2; 32]);
+        let root_checkpoint_sha256 = Digest([3; 32]);
+        let identity = TacticReplayControlPlaneIdentity::new(
+            execution_authority_sha256,
+            feature_schema_sha256,
+            objective_sha256,
+            root_checkpoint_sha256,
+        )
+        .unwrap();
+        let replay = TacticReplayControlPlane::create(
+            &root.join("replay.dtrp"),
+            &root.join("objects"),
+            identity,
+        )
+        .unwrap();
+        let mut authority = CampaignTacticLearnerAuthority::new(
+            replay,
+            OptionValueConfig::default(),
+            0,
+            TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
+            1,
+            Some(4),
+        )
+        .unwrap();
+        let cold_snapshot = authority.snapshot();
+        assert_eq!(cold_snapshot.replay_revision, 0);
+        assert_eq!(cold_snapshot.manifest.model_revision, 0);
+
+        let catalog = TacticAssetCatalog::new(vec![
+            TacticCatalogEntry::new(
+                "shield",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
+                    frames: 1,
+                })),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let description = catalog.entries()[0].description();
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let native_step = &shard.episodes[0].steps[0];
+        let mut before =
+            FactSnapshot::from_native_learning(&native_step.pre_input, &[], None, Vec::new())
+                .unwrap();
+        before.terminal.configured = Some(true);
+        before.terminal.reached = Some(false);
+        before.terminal.reason = FactTerminalReason::None;
+        let range = TapeRange {
+            start_frame: before.tape_frame,
+            end_frame_exclusive: before.tape_frame + 1,
+        };
+        let route = InputTape {
+            frames: vec![InputFrame::default(); range.end_frame_exclusive as usize],
+            ..InputTape::default()
+        };
+        let execution = OptionExecution::capture(
+            description.option.option_id.clone(),
+            description.option.option_type.clone(),
+            description.option.parameters.clone(),
+            description.duration.minimum_ticks,
+            description.duration.maximum_ticks,
+            description.stopping.termination.clone(),
+            description.stopping.cancellation.clone(),
+            OptionEndReason::Completed,
+            &route,
+            range,
+        )
+        .unwrap();
+        let mut next_boundary = native_step.post_simulation.clone();
+        next_boundary.phase = NativeObservationPhase::PreInput;
+        next_boundary.simulation_tick += 1;
+        next_boundary.tape_frame += 1;
+        let mut after = FactSnapshot::from_native_learning(
+            &next_boundary,
+            std::slice::from_ref(&native_step.pre_input),
+            Some(&execution),
+            Vec::new(),
+        )
+        .unwrap();
+        after.terminal.configured = Some(true);
+        after.terminal.reached = Some(true);
+        after.terminal.reason = FactTerminalReason::GoalReached;
+        after.terminal.first_hit_tick = Some(after.simulation_tick);
+        let source_route = InputTape {
+            frames: route.frames[..range.start_frame as usize].to_vec(),
+            ..route.clone()
+        };
+        let mut transition = OptionTransitionSample::capture(
+            feature_schema_sha256,
+            route_checkpoint(root_checkpoint_sha256, &source_route).unwrap(),
+            route_checkpoint(root_checkpoint_sha256, &route).unwrap(),
+            before.clone(),
+            after,
+            execution,
+            &route,
+            5.0,
+            true,
+            |facts| Ok::<_, &'static str>(vec![facts.tape_frame as f32]),
+        )
+        .unwrap();
+        transition.execution_authority_sha256 = execution_authority_sha256;
+        transition.validate().unwrap();
+
+        let registry = FactRegistry::canonical();
+        let current = LearnerState::build(before, &registry, &catalog, &[], |_| true).unwrap();
+        let mut campaign = TacticQCampaign::new(
+            feature_schema_sha256,
+            objective_sha256,
+            root_checkpoint_sha256,
+            11,
+            current,
+            source_route,
+            OptionValueConfig::default(),
+            TacticExplorationConfig {
+                seed: 41,
+                epsilon_per_million: 0,
+            },
+        )
+        .unwrap();
+        campaign
+            .bind_execution_authority(execution_authority_sha256)
+            .unwrap();
+        assert_eq!(
+            campaign.consume_learner_snapshot(&cold_snapshot).unwrap(),
+            0
+        );
+        let encode = |facts: &FactSnapshot| Ok::<_, &'static str>(vec![facts.tape_frame as f32]);
+        let cold_decision = campaign.decide(&catalog, &[], &encode).unwrap();
+        assert_eq!(
+            cold_decision.selected.reason,
+            TacticSelectionReason::UnsupportedBootstrap
+        );
+        assert!(cold_decision.ranking.values.ranked.is_empty());
+
+        assert!(matches!(
+            authority
+                .publish(
+                    0,
+                    0,
+                    cold_snapshot.sha256,
+                    &transition,
+                    &route,
+                    campaign.episode_group,
+                )
+                .unwrap(),
+            TacticReplayAdmissionOutcome::Admitted { sequence: 0, .. }
+        ));
+        let publish = authority.finish_decision(0, 0, 1, 0, true, 4).unwrap();
+        assert_eq!(publish.update.updates, 1);
+        assert_eq!(publish.update.snapshots_published, 1);
+        let learned_snapshot = authority.snapshot();
+        assert_eq!(learned_snapshot.replay_revision, 1);
+        assert_eq!(learned_snapshot.manifest.model_revision, 1);
+        assert_ne!(learned_snapshot.sha256, cold_snapshot.sha256);
+
+        assert_eq!(
+            campaign
+                .consume_learner_snapshot(&learned_snapshot)
+                .unwrap(),
+            1
+        );
+        let learned_decision = campaign.decide(&catalog, &[], &encode).unwrap();
+        assert_eq!(
+            learned_decision.ranking.learner_snapshot_sha256, campaign.current.snapshot_sha256,
+            "the legacy ranking field binds the state snapshot, not the fitted policy"
+        );
+        assert_eq!(learned_decision.ranking.values.ranked.len(), 1);
+        assert!(learned_decision.ranking.values.unsupported.is_empty());
+        assert_eq!(
+            learned_decision.selected.reason,
+            TacticSelectionReason::Greedy
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }

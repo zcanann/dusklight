@@ -522,10 +522,9 @@ fn seed_audit(
                 .filter(|tactic| tactic.selected)
                 .count()
                 == 1
-            && trace
-                .applicable_tactics
-                .iter()
-                .any(|tactic| tactic.selected && tactic.option_id == trace.selected_option_id);
+            && trace.applicable_tactics.iter().any(|tactic| {
+                tactic.applicable && tactic.selected && tactic.option_id == trace.selected_option_id
+            });
         scheduler_timeline_complete &= trace.scheduler_decision.as_ref().is_some_and(|scheduler| {
             scheduler.learner_model_sha256 == trace.learner_snapshot_sha256
                 && scheduler.validate().is_ok()
@@ -539,6 +538,9 @@ fn seed_audit(
                     })
         });
         for tactic in &trace.applicable_tactics {
+            if !tactic.applicable {
+                continue;
+            }
             let availability = action_availability_counts
                 .entry(tactic.option_id.clone())
                 .or_default();
@@ -786,7 +788,9 @@ fn seed_is_valid_v3(seed: &NativeTacticScratchSeedAudit) -> bool {
                         .count()
                         == 1
                     && decision.applicable_tactics.iter().any(|tactic| {
-                        tactic.selected && tactic.option_id == decision.selected_option_id
+                        tactic.applicable
+                            && tactic.selected
+                            && tactic.option_id == decision.selected_option_id
                     })
             }))
         && (!seed.scheduler_timeline_complete
@@ -858,7 +862,9 @@ fn seed_is_valid_v2(seed: &NativeTacticScratchSeedAudit) -> bool {
                         .count()
                         == 1
                     && decision.applicable_tactics.iter().any(|tactic| {
-                        tactic.selected && tactic.option_id == decision.selected_option_id
+                        tactic.applicable
+                            && tactic.selected
+                            && tactic.option_id == decision.selected_option_id
                     })
             }))
         && (!seed.scheduler_timeline_complete

@@ -990,13 +990,12 @@ pub(super) fn run_seed(
             .ranked
             .first()
             .map(|ranked| ranked.mean_q);
-        let applicable_tactics = step
+        let action_surface = step
             .step
             .decision
             .ranking
             .choices
             .iter()
-            .filter(|choice| choice.applicable)
             .map(|choice| {
                 let estimate = step
                     .step
@@ -1009,18 +1008,22 @@ pub(super) fn run_seed(
                 NativeTacticValueTrace {
                     option_id: choice.choice_id.clone(),
                     descriptor: Some(choice.descriptor.clone()),
+                    applicable: choice.applicable,
                     mean_q: estimate.map(|ranked| ranked.mean_q),
                     ensemble_variance: estimate.map(|ranked| ranked.ensemble_variance),
                     selected: choice.choice_id == selected.descriptor.option_id,
                 }
             })
             .collect::<Vec<_>>();
-        if applicable_tactics.is_empty()
-            || applicable_tactics
+        if action_surface.is_empty()
+            || action_surface
                 .iter()
                 .filter(|tactic| tactic.selected)
                 .count()
                 != 1
+            || action_surface
+                .iter()
+                .any(|tactic| tactic.selected && !tactic.applicable)
         {
             return Err(route_message(
                 "selected tactic is detached from the applicable action surface",
@@ -1127,7 +1130,7 @@ pub(super) fn run_seed(
             before: tactic_state_trace(&step.step.transition.before)?,
             after: tactic_state_trace(&step.step.transition.after)?,
             measurements: Vec::new(),
-            applicable_tactics,
+            applicable_tactics: action_surface,
             proposal_feedback,
             proposal_batch: proposal_traces,
         };
