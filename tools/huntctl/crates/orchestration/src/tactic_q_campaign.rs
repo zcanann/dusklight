@@ -657,6 +657,8 @@ impl TacticQCampaign {
             || snapshot.manifest.model_config != self.model_config
             || (self.campaign_learner_authority_managed
                 && snapshot.manifest.value_treatment != self.value_treatment)
+            || (self.campaign_learner_authority_managed
+                && snapshot.manifest.model_revision < self.model_revision)
             || snapshot.manifest.training_replay_rows
                 != snapshot.training_corpus.transitions.len() as u64
             || snapshot.replay_revision != snapshot.manifest.training_replay_rows

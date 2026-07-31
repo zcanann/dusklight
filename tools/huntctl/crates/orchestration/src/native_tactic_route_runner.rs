@@ -294,6 +294,8 @@ pub use restore_locality::{
     run_native_tactic_restore_locality,
 };
 
+mod learner_head;
+use learner_head::{CampaignLearnerHead, CampaignLearnerHeadJournal};
 mod learner_authority;
 use learner_authority::{
     CampaignLearnerPublishResult, CampaignTacticLearnerAuthority, SharedTacticLearnerAuthority,

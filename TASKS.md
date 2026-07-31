@@ -18,9 +18,6 @@ The first acceptance problem is the Ordon load zone:
 
 ## P0: prove the learning loop
 
-- [ ] Pin terminal, censored, unsupported-action, and stale-outcome semantics
-      with end-to-end tests. Closing and reopening a campaign must reproduce
-      the exact learner state and action rankings.
 - [ ] Audit the learner's state/action interface. Every legal primitive and its
       parameters must be visible when available, and observations must expose
       generic evidence sufficient to infer progress and control effects:

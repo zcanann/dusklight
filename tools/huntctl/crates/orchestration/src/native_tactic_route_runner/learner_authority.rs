@@ -24,6 +24,7 @@ pub(super) struct CampaignLearnerPublishResult {
 /// fitter, so worker count cannot multiply identical replay-prefix refits.
 pub(super) struct CampaignTacticLearnerAuthority {
     replay: TacticReplayControlPlane,
+    learner_heads: CampaignLearnerHeadJournal,
     model_config: OptionValueConfig,
     goal_distance_feature: usize,
     value_treatment: TacticValueTreatment,
@@ -48,6 +49,25 @@ impl CampaignTacticLearnerAuthority {
                 "campaign learner refit cadence must be positive",
             ));
         }
+        let learner_heads = CampaignLearnerHeadJournal::open_or_create(&replay)?;
+        let durable_snapshot = learner_heads
+            .latest()
+            .map(|head| {
+                replay
+                    .learner_snapshot(head.learner_snapshot_sha256)
+                    .map_err(route_error)
+                    .and_then(|snapshot| {
+                        if snapshot.training_replay_rows != head.replay_revision
+                            || snapshot.model_revision != head.model_revision
+                        {
+                            return Err(route_message(
+                                "durable campaign learner head is detached from its snapshot",
+                            ));
+                        }
+                        Ok((head.learner_snapshot_sha256, snapshot))
+                    })
+            })
+            .transpose()?;
         let admissions = replay.admissions();
         let completed_decisions = admissions
             .iter()
@@ -70,13 +90,16 @@ impl CampaignTacticLearnerAuthority {
             .into_iter()
             .filter(|(_, snapshot)| snapshot.kind == TacticQLearnerSnapshotKind::Learned)
             .collect::<Vec<_>>();
-        let published_snapshot_sha256s = prior_snapshots
+        let mut published_snapshot_sha256s = prior_snapshots
             .iter()
             .map(|(sha256, _)| *sha256)
             .collect::<BTreeSet<_>>();
-        let prior_snapshot = prior_snapshots
-            .into_iter()
-            .max_by_key(|(_, snapshot)| (snapshot.model_revision, snapshot.training_replay_rows));
+        published_snapshot_sha256s.extend(learner_heads.snapshot_sha256s());
+        let prior_snapshot = durable_snapshot.or_else(|| {
+            prior_snapshots.into_iter().max_by_key(|(_, snapshot)| {
+                (snapshot.model_revision, snapshot.training_replay_rows)
+            })
+        });
         let (snapshot, invocation_metrics, mut published_snapshot_sha256s) =
             if let Some((expected_sha256, manifest)) = prior_snapshot {
                 if manifest.model_config != model_config
@@ -155,6 +178,7 @@ impl CampaignTacticLearnerAuthority {
         published_snapshot_sha256s.insert(snapshot.sha256);
         let mut authority = Self {
             replay,
+            learner_heads,
             model_config,
             goal_distance_feature,
             value_treatment,
@@ -164,6 +188,7 @@ impl CampaignTacticLearnerAuthority {
             latest: Arc::new(snapshot),
             invocation_metrics,
         };
+        authority.publish_latest_head()?;
         if let Some(maximum_stale_replay_revisions) = maximum_stale_replay_revisions {
             authority.restore_missing_update(maximum_stale_replay_revisions)?;
         }
@@ -367,6 +392,11 @@ impl CampaignTacticLearnerAuthority {
                 "campaign learner snapshot store changed its identity",
             ));
         }
+        self.learner_heads.publish(CampaignLearnerHead {
+            learner_snapshot_sha256: snapshot.sha256,
+            replay_revision: snapshot.replay_revision,
+            model_revision: snapshot.manifest.model_revision,
+        })?;
         let snapshot = Arc::new(snapshot);
         self.published_snapshot_sha256s.insert(snapshot.sha256);
         self.latest = Arc::clone(&snapshot);
@@ -381,6 +411,15 @@ impl CampaignTacticLearnerAuthority {
             .saturating_add(elapsed_micros(started.elapsed()));
         Ok(snapshot)
     }
+
+    fn publish_latest_head(&mut self) -> Result<(), NativeTacticRouteRunError> {
+        self.learner_heads.publish(CampaignLearnerHead {
+            learner_snapshot_sha256: self.latest.sha256,
+            replay_revision: self.latest.replay_revision,
+            model_revision: self.latest.manifest.model_revision,
+        })?;
+        Ok(())
+    }
 }
 
 fn learner_update_required(
@@ -394,7 +433,7 @@ fn learner_update_required(
     pending_revisions > 0
         && (force_update
             || model_revision == 0
-            || completed_decisions % refit_every_decisions == 0
+            || completed_decisions.is_multiple_of(refit_every_decisions)
             || pending_revisions > maximum_stale_replay_revisions)
 }
 
@@ -433,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn admitted_native_outcome_updates_the_next_comparable_ranking() {
+    fn native_feedback_and_stale_workers_restart_with_the_exact_ranking() {
         let root = std::env::temp_dir().join(format!(
             "dusklight-learner-authority-feedback-{}-{}",
             std::process::id(),
@@ -453,12 +492,10 @@ mod tests {
             root_checkpoint_sha256,
         )
         .unwrap();
-        let replay = TacticReplayControlPlane::create(
-            &root.join("replay.dtrp"),
-            &root.join("objects"),
-            identity,
-        )
-        .unwrap();
+        let journal = root.join("replay.dtrp");
+        let objects = root.join("objects");
+        let replay =
+            TacticReplayControlPlane::create(&journal, &objects, identity.clone()).unwrap();
         let mut authority = CampaignTacticLearnerAuthority::new(
             replay,
             OptionValueConfig::default(),
@@ -551,14 +588,15 @@ mod tests {
         transition.validate().unwrap();
 
         let registry = FactRegistry::canonical();
-        let current = LearnerState::build(before, &registry, &catalog, &[], |_| true).unwrap();
+        let current =
+            LearnerState::build(before.clone(), &registry, &catalog, &[], |_| true).unwrap();
         let mut campaign = TacticQCampaign::new(
             feature_schema_sha256,
             objective_sha256,
             root_checkpoint_sha256,
             11,
             current,
-            source_route,
+            source_route.clone(),
             OptionValueConfig::default(),
             TacticExplorationConfig {
                 seed: 41,
@@ -619,6 +657,103 @@ mod tests {
             learned_decision.selected.reason,
             TacticSelectionReason::Greedy
         );
+
+        assert!(
+            campaign.consume_learner_snapshot(&cold_snapshot).is_err(),
+            "a managed lane must not roll its fitted policy back to an older revision"
+        );
+        assert_eq!(campaign.model_revision(), 1);
+
+        // A worker may finish evidence selected under an older policy after a
+        // newer snapshot has already been published. It remains authenticated
+        // off-policy experience and must advance the shared replay and model
+        // without making restart forget the intervening learner revision.
+        let mut stale_transition = transition.clone();
+        stale_transition.execution.option_id = "shield-stale-worker".into();
+        stale_transition.value_sample.action.option_id = "shield-stale-worker".into();
+        stale_transition.validate().unwrap();
+        assert!(matches!(
+            authority
+                .publish(
+                    1,
+                    0,
+                    cold_snapshot.sha256,
+                    &stale_transition,
+                    &route,
+                    campaign.episode_group + 1,
+                )
+                .unwrap(),
+            TacticReplayAdmissionOutcome::Admitted { sequence: 1, .. }
+        ));
+        let stale_publish = authority.finish_decision(1, 0, 1, 0, true, 4).unwrap();
+        assert_eq!(stale_publish.update.updates, 1);
+        let latest_snapshot = authority.snapshot();
+        assert_eq!(latest_snapshot.replay_revision, 2);
+        assert_eq!(latest_snapshot.manifest.model_revision, 2);
+        assert_eq!(
+            campaign.consume_learner_snapshot(&latest_snapshot).unwrap(),
+            1
+        );
+        let latest_decision = campaign.decide(&catalog, &[], &encode).unwrap();
+        let learned_values = latest_decision.ranking.values.clone();
+        let learned_selected = latest_decision.selected.clone();
+        let published_snapshot_count = authority.published_snapshot_count();
+        assert_eq!(published_snapshot_count, 3);
+
+        drop(campaign);
+        drop(authority);
+        let replay = TacticReplayControlPlane::open(&journal, &objects, &identity).unwrap();
+        let reopened_authority = CampaignTacticLearnerAuthority::new(
+            replay,
+            OptionValueConfig::default(),
+            0,
+            TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
+            1,
+            Some(4),
+        )
+        .unwrap();
+        let reopened_snapshot = reopened_authority.snapshot();
+        assert_eq!(
+            reopened_authority.published_snapshot_count(),
+            published_snapshot_count
+        );
+        assert_eq!(reopened_snapshot.sha256, latest_snapshot.sha256);
+        assert_eq!(reopened_snapshot.manifest, latest_snapshot.manifest);
+        assert_eq!(
+            reopened_snapshot.replay_revision,
+            latest_snapshot.replay_revision
+        );
+
+        let current = LearnerState::build(before, &registry, &catalog, &[], |_| true).unwrap();
+        let mut restarted_campaign = TacticQCampaign::new(
+            feature_schema_sha256,
+            objective_sha256,
+            root_checkpoint_sha256,
+            11,
+            current,
+            source_route,
+            OptionValueConfig::default(),
+            TacticExplorationConfig {
+                seed: 41,
+                epsilon_per_million: 0,
+            },
+        )
+        .unwrap();
+        restarted_campaign
+            .bind_execution_authority(execution_authority_sha256)
+            .unwrap();
+        assert_eq!(
+            restarted_campaign
+                .consume_learner_snapshot(&reopened_snapshot)
+                .unwrap(),
+            2
+        );
+        let restarted_decision = restarted_campaign.decide(&catalog, &[], &encode).unwrap();
+        assert_eq!(restarted_decision.ranking.values, learned_values);
+        assert_eq!(restarted_decision.selected, learned_selected);
+
+        drop(restarted_campaign);
+        drop(reopened_authority);
         fs::remove_dir_all(root).unwrap();
     }
 }
