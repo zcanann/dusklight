@@ -24,10 +24,11 @@ required. Route-planner product work belongs in `TASKS_ROUTE_PLANNER.md`.
 - Current scratch campaigns have not shown useful learning. Learned policy has
   failed to reach the terminal and has underperformed frozen-policy and
   random-valid controls.
-- Held-out calibration now blocks an unproven goal-reachability model from the
-  primary action, but the model can still influence acquisition/frontier
-  choices. Until every policy surface is gated, learned-versus-control results
-  are not trustworthy.
+- Whole-source-state held-out calibration gates every current use of the
+  goal-reachability model. Untrusted predictions remain visible, while v39
+  route reports and v3 campaign summaries reject unproven action or frontier
+  policy deployment. Learned-versus-control results can now test learning
+  rather than an authority leak.
 - The immediate problem is framework correctness and learning quality -- not
   mining more seeds or treating a near miss as success.
 
@@ -35,14 +36,6 @@ required. Route-planner product work belongs in `TASKS_ROUTE_PLANNER.md`.
 
 Work in this order. After a failed gate, repair the first demonstrated cause
 before running another large campaign.
-
-- [ ] **Make the learning loop trustworthy.** An unproven model may emit
-      predictions for evaluation, but may not choose actions, sibling
-      proposals, frontiers, checkpoints, or scheduling priorities. Report the
-      authority decision at every policy surface and reject a campaign that
-      deployed an unproven model. Verify the complete observation -> legal
-      actions -> selection -> native outcome -> credit -> update -> next-policy
-      chain with focused tests and a small native smoke run.
 
 - [ ] **Show that the system actually learns.** Run matched learned,
       frozen-policy, and random-valid treatments with identical seeds, action

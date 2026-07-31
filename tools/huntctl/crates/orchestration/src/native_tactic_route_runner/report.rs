@@ -795,7 +795,7 @@ pub struct NativeTacticDecisionTrace {
     #[serde(default)]
     pub proposal_batch: Vec<NativeTacticProposalTrace>,
     /// Whole-source-state held-out evidence governing whether the auxiliary
-    /// pre-terminal reachability model was allowed to select the primary.
+    /// pre-terminal reachability model had policy authority at this boundary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal_reachability_calibration: Option<GoalReachabilityCalibration>,
 }

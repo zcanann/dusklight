@@ -56,8 +56,8 @@ impl NativeTacticThroughputTreatmentAudit {
             serde_json::from_slice(control_bytes).map_err(route_error)?;
         let treatment: NativeTacticRouteReport =
             serde_json::from_slice(treatment_bytes).map_err(route_error)?;
-        if control.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38
-            || treatment.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38
+        if control.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39
+            || treatment.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39
             || control.seeds.len() != 1
             || treatment.seeds.len() != 1
             || control.seeds[0].seed != treatment.seeds[0].seed

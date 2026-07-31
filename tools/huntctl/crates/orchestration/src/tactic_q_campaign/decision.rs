@@ -353,12 +353,6 @@ impl TacticQCampaign {
                                 maximum_proposals,
                                 &mut proposals,
                             )?;
-                        } else {
-                            ensure_goal_reachability_evidence(
-                                &ranked_applicable,
-                                maximum_proposals,
-                                &mut proposals,
-                            )?;
                         }
                     } else {
                         ensure_generalized_value_acquisition(

@@ -36,6 +36,7 @@ fn frontier_learning_value_precedes_the_last_edges_immediate_cost() {
         terminal_value_supported: true,
         achieved_goal_value_supported: false,
         goal_reachability_supported: false,
+        goal_reachability_evidence_available: false,
         reward: -0.4,
         best_mean_q: Some(10.0),
         best_goal_progress_per_tick: None,
@@ -70,6 +71,7 @@ fn frontier_learning_value_precedes_coverage_count() {
         terminal_value_supported: true,
         achieved_goal_value_supported: false,
         goal_reachability_supported: false,
+        goal_reachability_evidence_available: false,
         reward: -0.4,
         best_mean_q: Some(10.0),
         best_goal_progress_per_tick: None,
@@ -103,6 +105,7 @@ fn cold_start_frontier_coverage_precedes_unsupported_sparse_return() {
         terminal_value_supported: false,
         achieved_goal_value_supported: false,
         goal_reachability_supported: false,
+        goal_reachability_evidence_available: false,
         reward: -0.04,
         best_mean_q: Some(10.0),
         best_goal_progress_per_tick: None,
@@ -141,6 +144,7 @@ fn terminal_supported_prediction_precedes_unsupported_q_estimate() {
         terminal_value_supported: true,
         achieved_goal_value_supported: false,
         goal_reachability_supported: false,
+        goal_reachability_evidence_available: false,
         reward: -0.4,
         best_mean_q: Some(2.0),
         best_goal_progress_per_tick: None,
@@ -176,6 +180,7 @@ fn exact_terminal_path_precedes_an_optimistic_generalized_prediction() {
         terminal_value_supported: true,
         achieved_goal_value_supported: false,
         goal_reachability_supported: false,
+        goal_reachability_evidence_available: false,
         reward: -0.4,
         best_mean_q: Some(90.0),
         best_goal_progress_per_tick: None,
@@ -214,6 +219,7 @@ fn frontier_terminal_cost_includes_the_replayed_prefix() {
         terminal_value_supported: true,
         achieved_goal_value_supported: false,
         goal_reachability_supported: false,
+        goal_reachability_evidence_available: false,
         reward: -0.4,
         best_mean_q: Some(99.0),
         best_goal_progress_per_tick: None,
@@ -249,6 +255,7 @@ fn equal_terminal_cost_prefers_the_less_expanded_frontier() {
         terminal_value_supported: true,
         achieved_goal_value_supported: false,
         goal_reachability_supported: false,
+        goal_reachability_evidence_available: false,
         reward: -0.4,
         best_mean_q: Some(99.0),
         best_goal_progress_per_tick: None,
@@ -284,6 +291,7 @@ fn goal_reachability_ranks_equally_fresh_cold_start_frontiers() {
         terminal_value_supported: false,
         achieved_goal_value_supported: false,
         goal_reachability_supported: true,
+        goal_reachability_evidence_available: true,
         reward: -0.4,
         best_mean_q: None,
         best_goal_progress_per_tick: Some(40.0),
@@ -306,6 +314,40 @@ fn goal_reachability_ranks_equally_fresh_cold_start_frontiers() {
 
     assert_eq!(
         compare_frontier_acquisition(&learned, &novel_but_slow),
+        std::cmp::Ordering::Less
+    );
+}
+
+#[test]
+fn blocked_goal_reachability_evidence_cannot_rank_frontiers() {
+    let blocked_but_optimistic = TacticFrontierAcquisition {
+        expansion_count: 0,
+        terminal: false,
+        terminal_value_supported: false,
+        achieved_goal_value_supported: false,
+        goal_reachability_supported: false,
+        goal_reachability_evidence_available: true,
+        reward: -0.4,
+        best_mean_q: None,
+        best_goal_progress_per_tick: Some(40.0),
+        predicted_terminal_ticks_to_go: None,
+        predicted_total_terminal_ticks: None,
+        exact_terminal_ticks_to_go: None,
+        exact_total_terminal_ticks: None,
+        maximum_ensemble_variance: None,
+        generalized_nearest_distance: None,
+        discovery_spatial_novelty: None,
+        novelty_rank: 8,
+        replayed_prefix_ticks: 40,
+    };
+    let generic_winner = TacticFrontierAcquisition {
+        best_goal_progress_per_tick: Some(8.0),
+        novelty_rank: 0,
+        ..blocked_but_optimistic.clone()
+    };
+
+    assert_eq!(
+        compare_frontier_acquisition(&generic_winner, &blocked_but_optimistic),
         std::cmp::Ordering::Less
     );
 }
@@ -889,6 +931,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert!(continuous_snapshot.generalized_model.is_none());
     assert!(continuous_snapshot.continuous_model.is_none());
     assert_ne!(local_treatment_snapshot.sha256, continuous_snapshot.sha256);
+    let mut blocked_control = TacticQCampaign::resume_without_model(checkpoint.clone()).unwrap();
     let mut unproven_goal_consumer =
         TacticQCampaign::resume_without_model(checkpoint.clone()).unwrap();
     let calibration =
@@ -919,6 +962,22 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         },
     ])
     .unwrap();
+    blocked_control.value_treatment = TacticValueTreatment::GoalRelabeledFittedQKnnV2;
+    blocked_control.campaign_learner_authority_managed = true;
+    blocked_control.goal_reachability_calibration = Some(calibration.clone());
+    let blocked_control_batch = blocked_control
+        .decide_parameterized_batch_with_policy::<&'static str, _>(
+            &catalog,
+            &[],
+            Digest([9; 32]),
+            &encode,
+            2,
+            0,
+            TacticProposalPolicy::Learned,
+            Some(0),
+            false,
+        )
+        .unwrap();
     unproven_goal_consumer.value_treatment = TacticValueTreatment::GoalRelabeledFittedQKnnV2;
     unproven_goal_consumer.campaign_learner_authority_managed = true;
     unproven_goal_consumer.goal_reachability_calibration = Some(calibration.clone());
@@ -946,10 +1005,9 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         unproven_batch.goal_reachability_calibration,
         Some(calibration)
     );
-    assert_ne!(
-        unproven_batch.proposals[0].reason,
-        TacticSelectionReason::GoalReachability,
-        "held-out calibration must authorize reachability before it controls proposal zero"
+    assert_eq!(
+        unproven_batch.proposals, blocked_control_batch.proposals,
+        "blocked reachability predictions must not alter any proposal slot"
     );
     let mut snapshot_consumer = TacticQCampaign::resume_without_model(checkpoint.clone()).unwrap();
     assert!(snapshot_consumer.model().is_none());

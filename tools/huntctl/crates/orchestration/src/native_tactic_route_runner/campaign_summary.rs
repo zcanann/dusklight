@@ -5,6 +5,8 @@ pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-campaign-summary/v1";
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V2: &str =
     "dusklight-native-tactic-campaign-summary/v2";
+pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V3: &str =
+    "dusklight-native-tactic-campaign-summary/v3";
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE: &str = "campaign-summary.json";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -97,6 +99,14 @@ pub struct NativeTacticCampaignGoalReachabilitySummary {
     pub calibration_decisions: u64,
     pub deployment_ready_decisions: u64,
     pub deployment_blocked_decisions: u64,
+    pub action_evidence_decisions: u64,
+    pub action_policy_authorized_decisions: u64,
+    pub action_policy_blocked_decisions: u64,
+    pub unproven_action_policy_deployments: u64,
+    pub frontier_evidence_decisions: u64,
+    pub frontier_policy_authorized_decisions: u64,
+    pub frontier_policy_blocked_decisions: u64,
+    pub unproven_frontier_policy_deployments: u64,
     pub reachability_primary_decisions: u64,
     pub unproven_reachability_primary_decisions: u64,
     pub most_mature_source_transitions: u64,
@@ -258,7 +268,7 @@ impl NativeTacticCampaignSummary {
         let peak_worker_resident_bytes = route.native_restore_accounting.peak_resident_bytes;
 
         let mut summary = Self {
-            schema: NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V2.into(),
+            schema: NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V3.into(),
             content_sha256: Digest::ZERO,
             route_report_sha256: route_report_sha256(route)?,
             identities: NativeTacticCampaignIdentities {
@@ -361,7 +371,7 @@ impl NativeTacticCampaignSummary {
     }
 
     pub fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
-        if self.schema != NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V2
+        if self.schema != NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V3
             || self.content_sha256 == Digest::ZERO
             || self.route_report_sha256 == Digest::ZERO
             || self.identities.optimization_request_sha256 == Digest::ZERO
@@ -394,11 +404,23 @@ impl NativeTacticCampaignSummary {
                     .goal_reachability
                     .deployment_ready_decisions
                     .saturating_add(self.goal_reachability.deployment_blocked_decisions)
+            || self.goal_reachability.action_evidence_decisions
+                != self
+                    .goal_reachability
+                    .action_policy_authorized_decisions
+                    .saturating_add(self.goal_reachability.action_policy_blocked_decisions)
+            || self.goal_reachability.frontier_evidence_decisions
+                != self
+                    .goal_reachability
+                    .frontier_policy_authorized_decisions
+                    .saturating_add(self.goal_reachability.frontier_policy_blocked_decisions)
             || (self.goal_reachability.calibration_authority_enforced
-                && self
+                && (self
                     .goal_reachability
                     .unproven_reachability_primary_decisions
-                    != 0)
+                    != 0
+                    || self.goal_reachability.unproven_action_policy_deployments != 0
+                    || self.goal_reachability.unproven_frontier_policy_deployments != 0))
             || self.compute_content_sha256()? != self.content_sha256
         {
             return Err(route_message("native tactic campaign summary is invalid"));
@@ -432,7 +454,7 @@ impl NativeTacticCampaignSummary {
         identity.content_sha256 = Digest::ZERO;
         let bytes = serde_json::to_vec(&identity).map_err(route_error)?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight-native-tactic-campaign-summary/v2\0");
+        hasher.update(b"dusklight-native-tactic-campaign-summary/v3\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -446,11 +468,23 @@ fn goal_reachability_summary(
     let mut calibration_decisions = 0_u64;
     let mut deployment_ready_decisions = 0_u64;
     let mut deployment_blocked_decisions = 0_u64;
+    let mut action_evidence_decisions = 0_u64;
+    let mut action_policy_authorized_decisions = 0_u64;
+    let mut action_policy_blocked_decisions = 0_u64;
+    let mut unproven_action_policy_deployments = 0_u64;
+    let mut frontier_evidence_decisions = 0_u64;
+    let mut frontier_policy_authorized_decisions = 0_u64;
+    let mut frontier_policy_blocked_decisions = 0_u64;
+    let mut unproven_frontier_policy_deployments = 0_u64;
     let mut reachability_primary_decisions = 0_u64;
     let mut unproven_reachability_primary_decisions = 0_u64;
     let mut most_mature: Option<&GoalReachabilityCalibration> = None;
 
     for decision in traces {
+        let deployment_ready = decision
+            .goal_reachability_calibration
+            .as_ref()
+            .is_some_and(|calibration| calibration.deployment_ready);
         if let Some(calibration) = &decision.goal_reachability_calibration {
             calibration_decisions = calibration_decisions.saturating_add(1);
             if calibration.deployment_ready {
@@ -474,6 +508,46 @@ fn goal_reachability_summary(
                 most_mature = Some(calibration);
             }
         }
+        let action_evidence_available = decision
+            .proposal_batch
+            .iter()
+            .any(|proposal| proposal.predicted_goal_progress_per_tick.is_some());
+        if action_evidence_available {
+            action_evidence_decisions = action_evidence_decisions.saturating_add(1);
+            if deployment_ready {
+                action_policy_authorized_decisions =
+                    action_policy_authorized_decisions.saturating_add(1);
+            } else {
+                action_policy_blocked_decisions = action_policy_blocked_decisions.saturating_add(1);
+            }
+        }
+        let reachability_action_deployed = decision.selection_reason
+            == TacticSelectionReason::GoalReachability
+            || decision.proposal_batch.iter().any(|proposal| {
+                proposal.selection_reason == TacticSelectionReason::GoalReachability
+            });
+        if reachability_action_deployed && (!deployment_ready || !action_evidence_available) {
+            unproven_action_policy_deployments =
+                unproven_action_policy_deployments.saturating_add(1);
+        }
+        if let Some(acquisition) = &decision.branch_acquisition {
+            if acquisition.goal_reachability_evidence_available {
+                frontier_evidence_decisions = frontier_evidence_decisions.saturating_add(1);
+                if acquisition.goal_reachability_supported {
+                    frontier_policy_authorized_decisions =
+                        frontier_policy_authorized_decisions.saturating_add(1);
+                } else {
+                    frontier_policy_blocked_decisions =
+                        frontier_policy_blocked_decisions.saturating_add(1);
+                }
+            }
+            if acquisition.goal_reachability_supported
+                && (!deployment_ready || !acquisition.goal_reachability_evidence_available)
+            {
+                unproven_frontier_policy_deployments =
+                    unproven_frontier_policy_deployments.saturating_add(1);
+            }
+        }
         if decision.selection_reason == TacticSelectionReason::GoalReachability {
             reachability_primary_decisions = reachability_primary_decisions.saturating_add(1);
             if decision
@@ -488,10 +562,18 @@ fn goal_reachability_summary(
     }
 
     NativeTacticCampaignGoalReachabilitySummary {
-        calibration_authority_enforced: route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38,
+        calibration_authority_enforced: route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39,
         calibration_decisions,
         deployment_ready_decisions,
         deployment_blocked_decisions,
+        action_evidence_decisions,
+        action_policy_authorized_decisions,
+        action_policy_blocked_decisions,
+        unproven_action_policy_deployments,
+        frontier_evidence_decisions,
+        frontier_policy_authorized_decisions,
+        frontier_policy_blocked_decisions,
+        unproven_frontier_policy_deployments,
         reachability_primary_decisions,
         unproven_reachability_primary_decisions,
         most_mature_source_transitions: most_mature
@@ -764,20 +846,64 @@ mod tests {
     #[test]
     fn summary_rejects_reachability_policy_without_calibration_authority() {
         let (_, mut route, plan) = retained_report_and_plan();
-        route.schema = NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38.into();
+        route.schema = NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39.into();
         for decision in route.seeds.iter_mut().flat_map(|seed| &mut seed.trace) {
             decision.selection_reason = TacticSelectionReason::UnsupportedBootstrap;
+            for proposal in &mut decision.proposal_batch {
+                proposal.selection_reason = TacticSelectionReason::UnsupportedBootstrap;
+                proposal.predicted_goal_progress_per_tick = None;
+            }
         }
         route.seeds[0].trace[0].goal_reachability_calibration = Some(
             dusklight_learning::goal_reachability_calibration::calibrate_goal_reachability(&[], 0)
                 .unwrap(),
         );
+        route.seeds[0].trace[0].proposal_batch[0].predicted_goal_progress_per_tick = Some(1.0);
+        route.seeds[0].trace[0].branch_acquisition = Some(TacticFrontierAcquisition {
+            expansion_count: 0,
+            terminal: false,
+            terminal_value_supported: false,
+            achieved_goal_value_supported: false,
+            goal_reachability_supported: false,
+            goal_reachability_evidence_available: true,
+            reward: 0.0,
+            best_mean_q: None,
+            best_goal_progress_per_tick: Some(1.0),
+            predicted_terminal_ticks_to_go: None,
+            predicted_total_terminal_ticks: None,
+            exact_terminal_ticks_to_go: None,
+            exact_total_terminal_ticks: None,
+            maximum_ensemble_variance: None,
+            generalized_nearest_distance: None,
+            discovery_spatial_novelty: None,
+            novelty_rank: 0,
+            replayed_prefix_ticks: 0,
+        });
+        let acquisition = route.seeds[0].trace[0].branch_acquisition.as_mut().unwrap();
+        acquisition.goal_reachability_evidence_available = true;
+        acquisition.goal_reachability_supported = false;
         let blocked = NativeTacticCampaignSummary::build(&route, &plan).unwrap();
         assert_eq!(blocked.goal_reachability.calibration_decisions, 1);
         assert_eq!(blocked.goal_reachability.deployment_blocked_decisions, 1);
+        assert_eq!(blocked.goal_reachability.action_evidence_decisions, 1);
+        assert_eq!(blocked.goal_reachability.action_policy_blocked_decisions, 1);
+        assert_eq!(blocked.goal_reachability.frontier_evidence_decisions, 1);
+        assert_eq!(
+            blocked.goal_reachability.frontier_policy_blocked_decisions,
+            1
+        );
         assert!(!blocked.goal_reachability.most_mature_deployment_ready);
 
-        route.seeds[0].trace[0].selection_reason = TacticSelectionReason::GoalReachability;
+        route.seeds[0].trace[0].proposal_batch[0].selection_reason =
+            TacticSelectionReason::GoalReachability;
+        assert!(NativeTacticCampaignSummary::build(&route, &plan).is_err());
+        route.seeds[0].trace[0].proposal_batch[0].selection_reason =
+            TacticSelectionReason::UnsupportedBootstrap;
+        route.seeds[0].trace[0]
+            .branch_acquisition
+            .as_mut()
+            .unwrap()
+            .goal_reachability_supported = true;
         assert!(NativeTacticCampaignSummary::build(&route, &plan).is_err());
     }
 }

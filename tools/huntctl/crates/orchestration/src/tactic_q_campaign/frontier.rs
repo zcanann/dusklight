@@ -400,6 +400,10 @@ impl TacticQCampaign {
         }
         let tie_offset = seeded_frontier_index(seed, round, choices.len());
         let choice_count = choices.len();
+        let goal_reachability_deployment_ready = self
+            .goal_reachability_calibration
+            .as_ref()
+            .is_some_and(|calibration| calibration.deployment_ready);
         let generalized_model = if demonstration_curriculum {
             None
         } else {
@@ -473,10 +477,14 @@ impl TacticQCampaign {
                                     .then_some(f64::from(value.outcome.duration_ticks))
                             }),
                             None,
-                            estimates
-                                .iter()
-                                .map(|value| value.nearest_distance)
-                                .max_by(f32::total_cmp),
+                            (!goal_reachability_supported || goal_reachability_deployment_ready)
+                                .then(|| {
+                                    estimates
+                                        .iter()
+                                        .map(|value| value.nearest_distance)
+                                        .max_by(f32::total_cmp)
+                                })
+                                .flatten(),
                         )
                     } else if let Some(model) = continuous_model.as_ref() {
                         let context = GeneralizedTacticContext::from_facts(&entry.frontier_state)?;
@@ -550,6 +558,10 @@ impl TacticQCampaign {
                     terminal_value_supported,
                     achieved_goal_value_supported: false,
                     goal_reachability_supported: !terminal_value_supported
+                        && self.value_treatment == TacticValueTreatment::GoalRelabeledFittedQKnnV2
+                        && generalized_model.is_some()
+                        && goal_reachability_deployment_ready,
+                    goal_reachability_evidence_available: !terminal_value_supported
                         && self.value_treatment == TacticValueTreatment::GoalRelabeledFittedQKnnV2
                         && generalized_model.is_some(),
                     reward: entry.transition.value_sample.reward,

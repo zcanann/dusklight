@@ -201,6 +201,7 @@ impl TacticQCampaign {
             terminal_value_supported: selected.exact_terminal_ticks_to_go.is_some(),
             achieved_goal_value_supported: false,
             goal_reachability_supported: false,
+            goal_reachability_evidence_available: false,
             reward: 0.0,
             best_mean_q: None,
             best_goal_progress_per_tick: None,

@@ -101,6 +101,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V35: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36: &str = "dusklight-native-tactic-route-report/v36";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37: &str = "dusklight-native-tactic-route-report/v37";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38: &str = "dusklight-native-tactic-route-report/v38";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39: &str = "dusklight-native-tactic-route-report/v39";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -165,12 +166,12 @@ pub use report::{
 mod campaign_summary;
 pub use campaign_summary::{
     NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE, NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V1,
-    NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V2, NativeTacticCampaignCausalSummary,
-    NativeTacticCampaignEfficiencySummary, NativeTacticCampaignGoalReachabilitySummary,
-    NativeTacticCampaignIdentities, NativeTacticCampaignOutcomeSummary,
-    NativeTacticCampaignResourceSummary, NativeTacticCampaignSummary,
-    NativeTacticCampaignTimingSummary, NativeTacticCampaignTreatmentSummary,
-    NativeTacticCampaignWorkSummary, NativeTacticCausalLink,
+    NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V2, NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V3,
+    NativeTacticCampaignCausalSummary, NativeTacticCampaignEfficiencySummary,
+    NativeTacticCampaignGoalReachabilitySummary, NativeTacticCampaignIdentities,
+    NativeTacticCampaignOutcomeSummary, NativeTacticCampaignResourceSummary,
+    NativeTacticCampaignSummary, NativeTacticCampaignTimingSummary,
+    NativeTacticCampaignTreatmentSummary, NativeTacticCampaignWorkSummary, NativeTacticCausalLink,
 };
 mod lease_journal;
 use lease_journal::NativeTacticLeaseLedger;
@@ -804,7 +805,7 @@ fn run_native_tactic_route_with_optional_fleet(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let mut report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,

@@ -1477,45 +1477,6 @@ fn goal_reachability_is_an_explicit_preterminal_primary() {
 }
 
 #[test]
-fn unproven_goal_reachability_is_sibling_evidence_only() {
-    let control = descriptor("known/control", OptionType::Move);
-    let reachable = descriptor("unseen/reachable", OptionType::Roll);
-    let proposal = |descriptor, reason| SelectedTactic {
-        schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
-        learner_snapshot_sha256: Digest([31; 32]),
-        decision_index: 7,
-        descriptor,
-        reason,
-        exploration_draw: 0,
-    };
-
-    let mut proposals = vec![proposal(
-        control.clone(),
-        TacticSelectionReason::UnsupportedBootstrap,
-    )];
-    ensure_goal_reachability_evidence(std::slice::from_ref(&reachable), 2, &mut proposals).unwrap();
-    assert_eq!(proposals[0].descriptor, control);
-    assert_eq!(
-        proposals[0].reason,
-        TacticSelectionReason::UnsupportedBootstrap
-    );
-    assert_eq!(proposals[1].descriptor, reachable);
-    assert_eq!(proposals[1].reason, TacticSelectionReason::GoalReachability);
-
-    let mut already_present = vec![proposal(
-        control.clone(),
-        TacticSelectionReason::UnsupportedBootstrap,
-    )];
-    ensure_goal_reachability_evidence(&[control.clone()], 2, &mut already_present).unwrap();
-    assert_eq!(already_present.len(), 1);
-    assert_eq!(already_present[0].descriptor, control);
-    assert_eq!(
-        already_present[0].reason,
-        TacticSelectionReason::UnsupportedBootstrap
-    );
-}
-
-#[test]
 fn goal_reachability_keeps_the_top_prediction_across_worker_partitions() {
     let control = descriptor("known/control", OptionType::Neutral);
     let best = descriptor("predicted/best", OptionType::Move);

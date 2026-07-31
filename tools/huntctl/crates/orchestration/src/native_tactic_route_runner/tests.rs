@@ -59,6 +59,7 @@ fn acquisition_with_expansion_count(expansion_count: u64) -> TacticFrontierAcqui
         terminal_value_supported: false,
         achieved_goal_value_supported: false,
         goal_reachability_supported: false,
+        goal_reachability_evidence_available: false,
         reward: 0.0,
         best_mean_q: None,
         best_goal_progress_per_tick: None,

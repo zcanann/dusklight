@@ -50,8 +50,8 @@ use dusklight_learning::tactic_exploration::{
     TacticProposalPolicy, TacticSelectionReason, choose_tactic_batch_for_policy,
     choose_tactic_batch_with_state_untried, ensure_action_factor_coverage,
     ensure_generalized_value_acquisition, ensure_goal_reachability_acquisition,
-    ensure_goal_reachability_evidence, ensure_terminal_support_factor_acquisitions,
-    retain_generalized_value_acquisition, retain_goal_reachability_acquisition,
+    ensure_terminal_support_factor_acquisitions, retain_generalized_value_acquisition,
+    retain_goal_reachability_acquisition,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_learning::tactic_value_treatment::{
@@ -259,6 +259,10 @@ pub struct TacticFrontierAcquisition {
     /// exploration. This is not authored-objective value support.
     #[serde(default)]
     pub goal_reachability_supported: bool,
+    /// True when the model produced a frontier prediction, even if held-out
+    /// calibration denied that prediction policy authority.
+    #[serde(default)]
+    pub goal_reachability_evidence_available: bool,
     pub reward: f32,
     pub best_mean_q: Option<f64>,
     /// Best learned target-relative distance reduction per native tick.
