@@ -34,6 +34,7 @@ mod gated_recurrent;
 pub mod generalized_tactic_calibration;
 pub mod generalized_tactic_value;
 pub mod goal_conditioning;
+pub mod goal_reachability_calibration;
 pub mod graph_representation;
 pub mod hindsight;
 pub mod history_critics;
