@@ -2,6 +2,8 @@ use super::*;
 
 pub const NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V1: &str =
     "dusklight-native-tactic-fault-recovery-audit/v1";
+pub const NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V2: &str =
+    "dusklight-native-tactic-fault-recovery-audit/v2";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -11,6 +13,8 @@ pub struct NativeTacticFaultRecoverySeedAudit {
     pub recovered_semantic_trace_sha256: Digest,
     pub semantic_trace_equal: bool,
     pub useful_expansion_set_equal: bool,
+    #[serde(default)]
+    pub state_graph_equal: bool,
     pub graph_shape_equal: bool,
     pub replay_shape_equal: bool,
     pub terminal_result_equal: bool,
@@ -33,6 +37,10 @@ pub struct NativeTacticFaultRecoveryAudit {
     pub platform_arch: String,
     pub marker: NativeTacticFaultInjectionMarker,
     pub campaign_identity_equal: bool,
+    #[serde(default)]
+    pub replay_snapshot_equal: bool,
+    #[serde(default)]
+    pub learner_authority_equal: bool,
     pub seed: NativeTacticFaultRecoverySeedAudit,
     pub passed: bool,
 }
@@ -40,7 +48,12 @@ pub struct NativeTacticFaultRecoveryAudit {
 impl NativeTacticFaultRecoveryAudit {
     pub fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
         self.marker.validate()?;
-        let conditions = self.schema == NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V1
+        let legacy = self.schema == NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V1;
+        let current = self.schema == NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V2;
+        let current_exact_authorities = self.seed.state_graph_equal
+            && self.replay_snapshot_equal
+            && self.learner_authority_equal;
+        let conditions = (legacy || current)
             && self.content_sha256 != Digest::ZERO
             && self.control_report_sha256 != Digest::ZERO
             && self.recovered_report_sha256 != Digest::ZERO
@@ -56,6 +69,7 @@ impl NativeTacticFaultRecoveryAudit {
             && self.seed.unresolved_leases == 0
             && self.seed.passed
             && self.campaign_identity_equal
+            && (legacy || current_exact_authorities)
             && self.passed;
         if !conditions || self.content_sha256 != fault_recovery_audit_digest(self)? {
             return Err(route_message(
@@ -97,11 +111,12 @@ pub fn audit_native_tactic_fault_recovery(
             "native tactic fault marker is detached from its matched reports",
         ));
     }
-    let control_trace_sha256 = semantic_trace_sha256(&control_seed.trace)?;
-    let recovered_trace_sha256 = semantic_trace_sha256(&recovered_seed.trace)?;
+    let control_trace_sha256 = semantic_trace_sha256_v2(&control_seed.trace)?;
+    let recovered_trace_sha256 = semantic_trace_sha256_v2(&recovered_seed.trace)?;
     let semantic_trace_equal = control_trace_sha256 == recovered_trace_sha256;
     let useful_expansion_set_equal = control_seed.useful_graph_expansion_set_sha256
         == recovered_seed.useful_graph_expansion_set_sha256;
+    let state_graph_equal = control_seed.state_graph_sha256 == recovered_seed.state_graph_sha256;
     let control_metrics = control_seed
         .graph_metrics
         .as_ref()
@@ -163,10 +178,14 @@ pub fn audit_native_tactic_fault_recovery(
         && recovered_leases.unresolved_leases == 0;
     let seed_passed = semantic_trace_equal
         && useful_expansion_set_equal
+        && state_graph_equal
         && graph_shape_equal
         && replay_shape_equal
         && terminal_result_equal
         && lease_accounting_exact;
+    let replay_snapshot_equal = control.replay_revision == recovered.replay_revision
+        && control.replay_snapshot_sha256 == recovered.replay_snapshot_sha256;
+    let learner_authority_equal = control.learner_authority == recovered.learner_authority;
     let campaign_identity_equal = control.optimization_request_sha256
         == recovered.optimization_request_sha256
         && control.execution_binding_sha256 == recovered.execution_binding_sha256
@@ -180,7 +199,7 @@ pub fn audit_native_tactic_fault_recovery(
         && control.execution_strategy == recovered.execution_strategy
         && control.resource_budgets == recovered.resource_budgets;
     let mut audit = NativeTacticFaultRecoveryAudit {
-        schema: NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V1.into(),
+        schema: NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V2.into(),
         content_sha256: Digest::ZERO,
         control_report_sha256: Digest(Sha256::digest(control_bytes).into()),
         recovered_report_sha256: Digest(Sha256::digest(recovered_bytes).into()),
@@ -189,12 +208,15 @@ pub fn audit_native_tactic_fault_recovery(
         platform_arch: std::env::consts::ARCH.into(),
         marker,
         campaign_identity_equal,
+        replay_snapshot_equal,
+        learner_authority_equal,
         seed: NativeTacticFaultRecoverySeedAudit {
             seed: control_seed.seed,
             control_semantic_trace_sha256: control_trace_sha256,
             recovered_semantic_trace_sha256: recovered_trace_sha256,
             semantic_trace_equal,
             useful_expansion_set_equal,
+            state_graph_equal,
             graph_shape_equal,
             replay_shape_equal,
             terminal_result_equal,
@@ -204,7 +226,10 @@ pub fn audit_native_tactic_fault_recovery(
             unresolved_leases: recovered_leases.unresolved_leases,
             passed: seed_passed,
         },
-        passed: campaign_identity_equal && seed_passed,
+        passed: campaign_identity_equal
+            && replay_snapshot_equal
+            && learner_authority_equal
+            && seed_passed,
     };
     audit.content_sha256 = fault_recovery_audit_digest(&audit)?;
     audit.validate()?;
@@ -256,45 +281,36 @@ fn expected_retryable_dispatches(point: NativeTacticFaultPoint, proposal_count: 
     }
 }
 
-fn semantic_trace_sha256(
+fn semantic_trace_sha256_v2(
     trace: &[NativeTacticDecisionTrace],
 ) -> Result<Digest, NativeTacticRouteRunError> {
-    let mut hasher = Sha256::new();
-    hasher.update(b"dusklight/native-tactic/recovered-semantic-trace/v1");
-    hasher.update((trace.len() as u64).to_le_bytes());
-    for decision in trace {
-        hasher.update(decision.execution_plan_sha256.0);
-        hasher.update(decision.decision_index.to_le_bytes());
-        hasher.update(decision.learner_snapshot_sha256.0);
-        hasher.update(decision.replay_rows_at_decision.to_le_bytes());
-        hasher.update(decision.replay_generation.to_le_bytes());
-        hasher.update((decision.lane_index as u64).to_le_bytes());
-        hash_cbor(&mut hasher, &decision.lane_role)?;
-        hasher.update(decision.acquisition_rank.to_le_bytes());
-        hasher.update(decision.frontier_identity.0);
-        hasher.update(decision.episode.to_le_bytes());
-        hasher.update(decision.source_route_ticks.to_le_bytes());
-        hasher.update(decision.route_suffix_ticks.to_le_bytes());
-        hash_cbor(&mut hasher, &decision.selected_option_id)?;
-        hash_cbor(&mut hasher, &decision.selection_reason)?;
-        hash_cbor(&mut hasher, &decision.scheduler_decision)?;
-        hash_cbor(&mut hasher, &decision.branch_acquisition)?;
-        hasher.update(decision.before.snapshot_sha256.0);
-        hasher.update(decision.after.snapshot_sha256.0);
-        hasher.update([u8::from(decision.terminal)]);
-        hasher.update((decision.proposal_batch.len() as u64).to_le_bytes());
-        for proposal in &decision.proposal_batch {
-            hasher.update(proposal.execution_plan_sha256.0);
-            hash_cbor(&mut hasher, &proposal.option_id)?;
-            hash_cbor(&mut hasher, &proposal.selection_reason)?;
-            hasher.update(proposal.realized_ticks.to_le_bytes());
-            hasher.update(proposal.root_route_ticks.to_le_bytes());
-            hasher.update(proposal.emitted_tape_sha256.0);
-            hasher.update([u8::from(proposal.terminal)]);
-            hasher.update(proposal.after_snapshot_sha256.0);
-            hasher.update([u8::from(proposal.retained)]);
+    semantic_trace_value_sha256(serde_json::to_value(trace).map_err(route_error)?)
+}
+
+fn semantic_trace_value_sha256(
+    mut trace: serde_json::Value,
+) -> Result<Digest, NativeTacticRouteRunError> {
+    let decisions = trace
+        .as_array_mut()
+        .ok_or_else(|| route_message("native tactic semantic trace is not an array"))?;
+    for decision in decisions {
+        let decision = decision
+            .as_object_mut()
+            .ok_or_else(|| route_message("native tactic semantic decision is not an object"))?;
+        for physical_field in [
+            "cumulative_wall_micros",
+            "checkpoint_owner_worker_slot",
+            "proposal_worker_slots",
+            "restore_source",
+            "directly_restorable_native_frontiers",
+            "replay_only_frontiers",
+        ] {
+            decision.remove(physical_field);
         }
     }
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight/native-tactic/recovered-semantic-trace/v2");
+    hash_cbor(&mut hasher, &trace)?;
     Ok(Digest(hasher.finalize().into()))
 }
 
@@ -311,10 +327,81 @@ fn hash_cbor<T: Serialize>(
 fn fault_recovery_audit_digest(
     audit: &NativeTacticFaultRecoveryAudit,
 ) -> Result<Digest, NativeTacticRouteRunError> {
+    if audit.schema == NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V1 {
+        return legacy_fault_recovery_audit_digest(audit);
+    }
     let mut unsigned = audit.clone();
     unsigned.content_sha256 = Digest::ZERO;
     Ok(Digest(
         Sha256::digest(serde_cbor::to_vec(&unsigned).map_err(route_error)?).into(),
+    ))
+}
+
+#[derive(Serialize)]
+struct LegacyNativeTacticFaultRecoverySeedAudit {
+    seed: u64,
+    control_semantic_trace_sha256: Digest,
+    recovered_semantic_trace_sha256: Digest,
+    semantic_trace_equal: bool,
+    useful_expansion_set_equal: bool,
+    graph_shape_equal: bool,
+    replay_shape_equal: bool,
+    terminal_result_equal: bool,
+    expected_retryable_dispatches: u64,
+    observed_retryable_dispatches: u64,
+    lease_accounting_exact: bool,
+    unresolved_leases: u64,
+    passed: bool,
+}
+
+#[derive(Serialize)]
+struct LegacyNativeTacticFaultRecoveryAudit<'a> {
+    schema: &'a str,
+    content_sha256: Digest,
+    control_report_sha256: Digest,
+    recovered_report_sha256: Digest,
+    execution_plan_sha256: Digest,
+    platform_os: &'a str,
+    platform_arch: &'a str,
+    marker: &'a NativeTacticFaultInjectionMarker,
+    campaign_identity_equal: bool,
+    seed: LegacyNativeTacticFaultRecoverySeedAudit,
+    passed: bool,
+}
+
+fn legacy_fault_recovery_audit_digest(
+    audit: &NativeTacticFaultRecoveryAudit,
+) -> Result<Digest, NativeTacticRouteRunError> {
+    let seed = &audit.seed;
+    let legacy = LegacyNativeTacticFaultRecoveryAudit {
+        schema: &audit.schema,
+        content_sha256: Digest::ZERO,
+        control_report_sha256: audit.control_report_sha256,
+        recovered_report_sha256: audit.recovered_report_sha256,
+        execution_plan_sha256: audit.execution_plan_sha256,
+        platform_os: &audit.platform_os,
+        platform_arch: &audit.platform_arch,
+        marker: &audit.marker,
+        campaign_identity_equal: audit.campaign_identity_equal,
+        seed: LegacyNativeTacticFaultRecoverySeedAudit {
+            seed: seed.seed,
+            control_semantic_trace_sha256: seed.control_semantic_trace_sha256,
+            recovered_semantic_trace_sha256: seed.recovered_semantic_trace_sha256,
+            semantic_trace_equal: seed.semantic_trace_equal,
+            useful_expansion_set_equal: seed.useful_expansion_set_equal,
+            graph_shape_equal: seed.graph_shape_equal,
+            replay_shape_equal: seed.replay_shape_equal,
+            terminal_result_equal: seed.terminal_result_equal,
+            expected_retryable_dispatches: seed.expected_retryable_dispatches,
+            observed_retryable_dispatches: seed.observed_retryable_dispatches,
+            lease_accounting_exact: seed.lease_accounting_exact,
+            unresolved_leases: seed.unresolved_leases,
+            passed: seed.passed,
+        },
+        passed: audit.passed,
+    };
+    Ok(Digest(
+        Sha256::digest(serde_cbor::to_vec(&legacy).map_err(route_error)?).into(),
     ))
 }
 
@@ -324,7 +411,7 @@ mod tests {
 
     fn valid_audit() -> NativeTacticFaultRecoveryAudit {
         let mut audit = NativeTacticFaultRecoveryAudit {
-            schema: NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V1.into(),
+            schema: NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
             control_report_sha256: Digest([1; 32]),
             recovered_report_sha256: Digest([2; 32]),
@@ -339,12 +426,15 @@ mod tests {
                 point: NativeTacticFaultPoint::DuringExecution,
             },
             campaign_identity_equal: true,
+            replay_snapshot_equal: true,
+            learner_authority_equal: true,
             seed: NativeTacticFaultRecoverySeedAudit {
                 seed: 17,
                 control_semantic_trace_sha256: Digest([4; 32]),
                 recovered_semantic_trace_sha256: Digest([4; 32]),
                 semantic_trace_equal: true,
                 useful_expansion_set_equal: true,
+                state_graph_equal: true,
                 graph_shape_equal: true,
                 replay_shape_equal: true,
                 terminal_result_equal: true,
@@ -382,5 +472,67 @@ mod tests {
         audit.seed.observed_retryable_dispatches = 3;
         audit.content_sha256 = fault_recovery_audit_digest(&audit).unwrap();
         assert!(audit.validate().is_err());
+    }
+
+    #[test]
+    fn semantic_trace_v2_ignores_only_physical_recovery_placement() {
+        let trace = serde_json::json!([{
+            "decision_index": 2,
+            "cumulative_wall_micros": 10,
+            "checkpoint_owner_worker_slot": 0,
+            "proposal_worker_slots": [0, 1],
+            "restore_source": "process_local_checkpoint",
+            "directly_restorable_native_frontiers": 3,
+            "replay_only_frontiers": 1,
+            "reward": -0.25,
+            "measurements": [{"name": "speed", "before": 4.0, "after": 3.0}],
+            "proposal_batch": [{
+                "option_id": "roll",
+                "emitted_tape_sha256": "11"
+            }]
+        }]);
+        let expected = semantic_trace_value_sha256(trace.clone()).unwrap();
+
+        let mut physical_change = trace.clone();
+        let decision = physical_change[0].as_object_mut().unwrap();
+        decision.insert("cumulative_wall_micros".into(), 99.into());
+        decision.insert("proposal_worker_slots".into(), serde_json::json!([7, 6]));
+        assert_eq!(
+            expected,
+            semantic_trace_value_sha256(physical_change).unwrap()
+        );
+
+        let mut semantic_change = trace;
+        semantic_change[0]["reward"] = serde_json::json!(-0.5);
+        assert_ne!(
+            expected,
+            semantic_trace_value_sha256(semantic_change).unwrap()
+        );
+    }
+
+    #[test]
+    fn v2_rejects_resealed_exact_authority_drift() {
+        for mutate in [
+            |audit: &mut NativeTacticFaultRecoveryAudit| audit.seed.state_graph_equal = false,
+            |audit: &mut NativeTacticFaultRecoveryAudit| audit.replay_snapshot_equal = false,
+            |audit: &mut NativeTacticFaultRecoveryAudit| audit.learner_authority_equal = false,
+        ] {
+            let mut audit = valid_audit();
+            mutate(&mut audit);
+            audit.content_sha256 = fault_recovery_audit_digest(&audit).unwrap();
+            assert!(audit.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn legacy_v1_digest_remains_valid_without_v2_authorities() {
+        let mut audit = valid_audit();
+        audit.schema = NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V1.into();
+        audit.seed.state_graph_equal = false;
+        audit.replay_snapshot_equal = false;
+        audit.learner_authority_equal = false;
+        audit.content_sha256 = fault_recovery_audit_digest(&audit).unwrap();
+
+        assert!(audit.validate().is_ok());
     }
 }

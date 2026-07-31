@@ -77,11 +77,19 @@ huntctl learn audit-tactic-fault-recovery \
   --output RECOVERED/fault-recovery-audit.json
 ```
 
-The content-bound audit rejects campaign-identity drift, semantic decision
-trace drift, useful-expansion or graph/replay-shape drift, terminal-result
-drift, unresolved leases, and any retry count other than the exact expected
-batch. The four pre-decision-commit faults must add exactly one dispatched
-batch of retryable leases. The post-decision-commit fault must add none.
+The current v2 content-bound audit rejects campaign-identity drift, semantic
+decision-trace drift, exact state-graph, replay-snapshot, or learner-authority
+drift, useful-expansion or graph/replay-shape drift, terminal-result drift,
+unresolved leases, and any retry count other than the exact expected batch.
+The semantic identity covers the complete typed decision and proposal trace,
+including rewards, measurements, value estimates, applicable actions,
+parameterized feedback, state facts, and emitted tapes. It excludes only wall
+time and physical worker/checkpoint placement, which may legitimately change
+after process loss. Legacy v1 audits remain readable but do not satisfy the
+long-campaign evidence gate.
+
+The four pre-decision-commit faults must add exactly one dispatched batch of
+retryable leases. The post-decision-commit fault must add none.
 
 The five one-decision Windows native cells pass this audit. That local smoke
 proves the harness and repaired transaction boundaries, but it is not the

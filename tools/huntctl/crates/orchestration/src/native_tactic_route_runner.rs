@@ -176,8 +176,9 @@ pub use fault_injection::{
 };
 mod fault_recovery_audit;
 pub use fault_recovery_audit::{
-    NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V1, NativeTacticFaultRecoveryAudit,
-    NativeTacticFaultRecoverySeedAudit, audit_native_tactic_fault_recovery,
+    NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V1, NATIVE_TACTIC_FAULT_RECOVERY_AUDIT_SCHEMA_V2,
+    NativeTacticFaultRecoveryAudit, NativeTacticFaultRecoverySeedAudit,
+    audit_native_tactic_fault_recovery,
 };
 mod launch_smoke;
 pub use launch_smoke::{
