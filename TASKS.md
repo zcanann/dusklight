@@ -1,15 +1,17 @@
-# Active tasks: build a credible save-state learning planner
+# Active tasks: build a learning framework that learns fast enough to use
 
-This file contains unfinished framework work only. Completed implementation
-belongs in Git, and experimental history belongs in immutable benchmark
-artifacts.
+This file is the forward work queue. It contains unfinished work only.
 
-## Product objective
+When a task is complete, remove it. Git and retained benchmark bundles are the
+history. Do not append commit logs, experiment diaries, implementation
+postmortems, or completed checklists here.
+
+## Mission
 
 Build a generic system that can learn efficient controller routes through a
 deterministic game from an authenticated native checkpoint.
 
-The environment gives the system:
+The framework receives:
 
 - exact restorable game states;
 - typed observations and currently applicable actions;
@@ -17,949 +19,293 @@ The environment gives the system:
 - a terminal predicate; and
 - native ticks consumed.
 
-The system must discover a terminal route, improve it, and learn reusable
-action compositions without authored route coordinates, benchmark-specific
-rewards, or UI-authored TAS graphs.
+It must:
 
-The Ordon acceptance problem is intentionally elementary: walk around one
-obstacle and hit the real load zone. The ordinary human recording reaches it
-at tick `131`; tick `123` or lower is the first credible optimization result.
-If scratch learning cannot solve and improve this in minutes rather than
-hours, the framework is not credible.
+1. discover a route to the real terminal predicate without an authored route;
+2. improve that route using evidence gathered from native execution;
+3. learn reusable state-conditioned actions and action compositions;
+4. make enough useful attempts per second for learning to finish on practical
+   time scales; and
+5. remain auditable, recoverable, and maintainable while doing so.
 
-## Evidence snapshot and present diagnosis
+The Ordon load-zone problem is the first acceptance case because it is
+deliberately elementary. The ordinary human replay reaches the load zone at
+tick `131`. Reaching it reliably is the minimum discovery gate. Beating `131`
+shows optimization; tick `123` or lower is the first credible route-quality
+result. If the framework cannot do this in minutes rather than hours, it is not
+ready for harder problems.
 
-The incoming 2026-07-29 work made substantial, useful progress:
+## Current position
 
-- The durable content-addressed state graph owns exact states, realized
-  expansions, restoration plans, terminal paths, learner rows, scheduling
-  decisions, persistence, and reports.
-- Exact restored typed state is validated before graph-owned native expansion.
-  Long options expose branchable interior states, and deterministic tests cover
-  transpositions, restart, lease lifecycle, and exact terminal returns.
-- A deterministic around-the-corner fixture has a known nine-tick optimum. A
-  learner trained on graph-disjoint translated fixtures reaches it in `40`
-  unique expansions versus `101` for the non-learning control. This is good
-  plumbing evidence, not native-policy acceptance.
-- Persistent native workers, compact repeated-request transport, subsystem
-  suppression parity, phase timing, and checkpoint-owner locality are
-  implemented. A short macOS fixed-work treatment reports a 15.54x steady-state
-  speedup over relaunching the same topology.
-- The Rust source-quality gate has zero debt exemptions and all 552 production
-  files are below 1,500 physical lines. The four final oversized orchestration
-  files are split by result tests, launch preparation, proposal-pool execution,
-  frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 330 tests.
-- Scratch validation now publishes a movable content-addressed bundle carrying
-  request, execution, plan, route, per-seed, graph checkpoint, terminal
-  tape/result, source-authority evidence, and a content-bound campaign audit.
-  New reports retain every exhausted budget and every proposal's exact
-  root-route length, allowing the audit to distinguish first terminal from
-  first evaluation of the eventual best route. The clean-checkout audit command
-  validates source quality, formatting, the workspace, all orchestration tests,
-  and every committed bundle.
-- New decision journals retain the exact applicable action surface, fitted
-  value and uncertainty support, and selected action across restart. Campaign
-  audits and matched comparisons explicitly mark legacy or incomplete
-  action-surface timelines, so absent roll/camera opportunities cannot be
-  misreported as bad learned ranking.
-- Live native decisions now retain their complete state-local pre-lease
-  scheduler queue: exact return, generalized terminal support and conditional
-  ticks, uncertainty, prediction error, visits, policy rank, global/local
-  exploration ranks, consumed learner-model identity, evaluated subset, and
-  final committed expansion. The queue is content-bound, campaign audits mark
-  legacy gaps explicitly, and a binary-checkpoint restart must reproduce it.
-- A content-bound observation audit now recomputes every learner feature
-  vector bit from the retained native facts and joins decision sources to
-  their typed applicable-action surfaces. It reports actual velocity,
-  trajectory, camera, prompt, kinematic-consequence, roll, A, and L coverage
-  and fails on missing legacy evidence, authored route sequences, or
-  benchmark-specific features. A retained native campaign still has to pass
-  this audit before the P2 observation task is complete.
-- The held-out tactic comparator now evaluates the actual scratch-discovery
-  achieved-goal learner against exact-action mean and the production
-  scheduler-only and random-valid policies on identical whole-group splits.
-  It reports unsupported actions, validation-calibrated test error, epistemic
-  distance, pairwise ordering, top-action wins, and regret. The P2 gate remains
-  open until a retained native corpus demonstrates an advantage.
-- A content-bound post-terminal control audit now joins immutable pre-lease
-  learner queues to later exact graph outcomes and compares predicted total
-  ticks with least-visited and random-valid ordering. It withholds the
-  exhaustive-local oracle claim unless every queued action has an authenticated
-  terminal continuation. Retained native evidence is still required.
-- Native route report v36 retains the checksummed binary lease-lifecycle
-  journal. Every issued native proposal is classified as completed, retryable,
-  cancelled, failed, or unresolved; scratch audits reject unresolved or
-  arithmetically detached accounting. Proposal dispatches, unique graph
-  expansions, and observed interior segments are distinct metrics, and the
-  portable evidence bundle carries the exact journal.
-- Every seed now owns an exact binary recovery transaction at each durable
-  decision boundary. Resume derives its transaction index from the decision
-  journal, loads only that exact content-bound campaign checkpoint, reconciles
-  the lease journal, prunes partial native attempt directories and stale or
-  ahead recovery points, and repairs committed shared replay idempotently.
-  A one-shot hard-exit injector covers lease-issued pre-dispatch, worker
-  execution, native completion, recovery commit, and decision commit. Its
-  content-bound comparator requires identical semantic traces, useful graph
-  work, graph/replay shape, terminal results, and exact retry accounting. All
-  five one-decision Windows native cells pass locally. Retained long-campaign
-  and cross-platform fault evidence remains open.
-- Bounded execution plans now divide their aggregate checkpoint-memory limit
-  across active workers and put that capacity into every native cache request.
-  The v2 campaign audit recomputes configured and observed pool bounds,
-  distinguishes lane refresh pressure from actual fitted-model replay lag,
-  fails selection if that lag exceeds the sealed limit, accounts for replay
-  fallback, and reports checkpoint-owner locality and assignment skew.
-- The hermetic clean-checkout gate does not launch the game executable. A
-  current-build one-decision Windows smoke exposed detached root-probe cache
-  and batch-schema contracts that the complete Rust suite had missed. Those
-  defects are fixed, but supported-platform native launch compatibility is not
-  yet a retained gate.
-- A dedicated native launch-smoke command now fixes a one-worker,
-  one-decision, one-proposal topology and publishes a movable content-addressed
-  bundle. It retains the native build/capability hello, initial cached-root
-  request/result, compact proposal envelope/result, binary plan and lease
-  journal, graph checkpoint, resource audit, and source authorities. The
-  clean-checkout gate discovers every committed smoke manifest. The retained
-  `win32-x86_64` cell passes from clean native revision `dc374771b1` with
-  bundle identity `651b486d54d108e3a214bd6da91dcd22bf3094d8aa536dee030f60f49b1c5a9c`.
-  The matching macOS cell remains open.
-- Native option summaries now retain same-tick wall-contact/commanded-motion
-  overlap and the momentum loss measured on those ticks. The v5 tactic feature
-  schema exposes the measured consequence with explicit legacy missingness;
-  contact itself still has no encoded desirability.
-- A content-bound terminal-route diagnosis command profiles every
-  graph-selected scratch result against an authenticated ordinary
-  demonstration. It reports typed roll/camera use, duration, trajectory,
-  velocity, detour, contact-correlated slowdown, neutral/repeated work, and
-  exact action-availability/support coverage without scoring human similarity.
-- Matched scratch comparison now keeps graph-node acquisition schedules fixed
-  across learned, scheduler-only, and random-valid action ranking. Its
-  fail-closed comparator rejects source, horizon, topology, schema, budget, or
-  cadence drift and reports both graph sample efficiency and end-to-end phase
-  occupancy. No matched native result has been retained yet.
-- A bounded macOS scratch campaign reached the actual Ordon load-zone
-  predicate in all four configured seeds without human replay. Its best route
-  was `231` ticks, median time to first terminal was about `691.6` seconds, and
-  worst time was about `728.3` seconds.
-- The historical fixed-work curve was only a one-decision warm-fleet
-  microbenchmark. Throughput report v4 now refuses that shortcut: every cell
-  must execute at least 16 decisions and prove learner updates, durable replay,
-  graph admission, repeated non-root restores, persistence, and bounded-cache
-  eviction. It retains the phase and occupancy counters needed to identify
-  saturation. A portable evidence bundle now content-addresses and compresses
-  the aggregate, all sample route reports and their recomputed resource audits,
-  request, execution, plan, and source authorities; the clean gate discovers
-  committed bundles. The retained Windows x86-64 v4 curve passes offline
-  reconstruction under bundle identity
-  `50f1ac417f00c2946ba2cc011f48a8b8c42cb3cd2f0c3654692d5ec3b09df723`.
-  All ten samples execute the same 16 decisions and 256 useful expansions with
-  the same useful-expansion-set identity.
-- The first current-build Windows v4 cell exposed a real architectural
-  bottleneck before the curve completed: one worker required about `62.5`
-  minutes for 16 decisions and 256 native expansions. Native simulation used
-  about `39.5` seconds, while checkpoint persistence used about `2,253.8`
-  seconds, or 60% of wall time. Each decision serialized and reverified the
-  whole accumulated replay twice. The remaining curve cells were stopped in
-  accordance with experiment discipline. A process-local content-reference
-  cache and single-pass recovery commit preserve the same authenticated
-  durable format without rereading every immutable object. The matched
-  one-worker treatment completed the same 16 decisions, 256 expansions, and
-  4,512 native ticks in about `2,601.2` seconds: wall time fell 30.7%,
-  persistence fell 45.3%, and useful expansion throughput rose 44.2%.
-  Removing duplicate whole-checkpoint authentication reduced the same cell to
-  about `2,152.5` seconds with `777.6` seconds in persistence. Relative to the
-  untreated cell, wall time fell 42.6%, persistence fell 65.5%, and useful
-  expansion throughput rose 74.3% to about `0.119` expansions per second.
-  Checkpoint v6 now replaces the remaining whole-history write path with a
-  bounded root manifest, one immutable graph base followed by authenticated
-  dirty-object and edge-addition records, and a parent-linked append journal
-  for retained replay. The graph-derived training corpus is reconstructed
-  instead of persisted as a second authority. V5 remains readable and migrates
-  on the next write. A 129-mutation growth test proves that individual graph
-  records remain within 32 bytes of the first delta after the complete graph
-  has grown beyond ten times one record; two-decision replay restart tests
-  exercise the append chain. The clean exact-plan v6 rerun completed the same
-  16 decisions, 256 unique useful expansions, and 4,512 native ticks with five
-  learner updates and four replay refreshes. Relative to the single-auth v5
-  predecessor, campaign wall fell 81.3%, persistence fell 96.2%, and output
-  bytes fell 86.4%. The retained comparison is
-  `docs/glitch-hunting/benchmarks/tactic-route-checkpoint-v6-windows-20260729.json`.
-  The first full-curve launch then exposed an invalid memory configuration
-  before completing its first sample: a `294,721,440`-byte native checkpoint
-  could not fit in the `20,971,520` bytes available to each member of a
-  16-worker fleet under a `335,544,320`-byte aggregate bound. Fleet launch now
-  requires every worker to report the same nonzero root-checkpoint size and
-  rejects any per-worker cache that cannot retain one checkpoint, with the
-  required and available byte counts. The balanced curve must use a bounded
-  aggregate budget large enough for all 16 workers; it must not reinterpret a
-  late missing-retention result as request detachment.
-- The corrected Windows curve completed its first one-worker v4 sample before
-  the run was stopped: 16 decisions, 256 useful expansions, 5,096 native
-  ticks, and about 28.6 wall minutes. Native simulation used only 36.3 seconds;
-  campaign admission, graph admission, persistence, and restore/capture work
-  consumed most of the measured time. Per-decision wall time rose from about
-  33.6 seconds over the first four decisions to 148.5 seconds over the last
-  four. Code inspection found that each native batch cloned the complete
-  accumulated graph and rebuilt its learner projection, after which retaining
-  the selected result cloned and projected that same graph again. Checkpoint
-  `e7803326dc` removes the redundant second admission and requires its
-  incremental persistence head to remain unchanged. This is a source-level
-  bottleneck fix, not retained curve evidence; rerun a matched cell before
-  claiming an end-to-end improvement.
-- The exact matched one-worker treatment at checkpoint `d6f386d62f` preserved
-  the request, execution plan, 16 decisions, 256 useful expansions, 5,096
-  native ticks, five learner updates, 256 replay rows, and useful-expansion-set
-  identity. Structurally shared ordered graph indexes and incremental learner
-  projection reduced duplicate graph admission by 99.2%, campaign admission by
-  39.7%, orchestration by 38.6%, and wall time by 9.3%, raising useful
-  expansion throughput from about `0.149` to `0.164` per second. The remaining
-  measured costs are about 337 seconds of persistence, 326 seconds of tactic
-  execution including restore/capture, 196 seconds in the first authoritative
-  batch admission, and 178 seconds of model update. The local committed sample
-  is matched diagnostic evidence, not the required sealed ten-cell curve.
-- A second exact matched one-worker diagnostic at checkpoint `354f11a46d`
-  preserved all 16 selected option identities, every emitted proposal tape,
-  the 256-member useful-expansion set, 5,096 native ticks, five learner
-  updates, and 256 replay rows. Combining transition validation with replay
-  identity, reusing prepared route identities, and sharing immutable node
-  facts reduced campaign admission only from about `196.3` to `184.5` seconds
-  (6.0%). Complete wall time regressed from about `1,556.8` to `1,632.8`
-  seconds as model update and persistence varied upward, so this is diagnostic
-  evidence, not a throughput win and not permission to launch the full curve.
-  Inspection then found that every proposal transition had already been fully
-  authenticated while constructing its rewarded outcome, but batch graph
-  admission repeated that complete large-snapshot pass. Checkpoint
-  `68e37a31ef` carries an immutable authenticated-transition receipt into graph
-  admission and preserves the existing JSON/CBOR transition wire shape. The
-  exact matched diagnostic at checkpoint `9bdb52bd69` again preserved all 16
-  selected options, all 256 emitted proposal tapes, the useful-expansion-set
-  identity, 5,096 native ticks, five learner updates, and 256 replay rows.
-  Relative to `354f11a46d`, campaign admission fell 12.2% to about `162.0`
-  seconds, complete wall fell 9.8% to about `1,473.3` seconds, and useful
-  expansion throughput rose 10.8% to about `0.174` per second. Relative to
-  `d6f386d62f`, admission is down 17.5%, complete wall is down 5.4%, and
-  throughput is up 5.7%. This validates the receipt reuse but does not close
-  P3: authoritative admission still consumes about 11% of total wall, while
-  tactic execution, persistence, and model update consume about `341.4`,
-  `360.1`, and `200.8` seconds respectively. Profile those remaining paths
-  before launching another curve cell. Checkpoint `252cd20dc7` makes clones of
-  the authenticated transition capability and graph evidence share one
-  immutable allocation instead of copying both complete typed snapshots. It
-  also publishes an exact wire-compatible admission breakdown for terminal
-  projection, batch graph admission, next-action catalog construction,
-  selected-outcome retention, frontier retention, and unattributed work in
-  route reports, curve samples, and matched comparisons. The exact matched
-  diagnostic at source checkpoint `de63af15e5` preserved the request,
-  execution plan, all 16 selected option identities, every emitted proposal
-  tape, the 256-member useful-expansion set, 5,096 native ticks, five learner
-  updates, and 256 replay rows. Complete wall time nevertheless regressed to
-  about `1,956.6` seconds and useful throughput fell to about `0.131`
-  expansions per second, so immutable sharing is not an end-to-end throughput
-  win. The new attribution is decisive: terminal projection used `51`
-  microseconds, batch graph admission `3.23` seconds, next-action catalog
-  construction `0.55` seconds, selected-outcome retention `0.65` seconds,
-  frontier retention `219.64` seconds, and unattributed work `0.001` seconds.
-  Frontier retention therefore consumed 98.0% of measured admission. It was
-  repeatedly constructing a restoration contract by validating, hashing, and
-  serializing the complete accumulated graph even though restoration targets
-  one immutable exact node. Checkpoint `f74b193f96` replaces that false
-  whole-graph dependency with a v2 node-scoped restoration authority, retains
-  validation support for v1 plans, and uses the campaign's already
-  authenticated state digest without trusting a stale digest over changed
-  typed facts. All 328 orchestration tests pass. This is a source-level
-  treatment awaiting one exact matched diagnostic; do not infer an end-to-end
-  win from the unit tests.
+- A historical scratch campaign reached the load-zone predicate in four seeds,
+  but its best reported route was `231` ticks and time to first terminal was
+  roughly twelve minutes. Its complete per-seed evidence is unavailable, so it
+  is directional evidence rather than the current baseline.
+- The deterministic around-the-corner fixture shows that learned ranking can
+  reduce expansions in a synthetic environment. There is still no retained
+  native proof that learning beats matched scheduler-only and random-valid
+  controls.
+- The latest retained two-worker fixed-work campaign performs 256 useful
+  expansions in about `113.3` seconds (`2.26` expansions/second). Roughly
+  `57.8` seconds are tactic execution, `19.2` seconds are persistence, and
+  `5.9` seconds are model update.
+- Replay admissions now batch one durable journal flush per decision instead
+  of one per proposal, but this change has not yet been measured in a matched
+  native run.
+- There is no retained current-build proof of reliable minutes-scale scratch
+  discovery, repeated post-terminal improvement, a route below `131`, or a
+  route at or below `123`.
 
-That campaign proves bounded terminal discovery under its exact conditions. It
-does not prove practical discovery, useful native learning, route
-optimization, cross-platform parity, or a generic framework.
+These facts make the immediate order of work:
 
-The latest diagnostic identifies whole-graph restoration-contract construction
-as the immediate coordinator bottleneck. After measuring that treatment, the
-remaining acceptance evidence must still distinguish:
+1. measure the already-implemented replay-batching treatment once;
+2. establish an honest current native baseline;
+3. prove whether learned ranking improves sample efficiency;
+4. raise useful-evidence throughput to the rate required by that sample count;
+5. make discovery and post-terminal optimization pass the Ordon gates; and
+6. prove the same machinery transfers to reusable tactics and another route.
 
-- poor expansion ranking or insufficient exploration;
-- too few useful expansions per second;
-- restore, IPC, learner, persistence, or scheduler contention during a real
-  campaign;
-- action availability or observation features that make good behavior hard to
-  infer;
-- a discovery-to-optimization handoff that stops exploiting useful terminal
-  evidence; or
-- correctness bugs hidden by incomplete retained evidence and failing quality
-  gates.
+## P0 - Establish a decisive native baseline
 
-Do not answer this by seed mining. Run the matched diagnostics below before
-another long campaign.
-
-## Non-negotiable design
-
-### One authoritative state graph
-
-- A node is an exact restorable native boundary, its complete typed state, and
-  the evidence identity that binds them.
-- An action expansion records one selected primitive or learned option and its
-  complete native realization. Observed segments connect interior boundaries
-  without pretending the continuing option was selected again.
-- Merge nodes only when future-affecting native state is proven equivalent.
-  Semantic proximity is a learner feature, not transposition authority.
-- Live process handles and portable machine images are caches for graph nodes,
-  never alternative sources of search truth.
-- Replay, learner batches, indexes, reports, visualizations, and tactic mining
-  are derived graph views. There must not be a second authoritative frontier
-  or behavior archive.
-
-### Learning ranks search; native evidence decides truth
-
-- The objective is lexicographic: reach the authenticated terminal, then
-  minimize native ticks. Do not encode it as a tunable terminal-reward
-  constant.
-- Predict terminal reach/support and conditional ticks-to-go separately.
-  Budget-censored continuation is unknown, not a failed terminal proof.
-- Learned values rank unexecuted node/action expansions. They never fabricate
-  terminal support, replace the executed policy result, or promote a route.
-- Exact successful graph paths provide exact ticks-to-go targets. Generalized
-  estimates and uncertainty remain separately inspectable.
-- Before a terminal exists, exploration may use coverage, visits, reachability,
-  uncertainty, and prediction error. These are search priorities, not
-  benchmark-specific reward.
-- State may expose velocity, trajectory history, momentum retention, camera
-  state, contacts and measured kinematic effects, prompted-action availability,
-  and action history. Do not hand-code “straight,” “roll,” wall avoidance, an
-  Ordon waypoint, or any other desired behavior as utility.
-- Every currently applicable primitive and promoted option remains selectable.
-  Unsupported estimates remain visibly unsupported.
-
-### Discovery and optimization are distinct regimes
-
-Before the first terminal, workers lease diverse node/action expansions and
-share graph evidence without collapsing their local coverage frontiers.
-Exploration horizons must be long enough for an unskilled route to reach the
-goal.
-
-After the first terminal, immediately decompose the successful path into exact
-branchable states at no coarser than four native ticks. Rank counterfactuals by
-predicted total root-to-terminal ticks, uncertainty, and visits while retaining
-a fixed broad-exploration share. A slow first route is evidence, not policy
-authority.
-
-### Optional human replay is ordinary evidence
-
-An authenticated human replay may add one path and exact terminal return to the
-same graph. It adds no authored waypoint, privileged action, behavior-cloning
-authority, separate reward, or mandatory curriculum. Removing it may reduce
-sample efficiency; it must not remove the framework's ability to succeed.
-
-### Operational data is binary and content-addressed
-
-JSON is allowed for small authored requests and exported reports. It is not the
-operational format for checkpoints, graph nodes, edges, replay, models,
-journals, or learned tactics.
-
-## P0 - Restore a truthful, auditable baseline
-
-P0 is a cross-platform evidence-collection gate, not an unimplemented campaign
-subsystem. Platform-exclusive collection belongs to that platform's work lane
-and does not stop executable engineering or experiments on another platform.
-
-- [x] Implement the native campaign smoke gate. It materializes a current
-      execution, launches the compact persistent worker, authenticates the root
-      probe, executes one cached tactic decision, passes the v2 resource audit,
-      and fails clearly on stale capabilities, detached root-cache
-      capacity/schema, or missing native result telemetry.
-- [x] Retain and clean-checkout validate the Windows smoke result for the sealed
-      request and seed `155921`.
-- [ ] **macOS lane:** run and retain the matching smoke for the same sealed
-      request and seed. This is ready for platform execution; no remaining
-      smoke-gate implementation is known.
-- [x] Exhaust repository recovery of the original `231`-tick macOS campaign.
-      The aggregate summary is present, but its child report and per-seed graph,
-      checkpoint, tape, and terminal-result artifacts are absent from reachable
-      Git history, remote branches, and the fork's GitHub Actions artifacts.
-- [ ] **macOS lane:** rerun the sealed four-seed campaign and commit its
-      self-contained scratch evidence bundle. Do not accept another aggregate
-      summary without all independently validated per-seed evidence. Source
-      checkpoint `ea88b71af2` fixes two blockers in that bundle path: terminal
-      tape ticks are now measured relative to the authenticated source
-      boundary, and terminal results are checked against their execution-plan
-      authority rather than the unrelated execution-binding digest. This
-      remains open pending the platform rerun and retained bundle.
+- [ ] Run one current-build, single-seed scratch diagnostic with a horizon long
+      enough for an unskilled policy to wander to the load zone. Do not use the
+      human replay, authored coordinates, Ordon-specific rewards, or a
+      hand-authored action sequence.
+- [ ] Retain a self-contained evidence bundle for that run: request, execution
+      binding, terminal predicate, game/controller identities, plan, seeds,
+      per-decision trace, graph checkpoint, replay/model authority, resource
+      audit, and any terminal tape/result.
+- [ ] Make the audit answer, without manually reading a multi-megabyte report:
+      - whether and when the real terminal predicate was reached;
+      - useful expansions and wall time to first and best terminal;
+      - why each node and action was selected;
+      - which learner revision and applicable-action surface were consumed;
+      - exploration versus learned selections;
+      - restore, native simulation, IPC, learner, graph, and persistence time;
+      - worker utilization, retries, fallbacks, and stop reason; and
+      - first-route and best-route native ticks.
+- [ ] Run matched learned-ranking, scheduler-only, and random-valid cells. Hold
+      checkpoint, predicate, action schema, seed, horizon, proposal width,
+      workers, expansion budget, wall budget, and fidelity fixed.
+- [ ] Compare any discovered route with the `131`-tick replay using trajectory,
+      velocity retention, action availability, roll/camera use, option
+      duration, detour, contact-correlated slowdown, and repeated or idle work.
+      This diagnoses missing state or actions; it does not authorize imitation
+      reward or an authored route.
+- [ ] From the observed expansions-to-terminal distribution, compute the
+      minimum useful-expansion throughput required for a five-minute median
+      and fifteen-minute worst-seed discovery gate. Use this measured rate,
+      with explicit headroom, as the P2 throughput target.
 
 Exit gate:
 
-- A clean checkout passes the documented audit command.
-- Current Windows and macOS builds pass the retained native launch smoke.
-- Another engineer can independently validate the `231`-tick claim and every
-  per-seed terminal without access to the originating macOS build directory.
+- We can distinguish a learning-quality failure from insufficient exploration,
+  insufficient throughput, an action/observation gap, or an orchestration bug.
+- The next campaign is justified by measured evidence rather than seed mining.
 
-## P1 - Diagnose the `231`-tick campaign before changing the algorithm
+## P1 - Make learning improve search
 
-- [ ] Produce a per-seed campaign audit with time and unique useful expansions
-      to first terminal and best terminal, selected-node and selected-action
-      reasons, exploration versus learned selections, restores and fallbacks,
-      learner revisions consumed, terminal-path lengths, and stop reasons.
-      Source checkpoints `8abfcf2489` and `97cd210747` advance and verify the
-      scratch campaign audit v3. Terminal-improvement ticks are relative to
-      the authenticated graph root; first/best wall and work counters are
-      recomputed from the decision timeline; and every claimed terminal
-      proposal must match the graph's complete typed action, realized tape
-      range, target, route length, reward, and executable evidence. Six focused
-      audit tests and the complete 315-test orchestration suite pass. This
-      remains open only for a retained v3 audit over the diagnostic campaign.
-- [ ] Compare each discovered route with the `131`-tick ordinary replay at the
-      level of trajectory, velocity retention, action availability, roll/camera
-      use, option duration, detour, contact-correlated slowdown, and idle or
-      repeated work. This is feature/action-surface diagnosis, not permission
-      to encode the human route as reward.
-- [ ] Run matched scratch cells for learned ranking, scheduler-only coverage,
-      and random-valid ranking. Hold source, terminal, action schema, seeds,
-      horizons, proposal width, workers, and expansion/wall budgets fixed.
-- [ ] For those cells report both sample efficiency and execution efficiency:
-      terminal rate, useful expansions to terminal, useful expansions per
-      second, simulated ticks per expansion, restore time, native simulation,
-      IPC, graph admission, learner update, persistence, and idle/saturation.
-- [ ] Reproduce one sealed diagnostic cell on macOS and the reference
-      workstation with identical game/controller bytes and execution fidelity.
-      Explain any difference in terminal, route tick, action applicability, or
-      throughput before comparing learning treatments across platforms.
-
-Exit gate:
-
-- Evidence identifies whether the primary failure is expansion quality,
-  expansion throughput, restoration/orchestration, action/feature coverage, or
-  platform drift. More native work is then assigned to that measured cause.
-
-## P2 - Prove native learning improves search
-
-- [ ] Demonstrate on held-out native state groups that the pre-terminal learner
-      ranks independently realized actions better than action-mean,
-      scheduler-only, and random-valid controls. Report coverage, calibration,
-      pairwise ordering, uncertainty, and unsupported actions.
-- [ ] Demonstrate that learned ranking reduces median unique useful expansions
-      to the real terminal under matched budgets. The deterministic
-      around-the-corner fixture remains a regression test, not this gate.
-- [ ] After terminal support appears, demonstrate on held-out successful-path
-      states that learned total-tick ranking selects better counterfactuals
-      than visit-count and random-valid controls, and recovers the
-      exhaustive-local oracle's best outcome with materially fewer native
-      evaluations. Exhaustive-local is an outcome ceiling and evaluation-cost
-      control, not a policy the learner can honestly beat.
-- [ ] Audit the observation vector against native evidence. Applicable actions,
-      velocity and trajectory history, camera state, prompted actions, and
-      kinematic consequences such as lost speed must be available when
-      supported by state; no derived signal may directly encode desired Ordon
-      behavior.
-Exit gate:
-
-- Learning reduces native expansions to terminal and improves held-out
-  counterfactual selection. A faster unchanged coverage heuristic does not
-  satisfy this gate.
-
-## P3 - Make real-campaign throughput scale
-
-- [x] Replace checkpoint v5's whole-payload identity and eager campaign clone
-      with a versioned manifest over immutable graph/replay objects and
-      append-only authenticated summaries. Preserve v5 read/migration support,
-      but make each durable decision authenticate newly admitted content once
-      and install a bounded root manifest. Add a long synthetic growth test
-      proving that per-decision persistence volume does not rise linearly with
-      accumulated history.
-- [x] Rerun the identical one-worker, 16-decision, 256-expansion Windows cell.
-      Require persistence to stop dominating wall time and compare phase
-      occupancy, useful expansions per second, native ticks, graph work, and
-      artifact volume with all three retained predecessor cells before
-      spending a full curve.
-- [x] Run fixed-work curves at 1, 2, 4, 8, and 16 workers over enough decisions
-      to exercise graph growth, repeated restores, learner updates,
-      persistence, and bounded checkpoint eviction. Retain the complete
-      content-bound sample reports and v4 aggregate, including phase occupancy
-      and saturation counters. A one-decision warm-fleet microbenchmark is
-      necessary but not sufficient. The retained Windows x86-64 bundle contains
-      two balanced repetitions and validates independently. Every cell completed
-      16 decisions, 256 useful expansions, five learner updates, six model
-      snapshots, repeated non-root restoration, persistence, and cache
-      eviction. Median useful throughput rises monotonically from `0.739` at
-      one worker to `0.805`, `1.663`, `2.043`, and `2.475` expansions per
-      second at 2, 4, 8, and 16 workers. The widest cell remains below the
-      5 GiB checkpoint-pool bound at `4,715,546,880` bytes, and maximum model
-      replay lag is 48 revisions against the declared limit of 64.
-- [x] Make the multi-sample curve resumable before another full launch.
-      Commit each completed sample by ordinal, repetition, worker count,
-      execution-plan identity, report identity, and useful-expansion set.
-      Resume must independently validate and skip complete samples, continue a
-      durable partial route sample, reject a torn or detached sample, and never
-      relaunch native work merely because final aggregate sealing was
-      interrupted.
-      Source checkpoint `fa2770a794c5` implements the protocol but does not
-      close this gate: compile it, run the focused pure tests, and retain
-      interruption tests covering a completed prefix, a durable partial
-      sample, detached/torn progress, and aggregate-only resealing with zero
-      native launches.
-      Source checkpoint `52101efb3d` fixes a fatal entry bug in the earlier
-      implementation: an existing output was rejected before `--resume` could
-      be honored. Resume now revalidates the physical sample roots, complete
-      contiguous sample evidence, fleet-launch journal, and exact aggregate
-      execution order; it rejects non-files, detached/future samples, and
-      torn records. Focused pure regression sources cover fresh/resume mode,
-      completed-prefix skipping, a durable partial sample, detached and
-      non-prefix progress, torn records, and aggregate-only zero-launch
-      resealing. Source checkpoint `97cd210747` compiles and passes all of
-      those focused cases; the complete suite passes all 318 tests at
-      checkpoint `3d6d9b4fe7`.
-- [ ] Retain a sealed long-campaign v2 resource audit proving the declared
-      memory and fitted-model staleness bounds while reporting replay fallback
-      and checkpoint-owner skew. Use the hard-loss injector before dispatch,
-      during execution, after native completion, after recovery-point commit,
-      and after decision commit, and retain all five content-bound recovery
-      audits proving exact semantic work and retry accounting. Run at least one
-      fault after graph/replay growth, not only at decision zero. Checkpoint
-      `8901e49b8f` upgrades the recovery audit to v2 after finding that v1
-      hashed only a hand-picked trace subset and compared graph counts rather
-      than exact authorities. V2 covers the complete typed decision/proposal
-      trace while normalizing only timing and physical placement, and requires
-      exact state-graph, replay-snapshot, and learner-authority identities in
-      addition to graph/replay shape and lease accounting. Legacy v1 digest
-      validation remains compatible but cannot close this gate. All 337
-      orchestration tests pass. Checkpoint `3759903689` adds the portable,
-      content-addressed retention format and offline validator. Each bundle
-      carries the exact request, execution binding and plan, all six source
-      authorities, compressed control and recovered reports, both v3 resource
-      audits, durable fault marker, and recomputable v2 recovery audit. The
-      builder fails closed on detached authorities and the validator rebuilds
-      the semantic audit from bundled bytes; all 338 orchestration tests and an
-      end-to-end seal/validate smoke pass. The task remains open only for the
-      five real native fault cells, including at least one after graph and
-      replay growth.
-- [ ] Remove the measured end-to-end saturation bottleneck until the reference
-      workstation sustains enough useful evidence to meet the P4 wall-time
-      gate. Prefer reducing restore/replay and idle time before adding capacity.
-      The first current resumable Windows curve launch exposed a separate
-      startup-pressure defect: all 16 native workers booted concurrently,
-      consuming 16 cores before any sample began. Checkpoint `9d5d929294`
-      launches the identical persistent fleet in contiguous batches of at most
-      two, retains total fleet-launch time outside sample wall time, and passes
-      the complete 319-test orchestration suite. A five-second live startup
-      interval used `10.05` native CPU-seconds with exactly two active boots.
-      This bounds launch pressure but does not close the end-to-end throughput
-      gate. The first corrected one-worker sample then showed strong
-      history-dependent coordinator cost despite only `36.3` seconds of native
-      simulation in roughly `1,717.4` wall seconds. Checkpoint `e7803326dc`
-      removes a duplicate whole-graph clone, admission, projection, and dirty
-      persistence mark from each retained selected outcome. Checkpoint
-      `d6f386d62f` makes the remaining atomic graph transaction structurally
-      shared and merges only newly admitted learner rows while preserving
-      byte-identical graph serialization. The exact matched cell reduced graph
-      admission 99.2% and wall time 9.3%, but still spent about 196 seconds in
-      authoritative batch admission. Checkpoint `354f11a46d` reduced that path
-      only 6.0%, to about 184.5 seconds, while total wall regressed 4.9%;
-      checkpoint `68e37a31ef` now reuses the immutable validation/identity
-      receipt created during rewarded-outcome evaluation instead of
-      re-authenticating every large transition during batch graph admission.
-      The exact checkpoint `9bdb52bd69` treatment reduced admission another
-      12.2% and total wall 9.8% with identical selected actions, proposal
-      tapes, and useful graph work, but still spent about 162 seconds in
-      admission. Profile and remove the remaining measured coordinator,
-      persistence, model-update, and restore/capture growth before spending the
-      remaining v4 cells; the curve must still identify the steady-state
-      saturation point. Checkpoint `252cd20dc7` removes the remaining deep
-      clone of each authenticated proposal on entry to batch admission and
-      makes the next report attribute every admission microsecond among
-      terminal projection, batch graph admission, action-catalog construction,
-      selected retention, frontier retention, and unaccounted overhead. The
-      exact source checkpoint `de63af15e5` diagnostic preserved every semantic
-      identity and all useful work but regressed to about `1,956.6` wall
-      seconds. Its attribution disproved the aggregate-timer hypothesis:
-      batch graph admission used only about `3.23` seconds, while frontier
-      retention used about `219.64` seconds, or 98.0% of campaign admission.
-      Checkpoint `f74b193f96` removes the resulting false whole-graph
-      dependency from restoration contracts. V2 binds graph identity plus the
-      exact immutable node, route, native boundary, terminal state, and
-      executability; v1 plans remain readable. The campaign path reuses its
-      authenticated state digest but also compares the complete typed facts,
-      preventing a stale digest from authorizing mutated state. Run exactly one
-      matched one-worker diagnostic and require semantic identity before
-      accepting the treatment. If frontier retention collapses, choose the
-      next treatment from the new phase occupancy rather than launching the
-      remaining curve cells. The first attempted treatment run was interrupted
-      repeatedly and eventually committed one sample under bounded resume, but
-      it is not matched performance evidence. Decisions zero through nine
-      reproduced the control; each process restart then refit the learner
-      immediately instead of preserving the sealed four-decision cadence.
-      Decisions ten through fifteen consequently changed learner snapshots,
-      selected actions, proposal tapes, native ticks, graph identity, and the
-      useful-expansion-set identity. Checkpoint `7556ce9777` reconstructs the
-      latest referenced learner snapshot at its exact replay prefix and model
-      revision, restores completed decision identities, performs only a
-      genuinely missing cadence update, and reports cumulative model revisions
-      and snapshots instead of invocation-local counts. The invalid resumed
-      sample did independently confirm the source-level diagnosis:
-      frontier-retention time fell from about `219.64` seconds to `0.006`
-      seconds, but a fresh uninterrupted matched sample is still required.
-      Checkpoints `692f8bc3b5` and `a159fbe156` make diagnostic process
-      ownership explicit before retrying:
-      every persistent native worker is suspended and resumed through the
-      exact child handle owned by its transport; process names, global process
-      scans, and ancestry-wide termination are not control mechanisms. The
-      throughput command can stop after an absolute durable sample ordinal,
-      gracefully shuts down only its owned fleet, emits typed partial progress,
-      and resumes an already committed stop without launching native workers.
-      All 330 orchestration tests, ten worker-protocol tests, and five
-      process-roundtrip tests pass, including same-session suspend/resume. The
-      fresh uninterrupted one-worker sample at source checkpoint `7556ce9777`
-      passes the required semantic comparison with the `de63af15e5` control:
-      the request, execution plan, all 16 selected actions, all 256 proposal
-      batches and emitted tapes, every consumed learner snapshot, 5,096 native
-      ticks, five learner updates, six published model snapshots, 256 useful
-      expansions, and the useful-expansion-set identity are exact. Campaign
-      wall fell 82.3%, from about `1,956.6` to `347.2` seconds, and useful
-      expansion throughput rose 5.63x, from about `0.131` to `0.737` per
-      second. Campaign admission fell from `224.08` seconds to `0.232`
-      seconds; frontier retention fell from `219.64` seconds to `830`
-      microseconds. With idle workers now quiescent, persistence and model
-      update also fell to about `27.3` and `5.9` seconds. Tactic execution is
-      now the dominant measured phase at about `298.2` seconds. Continue the
-      bounded curve one durable sample at a time to locate useful-work
-      saturation; do not infer multi-worker scaling from this one-worker win.
-      The completed balanced curve now locates the next bottleneck: median
-      speedup is only `1.09x`, `2.25x`, `2.76x`, and `3.35x` at 2, 4, 8, and
-      16 workers, with parallel efficiency falling to 20.9% at 16. All
-      correctness, fixed-work, memory, staleness, long-work, and strictly
-      increasing-throughput gates pass, so this is measured saturation rather
-      than semantic drift. At two workers the direct live-frontier owner is
-      reserved for the selected proposal, leaving one worker to serially
-      execute all counterfactual siblings. More generally, dispatch currently
-      creates one job per proposal even though a worker job already supports a
-      proposal vector; each such job rematerializes the same non-root frontier.
-      Group counterfactual proposals per worker and materialize each worker's
-      frontier once per decision while keeping the live-owner proposal
-      isolated. Require exact proposal order, action/tape/state semantics,
-      retry accounting, and useful-expansion evidence before accepting the
-      throughput treatment. Whole state-graph identity is not a cross-run
-      oracle: even the two retained repetitions at a fixed worker count have
-      distinct graph digests while their exact useful-expansion-set identity
-      remains stable. Source checkpoint `cfb55f7e02` implements that
-      grouping in a dedicated dispatch module. For a 16-proposal,
-      16-decision sample, planned sibling frontier materializations fall from
-      225 to 15, 15, 45, 105, and 225 at 1, 2, 4, 8, and 16 workers; the direct
-      primary remains a separate job and still fails over through the exact
-      replay path if its owner checkpoint is missing. Result cardinality is
-      checked before proposal-index ordering is restored. All 334
-      orchestration tests pass. Checkpoint `f1a618fc78` separates the number
-      of active workers from the divisor used to reserve each worker's share
-      of the sealed aggregate checkpoint-memory budget. This permits an
-      isolated one-worker diagnostic to reproduce the retained curve's
-      16-worker fleet share without launching the other 15 workers; all 339
-      orchestration tests and the 555-file source-size gate pass. The exact
-      first cache-matched diagnostic used one active worker, a capacity divisor
-      of 16, and the same 335,544,320-byte cache as the retained control. It
-      reproduced the execution plan, all learner snapshots and 16 selected
-      options, all 256 proposal batches including emitted tapes and resulting
-      states, before/after snapshots, applicable tactics, 5,096 native ticks,
-      and useful-expansion-set identity. Its performance result is invalid:
-      it accidentally used the debug coordinator, making every Rust-side
-      phase 8-32x slower even though native execution improved. The corrected
-      release treatment preserves the same exact semantics and fixed work.
-      Campaign wall falls from about `347.19` to `172.52` seconds, tactic
-      execution from about `298.22` to `110.28` seconds, prefix
-      materializations from 240 to 29, and cache evictions from 233 to 28.
-      Useful-expansion throughput rises from about `0.737` to `1.484` per
-      second, a `2.012x` end-to-end improvement; model update, orchestration,
-      and admission return to control scale.
-      Checkpoint `4ef6fbdd3f` adds a content-addressed single-cell treatment
-      bundle and offline validator, then retains this matched Windows evidence
-      at
-      `benchmarks/native-tactic-throughput-treatment/win32-x86_64/grouped-dispatch-f1a618fc78`.
-      The validator recomputes exact semantic trace, campaign/replay/learner
-      authority, fixed work, graph shape, resource contract, terminal result,
-      and all performance gates from the bundled reports. It deliberately
-      excludes physical worker placement and run-specific graph/queue seals,
-      whose opaque identities differ across the retained control repetitions.
-      Bundle identity
-      `f8dc93c3f520985af4d81fcdbf91fa038e9791f24fee85651e67a8bdc2bb58ef`;
-      all 341 orchestration tests, the 557-file source-size gate, workspace
-      check, and the complete clean-checkout evidence audit pass. Checkpoint
-      `b7762af560` retains the matched two-worker release treatment at
-      `benchmarks/native-tactic-throughput-treatment/win32-x86_64/grouped-dispatch-f1a618fc78-w2`
-      under bundle identity
-      `a837229be03af51fdb82050fcae3e3ca8ad643e334b2201ff49ad1683fdd7883`.
-      It preserves the same exact semantic and fixed-work authorities while
-      reducing the retained two-worker control wall from about `309.56` to
-      `153.01` seconds, tactic execution from about `261.76` to `92.18`
-      seconds, prefix materializations from 226 to 16, and cache evictions
-      from 212 to 14. Useful-expansion throughput rises from about `0.827` to
-      `1.673` per second, a `2.023x` end-to-end treatment improvement. The
-      treatment itself gains only `1.128x` wall throughput over its matched
-      one-worker treatment, or about 56.4% two-worker parallel efficiency;
-      the new saturation point is therefore already visible at two workers.
-      Its remaining measured wall is dominated by tactic execution at about
-      `92.18` seconds and persistence at about `28.47` seconds, while model
-      update, orchestration, and admission use about `6.33`, `0.70`, and
-      `0.27` seconds. Checkpoint `9e8f2db661` accounts for the selected
-      proposal as one unit of owner load and balances all counterfactuals
-      across a sub-width fleet, with the selected proposal queued last on its
-      owner. The retained intermediate bundle at
-      `benchmarks/native-tactic-throughput-treatment/win32-x86_64/balanced-owner-9e8f2db661-w2`
-      passes exact semantic and fixed-work validation under identity
-      `8e22432add73c87a30cd7609be72bb57d024695581b4d1052843697b6a13e2b9`;
-      wall falls to about `131.48` seconds and tactic execution to `72.56`
-      seconds. It also exposes 14 direct-restore fallbacks because the owner's
-      sibling materialization evicts its single-use live endpoint. Reusing
-      that endpoint across siblings correctly failed closed and was reverted.
-      Checkpoint `56c73d14bf` instead appends the selected proposal to the
-      owner's one portable sibling batch, so one materialization serves the
-      whole owner batch and the selected proposal still executes last. The
-      matched one- and two-worker bundles are retained at
-      `benchmarks/native-tactic-throughput-treatment/win32-x86_64/portable-owner-56c73d14bf-w1`
-      and
-      `benchmarks/native-tactic-throughput-treatment/win32-x86_64/portable-owner-56c73d14bf-w2`
-      under identities
-      `9c68b59f52cbe2c37a1cb0eaf43a3897e75f03cc46e8ad1db51ab0881a9fb12d`
-      and
-      `01cb657dd4b90ef93a28cbd8e39d47c96b4a53944c0141c6462edea44275db5b`.
-      Both preserve the complete semantic trace, learner/replay/campaign
-      authorities, graph shape, fixed work, resource contract, and terminal
-      result. One-worker wall is about `148.73` seconds with `93.41` seconds
-      of tactic execution and `1.721` useful expansions per second.
-      Two-worker wall is about `117.63` seconds with `60.37` seconds of tactic
-      execution and `2.176` useful expansions per second. Both have zero
-      direct-restore fallback replays; prefix materializations/cache evictions
-      are 15/14 and 30/28 respectively. Two-worker speedup is now `1.264x`
-      end to end at 63.2% efficiency and `1.547x` in tactic execution. The
-      remaining non-tactic wall is effectively fixed at about 55-57 seconds,
-      including about 25-26 seconds of persistence and about 6 seconds of
-      model update. Checkpoint `b668a16b5f` repairs that attribution: model
-      updates were timed inside persistence and then reported separately, and
-      the residual persistence path had no phase breakdown. The matched
-      two-worker report retained at
-      `benchmarks/native-tactic-throughput-treatment/win32-x86_64/persistence-attribution-b668a16b5f-w2`
-      preserves the exact 16 decisions, 5,096 native ticks, 256 useful
-      expansions, complete semantic trace, and fixed-work authorities under
-      bundle identity
-      `b8a52ba959f6fc5a5431742a25e5132fe62bc2278b9f62c78060b1a8236e73bd`.
-      Its wall is about `113.29` seconds, tactic execution `57.77` seconds,
-      and useful-expansion throughput `2.260` per second. Persistence is
-      actually `19.221` seconds exclusive of the `5.889`-second model update,
-      and its exact additive attribution is `9.081` seconds of finalization,
-      `8.334` seconds of replay publication, `1.653` seconds of recovery
-      checkpoints, `0.121` seconds of decision journaling, and less than
-      `0.032` seconds across all other persistence phases. Finalization and
-      replay publication now account for 90.6% of measured persistence.
-      Source checkpoint `6cef79ba89` attacks replay publication at its measured
-      durability boundary: the learner stages each decision's ordered replay
-      admissions, preserves within-batch deduplication and snapshot chaining,
-      appends their authenticated records together, and performs one durable
-      journal flush per decision instead of one per proposal. Single-row
-      callers retain their original durable behavior. All 343 orchestration
-      tests pass, including a new batch-order/deduplication/reopen test, and
-      the 558-file source-size gate passes. Native timing evidence for this
-      treatment remains open because the owned release-build cell was
-      interrupted before it reported completion; do not claim a throughput
-      win until the matched two-worker report passes the existing semantic and
-      fixed-work audit.
-      Eliminate or amortize those two serial paths before spending a wider
-      cell; then confirm the repaired saturation curve. The widest cell's
-      persistence occupancy remains independently relevant because grouping
-      cannot improve the 16-worker cell when every sibling already has a
-      worker. All 342 orchestration tests and the 557-file source-size gate
-      pass.
-- [x] Preserve native state, applicable actions, controller output, terminal
-      evidence, and first-hit tick for every disabled presentation subsystem.
-      Source checkpoint `703dcdbbba` advances the parity report to v2 and
-      makes those authorities explicit: it separately binds the native state
-      trajectory, recomputed complete primitive action surface at every
-      boundary, chosen and consumed controller pads, first-hit vector, and
-      terminal projection for every legal retained/suppressed pair. The
-      historical ignored v1 report only compared opaque episode payloads and
-      cannot close this gate. Focused tests compile and pass at source
-      checkpoint `97cd210747`; keep this open until a retained v2 native report
-      passes.
-      Source checkpoint `0f4d6e6831` adds the portable evidence path: it bundles
-      every condition's exact batch request, result, and binary episode shard
-      with the sealed optimization, execution binding, and report. Offline
-      validation reconstructs all five authorities from bundled native bytes,
-      and the clean-checkout audit automatically discovers committed manifests.
-      Source checkpoint `97cd210747` compiles this path in the passing complete
-      orchestration suite. Checkpoint `5a1e3e8f25` retains the passing
-      `win32-x86_64` v2 report and portable bundle. All nine legal
-      retained/suppressed conditions reproduce the exact native state
-      trajectory, complete primitive action surfaces, controller bytes,
-      first-hit vector, terminal projection/evidence, and binary episode.
-      Report identity
-      `89d1c04bc39d6aeafb2b577f6eed65e651ce3b82b7488c44fa2011524c2a1141`;
-      bundle identity
-      `f21d10b2fd0677b174e741d8ddbe59b450d2c0525b430f5691f55c9bc5dad454`.
-      The clean-checkout audit validates the bundle at checkpoint
-      `3d6d9b4fe7`.
+- [ ] Verify that every decision exposes the complete state-local action
+      surface. This includes analog directions and durations, roll, camera
+      modifier, A/prompted actions, and any other primitive currently legal in
+      native state. Unavailable actions must be explicitly unavailable, not
+      silently absent.
+- [ ] Audit the observation vector against retained native facts. It must expose
+      supported velocity, trajectory history, momentum change, camera state,
+      contacts and their measured kinematic consequences, prompted-action
+      availability, action history, and terminal evidence with explicit
+      missingness.
+- [ ] Keep the objective lexicographic: first predict terminal reach/support,
+      then conditional ticks-to-go. Budget-censored continuation is unknown,
+      not a failed terminal. Do not encode `straight`, `roll`, wall avoidance,
+      a waypoint, or any Ordon-specific desired behavior as reward.
+- [ ] Demonstrate on held-out native state groups that pre-terminal learned
+      ranking beats action-mean, scheduler-only, and random-valid controls.
+      Report coverage, calibration, pairwise ordering, regret, uncertainty, and
+      unsupported actions.
+- [ ] Demonstrate in matched online campaigns that learned ranking reduces
+      median unique useful expansions to the real terminal. Offline fit quality
+      alone does not satisfy this task.
+- [ ] Make exploration robust to the around-the-corner local optimum. Horizons
+      must allow meaningful wandering; workers must lease diverse node/action
+      expansions; uncertainty and coverage may prioritize search without
+      becoming benchmark-specific utility.
+- [ ] Prove that learner updates actually change future state-conditioned
+      rankings at the intended cadence and that worker staleness stays within
+      the sealed bound.
+- [ ] Add the authenticated `131`-tick human replay as ordinary optional graph
+      evidence and run an ablation. It may improve sample efficiency, but
+      scratch success must remain possible and the replay must not become an
+      incumbent policy, waypoint source, or privileged curriculum.
 
 Exit gate:
 
-- Additional workers improve long-running useful expansions per second with
-  bounded memory and staleness.
-- The P4 time gate is feasible at the measured expansions-to-terminal count,
-  rather than extrapolated from a short microbenchmark.
+- Learned ranking reaches the real terminal in fewer useful native expansions
+  than matched non-learning controls on development and held-out seeds.
+- The gain is attributable to generalization from surfaced state and action
+  evidence, not a benchmark-specific heuristic.
 
-## P4 - Make scratch discovery practical and general
+## P2 - Make useful evidence arrive fast enough
 
-- [ ] Reach the actual load-zone predicate in all four sealed evaluation seeds
-      with median time to first terminal at or below five wall minutes and
-      worst-seed time at or below fifteen minutes on the reference workstation.
-- [ ] Repeat the acceptance run on held-out seeds that were not used to repair
-      or tune the discovery policy. Report terminal rate and confidence rather
-      than treating the four development seeds as generic evidence.
-- [ ] Demonstrate that adding the ordinary `131`-tick human replay improves
-      median time or expansions to first terminal while remaining unnecessary
-      for scratch success.
-- [ ] Retain the complete P0 evidence bundle for every acceptance run.
-
-Exit gate:
-
-- Walking off the map is a reliable minutes-scale operation, not an overnight
-  search.
-- Failure sends work back to the measured P1/P2/P3 cause; it does not authorize
-  more seed mining.
-
-## P5 - Reliably improve successful routes
-
-- [ ] Continue useful work after first terminal instead of treating discovery
-      as campaign completion. Hand the exact successful graph path and terminal
-      returns directly to the optimization scheduler.
-      Source checkpoint `3dbf335b7d` keeps rank-zero terminal-support lanes on
-      exact-return optimization while sealed nonzero acquisition ranks retain
-      discovery-ordered broad exploration. Source checkpoint `62aac70a51`
-      fixes the remaining terminal handoff: a terminal-triggered branch now
-      restores the scheduled frontier immediately instead of unconditionally
-      restarting from root, and a campaign-level test requires rank-zero
-      acquisition to select the supported successful-path interior. Source
-      checkpoint `e72f47009c` makes authenticated rank-zero support acquire a
-      scheduled frontier every decision, while periodic root and demonstration
-      refreshes remain confined to ordinary exploration branches. The complete
-      315-test orchestration suite passes at source checkpoint `97cd210747`;
-      this remains open until retained native traces prove post-terminal work
-      and improvement rather than merely continued execution.
-- [ ] Schedule counterfactuals across the complete interior-state sequence of
-      every newly successful path, not option endpoints alone.
-      Source checkpoint `c9bfb90865` aligns native and optional-replay
-      boundaries to at most four ticks and requires terminal-path interior
-      nodes to retain exact optimization-scheduler support. Source checkpoint
-      `62aac70a51` removes best-route-only node support, schedules interiors
-      from every authenticated terminal route, and prevents validated
-      transposition canonicalization from erasing a route-specific supported
-      interior. Source checkpoint `e72f47009c` removes the eight-decision
-      counterfactual cadence bottleneck and advances the post-terminal control
-      report to v2: each seed now retains the exact supported, leased, and
-      unleased interior-node sets and can claim complete coverage only for a
-      nonempty supported set with no missing lease source. Focused tests compile
-      and pass at source checkpoint `97cd210747`; keep this open until a
-      retained native v2 report proves complete sequence coverage.
-- [ ] Demonstrate repeated monotonic best-route improvement from the first
-      terminal in at least three sealed seeds. One favorable counterfactual is
-      not proof. Source checkpoint `978f7ee3b1` makes the proof contract
-      executable: scratch audit v3 binds each claimed improvement to matching
-      action, duration, target state, route length, emitted tape, reward, and
-      terminal truth in the final graph, while journal projection requires the
-      policy-selected first proposal to remain the retained result. The source
-      contract and focused tests pass at checkpoint `97cd210747`; this stays
-      open until three retained sealed seed timelines show strict improvement.
-- [ ] Beat the `131`-tick ordinary demonstration without making it incumbent or
-      policy authority.
-- [ ] Reach tick `123` or lower from scratch or optional-replay assistance,
-      then cold-replay the complete tape twice with the learner out of loop.
-      Source checkpoint `b43c547045` adds a tactic-route-specific cold replay
-      command and offline validator. It requires the selected seed to be the
-      report's graph-selected campaign best and at or below the sealed tick
-      ceiling, then launches at least two fresh learner-free processes from
-      separately retained copies of the complete controller tape. The source
-      compiles in the complete passing suite at checkpoint `97cd210747`; this
-      stays open pending a retained tick-`123`-or-lower proof.
-      Source checkpoint `6221b966a0` adds a portable outer bundle that nests
-      the independently validating scratch campaign plus only proof-referenced
-      replay artifacts, requires an actual tick of `123` or lower, and is
-      automatically discovered by the clean-checkout evidence gate.
-- [ ] Require identical controller bytes, first-hit tick, terminal evidence,
-      game identity, fixture, source boundary, and execution fidelity.
-      The checkpoint above seals every per-repetition controller artifact and
-      milestone result, requires identical exact boundary fingerprints and
-      first-hit frames, and binds the request, execution plan, route report,
-      graph/result identities, executable plus runtime dependencies, game
-      data, fixture manifest, world context, source fingerprints, fixed
-      automation CVars, and headless fixed-step unpaced launch contract. Its
-      offline validator re-authenticates the source campaign and every retained
-      byte. The portable bundle additionally cross-binds the proof to the
-      bundled graph-selected terminal tape/result instead of requiring paths
-      into the originating build tree. The compiled test portion passes at
-      source checkpoint `97cd210747`; this remains open until native evidence
-      passes.
+- [ ] Complete one matched two-worker native measurement of batched replay
+      publication. Require exact semantic work, proposal order, learner/replay
+      authority, native ticks, and useful-expansion identity before accepting
+      a performance result.
+- [ ] Attribute and reduce the remaining fixed serial wall. The last measured
+      run spent about `9.1` seconds in finalization and `8.3` seconds in replay
+      publication. Eliminate repeated whole-history serialization,
+      verification, compaction, or durable flushes; operational data remains
+      binary and content-addressed.
+- [ ] Profile tactic execution after persistence is reduced. Separate native
+      simulation from checkpoint materialization, restore/capture, IPC,
+      controller preparation, and worker idle time. Optimize the largest
+      measured component rather than the aggregate timer.
+- [ ] Make checkpoint reuse and dispatch scale across workers. Balance the
+      selected proposal and counterfactual siblings, materialize each frontier
+      no more often than required, preserve proposal order, and avoid evicting
+      a useful live owner endpoint.
+- [ ] Make model updates incremental or otherwise bounded if their cost grows
+      with replay history. Preserve exact learner cadence and reproducible
+      snapshots across restart.
+- [ ] Run fixed-work 1/2/4/8/16-worker curves only after the current measured
+      serial bottleneck is reduced. Report useful expansions/second, parallel
+      efficiency, worker utilization, memory, cache eviction, replay lag,
+      restore fallback, and phase occupancy.
+- [ ] Retain a long-campaign resource audit proving bounded checkpoint memory,
+      bounded learner staleness, and no history-dependent persistence or model
+      growth that makes later decisions progressively slower.
+- [ ] Exercise crash recovery before dispatch, during native execution, after
+      native completion, after recovery commit, and after decision commit,
+      including at least one fault after substantial graph/replay growth.
+      Recovery must reproduce semantic work and account exactly for retries.
+- [ ] Meet or exceed the throughput target derived in P0 on the reference
+      workstation with enough headroom that learning and evaluation can share
+      the wall budget.
 
 Exit gate:
 
-- At least three sealed seeds improve their first discovered terminal route.
-- The best authenticated route is tick `123` or lower and reproduces exactly.
+- The measured useful-expansion rate makes the P3 discovery time gate feasible.
+- Increasing workers produces useful evidence rather than launch pressure,
+  duplicate work, memory failure, stale learning, or coordinator serialization.
 
-## P6 - Discover and reuse tactics
+## P3 - Discover and improve the Ordon route
+
+- [ ] Reach the actual load-zone predicate from scratch in all four sealed
+      development seeds with median time to first terminal at or below five
+      minutes and worst-seed time at or below fifteen minutes.
+- [ ] Repeat scratch discovery on held-out seeds not used to repair the policy.
+      Report terminal rate and uncertainty rather than treating four favorable
+      seeds as general evidence.
+- [ ] On the first terminal, immediately hand the exact successful graph path
+      to optimization. Continue useful work instead of treating discovery as
+      campaign completion.
+- [ ] Expose branchable states across every successful path at intervals no
+      coarser than four native ticks. Schedule counterfactuals from all supported
+      interiors, not only option endpoints or the current best route.
+- [ ] Rank post-terminal counterfactuals by predicted complete
+      root-to-terminal ticks, uncertainty, and visits while retaining a fixed
+      broad-exploration share. Exact native terminal returns remain truth.
+- [ ] Demonstrate strict best-route improvement after first terminal in at
+      least three sealed seeds.
+- [ ] Beat the ordinary `131`-tick replay without making it incumbent or policy
+      authority.
+- [ ] Reach tick `123` or lower from scratch or optional-replay assistance.
+- [ ] Cold-replay the selected tape at least twice with the learner out of the
+      loop. Require identical controller bytes, first-hit tick, terminal
+      evidence, source boundary, game/fixture identity, and execution fidelity.
+
+Exit gate:
+
+- Scratch discovery is reliable on development and held-out seeds.
+- At least three seeds improve after their first terminal.
+- A tick-`123`-or-lower route reproduces exactly in learner-free native replay.
+
+## P4 - Discover and reuse tactics
 
 - [ ] Mine parameterized action compositions from successful graph paths and
       high-value counterfactuals. Direction plus camera modifier, roll cadence,
-      curved steering, and prompted actions use the same generic mechanism.
-      Checkpoint `934e92a8e1` fixes false composition support: connected tapes
-      are now bucketed across repeated occurrences and retain only each
-      occurrence's true entry state, not internal steps. Source checkpoint
-      `9987099995` advances the registry to v3: candidate identity and binary
-      persistence now retain the complete ordered typed primitive/parameter
-      sequence plus every occurrence's full transition chain. Source
-      checkpoint `79ff1f996a` advances that contract to v4, retains each
-      component's bounded canonical executable source, captures those sources
-      in new journals, and reconstructs legacy family actions deterministically.
-      The source compiles in the passing complete suite at checkpoint
-      `97cd210747`; this remains open pending native discovery evidence.
-- [ ] Learn typed entry conditions from independent source states.
-      Candidate construction requires at least two distinct entry-state
-      identities. Source checkpoint `be0427afcd` fixes a false-generalization
-      bug: stage/room, procedure, contacts, and distance evidence now remains
-      in joint typed cells with per-cell distance ranges instead of fabricating
-      unsupported Cartesian combinations from independent sets. Compiled tests
-      pass at checkpoint `97cd210747`; this stays open until held-out native
-      applicability evidence validates the learned condition.
-- [ ] Promote only when a composition improves terminal/tick return on held-out
-      state groups relative to executing its primitive components.
-      Source checkpoint `79ff1f996a` deletes the best-single-primitive
-      shortcut and executes the complete retained component sequence natively
-      from the same held-out frontier under the same horizon; route report v37
-      counts those executions separately and leaves the legacy shortcut count
-      at zero. Source checkpoint `b23d9453a7` additionally requires paired
-      dominance in every supporting held-out state, preventing cheap failures
-      from offsetting slower terminal routes in aggregate tick sums. Compiled
-      tests pass at checkpoint `97cd210747`; this stays open until a sealed
-      native report proves every promotion comparison used that path.
-- [x] Keep every valid primitive selectable after promotion. Source checkpoint
-      `f350c40a73` compares the complete descriptor map before and after
-      promotion, proves every primitive remains byte-for-byte identical, and
-      proves an inapplicable promoted macro leaves the primitive catalog
-      exactly unchanged. Source checkpoint `97cd210747` fixes the state-local
-      comparison test and passes the complete 315-test orchestration suite.
+      curved steering, and prompted actions must use the same generic
+      composition mechanism.
+- [ ] Preserve each composition's complete ordered primitive/parameter
+      sequence, executable controller source, realized transition chain, and
+      independent entry-state occurrences.
+- [ ] Learn typed entry conditions from multiple independent source states
+      without fabricating unsupported combinations of stage, procedure,
+      contact, prompt, camera, or distance facts.
+- [ ] Promote a composition only when native execution beats its primitive
+      components on held-out state groups under the same horizon. Require
+      paired benefit rather than aggregate wins that hide failures.
+- [ ] Keep every valid primitive selectable after promotion and keep
+      inapplicable promoted tactics out of the local action surface.
 - [ ] Compare promotion-enabled and primitives-only search on held-out seeds
-      using terminal rate, time to first terminal, time to best route, and
-      unique useful expansions per second.
-- [ ] Repeat the complete discovery and improvement evaluation on a second
-      native route problem before claiming a generic framework.
+      using terminal rate, expansions/time to first terminal, expansions/time
+      to best route, and useful expansions/second.
+- [ ] Repeat discovery and improvement on a second native route problem without
+      changing rewards or authoring route structure for that benchmark.
 
 Exit gate:
 
 - At least one learned composition provides reproducible held-out search value.
-- The second route problem succeeds without benchmark-specific reward or
-  authored route structure.
+- The second route succeeds through the same state, action, learning, and
+  orchestration contracts.
 
-## Experiment discipline
+## P5 - Framework hardening and maintainability
 
-- Every native run names the architectural invariant or exit gate it tests.
-- Do not run more than one diagnostic cell after a failed architectural
-  treatment. Analyze or redesign before spending another full campaign.
-- Controls share source checkpoint, terminal predicate, game bytes, fixture,
-  route horizon, expansion budget, worker topology, and fidelity.
-- Reports distinguish terminal discovery, route promotion, best authenticated
-  tick, exact graph return, generalized prediction, and exploration priority.
-- Report wall time and unique useful expansions together. Faster failure is
-  throughput evidence; fewer expansions at unchanged throughput is policy
-  evidence.
-- A terminal hit, a `125`-tick tie, or one isolated route improvement is
-  progress evidence only.
+- [ ] Provide a concise operator-facing campaign summary that identifies the
+      dominant failure class and links to detailed content-addressed evidence.
+      Operators should not need to inspect raw multi-megabyte reports to decide
+      the next experiment.
+- [ ] Audit hot-path ownership and data structures for accidental whole-graph,
+      whole-replay, or whole-checkpoint cloning, hashing, serialization, and
+      projection. Add growth tests for every repaired path.
+- [ ] Split `native_tactic_route_runner/campaign.rs` by responsibility before
+      adding more campaign behavior. It is currently 1,489 physical lines.
+      Separate decision execution, durable commit/recovery, and
+      finalization/report construction instead of treating the 1,500-line gate
+      as a target.
+
+Exit gate:
+
+- Another engineer can reproduce a campaign, explain every selection and
+  failure, resume it after interruption, and modify one subsystem without
+  understanding an oversized monolith or breaking unrelated authority.
+
+## Non-negotiable engineering constraints
+
+- Every per-decision selection remains reconstructible from retained evidence:
+  applicable actions, features, predicted support/ticks, uncertainty, visits,
+  exploration ranks, learner revision, lease, native result, graph admission,
+  and terminal/tick outcome.
+- Coordinators may suspend, resume, cancel, and terminate only exact child
+  handles they created. Process-name kills, global process scans, and
+  ancestry-wide termination are not control mechanisms.
+- The content-addressed state graph is the sole search authority. Replay,
+  learner batches, indexes, reports, visualizations, and tactic mining are
+  derived views; live endpoints and portable machine images are caches.
+- Operational checkpoints, graph records, replay, journals, models, and learned
+  tactics use versioned binary formats. JSON is limited to small authored
+  requests and exported reports.
+- Detached game/controller identity, fixture, source boundary, terminal
+  predicate, action schema, feature schema, learner snapshot, graph state,
+  replay, or execution fidelity fails closed.
+- Production files stay below the enforced source-size limit and are split by
+  responsibility before hot-path modules become dumping grounds.
+- The clean-checkout audit validates formatting, source quality, tests,
+  schemas, retained bundles, and replayability without launching unrelated
+  native work.
+
+## Experiment rules
+
+- Every native run names the task and exit gate it tests.
+- Run the smallest cell that can answer the question. After a failed
+  architectural treatment, analyze it before launching another campaign.
+- Controls share checkpoint, predicate, game/controller bytes, fixture, action
+  and feature schemas, seeds, horizons, budgets, worker topology, and fidelity.
+- Report sample efficiency and execution efficiency together: useful
+  expansions to outcome and useful expansions per second.
+- Do not mine seeds, hand-author routes, encode desired behavior as reward, or
+  mistake faster failure for better learning.
+- A terminal hit, a `125`-tick tie, or one isolated improvement is progress
+  evidence, not acceptance.
+- Retain detailed history in immutable benchmark bundles. Keep this file short,
+  current, and executable.
