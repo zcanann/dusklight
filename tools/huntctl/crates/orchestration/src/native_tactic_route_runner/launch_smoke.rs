@@ -537,7 +537,7 @@ fn validate_smoke_sources(
 fn launch_smoke_route_schema_is_supported(schema: &str) -> bool {
     matches!(
         schema,
-        NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36 | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
+        NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37 | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38
     )
 }
 
@@ -825,13 +825,13 @@ mod tests {
     #[test]
     fn retained_and_current_route_schemas_are_supported() {
         assert!(launch_smoke_route_schema_is_supported(
-            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36
-        ));
-        assert!(launch_smoke_route_schema_is_supported(
             NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
         ));
+        assert!(launch_smoke_route_schema_is_supported(
+            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38
+        ));
         assert!(!launch_smoke_route_schema_is_supported(
-            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V35
+            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36
         ));
     }
 }

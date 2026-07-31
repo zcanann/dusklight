@@ -508,6 +508,7 @@ impl TacticQCampaign {
                 ranking: batch.ranking,
                 proposals,
                 goal_reachability_estimates: batch.goal_reachability_estimates,
+                goal_reachability_calibration: batch.goal_reachability_calibration,
             },
             leases,
             scheduler_decision,

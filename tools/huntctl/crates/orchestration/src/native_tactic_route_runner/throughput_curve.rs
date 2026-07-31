@@ -1102,7 +1102,7 @@ fn validate_completed_sample(
     sample: &NativeTacticThroughputCurveSample,
     route: &NativeTacticRouteReport,
 ) -> Result<(), NativeTacticRouteRunError> {
-    if route.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
+    if route.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38
         || route.optimization_request_sha256 != config.optimization.content_sha256
         || route.execution_binding_sha256 != config.execution.content_sha256
         || route.execution_plan_sha256 != execution_plan_sha256

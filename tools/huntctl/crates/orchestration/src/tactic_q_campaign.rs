@@ -23,6 +23,7 @@ use dusklight_learning::generalized_tactic_value::authenticated_terminal_conditi
 use dusklight_learning::generalized_tactic_value::{
     GeneralizedTacticContext, GeneralizedTacticValueError, GeneralizedTacticValueModel,
 };
+use dusklight_learning::goal_reachability_calibration::GoalReachabilityCalibration;
 use dusklight_learning::hindsight::{
     HindsightError, HindsightOptionReplay, RelabeledHindsightOption,
 };
@@ -49,8 +50,8 @@ use dusklight_learning::tactic_exploration::{
     TacticProposalPolicy, TacticSelectionReason, choose_tactic_batch_for_policy,
     choose_tactic_batch_with_state_untried, ensure_action_factor_coverage,
     ensure_generalized_value_acquisition, ensure_goal_reachability_acquisition,
-    ensure_terminal_support_factor_acquisitions, retain_generalized_value_acquisition,
-    retain_goal_reachability_acquisition,
+    ensure_goal_reachability_evidence, ensure_terminal_support_factor_acquisitions,
+    retain_generalized_value_acquisition, retain_goal_reachability_acquisition,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_learning::tactic_value_treatment::{
@@ -77,6 +78,7 @@ pub const TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1: &str =
 pub const TACTIC_Q_FINAL_RESULT_SCHEMA_V2: &str = "dusklight-tactic-q-final-result/v2";
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1: &str = "dusklight-tactic-q-learner-snapshot/v1";
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V2: &str = "dusklight-tactic-q-learner-snapshot/v2";
+pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3: &str = "dusklight-tactic-q-learner-snapshot/v3";
 /// Episode group reserved for critic evidence that must never become an
 /// executable frontier.
 pub const TACTIC_Q_MODEL_ONLY_EPISODE_GROUP: u64 = u64::MAX;
@@ -109,6 +111,7 @@ pub struct TacticQProposalBatch {
     pub ranking: LiveTacticRanking,
     pub proposals: Vec<SelectedTactic>,
     pub goal_reachability_estimates: Vec<TacticQGoalReachabilityEstimate>,
+    pub goal_reachability_calibration: Option<GoalReachabilityCalibration>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -422,6 +425,7 @@ pub struct TacticQCampaign {
     native_terminal_model: RefCell<Option<CachedGeneralizedTacticValueModel>>,
     native_terminal_action_model: RefCell<Option<CachedContinuousTacticDoubleQModel>>,
     continuous_model: RefCell<Option<CachedContinuousTacticValueModel>>,
+    goal_reachability_calibration: Option<GoalReachabilityCalibration>,
     visited_states: BTreeSet<TacticStateDescriptor>,
     hindsight: HindsightOptionReplay,
     checkpoint_persistence: Option<TacticQCheckpointPersistence>,
@@ -579,6 +583,7 @@ impl TacticQCampaign {
             native_terminal_model: RefCell::new(None),
             native_terminal_action_model: RefCell::new(None),
             continuous_model: RefCell::new(None),
+            goal_reachability_calibration: None,
             visited_states,
             hindsight,
             checkpoint_persistence: None,
@@ -604,7 +609,7 @@ impl TacticQCampaign {
             })
             .transpose()?;
         let snapshot = TacticQLearnerSnapshot {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V2.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3.into(),
             kind: TacticQLearnerSnapshotKind::Learned,
             value_treatment: self.value_treatment,
             execution_authority_sha256: self.execution_authority_sha256,
@@ -619,6 +624,7 @@ impl TacticQCampaign {
             model_revision: self.model_revision,
             model_config: self.model_config.clone(),
             model_sha256,
+            goal_reachability_calibration: self.goal_reachability_calibration.clone(),
         };
         snapshot.validate()?;
         Ok(snapshot)
@@ -710,6 +716,8 @@ impl TacticQCampaign {
                     model_revision: snapshot.manifest.model_revision,
                     model: Arc::clone(model),
                 });
+        self.goal_reachability_calibration =
+            snapshot.manifest.goal_reachability_calibration.clone();
         Ok(admitted)
     }
 

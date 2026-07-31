@@ -630,6 +630,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
                 ranking: decision.ranking.clone(),
                 proposals: vec![decision.selected.clone()],
                 goal_reachability_estimates: Vec::new(),
+                goal_reachability_calibration: None,
             },
             std::slice::from_ref(&decision.selected.descriptor),
             1,
@@ -654,6 +655,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
                 ranking: decision.ranking.clone(),
                 proposals: vec![decision.selected.clone()],
                 goal_reachability_estimates: Vec::new(),
+                goal_reachability_calibration: None,
             },
             std::slice::from_ref(&decision.selected.descriptor),
             1,
@@ -683,6 +685,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
                     ranking: decision.ranking.clone(),
                     proposals: vec![decision.selected.clone()],
                     goal_reachability_estimates: Vec::new(),
+                    goal_reachability_calibration: None,
                 },
                 std::slice::from_ref(&decision.selected.descriptor),
                 1,
@@ -886,6 +889,68 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert!(continuous_snapshot.generalized_model.is_none());
     assert!(continuous_snapshot.continuous_model.is_none());
     assert_ne!(local_treatment_snapshot.sha256, continuous_snapshot.sha256);
+    let mut unproven_goal_consumer =
+        TacticQCampaign::resume_without_model(checkpoint.clone()).unwrap();
+    let calibration =
+        dusklight_learning::goal_reachability_calibration::calibrate_goal_reachability(&[], 0)
+            .unwrap();
+    assert!(!calibration.deployment_ready);
+    let context = GeneralizedTacticContext::from_facts(&before).unwrap();
+    let descriptor = treatment_corpus.transitions[0].value_sample.action.clone();
+    let alternate_descriptor = treatment_corpus.transitions[1].value_sample.action.clone();
+    let generalized = GeneralizedTacticValueModel::fit(&[
+        dusklight_learning::generalized_tactic_value::GeneralizedTacticTrainingSample {
+            state_features: vec![before.tape_frame as f32],
+            context: context.clone(),
+            action: descriptor,
+            outcome: dusklight_learning::generalized_tactic_value::GeneralizedTacticOutcome {
+                goal_progress_per_tick: 1.0,
+                ..Default::default()
+            },
+        },
+        dusklight_learning::generalized_tactic_value::GeneralizedTacticTrainingSample {
+            state_features: vec![before.tape_frame as f32],
+            context,
+            action: alternate_descriptor,
+            outcome: dusklight_learning::generalized_tactic_value::GeneralizedTacticOutcome {
+                goal_progress_per_tick: -1.0,
+                ..Default::default()
+            },
+        },
+    ])
+    .unwrap();
+    unproven_goal_consumer.value_treatment = TacticValueTreatment::GoalRelabeledFittedQKnnV2;
+    unproven_goal_consumer.campaign_learner_authority_managed = true;
+    unproven_goal_consumer.goal_reachability_calibration = Some(calibration.clone());
+    *unproven_goal_consumer.generalized_model.borrow_mut() =
+        Some(CachedGeneralizedTacticValueModel {
+            goal_distance_feature: 0,
+            model_revision: unproven_goal_consumer.model_revision,
+            model: Arc::new(generalized),
+        });
+    let unproven_batch = unproven_goal_consumer
+        .decide_parameterized_batch_with_policy::<&'static str, _>(
+            &catalog,
+            &[],
+            Digest([9; 32]),
+            &encode,
+            2,
+            0,
+            TacticProposalPolicy::Learned,
+            Some(0),
+            false,
+        )
+        .unwrap();
+    assert!(!unproven_batch.goal_reachability_estimates.is_empty());
+    assert_eq!(
+        unproven_batch.goal_reachability_calibration,
+        Some(calibration)
+    );
+    assert_ne!(
+        unproven_batch.proposals[0].reason,
+        TacticSelectionReason::GoalReachability,
+        "held-out calibration must authorize reachability before it controls proposal zero"
+    );
     let mut snapshot_consumer = TacticQCampaign::resume_without_model(checkpoint.clone()).unwrap();
     assert!(snapshot_consumer.model().is_none());
     assert_eq!(

@@ -794,6 +794,10 @@ pub struct NativeTacticDecisionTrace {
     pub proposal_feedback: Option<ParameterizedTacticFeedback>,
     #[serde(default)]
     pub proposal_batch: Vec<NativeTacticProposalTrace>,
+    /// Whole-source-state held-out evidence governing whether the auxiliary
+    /// pre-terminal reachability model was allowed to select the primary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_reachability_calibration: Option<GoalReachabilityCalibration>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -985,4 +989,6 @@ pub(super) struct NativeTacticDecisionRecord {
     pub(super) proposal_feedback: Option<ParameterizedTacticFeedback>,
     #[serde(default)]
     pub(super) proposal_batch: Vec<NativeTacticProposalRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) goal_reachability_calibration: Option<GoalReachabilityCalibration>,
 }

@@ -114,16 +114,29 @@ impl CampaignTacticLearnerAuthority {
                     .snapshot_through(manifest.training_replay_rows)
                     .map_err(route_error)?;
                 let started = Instant::now();
-                let snapshot = TacticQImmutableLearnerSnapshot::fit(
-                    replay_snapshot.corpus,
-                    replay_snapshot.version.revision,
-                    manifest.model_revision,
-                    model_config.clone(),
-                    goal_distance_feature,
-                    value_treatment,
-                )
-                .map_err(route_error)?;
-                if snapshot.sha256 != expected_sha256 || snapshot.manifest != manifest {
+                let snapshot =
+                    TacticQImmutableLearnerSnapshot::fit_with_prior_goal_reachability_calibration(
+                        replay_snapshot.corpus,
+                        replay_snapshot.version.revision,
+                        manifest.model_revision,
+                        model_config.clone(),
+                        goal_distance_feature,
+                        value_treatment,
+                        manifest.goal_reachability_calibration.as_ref(),
+                    )
+                    .map_err(route_error)?;
+                let migrated = manifest.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3;
+                if migrated {
+                    let stored_sha256 = replay
+                        .publish_learner_snapshot(&snapshot.manifest)
+                        .map_err(route_error)?;
+                    if stored_sha256 != snapshot.sha256 {
+                        return Err(route_message(
+                            "migrated campaign learner snapshot store changed its identity",
+                        ));
+                    }
+                    published_snapshot_sha256s.insert(snapshot.sha256);
+                } else if snapshot.sha256 != expected_sha256 || snapshot.manifest != manifest {
                     return Err(route_message(
                         "durable campaign learner snapshot cannot be reconstructed exactly",
                     ));
@@ -133,7 +146,7 @@ impl CampaignTacticLearnerAuthority {
                     CampaignLearnerUpdateMetrics {
                         updates: 0,
                         update_micros: 0,
-                        snapshots_published: 0,
+                        snapshots_published: u64::from(migrated),
                         reconstruction_micros: elapsed_micros(started.elapsed()),
                     },
                     published_snapshot_sha256s,
@@ -374,15 +387,17 @@ impl CampaignTacticLearnerAuthority {
     ) -> Result<Arc<TacticQImmutableLearnerSnapshot>, NativeTacticRouteRunError> {
         let started = Instant::now();
         let model_revision = self.latest.manifest.model_revision.saturating_add(1);
-        let snapshot = TacticQImmutableLearnerSnapshot::fit(
-            replay.corpus,
-            replay.version.revision,
-            model_revision,
-            self.model_config.clone(),
-            self.goal_distance_feature,
-            self.value_treatment,
-        )
-        .map_err(route_error)?;
+        let snapshot =
+            TacticQImmutableLearnerSnapshot::fit_with_prior_goal_reachability_calibration(
+                replay.corpus,
+                replay.version.revision,
+                model_revision,
+                self.model_config.clone(),
+                self.goal_distance_feature,
+                self.value_treatment,
+                self.latest.manifest.goal_reachability_calibration.as_ref(),
+            )
+            .map_err(route_error)?;
         let stored_sha256 = self
             .replay
             .publish_learner_snapshot(&snapshot.manifest)

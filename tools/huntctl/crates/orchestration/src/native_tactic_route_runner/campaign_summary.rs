@@ -3,6 +3,8 @@ use super::*;
 
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-campaign-summary/v1";
+pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V2: &str =
+    "dusklight-native-tactic-campaign-summary/v2";
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE: &str = "campaign-summary.json";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -90,6 +92,29 @@ pub struct NativeTacticCampaignCausalSummary {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct NativeTacticCampaignGoalReachabilitySummary {
+    pub calibration_authority_enforced: bool,
+    pub calibration_decisions: u64,
+    pub deployment_ready_decisions: u64,
+    pub deployment_blocked_decisions: u64,
+    pub reachability_primary_decisions: u64,
+    pub unproven_reachability_primary_decisions: u64,
+    pub most_mature_source_transitions: u64,
+    pub most_mature_source_state_groups: u64,
+    pub most_mature_evaluated_action_predictions: u64,
+    pub most_mature_comparable_state_groups: u64,
+    pub most_mature_ranking_wins: u64,
+    pub most_mature_ranking_win_rate_millionths: Option<u64>,
+    pub most_mature_chance_win_rate_millionths: Option<u64>,
+    pub most_mature_wilson_lower_bound_millionths: Option<u64>,
+    pub most_mature_mean_observed_regret_millionths: Option<u64>,
+    pub most_mature_mean_absolute_progress_error_millionths: Option<u64>,
+    pub most_mature_progress_sign_accuracy_millionths: Option<u64>,
+    pub most_mature_deployment_ready: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NativeTacticCampaignEfficiencySummary {
     pub useful_expansions_per_second_millionths: u64,
     pub native_ticks_per_second_millionths: u64,
@@ -158,6 +183,7 @@ pub struct NativeTacticCampaignSummary {
     pub treatment: NativeTacticCampaignTreatmentSummary,
     pub outcome: NativeTacticCampaignOutcomeSummary,
     pub causal_chain: NativeTacticCampaignCausalSummary,
+    pub goal_reachability: NativeTacticCampaignGoalReachabilitySummary,
     pub efficiency: NativeTacticCampaignEfficiencySummary,
     pub timing: NativeTacticCampaignTimingSummary,
     pub work: NativeTacticCampaignWorkSummary,
@@ -214,6 +240,7 @@ impl NativeTacticCampaignSummary {
         }
 
         let causal_chain = causal_summary(route);
+        let goal_reachability = goal_reachability_summary(route);
         let work = work_summary(route, total_proposals);
         let worker_capacity_micros = route
             .timing
@@ -231,7 +258,7 @@ impl NativeTacticCampaignSummary {
         let peak_worker_resident_bytes = route.native_restore_accounting.peak_resident_bytes;
 
         let mut summary = Self {
-            schema: NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V1.into(),
+            schema: NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
             route_report_sha256: route_report_sha256(route)?,
             identities: NativeTacticCampaignIdentities {
@@ -274,6 +301,7 @@ impl NativeTacticCampaignSummary {
                 stop_reasons,
             },
             causal_chain,
+            goal_reachability,
             efficiency: NativeTacticCampaignEfficiencySummary {
                 useful_expansions_per_second_millionths: route
                     .timing
@@ -333,7 +361,7 @@ impl NativeTacticCampaignSummary {
     }
 
     pub fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
-        if self.schema != NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V1
+        if self.schema != NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V2
             || self.content_sha256 == Digest::ZERO
             || self.route_report_sha256 == Digest::ZERO
             || self.identities.optimization_request_sha256 == Digest::ZERO
@@ -361,6 +389,16 @@ impl NativeTacticCampaignSummary {
                     .saturating_add(self.work.unresolved_leases)
             || self.causal_chain.causal_chain_ready_for_matched_evaluation
                 == self.causal_chain.first_incomplete_link.is_some()
+            || self.goal_reachability.calibration_decisions
+                != self
+                    .goal_reachability
+                    .deployment_ready_decisions
+                    .saturating_add(self.goal_reachability.deployment_blocked_decisions)
+            || (self.goal_reachability.calibration_authority_enforced
+                && self
+                    .goal_reachability
+                    .unproven_reachability_primary_decisions
+                    != 0)
             || self.compute_content_sha256()? != self.content_sha256
         {
             return Err(route_message("native tactic campaign summary is invalid"));
@@ -394,11 +432,95 @@ impl NativeTacticCampaignSummary {
         identity.content_sha256 = Digest::ZERO;
         let bytes = serde_json::to_vec(&identity).map_err(route_error)?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight-native-tactic-campaign-summary/v1\0");
+        hasher.update(b"dusklight-native-tactic-campaign-summary/v2\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
     }
+}
+
+fn goal_reachability_summary(
+    route: &NativeTacticRouteReport,
+) -> NativeTacticCampaignGoalReachabilitySummary {
+    let traces = route.seeds.iter().flat_map(|seed| seed.trace.iter());
+    let mut calibration_decisions = 0_u64;
+    let mut deployment_ready_decisions = 0_u64;
+    let mut deployment_blocked_decisions = 0_u64;
+    let mut reachability_primary_decisions = 0_u64;
+    let mut unproven_reachability_primary_decisions = 0_u64;
+    let mut most_mature: Option<&GoalReachabilityCalibration> = None;
+
+    for decision in traces {
+        if let Some(calibration) = &decision.goal_reachability_calibration {
+            calibration_decisions = calibration_decisions.saturating_add(1);
+            if calibration.deployment_ready {
+                deployment_ready_decisions = deployment_ready_decisions.saturating_add(1);
+            } else {
+                deployment_blocked_decisions = deployment_blocked_decisions.saturating_add(1);
+            }
+            if most_mature.is_none_or(|current| {
+                (
+                    calibration.source_transitions,
+                    calibration.source_state_groups,
+                    calibration.comparable_state_groups,
+                    calibration.evaluated_action_predictions,
+                ) > (
+                    current.source_transitions,
+                    current.source_state_groups,
+                    current.comparable_state_groups,
+                    current.evaluated_action_predictions,
+                )
+            }) {
+                most_mature = Some(calibration);
+            }
+        }
+        if decision.selection_reason == TacticSelectionReason::GoalReachability {
+            reachability_primary_decisions = reachability_primary_decisions.saturating_add(1);
+            if decision
+                .goal_reachability_calibration
+                .as_ref()
+                .is_none_or(|calibration| !calibration.deployment_ready)
+            {
+                unproven_reachability_primary_decisions =
+                    unproven_reachability_primary_decisions.saturating_add(1);
+            }
+        }
+    }
+
+    NativeTacticCampaignGoalReachabilitySummary {
+        calibration_authority_enforced: route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38,
+        calibration_decisions,
+        deployment_ready_decisions,
+        deployment_blocked_decisions,
+        reachability_primary_decisions,
+        unproven_reachability_primary_decisions,
+        most_mature_source_transitions: most_mature
+            .map_or(0, |value| value.source_transitions as u64),
+        most_mature_source_state_groups: most_mature
+            .map_or(0, |value| value.source_state_groups as u64),
+        most_mature_evaluated_action_predictions: most_mature
+            .map_or(0, |value| value.evaluated_action_predictions as u64),
+        most_mature_comparable_state_groups: most_mature
+            .map_or(0, |value| value.comparable_state_groups as u64),
+        most_mature_ranking_wins: most_mature.map_or(0, |value| value.ranking_wins as u64),
+        most_mature_ranking_win_rate_millionths: most_mature
+            .and_then(|value| millionths(value.ranking_win_rate)),
+        most_mature_chance_win_rate_millionths: most_mature
+            .and_then(|value| millionths(value.chance_win_rate)),
+        most_mature_wilson_lower_bound_millionths: most_mature
+            .and_then(|value| millionths(value.ranking_win_rate_wilson_lower_bound)),
+        most_mature_mean_observed_regret_millionths: most_mature
+            .and_then(|value| millionths(value.mean_observed_regret)),
+        most_mature_mean_absolute_progress_error_millionths: most_mature
+            .and_then(|value| millionths(value.mean_absolute_progress_error)),
+        most_mature_progress_sign_accuracy_millionths: most_mature
+            .and_then(|value| millionths(value.progress_sign_accuracy)),
+        most_mature_deployment_ready: most_mature.is_some_and(|value| value.deployment_ready),
+    }
+}
+
+fn millionths(value: Option<f64>) -> Option<u64> {
+    value.map(|value| (value * 1_000_000.0).round() as u64)
 }
 
 fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausalSummary {
@@ -612,6 +734,8 @@ mod tests {
         assert_eq!(summary.causal_chain.newly_published_training_rows, 4);
         assert_eq!(summary.causal_chain.learner_updates, 2);
         assert_eq!(summary.causal_chain.post_update_policy_decisions, 1);
+        assert_eq!(summary.goal_reachability.calibration_decisions, 0);
+        assert!(!summary.goal_reachability.calibration_authority_enforced);
         assert_eq!(summary.work.proposal_dispatches, 4);
         assert_eq!(summary.work.unresolved_leases, 0);
         assert!(summary.resources.memory_bound_satisfied);
@@ -635,5 +759,25 @@ mod tests {
         let mut detached = plan;
         detached.proposal_width_per_decision += 1;
         assert!(NativeTacticCampaignSummary::build(&route, &detached).is_err());
+    }
+
+    #[test]
+    fn summary_rejects_reachability_policy_without_calibration_authority() {
+        let (_, mut route, plan) = retained_report_and_plan();
+        route.schema = NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38.into();
+        for decision in route.seeds.iter_mut().flat_map(|seed| &mut seed.trace) {
+            decision.selection_reason = TacticSelectionReason::UnsupportedBootstrap;
+        }
+        route.seeds[0].trace[0].goal_reachability_calibration = Some(
+            dusklight_learning::goal_reachability_calibration::calibrate_goal_reachability(&[], 0)
+                .unwrap(),
+        );
+        let blocked = NativeTacticCampaignSummary::build(&route, &plan).unwrap();
+        assert_eq!(blocked.goal_reachability.calibration_decisions, 1);
+        assert_eq!(blocked.goal_reachability.deployment_blocked_decisions, 1);
+        assert!(!blocked.goal_reachability.most_mature_deployment_ready);
+
+        route.seeds[0].trace[0].selection_reason = TacticSelectionReason::GoalReachability;
+        assert!(NativeTacticCampaignSummary::build(&route, &plan).is_err());
     }
 }

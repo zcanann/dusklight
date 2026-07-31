@@ -20,21 +20,16 @@ return useful results quickly. Route-planner product work belongs in
 - The pinned human replay reaches the Ordon terminal in 125 native ticks.
 - A valid matched 16-decision experiment did not reach the terminal. Learned
   policy was also slower than frozen-policy and random-valid controls.
-- The causal chain is intact, but a small, poorly calibrated goal-reachability
-  model is being deployed as policy. Its predictions frequently have the wrong
-  sign. This is the first known learning failure; more blind route mining is
-  not useful until it is fixed.
+- The first diagnosed failure was premature deployment of a small,
+  poorly-calibrated goal-reachability model. Whole-source-state held-out
+  calibration now keeps that model as visible sibling evidence until it proves
+  better-than-chance ranking. The next matched experiment must determine
+  whether policy updates now improve behavior.
 
 ## Ordered work
 
 Work top to bottom. If a result fails, add only the task required to repair the
 first demonstrated failure, then repeat that gate.
-
-- [ ] **Make online learning safe to deploy.** Evaluate goal-reachability
-      predictions on whole held-out source states, expose calibration and
-      ranking regret in the campaign summary, and prevent an unproven model
-      from controlling action selection. Preserve its predictions as evidence
-      while it is untrusted.
 
 - [ ] **Prove that policy updates improve behavior.** Run learned,
       frozen-policy, and random-valid treatments with identical seeds, action

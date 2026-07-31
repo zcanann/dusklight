@@ -80,6 +80,7 @@ impl TacticQCampaign {
             ranking,
             proposals,
             goal_reachability_estimates: Vec::new(),
+            goal_reachability_calibration: None,
         })
     }
 
@@ -243,6 +244,7 @@ impl TacticQCampaign {
             ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
         }
         let mut goal_reachability_estimates = Vec::new();
+        let mut goal_reachability_calibration = None;
         if policy.uses_learned_selector() {
             let context = GeneralizedTacticContext::from_facts(&self.current.snapshot)?;
             let applicable_descriptors = ranking
@@ -260,6 +262,14 @@ impl TacticQCampaign {
             let goal_reachability_acquisition = self.value_treatment
                 == TacticValueTreatment::GoalRelabeledFittedQKnnV2
                 && !native_terminal_supported;
+            let goal_reachability_deployment_ready = goal_reachability_acquisition
+                && self
+                    .goal_reachability_calibration
+                    .as_ref()
+                    .is_some_and(|calibration| calibration.deployment_ready);
+            if goal_reachability_acquisition {
+                goal_reachability_calibration = self.goal_reachability_calibration.clone();
+            }
             if let Some(goal_distance_feature) = goal_distance_feature {
                 let ranked_applicable = match self.value_treatment {
                     TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => self
@@ -336,12 +346,20 @@ impl TacticQCampaign {
                 };
                 if let Some(ranked_applicable) = ranked_applicable {
                     if goal_reachability_acquisition {
-                        ensure_goal_reachability_acquisition(
-                            &ranked_applicable,
-                            acquisition_partition,
-                            maximum_proposals,
-                            &mut proposals,
-                        )?;
+                        if goal_reachability_deployment_ready {
+                            ensure_goal_reachability_acquisition(
+                                &ranked_applicable,
+                                acquisition_partition,
+                                maximum_proposals,
+                                &mut proposals,
+                            )?;
+                        } else {
+                            ensure_goal_reachability_evidence(
+                                &ranked_applicable,
+                                maximum_proposals,
+                                &mut proposals,
+                            )?;
+                        }
                     } else {
                         ensure_generalized_value_acquisition(
                             &ranked_applicable,
@@ -373,7 +391,7 @@ impl TacticQCampaign {
                 maximum_proposals,
                 &mut proposals,
             )?;
-            if goal_reachability_acquisition {
+            if goal_reachability_deployment_ready {
                 retain_goal_reachability_acquisition(&mut proposals)?;
             } else {
                 retain_generalized_value_acquisition(&mut proposals)?;
@@ -399,6 +417,7 @@ impl TacticQCampaign {
             ranking,
             proposals,
             goal_reachability_estimates,
+            goal_reachability_calibration,
         })
     }
 

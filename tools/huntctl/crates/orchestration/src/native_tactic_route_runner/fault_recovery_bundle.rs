@@ -301,8 +301,8 @@ fn validate_route_authorities(
     control: &NativeTacticRouteReport,
     recovered: &NativeTacticRouteReport,
 ) -> Result<(), NativeTacticRouteRunError> {
-    if control.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
-        || recovered.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
+    if control.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38
+        || recovered.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38
         || control.optimization_request_sha256 != request.content_sha256
         || recovered.optimization_request_sha256 != request.content_sha256
         || control.execution_binding_sha256 != execution.content_sha256

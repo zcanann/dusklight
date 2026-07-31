@@ -508,6 +508,7 @@ pub(super) fn decision_record(
         inline_transition,
         proposal_feedback: trace.proposal_feedback,
         proposal_batch,
+        goal_reachability_calibration: trace.goal_reachability_calibration.clone(),
     }
 }
 
@@ -700,6 +701,7 @@ pub(super) fn project_tactic_decision_record(
         applicable_tactics: record.applicable_tactics,
         proposal_feedback: record.proposal_feedback,
         proposal_batch,
+        goal_reachability_calibration: record.goal_reachability_calibration,
     })
 }
 

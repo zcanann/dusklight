@@ -907,6 +907,38 @@ pub fn ensure_goal_reachability_acquisition(
     Ok(())
 }
 
+/// Measure the best pre-terminal reachability prediction without granting it
+/// policy authority. Existing proposals retain both their order and selection
+/// reason; a distinct predicted action may occupy only a sibling slot.
+pub fn ensure_goal_reachability_evidence(
+    ranked_applicable: &[OptionActionDescriptor],
+    maximum_proposals: usize,
+    proposals: &mut Vec<SelectedTactic>,
+) -> Result<(), TacticExplorationError> {
+    if maximum_proposals <= 1 || proposals.is_empty() || proposals.len() > maximum_proposals {
+        return if !proposals.is_empty() && proposals.len() <= maximum_proposals {
+            Ok(())
+        } else {
+            Err(TacticExplorationError::InvalidInput)
+        };
+    }
+    let Some(descriptor) = ranked_applicable.first() else {
+        return Ok(());
+    };
+    if proposals
+        .iter()
+        .any(|proposal| proposal.descriptor == *descriptor)
+    {
+        return Ok(());
+    }
+    let mut evidence = proposals[0].clone();
+    evidence.descriptor = descriptor.clone();
+    evidence.reason = TacticSelectionReason::GoalReachability;
+    proposals.insert(1, evidence);
+    proposals.truncate(maximum_proposals);
+    Ok(())
+}
+
 fn ensure_ranked_model_acquisition(
     ranked_applicable: &[OptionActionDescriptor],
     acquisition_partition: u64,
