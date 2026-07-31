@@ -49,16 +49,19 @@ ready for harder problems.
   expansions in about `113.3` seconds (`2.26` expansions/second). Roughly
   `57.8` seconds are tactic execution, `19.2` seconds are persistence, and
   `5.9` seconds are model update.
-- Replay admissions now batch one durable journal flush per decision instead
-  of one per proposal, but this change has not yet been measured in a matched
-  native run.
+- Batching replay-journal flushes preserved exact semantic work but did not
+  improve the matched two-worker cell: wall rose to about `121.0` seconds and
+  replay publication to `9.6` seconds. The seed checkpoint and shared replay
+  use one physical content store through separate reference caches, causing
+  repeated content encoding/verification; completion also republishes the 256
+  rows already admitted during decisions.
 - There is no retained current-build proof of reliable minutes-scale scratch
   discovery, repeated post-terminal improvement, a route below `131`, or a
   route at or below `123`.
 
 These facts make the immediate order of work:
 
-1. measure the already-implemented replay-batching treatment once;
+1. remove the measured replay-publication duplication;
 2. establish an honest current native baseline;
 3. prove whether learned ranking improves sample efficiency;
 4. raise useful-evidence throughput to the rate required by that sample count;
@@ -147,15 +150,13 @@ Exit gate:
 
 ## P2 - Make useful evidence arrive fast enough
 
-- [ ] Complete one matched two-worker native measurement of batched replay
-      publication. Require exact semantic work, proposal order, learner/replay
-      authority, native ticks, and useful-expansion identity before accepting
-      a performance result.
 - [ ] Attribute and reduce the remaining fixed serial wall. The last measured
-      run spent about `9.1` seconds in finalization and `8.3` seconds in replay
-      publication. Eliminate repeated whole-history serialization,
-      verification, compaction, or durable flushes; operational data remains
-      binary and content-addressed.
+      run spent about `9.1` seconds in finalization and `9.6` seconds in replay
+      publication. Share authenticated content references across the seed and
+      replay authorities, and do not republish a completed seed's rows when
+      they were already durably admitted decision by decision. Eliminate
+      repeated whole-history serialization, verification, compaction, or
+      durable flushes; operational data remains binary and content-addressed.
 - [ ] Profile tactic execution after persistence is reduced. Separate native
       simulation from checkpoint materialization, restore/capture, IPC,
       controller preparation, and worker idle time. Optimize the largest
