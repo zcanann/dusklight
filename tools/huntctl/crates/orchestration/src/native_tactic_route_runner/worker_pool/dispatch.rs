@@ -17,8 +17,7 @@ impl NativeTacticProposalPool {
         replayed_prefix: usize,
     ) -> Vec<NativeTacticProposalDispatch> {
         let mut dispatches = Vec::<NativeTacticProposalDispatch>::new();
-        let balance_direct_owner =
-            direct.is_some() && self.preferred_owner_slot.is_none() && self.senders.len() > 1;
+        let balance_direct_owner = direct.is_some() && self.preferred_owner_slot.is_none();
         let mut planned_proposals = vec![0_usize; self.senders.len()];
         if balance_direct_owner {
             planned_proposals[direct.expect("direct owner is present").worker_slot] = 1;
@@ -41,6 +40,22 @@ impl NativeTacticProposalPool {
             );
             if !(balance_direct_owner && proposal_index == 0) {
                 planned_proposals[worker_slot] += 1;
+            }
+            if primary_source.is_some()
+                && balance_direct_owner
+                && let Some(dispatch) = dispatches.iter_mut().find(|dispatch| {
+                    dispatch.worker_slot == worker_slot
+                        && dispatch.checkpoint_source.is_none()
+                        && dispatch.materialize_frontier
+                })
+            {
+                // A live endpoint is single-use. When its owner also executes
+                // siblings, append the selected proposal to the owner's
+                // portable batch instead of evicting the live source and then
+                // replaying the same frontier again. Keeping it last rearms
+                // the owner at the selected endpoint.
+                dispatch.proposal_indices.push(proposal_index);
+                continue;
             }
             let materialize_frontier = requires_frontier_materialization(
                 restoration_present,
