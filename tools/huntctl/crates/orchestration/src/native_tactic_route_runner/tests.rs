@@ -1356,6 +1356,8 @@ fn live_parameterized_policy_rejects_authored_route_actions() {
         state_sha256: Digest([7; 32]),
         player_position: [0.0, 0.0, 0.0],
         camera_yaw_radians: Some(0.0),
+        prompted_action_available: true,
+        front_roll_prompt_available: true,
         goal_coordinate: [100.0, 0.0, -100.0],
         maximum_ticks: 40,
         feedback: None,
@@ -1380,6 +1382,65 @@ fn live_parameterized_policy_rejects_authored_route_actions() {
 }
 
 #[test]
+fn native_prompt_facts_drive_matching_feature_and_action_surfaces() {
+    let shard = NativeEpisodeShard::decode(include_bytes!(
+        "../../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+    ))
+    .unwrap();
+    let mut snapshot = FactSnapshot::from_native_learning(
+        &shard.episodes[0].steps[0].pre_input,
+        &[],
+        None,
+        Vec::new(),
+    )
+    .unwrap();
+    let encoder = GoalConditionedTacticFeatureEncoder::new([100.0, 0.0, -100.0]).unwrap();
+    let feature_index = |name: &str| {
+        encoder
+            .feature_names
+            .iter()
+            .position(|candidate| candidate == name)
+            .unwrap()
+    };
+    let prompt_index = feature_index("player_do_prompt_available");
+    let roll_prompt_index = feature_index("player_front_roll_prompt_available");
+    let surfaces = |snapshot: &FactSnapshot| {
+        let encoded = encoder.encode(snapshot).unwrap();
+        let option_types =
+            parameterized_catalog_for_state(11, 3, snapshot, &encoder, 40, None, Digest([8; 32]))
+                .unwrap()
+                .catalog
+                .option_descriptors()
+                .map(|descriptor| descriptor.option_type.clone())
+                .collect::<Vec<_>>();
+        (
+            encoded[prompt_index],
+            encoded[roll_prompt_index],
+            option_types,
+        )
+    };
+
+    snapshot.player.action_state.as_mut().unwrap().do_status = 0;
+    let (prompted, roll_prompted, actions) = surfaces(&snapshot);
+    assert_eq!((prompted, roll_prompted), (0.0, 0.0));
+    assert!(!actions.iter().any(|action| action == &OptionType::Interact));
+    assert!(!actions.iter().any(|action| action == &OptionType::Roll));
+
+    snapshot.player.action_state.as_mut().unwrap().do_status = 4;
+    let (prompted, roll_prompted, actions) = surfaces(&snapshot);
+    assert_eq!((prompted, roll_prompted), (1.0, 0.0));
+    assert!(actions.iter().any(|action| action == &OptionType::Interact));
+    assert!(!actions.iter().any(|action| action == &OptionType::Roll));
+
+    snapshot.player.action_state.as_mut().unwrap().do_status =
+        dusklight_learning::fact_snapshot::FRONT_ROLL_DO_STATUS;
+    let (prompted, roll_prompted, actions) = surfaces(&snapshot);
+    assert_eq!((prompted, roll_prompted), (1.0, 1.0));
+    assert!(actions.iter().any(|action| action == &OptionType::Interact));
+    assert!(actions.iter().any(|action| action == &OptionType::Roll));
+}
+
+#[test]
 fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
     let generic = propose_parameterized_tactics(ParameterizedTacticProposalContext {
         seed: 11,
@@ -1387,6 +1448,8 @@ fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
         state_sha256: Digest([7; 32]),
         player_position: [0.0, 0.0, 0.0],
         camera_yaw_radians: Some(0.0),
+        prompted_action_available: true,
+        front_roll_prompt_available: true,
         goal_coordinate: [100.0, 0.0, -100.0],
         maximum_ticks: 40,
         feedback: None,

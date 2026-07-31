@@ -19,6 +19,8 @@ use std::fmt;
 
 pub const FACT_SNAPSHOT_SCHEMA_V1: &str = "dusklight-fact-snapshot/v1";
 pub const FACT_SNAPSHOT_SCHEMA_V2: &str = "dusklight-fact-snapshot/v2";
+/// Native player-action do-status whose A input dispatches a front roll.
+pub const FRONT_ROLL_DO_STATUS: u8 = 0x79;
 pub const MAX_FACT_HISTORY: usize = 8;
 pub const MAX_FACT_ACTORS: usize = 4_096;
 pub const MAX_CONDITION_EVALUATIONS: usize = 256;

@@ -4,8 +4,8 @@ use dusklight_learning::generalized_tactic_value::{
     GeneralizedTacticContext, generalized_tactic_action_factors,
 };
 
-pub const NATIVE_TACTIC_OBSERVATION_AUDIT_SCHEMA_V1: &str =
-    "dusklight-native-tactic-observation-audit/v1";
+pub const NATIVE_TACTIC_OBSERVATION_AUDIT_SCHEMA_V2: &str =
+    "dusklight-native-tactic-observation-audit/v2";
 
 const BUTTON_L: u16 = 0x0040;
 const BUTTON_A: u16 = 0x0100;
@@ -34,8 +34,15 @@ pub struct NativeTacticActionSurfaceCoverage {
     pub selected_descriptors: u64,
     pub roll_available_decisions: u64,
     pub roll_selected_decisions: u64,
+    pub front_roll_prompt_native_available_decisions: u64,
+    pub roll_availability_mismatches: u64,
     pub a_button_available_decisions: u64,
     pub a_button_selected_decisions: u64,
+    pub a_button_availability_mismatches: u64,
+    pub prompted_action_available_decisions: u64,
+    pub prompted_action_selected_decisions: u64,
+    pub prompted_action_native_available_decisions: u64,
+    pub prompted_action_availability_mismatches: u64,
     pub camera_modifier_available_decisions: u64,
     pub camera_modifier_selected_decisions: u64,
     pub option_type_availability: BTreeMap<String, u64>,
@@ -186,6 +193,13 @@ impl NativeTacticObservationAudit {
         let signal_inputs = snapshots.values().collect::<Vec<_>>();
         let signals = vec![
             signal_coverage(
+                "player_position",
+                &["player_present", "player_x", "player_y", "player_z"],
+                &signal_inputs,
+                &feature_indices,
+                |facts| facts.player.present,
+            )?,
+            signal_coverage(
                 "player_velocity",
                 &[
                     "velocity_available",
@@ -196,6 +210,43 @@ impl NativeTacticObservationAudit {
                 &signal_inputs,
                 &feature_indices,
                 |facts| facts.player.velocity_f32_bits.is_some(),
+            )?,
+            signal_coverage(
+                "previous_input",
+                &[
+                    "previous_pad_available",
+                    "previous_pad_button_0",
+                    "previous_pad_button_1",
+                    "previous_pad_button_2",
+                    "previous_pad_button_3",
+                    "previous_pad_button_4",
+                    "previous_pad_button_5",
+                    "previous_pad_button_6",
+                    "previous_pad_button_7",
+                    "previous_pad_button_8",
+                    "previous_pad_button_9",
+                    "previous_pad_button_10",
+                    "previous_pad_button_11",
+                    "previous_pad_button_12",
+                    "previous_pad_button_13",
+                    "previous_pad_button_14",
+                    "previous_pad_button_15",
+                    "previous_pad_stick_x",
+                    "previous_pad_stick_y",
+                    "previous_pad_stick_magnitude",
+                    "previous_pad_substick_x",
+                    "previous_pad_substick_y",
+                    "previous_pad_substick_magnitude",
+                    "previous_pad_trigger_left",
+                    "previous_pad_trigger_right",
+                    "previous_pad_analog_a",
+                    "previous_pad_analog_b",
+                    "previous_pad_connected",
+                    "previous_pad_error",
+                ],
+                &signal_inputs,
+                &feature_indices,
+                |facts| facts.player.previous_pad.is_some(),
             )?,
             signal_coverage(
                 "past_trajectory",
@@ -232,6 +283,18 @@ impl NativeTacticObservationAudit {
                 |facts| {
                     facts.player.action_state.is_some() || !facts.player.action_lanes.is_empty()
                 },
+            )?,
+            signal_coverage(
+                "player_contacts",
+                &[
+                    "player_contacts_available",
+                    "player_contacts",
+                    "collision_correction_available",
+                    "collision_correction_magnitude",
+                ],
+                &signal_inputs,
+                &feature_indices,
+                |facts| facts.player.contacts.is_some(),
             )?,
             signal_coverage(
                 "recent_option_kinematics",
@@ -273,6 +336,18 @@ impl NativeTacticObservationAudit {
                         })
                 },
             )?,
+            signal_coverage(
+                "terminal_evidence",
+                &[
+                    "terminal_available",
+                    "terminal_reached",
+                    "terminal_hit_fraction",
+                    "terminal_stability_fraction",
+                ],
+                &signal_inputs,
+                &feature_indices,
+                |facts| facts.terminal.reached.is_some(),
+            )?,
         ];
         let action_surface = action_surface_coverage(route, &snapshots)?;
         let benchmark_specific_feature_names = encoder
@@ -299,7 +374,7 @@ impl NativeTacticObservationAudit {
             passed: false,
         };
         let mut report = Self {
-            schema: NATIVE_TACTIC_OBSERVATION_AUDIT_SCHEMA_V1.into(),
+            schema: NATIVE_TACTIC_OBSERVATION_AUDIT_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
             optimization_request_sha256: request.content_sha256,
             route_report_sha256: route_report_sha256(route)?,
@@ -339,9 +414,20 @@ impl NativeTacticObservationAudit {
             && report.action_surface.source_snapshots_resolved == report.action_surface.decisions
             && report.action_surface.untyped_descriptors == 0
             && report.action_surface.selected_descriptors == report.action_surface.decisions
-            && report.action_surface.roll_available_decisions > 0
-            && report.action_surface.a_button_available_decisions > 0
+            && report.action_surface.roll_availability_mismatches == 0
+            && report.action_surface.a_button_availability_mismatches == 0
+            && report
+                .action_surface
+                .prompted_action_availability_mismatches
+                == 0
             && report.action_surface.camera_modifier_available_decisions > 0
+            && ["maintainheading", "move", "target"].iter().all(|name| {
+                report
+                    .action_surface
+                    .option_type_availability
+                    .get(*name)
+                    .is_some_and(|count| *count > 0)
+            })
             && report.policy_signal_contract.passed;
         report.content_sha256 = report.digest()?;
         report.validate()?;
@@ -349,7 +435,7 @@ impl NativeTacticObservationAudit {
     }
 
     pub fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
-        if self.schema != NATIVE_TACTIC_OBSERVATION_AUDIT_SCHEMA_V1
+        if self.schema != NATIVE_TACTIC_OBSERVATION_AUDIT_SCHEMA_V2
             || self.content_sha256 == Digest::ZERO
             || self.content_sha256 != self.digest()?
             || self.optimization_request_sha256 == Digest::ZERO
@@ -369,18 +455,22 @@ impl NativeTacticObservationAudit {
                 != self
                     .compared_feature_vectors
                     .saturating_sub(self.exact_feature_vectors)
-            || self.signals.len() != 6
+            || self.signals.len() != 10
             || self
                 .signals
                 .iter()
                 .map(|signal| signal.signal.as_str())
                 .ne([
+                    "player_position",
                     "player_velocity",
+                    "previous_input",
                     "past_trajectory",
                     "camera_yaw",
                     "prompted_action_state",
+                    "player_contacts",
                     "recent_option_kinematics",
                     "contact_correlated_slowdown",
+                    "terminal_evidence",
                 ])
             || self.signals.iter().any(|signal| {
                 signal.observed_snapshots != self.unique_native_snapshots
@@ -402,9 +492,25 @@ impl NativeTacticObservationAudit {
             || self.action_surface.roll_available_decisions > self.action_surface.decisions
             || self.action_surface.roll_selected_decisions
                 > self.action_surface.roll_available_decisions
+            || self
+                .action_surface
+                .front_roll_prompt_native_available_decisions
+                > self.action_surface.decisions
+            || self.action_surface.roll_availability_mismatches > self.action_surface.decisions
             || self.action_surface.a_button_available_decisions > self.action_surface.decisions
             || self.action_surface.a_button_selected_decisions
                 > self.action_surface.a_button_available_decisions
+            || self.action_surface.a_button_availability_mismatches > self.action_surface.decisions
+            || self.action_surface.prompted_action_available_decisions
+                > self.action_surface.decisions
+            || self.action_surface.prompted_action_selected_decisions
+                > self.action_surface.prompted_action_available_decisions
+            || self
+                .action_surface
+                .prompted_action_native_available_decisions
+                > self.action_surface.decisions
+            || self.action_surface.prompted_action_availability_mismatches
+                > self.action_surface.decisions
             || self.action_surface.camera_modifier_available_decisions
                 > self.action_surface.decisions
             || self.action_surface.camera_modifier_selected_decisions
@@ -430,9 +536,16 @@ impl NativeTacticObservationAudit {
                         == self.action_surface.decisions
                     && self.action_surface.untyped_descriptors == 0
                     && self.action_surface.selected_descriptors == self.action_surface.decisions
-                    && self.action_surface.roll_available_decisions > 0
-                    && self.action_surface.a_button_available_decisions > 0
+                    && self.action_surface.roll_availability_mismatches == 0
+                    && self.action_surface.a_button_availability_mismatches == 0
+                    && self.action_surface.prompted_action_availability_mismatches == 0
                     && self.action_surface.camera_modifier_available_decisions > 0
+                    && ["maintainheading", "move", "target"].iter().all(|name| {
+                        self.action_surface
+                            .option_type_availability
+                            .get(*name)
+                            .is_some_and(|count| *count > 0)
+                    })
                     && self.policy_signal_contract.passed)
         {
             return Err(route_message(
@@ -525,8 +638,15 @@ fn action_surface_coverage(
         selected_descriptors: 0,
         roll_available_decisions: 0,
         roll_selected_decisions: 0,
+        front_roll_prompt_native_available_decisions: 0,
+        roll_availability_mismatches: 0,
         a_button_available_decisions: 0,
         a_button_selected_decisions: 0,
+        a_button_availability_mismatches: 0,
+        prompted_action_available_decisions: 0,
+        prompted_action_selected_decisions: 0,
+        prompted_action_native_available_decisions: 0,
+        prompted_action_availability_mismatches: 0,
         camera_modifier_available_decisions: 0,
         camera_modifier_selected_decisions: 0,
         option_type_availability: BTreeMap::new(),
@@ -563,10 +683,23 @@ fn action_surface_coverage(
             .map(|(facts, _)| GeneralizedTacticContext::from_facts(facts))
             .transpose()
             .map_err(route_error)?;
+        let native_prompted_action_available = source.is_some_and(|(facts, _)| {
+            facts
+                .player
+                .action_state
+                .is_some_and(|action| action.do_status != 0)
+        });
+        let native_front_roll_prompt_available = source.is_some_and(|(facts, _)| {
+            facts.player.action_state.is_some_and(|action| {
+                action.do_status == dusklight_learning::fact_snapshot::FRONT_ROLL_DO_STATUS
+            })
+        });
         let mut roll_available = false;
         let mut roll_selected = false;
         let mut a_available = false;
         let mut a_selected = false;
+        let mut prompted_action_available = false;
+        let mut prompted_action_selected = false;
         let mut l_available = false;
         let mut l_selected = false;
         for tactic in &decision.applicable_tactics {
@@ -586,6 +719,9 @@ fn action_surface_coverage(
                 .option_type_availability
                 .entry(option_type_name(&descriptor.option_type))
                 .or_default() += 1;
+            let is_prompted_action = descriptor.option_type == OptionType::Interact;
+            prompted_action_available |= is_prompted_action;
+            prompted_action_selected |= is_prompted_action && tactic.selected;
             let Some(context) = &context else {
                 continue;
             };
@@ -607,12 +743,37 @@ fn action_surface_coverage(
         coverage.roll_selected_decisions = coverage
             .roll_selected_decisions
             .saturating_add(u64::from(roll_selected));
+        coverage.front_roll_prompt_native_available_decisions = coverage
+            .front_roll_prompt_native_available_decisions
+            .saturating_add(u64::from(native_front_roll_prompt_available));
+        coverage.roll_availability_mismatches = coverage
+            .roll_availability_mismatches
+            .saturating_add(u64::from(
+                roll_available != native_front_roll_prompt_available,
+            ));
         coverage.a_button_available_decisions = coverage
             .a_button_available_decisions
             .saturating_add(u64::from(a_available));
         coverage.a_button_selected_decisions = coverage
             .a_button_selected_decisions
             .saturating_add(u64::from(a_selected));
+        coverage.a_button_availability_mismatches = coverage
+            .a_button_availability_mismatches
+            .saturating_add(u64::from(a_available != native_prompted_action_available));
+        coverage.prompted_action_available_decisions = coverage
+            .prompted_action_available_decisions
+            .saturating_add(u64::from(prompted_action_available));
+        coverage.prompted_action_selected_decisions = coverage
+            .prompted_action_selected_decisions
+            .saturating_add(u64::from(prompted_action_selected));
+        coverage.prompted_action_native_available_decisions = coverage
+            .prompted_action_native_available_decisions
+            .saturating_add(u64::from(native_prompted_action_available));
+        coverage.prompted_action_availability_mismatches = coverage
+            .prompted_action_availability_mismatches
+            .saturating_add(u64::from(
+                prompted_action_available != native_prompted_action_available,
+            ));
         coverage.camera_modifier_available_decisions = coverage
             .camera_modifier_available_decisions
             .saturating_add(u64::from(l_available));
@@ -674,12 +835,16 @@ mod tests {
 
     fn valid_report() -> NativeTacticObservationAudit {
         let signals = [
+            "player_position",
             "player_velocity",
+            "previous_input",
             "past_trajectory",
             "camera_yaw",
             "prompted_action_state",
+            "player_contacts",
             "recent_option_kinematics",
             "contact_correlated_slowdown",
+            "terminal_evidence",
         ]
         .into_iter()
         .map(|signal| NativeTacticSignalCoverage {
@@ -693,7 +858,7 @@ mod tests {
         })
         .collect();
         let mut report = NativeTacticObservationAudit {
-            schema: NATIVE_TACTIC_OBSERVATION_AUDIT_SCHEMA_V1.into(),
+            schema: NATIVE_TACTIC_OBSERVATION_AUDIT_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
             optimization_request_sha256: Digest([1; 32]),
             route_report_sha256: Digest([2; 32]),
@@ -712,17 +877,30 @@ mod tests {
                 decisions: 1,
                 complete_decisions: 1,
                 source_snapshots_resolved: 1,
-                applicable_descriptors: 3,
-                unique_descriptors: 3,
+                applicable_descriptors: 5,
+                unique_descriptors: 5,
                 untyped_descriptors: 0,
                 selected_descriptors: 1,
                 roll_available_decisions: 1,
                 roll_selected_decisions: 0,
+                front_roll_prompt_native_available_decisions: 1,
+                roll_availability_mismatches: 0,
                 a_button_available_decisions: 1,
                 a_button_selected_decisions: 0,
+                a_button_availability_mismatches: 0,
+                prompted_action_available_decisions: 1,
+                prompted_action_selected_decisions: 0,
+                prompted_action_native_available_decisions: 1,
+                prompted_action_availability_mismatches: 0,
                 camera_modifier_available_decisions: 1,
                 camera_modifier_selected_decisions: 0,
-                option_type_availability: BTreeMap::from([("move".into(), 3)]),
+                option_type_availability: BTreeMap::from([
+                    ("interact".into(), 1),
+                    ("maintainheading".into(), 1),
+                    ("move".into(), 1),
+                    ("roll".into(), 1),
+                    ("target".into(), 1),
+                ]),
             },
             policy_signal_contract: NativeTacticPolicySignalContract {
                 goal_coordinate_is_objective_derived: true,
@@ -743,12 +921,16 @@ mod tests {
     fn feature_schema_contains_every_required_generic_signal_without_benchmark_names() {
         let encoder = GoalConditionedTacticFeatureEncoder::new([1.0, 2.0, 3.0]).unwrap();
         for required in [
+            "player_present",
             "velocity_available",
+            "previous_pad_available",
             "trajectory_available",
             "camera_yaw_available",
             "player_action_available",
+            "player_contacts_available",
             "recent_option_trajectory_available",
             "recent_option_contact_slowdown_available",
+            "terminal_available",
         ] {
             assert!(encoder.feature_names.iter().any(|name| name == required));
         }
@@ -772,8 +954,38 @@ mod tests {
         report.validate().unwrap();
 
         let mut drifted = report;
-        drifted.action_surface.camera_modifier_available_decisions = 0;
+        drifted
+            .action_surface
+            .prompted_action_availability_mismatches = 1;
         drifted.content_sha256 = drifted.digest().unwrap();
         assert!(drifted.validate().is_err());
+    }
+
+    #[test]
+    fn audit_accepts_exact_absence_of_state_gated_actions() {
+        let mut report = valid_report();
+        report.action_surface.applicable_descriptors = 3;
+        report.action_surface.unique_descriptors = 3;
+        report.action_surface.roll_available_decisions = 0;
+        report
+            .action_surface
+            .front_roll_prompt_native_available_decisions = 0;
+        report.action_surface.a_button_available_decisions = 0;
+        report.action_surface.prompted_action_available_decisions = 0;
+        report
+            .action_surface
+            .prompted_action_native_available_decisions = 0;
+        report
+            .action_surface
+            .option_type_availability
+            .remove("roll");
+        report
+            .action_surface
+            .option_type_availability
+            .remove("interact");
+        report.content_sha256 = report.digest().unwrap();
+
+        report.validate().unwrap();
+        assert!(report.passed);
     }
 }

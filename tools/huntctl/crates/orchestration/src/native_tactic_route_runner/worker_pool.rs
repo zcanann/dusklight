@@ -188,6 +188,13 @@ pub(super) fn parameterized_catalog_for_state_with_promoted(
         state_sha256: state.content_sha256().map_err(route_error)?,
         player_position: state.player.position_f32_bits.map(f32::from_bits),
         camera_yaw_radians: state.player.camera_yaw_radians_f32_bits.map(f32::from_bits),
+        prompted_action_available: state
+            .player
+            .action_state
+            .is_some_and(|action| action.do_status != 0),
+        front_roll_prompt_available: state.player.action_state.is_some_and(|action| {
+            action.do_status == dusklight_learning::fact_snapshot::FRONT_ROLL_DO_STATUS
+        }),
         goal_coordinate: encoder.target_coordinate_f32_bits.map(f32::from_bits),
         maximum_ticks,
         feedback,

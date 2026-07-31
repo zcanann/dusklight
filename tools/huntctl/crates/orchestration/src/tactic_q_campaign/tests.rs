@@ -417,6 +417,8 @@ fn parameterized_batch_uses_family_instances_absent_from_the_state_catalog() {
             .player
             .camera_yaw_radians_f32_bits
             .map(f32::from_bits),
+        prompted_action_available: true,
+        front_roll_prompt_available: true,
         goal_coordinate: [100.0, 20.0, -50.0],
         maximum_ticks: 40,
         feedback: None,

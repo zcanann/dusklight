@@ -6,7 +6,7 @@
 
 use crate::artifact::Digest;
 use crate::fact_snapshot::{
-    ByteBankFactSnapshot, FactAvailability, FactSnapshot, FactSnapshotError,
+    ByteBankFactSnapshot, FRONT_ROLL_DO_STATUS, FactAvailability, FactSnapshot, FactSnapshotError,
 };
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
@@ -15,12 +15,9 @@ use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
-pub const TACTIC_FEATURE_SCHEMA_V5: &str = "dusklight-tactic-features/v5";
-pub const GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V5: &str =
-    "dusklight-goal-conditioned-tactic-features/v5";
-// `BUTTON_STATUS_UNK_121` in the native player action path: A dispatches
-// `procFrontRollInit`. `BUTTON_STATUS_ROLL` (0x47) instead rolls a world object.
-const FRONT_ROLL_DO_STATUS: u8 = 0x79;
+pub const TACTIC_FEATURE_SCHEMA_V6: &str = "dusklight-tactic-features/v6";
+pub const GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V6: &str =
+    "dusklight-goal-conditioned-tactic-features/v6";
 const GOAL_FEATURE_NAMES: &[&str] = &[
     "goal_dx",
     "goal_dy",
@@ -108,6 +105,35 @@ const FEATURE_NAMES: &[&str] = &[
     "player_action_flag_29",
     "player_action_flag_30",
     "player_action_flag_31",
+    "previous_pad_available",
+    "previous_pad_button_0",
+    "previous_pad_button_1",
+    "previous_pad_button_2",
+    "previous_pad_button_3",
+    "previous_pad_button_4",
+    "previous_pad_button_5",
+    "previous_pad_button_6",
+    "previous_pad_button_7",
+    "previous_pad_button_8",
+    "previous_pad_button_9",
+    "previous_pad_button_10",
+    "previous_pad_button_11",
+    "previous_pad_button_12",
+    "previous_pad_button_13",
+    "previous_pad_button_14",
+    "previous_pad_button_15",
+    "previous_pad_stick_x",
+    "previous_pad_stick_y",
+    "previous_pad_stick_magnitude",
+    "previous_pad_substick_x",
+    "previous_pad_substick_y",
+    "previous_pad_substick_magnitude",
+    "previous_pad_trigger_left",
+    "previous_pad_trigger_right",
+    "previous_pad_analog_a",
+    "previous_pad_analog_b",
+    "previous_pad_connected",
+    "previous_pad_error",
     "player_contacts_available",
     "player_contacts",
     "collision_correction_available",
@@ -135,6 +161,7 @@ const FEATURE_NAMES: &[&str] = &[
     "event_running",
     "event_id",
     "event_mode",
+    "terminal_available",
     "terminal_reached",
     "terminal_hit_fraction",
     "terminal_stability_fraction",
@@ -218,7 +245,7 @@ impl TacticFeatureEncoder {
         let feature_names = FEATURE_NAMES.iter().map(|name| (*name).into()).collect();
         let schema_sha256 = feature_schema_digest(FEATURE_NAMES);
         Self {
-            schema: TACTIC_FEATURE_SCHEMA_V5.into(),
+            schema: TACTIC_FEATURE_SCHEMA_V6.into(),
             schema_sha256,
             feature_names,
         }
@@ -230,7 +257,7 @@ impl TacticFeatureEncoder {
 
     pub fn encode(&self, facts: &FactSnapshot) -> Result<Vec<f32>, TacticFeatureError> {
         facts.validate().map_err(TacticFeatureError::Facts)?;
-        if self.schema != TACTIC_FEATURE_SCHEMA_V5
+        if self.schema != TACTIC_FEATURE_SCHEMA_V6
             || self.schema_sha256 != feature_schema_digest(FEATURE_NAMES)
             || self.feature_names.len() != FEATURE_NAMES.len()
             || self
@@ -255,6 +282,7 @@ impl TacticFeatureEncoder {
         push_optional_u16(&mut output, facts.player.procedure);
         push_optional_u32(&mut output, facts.player.mode_flags);
         encode_player_action(&mut output, facts)?;
+        encode_previous_pad(&mut output, facts);
         push_optional_u8(&mut output, facts.player.contacts);
         match facts.player.collision_correction_f32_bits {
             Some(bits) => {
@@ -300,6 +328,7 @@ impl TacticFeatureEncoder {
             ]),
             None => output.extend([0.0; 4]),
         }
+        output.push(bool_feature(facts.terminal.reached.is_some()));
         output.push(optional_bool_feature(facts.terminal.reached));
         output.push(ratio(
             facts.terminal.hit_count,
@@ -393,7 +422,7 @@ impl GoalConditionedTacticFeatureEncoder {
         let mut feature_names = base.feature_names.clone();
         feature_names.extend(GOAL_FEATURE_NAMES.iter().map(|name| (*name).into()));
         Ok(Self {
-            schema: GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V5.into(),
+            schema: GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V6.into(),
             schema_sha256: goal_conditioned_feature_schema_digest(base.schema_sha256),
             feature_names,
             target_coordinate_f32_bits: target.map(f32::to_bits),
@@ -429,7 +458,7 @@ impl GoalConditionedTacticFeatureEncoder {
     }
 
     pub fn encode(&self, facts: &FactSnapshot) -> Result<Vec<f32>, TacticFeatureError> {
-        if self.schema != GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V5
+        if self.schema != GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V6
             || self.schema_sha256 != goal_conditioned_feature_schema_digest(self.base.schema_sha256)
             || self.feature_names.len() != self.base.feature_width() + GOAL_FEATURE_NAMES.len()
         {
@@ -472,6 +501,8 @@ fn distance_group(name: &str) -> String {
         "player_procedure_context"
     } else if name.starts_with("player_action_lane_") {
         "player_action_phase"
+    } else if name.starts_with("previous_pad_") {
+        "previous_input"
     } else if matches!(
         name,
         "actor_count"
@@ -510,6 +541,8 @@ fn distance_group(name: &str) -> String {
         "player_yaw"
     } else if name.starts_with("camera_yaw_") {
         "camera_yaw"
+    } else if name.starts_with("terminal_") {
+        "terminal_evidence"
     } else if matches!(name, "goal_dx" | "goal_dy" | "goal_dz") {
         "goal_delta"
     } else if name.starts_with("goal_history_")
@@ -565,6 +598,33 @@ fn encode_player_action(
     let flags = action.map_or(0, |action| action.flags);
     output.extend((0..32).map(|bit| bool_feature(flags & (1 << bit) != 0)));
     Ok(())
+}
+
+fn encode_previous_pad(output: &mut Vec<f32>, facts: &FactSnapshot) {
+    let Some(pad) = facts.player.previous_pad else {
+        output.extend([0.0; 29]);
+        return;
+    };
+    output.push(1.0);
+    output.extend((0..u16::BITS).map(|bit| bool_feature(pad.buttons & (1_u16 << bit) != 0)));
+    let stick_x = f32::from(pad.stick_x);
+    let stick_y = f32::from(pad.stick_y);
+    let substick_x = f32::from(pad.substick_x);
+    let substick_y = f32::from(pad.substick_y);
+    output.extend([
+        stick_x,
+        stick_y,
+        stick_x.hypot(stick_y),
+        substick_x,
+        substick_y,
+        substick_x.hypot(substick_y),
+        f32::from(pad.trigger_left),
+        f32::from(pad.trigger_right),
+        f32::from(pad.analog_a),
+        f32::from(pad.analog_b),
+        bool_feature(pad.connected),
+        f32::from(pad.error),
+    ]);
 }
 
 fn trajectory_summary(
@@ -708,7 +768,7 @@ fn planar_distance(left: [f32; 3], right: [f32; 3]) -> f32 {
 
 fn goal_conditioned_feature_schema_digest(base: Digest) -> Digest {
     let bytes = serde_json::to_vec(&(
-        GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V5,
+        GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V6,
         base,
         GOAL_FEATURE_NAMES,
     ))
@@ -977,7 +1037,7 @@ fn symbol_feature(value: &str) -> f32 {
 
 fn feature_schema_digest(names: &[&str]) -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(TACTIC_FEATURE_SCHEMA_V5.as_bytes());
+    hasher.update(TACTIC_FEATURE_SCHEMA_V6.as_bytes());
     for name in names {
         hasher.update((name.len() as u64).to_le_bytes());
         hasher.update(name.as_bytes());
@@ -1133,6 +1193,72 @@ mod tests {
         assert_eq!(feature("player_do_status_bit_3"), 1.0);
         assert_eq!(feature("player_do_status_bit_7"), 0.0);
         assert_eq!(feature("player_front_roll_prompt_available"), 1.0);
+    }
+
+    #[test]
+    fn previous_input_and_terminal_missingness_are_explicit_model_state() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let mut facts = FactSnapshot::from_native_learning(
+            &shard.episodes[0].steps[0].pre_input,
+            &[],
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        facts.player.previous_pad = Some(crate::fact_snapshot::PadFactSnapshot {
+            buttons: 0x0140,
+            stick_x: -100,
+            stick_y: 50,
+            substick_x: 25,
+            substick_y: -75,
+            trigger_left: 9,
+            trigger_right: 10,
+            analog_a: 11,
+            analog_b: 12,
+            connected: true,
+            error: -3,
+        });
+        facts.terminal.reached = Some(false);
+        let encoder = TacticFeatureEncoder::new();
+        let encoded = encoder.encode(&facts).unwrap();
+        let feature = |name: &str| {
+            encoded[encoder
+                .feature_names
+                .iter()
+                .position(|candidate| candidate == name)
+                .unwrap()]
+        };
+        assert_eq!(feature("previous_pad_available"), 1.0);
+        assert_eq!(feature("previous_pad_button_6"), 1.0);
+        assert_eq!(feature("previous_pad_button_8"), 1.0);
+        assert_eq!(feature("previous_pad_button_7"), 0.0);
+        assert_eq!(feature("previous_pad_stick_x"), -100.0);
+        assert_eq!(feature("previous_pad_stick_y"), 50.0);
+        assert_eq!(feature("previous_pad_substick_x"), 25.0);
+        assert_eq!(feature("previous_pad_trigger_right"), 10.0);
+        assert_eq!(feature("previous_pad_analog_b"), 12.0);
+        assert_eq!(feature("previous_pad_connected"), 1.0);
+        assert_eq!(feature("previous_pad_error"), -3.0);
+        assert_eq!(feature("terminal_available"), 1.0);
+        assert_eq!(feature("terminal_reached"), 0.0);
+
+        facts.player.previous_pad = None;
+        facts.terminal.reached = None;
+        let missing = encoder.encode(&facts).unwrap();
+        let missing_feature = |name: &str| {
+            missing[encoder
+                .feature_names
+                .iter()
+                .position(|candidate| candidate == name)
+                .unwrap()]
+        };
+        assert_eq!(missing_feature("previous_pad_available"), 0.0);
+        assert_eq!(missing_feature("previous_pad_button_8"), 0.0);
+        assert_eq!(missing_feature("terminal_available"), 0.0);
+        assert_eq!(missing_feature("terminal_reached"), 0.0);
     }
 
     #[test]

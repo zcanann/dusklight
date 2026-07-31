@@ -248,7 +248,7 @@ pub use route_diagnosis::{
 };
 mod observation_audit;
 pub use observation_audit::{
-    NATIVE_TACTIC_OBSERVATION_AUDIT_SCHEMA_V1, NativeTacticActionSurfaceCoverage,
+    NATIVE_TACTIC_OBSERVATION_AUDIT_SCHEMA_V2, NativeTacticActionSurfaceCoverage,
     NativeTacticObservationAudit, NativeTacticPolicySignalContract, NativeTacticSignalCoverage,
 };
 mod post_terminal_controls;

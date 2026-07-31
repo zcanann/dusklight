@@ -29,10 +29,6 @@ actions and let the learner value them.
 
 ## 1. Establish a valid learning problem
 
-- [ ] Finish end-to-end state/action parity. Every currently legal primitive
-      and parameter must reach the learner, and observations must expose
-      explicit presence/missingness for position, trajectory, camera, prior
-      input/action, contact kinematics, prompts, and terminal evidence.
 - [ ] Run identical-budget learned, frozen-ranking, and random-valid campaigns.
       Require learned ranking to reduce useful expansions to terminal on
       development and held-out seeds before doing route-quality tuning.

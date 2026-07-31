@@ -11,14 +11,15 @@ use crate::tactic_asset::{
 };
 use crate::tactic_blueprint::TacticBlueprint;
 use dusklight_control::controller_program::ControllerProgram;
+use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
 use dusklight_control::roll_option::RollOptionPlan;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::f32::consts::{PI, TAU};
 
-pub const PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V5: &str =
-    "dusklight-parameterized-tactic-families/v5";
+pub const PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V6: &str =
+    "dusklight-parameterized-tactic-families/v6";
 pub const MAX_PARAMETERIZED_PROPOSALS: usize = 192;
 const MAX_PARAMETERIZED_TACTIC_TICKS: u32 = 4_096;
 
@@ -30,6 +31,7 @@ pub enum ParameterizedTacticFamily {
     CameraLockRollForward,
     ShortCurve,
     Roll,
+    PromptedAction,
     Neutral,
 }
 
@@ -42,6 +44,7 @@ impl ParameterizedTacticFamily {
             Self::CameraLockRollForward => "camera-lock-roll-forward",
             Self::ShortCurve => "short-curve",
             Self::Roll => "roll",
+            Self::PromptedAction => "prompted-action",
             Self::Neutral => "neutral",
         }
     }
@@ -54,6 +57,8 @@ pub struct ParameterizedTacticProposalContext {
     pub state_sha256: Digest,
     pub player_position: [f32; 3],
     pub camera_yaw_radians: Option<f32>,
+    pub prompted_action_available: bool,
+    pub front_roll_prompt_available: bool,
     pub goal_coordinate: [f32; 3],
     pub maximum_ticks: u32,
     pub feedback: Option<ParameterizedTacticFeedback>,
@@ -108,7 +113,7 @@ pub struct ParameterizedTacticProposalCatalog {
 
 pub fn parameterized_tactic_family_schema_sha256() -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V5.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V6.as_bytes());
     hasher.update((MAX_PARAMETERIZED_PROPOSALS as u64).to_le_bytes());
     hasher.update(MAX_PARAMETERIZED_TACTIC_TICKS.to_le_bytes());
     for family in [
@@ -118,6 +123,7 @@ pub fn parameterized_tactic_family_schema_sha256() -> Digest {
         ParameterizedTacticFamily::CameraLockRollForward,
         ParameterizedTacticFamily::ShortCurve,
         ParameterizedTacticFamily::Roll,
+        ParameterizedTacticFamily::PromptedAction,
         ParameterizedTacticFamily::Neutral,
     ] {
         hasher.update(family.slug().as_bytes());
@@ -245,24 +251,26 @@ pub fn propose_parameterized_tactics(
     // L+A schedules and a conservative fully staggered schedule, then expose a
     // short forward recovery window so the learner can make another decision
     // instead of embedding a long, benchmark-specific roll cadence.
-    for (index, offset) in heading_offsets.iter().copied().enumerate() {
-        let heading = if index == 0 {
-            goal_heading
-        } else {
-            normalize_angle(central_heading + offset)
-        };
-        let duration = context.maximum_ticks.min(16);
-        for timing in 0..=2_u32.min(duration.saturating_sub(1)) {
-            insert(
-                &mut entries,
-                ParameterizedTacticFamily::CameraLockRollForward,
-                TacticAssetSource::ReactiveController(camera_lock_roll_forward_program(
-                    stick(heading, 127),
-                    duration,
-                    timing,
-                )?),
-                context.maximum_ticks,
-            )?;
+    if context.front_roll_prompt_available {
+        for (index, offset) in heading_offsets.iter().copied().enumerate() {
+            let heading = if index == 0 {
+                goal_heading
+            } else {
+                normalize_angle(central_heading + offset)
+            };
+            let duration = context.maximum_ticks.min(16);
+            for timing in 0..=2_u32.min(duration.saturating_sub(1)) {
+                insert(
+                    &mut entries,
+                    ParameterizedTacticFamily::CameraLockRollForward,
+                    TacticAssetSource::ReactiveController(camera_lock_roll_forward_program(
+                        stick(heading, 127),
+                        duration,
+                        timing,
+                    )?),
+                    context.maximum_ticks,
+                )?;
+            }
         }
     }
 
@@ -290,13 +298,14 @@ pub fn propose_parameterized_tactics(
     // Expose the same generic direction lattice as ordinary movement so the
     // learner can decide both whether and where to roll. This is state-local
     // applicability, not a pre-authored cadence or route composition.
-    for (index, offset) in heading_offsets.iter().copied().enumerate() {
-        let heading = if index == 0 {
-            goal_heading
-        } else {
-            normalize_angle(central_heading + offset)
-        };
-        for recovery_frames in [3_u32] {
+    if context.front_roll_prompt_available {
+        for (index, offset) in heading_offsets.iter().copied().enumerate() {
+            let heading = if index == 0 {
+                goal_heading
+            } else {
+                normalize_angle(central_heading + offset)
+            };
+            let recovery_frames = 3_u32;
             // RollOptionPlan's camera-relative +90 semantic emits positive raw
             // stick X, while world-heading controllers use the game's -sin X
             // convention. Negate the world-relative heading so roll, seek,
@@ -313,6 +322,22 @@ pub fn propose_parameterized_tactics(
                 context.maximum_ticks,
             )?;
         }
+    }
+
+    // Prompted A actions (interact, mount, lift, enter, and future contextual
+    // actions) are one primitive input opportunity. The native do-status is
+    // state, so this action enters the universe only at boundaries that expose
+    // such an opportunity; the scheduler does not invent its availability.
+    if context.prompted_action_available {
+        insert(
+            &mut entries,
+            ParameterizedTacticFamily::PromptedAction,
+            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Interact {
+                press_frames: 1,
+                recovery_frames: 1,
+            })),
+            context.maximum_ticks,
+        )?;
     }
 
     insert(
@@ -349,7 +374,7 @@ fn insert(
 ) -> Result<(), TacticAssetError> {
     let canonical = source.canonical_bytes()?;
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V5.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V6.as_bytes());
     hasher.update(family.slug().as_bytes());
     hasher.update((canonical.len() as u64).to_le_bytes());
     hasher.update(canonical);
@@ -368,7 +393,7 @@ fn insert(
 
 fn proposal_draw(context: ParameterizedTacticProposalContext) -> u64 {
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V5.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V6.as_bytes());
     hasher.update(context.seed.to_le_bytes());
     hasher.update(context.decision_index.to_le_bytes());
     hasher.update(context.state_sha256.0);
@@ -474,6 +499,8 @@ mod tests {
             state_sha256: Digest([7; 32]),
             player_position: [10.0, 20.0, 30.0],
             camera_yaw_radians: Some(0.25),
+            prompted_action_available: true,
+            front_roll_prompt_available: true,
             goal_coordinate: [90.0, 25.0, -40.0],
             maximum_ticks: 40,
             feedback: None,
@@ -521,7 +548,7 @@ mod tests {
         assert!(types.contains(&OptionType::MaintainHeading));
         assert!(types.contains(&OptionType::Move));
         assert!(types.contains(&OptionType::Roll));
-        assert!(!types.contains(&OptionType::Interact));
+        assert!(types.contains(&OptionType::Interact));
         assert!(
             proposals
                 .catalog
@@ -585,6 +612,46 @@ mod tests {
                 .all(|durations| durations == &BTreeSet::from([4, 8, 16, 40]))
         );
         assert!(proposals.blueprints.is_empty());
+    }
+
+    #[test]
+    fn prompted_actions_and_roll_are_exposed_only_by_native_state() {
+        let available = propose_parameterized_tactics(context(21, 5)).unwrap();
+        assert!(available.catalog.option_descriptors().any(|descriptor| {
+            descriptor.option_type == OptionType::Interact
+                && descriptor
+                    .parameters
+                    .get("press_frames")
+                    .is_some_and(|value| value == &OptionParameter::Unsigned(1))
+        }));
+        assert!(
+            available
+                .catalog
+                .option_descriptors()
+                .any(|descriptor| descriptor.option_type == OptionType::Roll)
+        );
+
+        let mut unavailable_context = context(21, 5);
+        unavailable_context.prompted_action_available = false;
+        unavailable_context.front_roll_prompt_available = false;
+        let unavailable = propose_parameterized_tactics(unavailable_context).unwrap();
+        assert!(unavailable.catalog.option_descriptors().all(|descriptor| {
+            descriptor.option_type != OptionType::Interact
+                && descriptor.option_type != OptionType::Roll
+                && descriptor.option_type != OptionType::Custom("target_roll".into())
+        }));
+        assert!(
+            unavailable
+                .catalog
+                .option_descriptors()
+                .any(|descriptor| descriptor.option_type == OptionType::MaintainHeading)
+        );
+        assert!(
+            unavailable
+                .catalog
+                .option_descriptors()
+                .any(|descriptor| descriptor.option_type == OptionType::Target)
+        );
     }
 
     #[test]
