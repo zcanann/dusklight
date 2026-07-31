@@ -1,101 +1,83 @@
-# Learning framework critical path
+# Learning framework
 
-This file tracks only unfinished work needed to build a generic framework that
-actually learns and does so fast enough to be useful. Completed work is removed;
-git history and retained evidence bundles are the record. Route-planner product
-work belongs in `TASKS_ROUTE_PLANNER.md`.
+This file tracks only unfinished work required to build a generic learning
+framework that **actually learns** and does so **fast enough to be useful**.
+Completed work is removed. Product work belongs in `TASKS_ROUTE_PLANNER.md`.
 
-## What counts as success
+## Definition of done
 
-The framework starts from a restorable native state and receives observations,
-legal actions, and a real terminal predicate. Without authored routes,
-waypoints, tactic sequences, or route-shaped rewards, it must:
+Starting from a restorable native state, the framework receives observations,
+legal actions, and a terminal predicate. Without an authored route, waypoint
+sequence, route-shaped reward, or blessed tactic sequence, it must:
 
-1. beat matched frozen-policy and random-valid controls on development and
-   held-out seeds;
-2. find the Ordon terminal in a five-minute median and within fifteen minutes
-   on every retained seed;
-3. continue learning after first success, beat the pinned human replay, and
-   produce a route of 123 native ticks or fewer with exact cold replay; and
-4. repeat discovery and improvement on a second route without changing the
-   learner, objective, or observation/action contract.
+1. learn materially faster than matched frozen-policy and random-valid controls;
+2. discover the Ordon terminal in a five-minute median and within fifteen
+   minutes on every retained development and held-out seed;
+3. continue improving after discovery, beat the pinned 125-tick human replay,
+   and produce a route of 123 native ticks or fewer; and
+4. repeat discovery and improvement on a second route without route-specific
+   changes to the learner or observation/action/objective contracts.
 
-A lucky route, an unbounded mining campaign, or benchmark-specific shaping is
-not evidence that the framework learns. Ordon coordinates, straightness,
-rolling, wall contact, camera alignment, and human input are observations,
-available actions, or optional experience - never hard-coded policy or reward.
+Every result must cold-replay exactly. A lucky route, an unbounded search, or a
+benchmark-specific heuristic is not evidence of learning.
 
-## Work queue
+## Current work
 
-Complete these gates in order. Supporting cleanup belongs in the gate it
-unblocks, not in an unrelated backlog.
+Complete these gates in order. Add work only when it is necessary to pass one
+of them.
 
-### P0 - Trust the framework
+### 1. Make the learning claim trustworthy
 
-- [ ] Make the learning loop auditable end to end: observed state and legal
-      actions -> exploration -> published experience -> learner update ->
-      deployed policy -> changed behavior. Emit one compact campaign report
-      with pinned inputs, treatment, outcome, samples/time to terminal,
-      expansions/second, phase timings, utilization, learner lag, retries,
-      rejected work, resource peaks, and evidence identities.
-- [ ] Harden campaign ownership and clean-checkout validation. Each campaign
-      must own exact child handles, cancellation, resource budgets, artifacts,
-      and cleanup; validation must cover deterministic replay, treatment
-      isolation, interruption/resume, schema compatibility, bounded history,
-      and retained evidence. Never discover or terminate work by process name
-      or broad ancestry.
-- [ ] Enforce maintainable boundaries. Split oversized modules into native
-      execution, learning/search, replay/graph, persistence/recovery, transport,
-      orchestration, and reporting responsibilities; test each boundary and add
-      a source-size gate. Keep durable machine state versioned, bounded, and
-      binary, with JSON limited to small requests and human-facing reports.
+- [ ] Emit and validate one compact campaign summary that follows the causal
+      chain from observation and legal actions through exploration, experience,
+      learner update, deployed policy, and changed behavior. Include pinned
+      inputs, treatment, outcome, samples/time to terminal, throughput, phase
+      timing, utilization, learner lag, rejected/retried work, resource peaks,
+      and evidence identities.
+- [ ] Run learned, frozen-policy, and random-valid treatments with identical
+      budgets on retained development and held-out seeds. Horizons must be long
+      enough for unguided discovery. If learned does not beat both controls,
+      use the causal summary to find and fix the first broken link before doing
+      more route mining.
 
-### P1 - Prove real learning
+### 2. Make time-to-result useful
 
-- [ ] Run identical-budget learned, frozen-policy, and random-valid treatments
-      on retained development and held-out seeds. Horizons must permit unguided
-      terminal discovery. Report terminal rate, samples/time to terminal,
-      useful expansions, and uncertainty across seeds.
-- [ ] If learning does not beat both controls, use the causal audit to fix the
-      first place experience is lost, duplicated, censored, stale, or ignored.
-      Repeat the matched comparison until the advantage reproduces on held-out
-      seeds; do not add route-shaped rewards or authored tactic sequences.
-- [ ] Ablate the ordinary suboptimal human replay. Measure any sample-efficiency
-      gain while proving replay is optional and the learned policy can surpass
-      it.
+- [ ] Measure sample efficiency separately from execution efficiency. Account
+      for all campaign time across native simulation/state work, transport,
+      scheduling, learning, persistence/finalization, and idle capacity.
+- [ ] Fix the measured dominant constraints, then repeat the matched experiment.
+      Test worker scaling under explicit CPU and memory caps; address duplicated
+      work, policy lag, contention, serialization/copying, idle workers, and
+      unbounded state only when evidence shows they matter. Meet the five-minute
+      median and fifteen-minute worst-seed discovery target.
 
-### P2 - Make it fast enough to use
+### 3. Prove useful learning, not benchmark gaming
 
-- [ ] Profile fixed work with non-overlapping time for native simulation/state,
-      transport, scheduling, learning, persistence, finalization, and idle time.
-      Report sample efficiency separately from execution efficiency.
-- [ ] Remove measured dominant costs, then re-profile: duplicated exploration,
-      serialization/copies, contention, whole-history work, policy lag, idle
-      workers, and unbounded memory or persistence growth.
-- [ ] Demonstrate useful scaling under explicit CPU/memory caps and choose the
-      default worker count by time-to-result. Meet the five-minute median and
-      fifteen-minute worst-seed discovery target on development and held-out
-      seeds.
-
-### P3 - Improve and generalize
-
-- [ ] Continue learning after first terminal without collapsing exploration.
-      Beat the pinned human replay, reach 123 native ticks or fewer, and cold
-      replay the controller twice with identical bytes, terminal evidence,
-      tick count, and identities.
-- [ ] Let the learner discover parameterized and composed legal actions while
-      retaining primitives and rejected evidence. Promote compositions only
-      from held-out results, never from a blessed tactic list.
-- [ ] Repeat scratch discovery and post-success improvement on a second native
+- [ ] Continue learning after the first terminal. Beat the pinned human replay,
+      reach 123 native ticks or fewer, and cold-replay the learned controller
+      twice with identical bytes, terminal evidence, tick count, and identities.
+- [ ] Treat human replay as optional experience: measure whether it improves
+      sample efficiency while proving that scratch learning works and can
+      surpass the demonstration.
+- [ ] Let the learner discover useful parameterized or composed actions from the
+      generic legal action surface. Retain primitives and rejected evidence;
+      promote compositions only when held-out results improve.
+- [ ] Repeat scratch discovery and post-terminal improvement on a second native
       route without changing the learner, objective, or observation/action
-      contract.
+      contracts.
 
-## Working rules
+## Required framework quality
 
-- Run the smallest matched experiment that answers one named question.
-- Never substitute one fast route for evidence of learning.
-- Do not optimize throughput before measuring where fixed work goes.
-- Architecture changes must close a correctness hole, remove a measured
-  bottleneck, or make the learning claim materially easier to audit.
-- Commit and push each natural milestone; do not leave a long-term dirty
-  workspace.
+These are acceptance criteria for every gate, not a separate backlog:
+
+- Campaigns own exact child handles, cancellation, budgets, artifacts, and
+  cleanup. Never find or terminate work by process name or broad ancestry.
+- Interruption/resume, deterministic replay, treatment isolation, schema
+  compatibility, bounded history, and clean-checkout reproduction are tested.
+- Native execution, learning/search, replay/graph, persistence/recovery,
+  transport, orchestration, and reporting have testable single-purpose
+  boundaries. Oversized modules are split and prevented by a source-size gate.
+- Durable machine state is versioned, bounded, and binary. JSON is limited to
+  small requests and human-facing reports.
+- Every experiment answers one named question with the smallest matched run
+  that can answer it. Commit and push each natural milestone.
