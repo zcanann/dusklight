@@ -165,7 +165,60 @@ pub enum TacticReplayAdmissionOutcome {
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
+pub struct TacticReplayAdmissionTiming {
+    pub validation_micros: u64,
+    pub identity_and_dedup_micros: u64,
+    pub transition_store_micros: u64,
+    pub route_store_micros: u64,
+    pub record_encoding_micros: u64,
+    pub journal_sync_micros: u64,
+    pub bookkeeping_micros: u64,
+    pub unattributed_micros: u64,
+}
+
+impl TacticReplayAdmissionTiming {
+    pub fn total_micros(&self) -> u64 {
+        self.validation_micros
+            .saturating_add(self.identity_and_dedup_micros)
+            .saturating_add(self.transition_store_micros)
+            .saturating_add(self.route_store_micros)
+            .saturating_add(self.record_encoding_micros)
+            .saturating_add(self.journal_sync_micros)
+            .saturating_add(self.bookkeeping_micros)
+            .saturating_add(self.unattributed_micros)
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.validation_micros = self
+            .validation_micros
+            .saturating_add(other.validation_micros);
+        self.identity_and_dedup_micros = self
+            .identity_and_dedup_micros
+            .saturating_add(other.identity_and_dedup_micros);
+        self.transition_store_micros = self
+            .transition_store_micros
+            .saturating_add(other.transition_store_micros);
+        self.route_store_micros = self
+            .route_store_micros
+            .saturating_add(other.route_store_micros);
+        self.record_encoding_micros = self
+            .record_encoding_micros
+            .saturating_add(other.record_encoding_micros);
+        self.journal_sync_micros = self
+            .journal_sync_micros
+            .saturating_add(other.journal_sync_micros);
+        self.bookkeeping_micros = self
+            .bookkeeping_micros
+            .saturating_add(other.bookkeeping_micros);
+        self.unattributed_micros = self
+            .unattributed_micros
+            .saturating_add(other.unattributed_micros);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct TacticReplayAdmissionMetrics {
     /// Successful publish calls during this process invocation.
     pub attempts: u64,
@@ -174,10 +227,17 @@ pub struct TacticReplayAdmissionMetrics {
     pub admission_micros: u64,
     pub maximum_admission_micros: u64,
     pub mean_admission_micros: u64,
+    pub timing: TacticReplayAdmissionTiming,
 }
 
 impl TacticReplayAdmissionMetrics {
-    fn record(&mut self, admitted: bool, elapsed_micros: u64) {
+    fn record(
+        &mut self,
+        admitted: bool,
+        elapsed_micros: u64,
+        mut timing: TacticReplayAdmissionTiming,
+    ) {
+        timing.unattributed_micros = elapsed_micros.saturating_sub(timing.total_micros());
         self.attempts = self.attempts.saturating_add(1);
         if admitted {
             self.admitted = self.admitted.saturating_add(1);
@@ -187,6 +247,7 @@ impl TacticReplayAdmissionMetrics {
         self.admission_micros = self.admission_micros.saturating_add(elapsed_micros);
         self.maximum_admission_micros = self.maximum_admission_micros.max(elapsed_micros);
         self.mean_admission_micros = self.admission_micros / self.attempts;
+        self.timing.merge(timing);
     }
 }
 
@@ -415,6 +476,8 @@ impl TacticReplayControlPlane {
         episode_group: u64,
     ) -> Result<TacticReplayAdmissionOutcome, TacticReplayControlPlaneError> {
         let started = Instant::now();
+        let mut timing = TacticReplayAdmissionTiming::default();
+        let validation_started = Instant::now();
         if learner_snapshot_sha256 == Digest::ZERO {
             return Err(TacticReplayControlPlaneError::Invalid(
                 "published replay has no learner snapshot authority",
@@ -431,17 +494,19 @@ impl TacticReplayControlPlane {
             episode_groups: vec![episode_group],
         };
         validate_training_corpus(&corpus).map_err(domain_error)?;
+        timing.validation_micros = elapsed_micros(validation_started);
+        let identity_started = Instant::now();
         let transition_identity_sha256 =
             transition.replay_identity_sha256().map_err(domain_error)?;
-        if let Some(existing_sequence) = self
+        let existing_sequence = self
             .transition_sequences
             .get(&transition_identity_sha256)
-            .copied()
-        {
-            self.invocation_metrics.record(
-                false,
-                u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-            );
+            .copied();
+        timing.identity_and_dedup_micros = elapsed_micros(identity_started);
+        if let Some(existing_sequence) = existing_sequence {
+            let elapsed_micros = elapsed_micros(started);
+            self.invocation_metrics
+                .record(false, elapsed_micros, timing);
             return Ok(TacticReplayAdmissionOutcome::Duplicate {
                 existing_sequence,
                 transition_identity_sha256,
@@ -453,11 +518,16 @@ impl TacticReplayControlPlane {
                 "replay control-plane journal exceeds its record bound",
             ));
         }
+        let transition_store_started = Instant::now();
         let transition_ref = self
             .content_store
             .store_option_transition(transition, route)
             .map_err(store_error)?;
+        timing.transition_store_micros = elapsed_micros(transition_store_started);
+        let route_store_started = Instant::now();
         let route_ref = self.content_store.store_tape(route).map_err(store_error)?;
+        timing.route_store_micros = elapsed_micros(route_store_started);
+        let record_encoding_started = Instant::now();
         let sequence = self.entries.len() as u64;
         let mut entry = StoredTacticReplayAdmission {
             schema: TACTIC_REPLAY_ADMISSION_SCHEMA_V2.into(),
@@ -507,8 +577,12 @@ impl TacticReplayControlPlane {
         );
         envelope.extend_from_slice(&sha256(&raw).0);
         envelope.extend_from_slice(&compressed);
+        timing.record_encoding_micros = elapsed_micros(record_encoding_started);
+        let journal_sync_started = Instant::now();
         self.journal.write_all(&envelope).map_err(io_error)?;
         self.journal.sync_data().map_err(io_error)?;
+        timing.journal_sync_micros = elapsed_micros(journal_sync_started);
+        let bookkeeping_started = Instant::now();
         self.replay_snapshot = TacticReplaySnapshotVersion {
             revision: sequence + 1,
             sha256: entry.replay_snapshot_sha256,
@@ -516,10 +590,9 @@ impl TacticReplayControlPlane {
         self.transition_sequences
             .insert(transition_identity_sha256, sequence);
         self.entries.push(entry);
-        self.invocation_metrics.record(
-            true,
-            u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-        );
+        timing.bookkeeping_micros = elapsed_micros(bookkeeping_started);
+        let elapsed_micros = elapsed_micros(started);
+        self.invocation_metrics.record(true, elapsed_micros, timing);
         Ok(TacticReplayAdmissionOutcome::Admitted {
             sequence,
             transition_identity_sha256,
@@ -686,6 +759,10 @@ impl TacticReplayControlPlane {
     ) -> Result<TacticQLearnerSnapshot, TacticReplayControlPlaneError> {
         self.validate_learner_snapshot(sha256)
     }
+}
+
+fn elapsed_micros(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
 }
 
 fn validate_stored_entry(
@@ -1033,6 +1110,7 @@ mod tests {
             metrics.admission_micros / metrics.attempts
         );
         assert!(metrics.maximum_admission_micros <= metrics.admission_micros);
+        assert_eq!(metrics.timing.total_micros(), metrics.admission_micros);
         drop(service);
 
         let mut reopened = TacticReplayControlPlane::open(&journal, &objects, &expected).unwrap();
@@ -1067,6 +1145,15 @@ mod tests {
         assert_eq!(reopened.len(), 1);
         drop(reopened);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_admission_metrics_default_the_timing_breakdown() {
+        let metrics: TacticReplayAdmissionMetrics = serde_json::from_str(
+            r#"{"attempts":2,"admitted":1,"duplicates":1,"admission_micros":17,"maximum_admission_micros":12,"mean_admission_micros":8}"#,
+        )
+        .unwrap();
+        assert_eq!(metrics.timing, TacticReplayAdmissionTiming::default());
     }
 
     #[test]
