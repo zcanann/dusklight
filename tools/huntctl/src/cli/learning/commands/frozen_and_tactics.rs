@@ -22,14 +22,14 @@ use super::{
     realize_native_frozen_policy_tape, repeated_option, required_path,
     run_native_tactic_cold_replay, run_native_tactic_policy, run_native_tactic_restore_locality,
     run_native_tactic_route, run_native_tactic_throughput_curve_controlled,
-    tactic_macro_registry_identity, u64_option, usage_error, usize_option,
-    verify_native_frozen_policy_cold_replay, verify_native_frozen_policy_reinference,
+    sealed_plan_shape_conflict, tactic_macro_registry_identity, u64_option, usage_error,
+    usize_option, verify_native_frozen_policy_cold_replay, verify_native_frozen_policy_reinference,
 };
 use serde_json::json;
 use sha2::Digest as _;
 use std::error::Error;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -532,40 +532,6 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             } else {
                 repository_root.join(output_argument)
             };
-            let mut seeds = repeated_option(learn_args, "--seed")
-                .into_iter()
-                .map(|seed| seed.parse::<u64>())
-                .collect::<Result<Vec<_>, _>>()?;
-            if seeds.is_empty() {
-                seeds = request.execution.deterministic_seeds.clone();
-            }
-            seeds.sort_unstable();
-            seeds.dedup();
-            let proposal_policy_argument = option(learn_args, "--proposal-policy");
-            let proposal_policy = match proposal_policy_argument.as_deref().unwrap_or("learned") {
-                "learned" => TacticProposalPolicy::Learned,
-                "random-valid" => TacticProposalPolicy::RandomValid,
-                "structured-non-learning" => TacticProposalPolicy::StructuredNonLearning,
-                value => {
-                    return Err(format!(
-                        "unknown tactic proposal policy {value:?}; expected learned, random-valid, or structured-non-learning"
-                    )
-                    .into());
-                }
-            };
-            let execution_strategy = match option(learn_args, "--execution-strategy")
-                .as_deref()
-                .unwrap_or("native-controller")
-            {
-                "native-controller" => NativeGenericExecutionStrategy::NativeController,
-                "progressive-audit" => NativeGenericExecutionStrategy::ProgressiveAudit,
-                value => {
-                    return Err(format!(
-                        "unknown tactic execution strategy {value:?}; expected native-controller or progressive-audit"
-                    )
-                    .into());
-                }
-            };
             let workers = usize_option(
                 learn_args,
                 "--workers",
@@ -583,14 +549,59 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 } else {
                     None
                 };
-            let execution_plan = native_tactic_execution_plan(
-                learn_args,
-                &request,
-                &seeds,
-                proposal_policy,
-                execution_strategy,
-                promoted_tactic_registry_sha256,
-            )?;
+            let execution_plan = if let Some(plan_path) = option(learn_args, "--plan") {
+                if let Some(conflict) = sealed_plan_shape_conflict(learn_args) {
+                    return Err(format!(
+                        "tactic route --plan cannot be combined with plan-shaping option {conflict}"
+                    )
+                    .into());
+                }
+                NativeTacticExecutionPlan::read(Path::new(&plan_path))?
+            } else {
+                let mut seeds = repeated_option(learn_args, "--seed")
+                    .into_iter()
+                    .map(|seed| seed.parse::<u64>())
+                    .collect::<Result<Vec<_>, _>>()?;
+                if seeds.is_empty() {
+                    seeds = request.execution.deterministic_seeds.clone();
+                }
+                seeds.sort_unstable();
+                seeds.dedup();
+                let proposal_policy_argument = option(learn_args, "--proposal-policy");
+                let proposal_policy = match proposal_policy_argument.as_deref().unwrap_or("learned")
+                {
+                    "learned" => TacticProposalPolicy::Learned,
+                    "random-valid" => TacticProposalPolicy::RandomValid,
+                    "structured-non-learning" => TacticProposalPolicy::StructuredNonLearning,
+                    value => {
+                        return Err(format!(
+                                "unknown tactic proposal policy {value:?}; expected learned, random-valid, or structured-non-learning"
+                            )
+                            .into());
+                    }
+                };
+                let execution_strategy = match option(learn_args, "--execution-strategy")
+                    .as_deref()
+                    .unwrap_or("native-controller")
+                {
+                    "native-controller" => NativeGenericExecutionStrategy::NativeController,
+                    "progressive-audit" => NativeGenericExecutionStrategy::ProgressiveAudit,
+                    value => {
+                        return Err(format!(
+                            "unknown tactic execution strategy {value:?}; expected native-controller or progressive-audit"
+                        )
+                        .into());
+                    }
+                };
+                native_tactic_execution_plan(
+                    learn_args,
+                    &request,
+                    &seeds,
+                    proposal_policy,
+                    execution_strategy,
+                    promoted_tactic_registry_sha256,
+                )?
+            };
             let fault_injection = option(learn_args, "--fault-inject")
                 .map(|point| {
                     Ok::<_, Box<dyn Error>>(NativeTacticFaultInjector::process_exit(

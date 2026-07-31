@@ -9,6 +9,29 @@ use dusklight_orchestration::{
 };
 use std::error::Error;
 
+const SEALED_PLAN_SHAPING_OPTIONS: [&str; 14] = [
+    "--seed",
+    "--proposal-policy",
+    "--value-treatment",
+    "--execution-strategy",
+    "--decisions-per-seed",
+    "--proposals-per-decision",
+    "--lanes-per-generation",
+    "--branch-every",
+    "--refit-every",
+    "--epsilon-per-million",
+    "--demonstration-chunk-ticks",
+    "--maximum-stale-replay-revisions",
+    "--memory-bytes",
+    "--wall-micros",
+];
+
+pub(super) fn sealed_plan_shape_conflict(learn_args: &[String]) -> Option<&'static str> {
+    SEALED_PLAN_SHAPING_OPTIONS
+        .into_iter()
+        .find(|name| learn_args.iter().any(|argument| argument == name))
+}
+
 pub(super) fn native_tactic_execution_plan(
     learn_args: &[String],
     request: &OptimizationRequest,
@@ -126,8 +149,9 @@ fn default_replay_sharing(
 #[cfg(test)]
 mod tests {
     use super::{
-        CampaignClass, NativeTacticReplaySharingPlan, TacticProposalPolicy, TacticValueTreatment,
-        default_replay_sharing, default_value_treatment, value_treatment,
+        CampaignClass, NativeTacticReplaySharingPlan, SEALED_PLAN_SHAPING_OPTIONS,
+        TacticProposalPolicy, TacticValueTreatment, default_replay_sharing,
+        default_value_treatment, sealed_plan_shape_conflict, value_treatment,
     };
 
     #[test]
@@ -194,6 +218,28 @@ mod tests {
                 TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn sealed_plan_rejects_every_shape_override_but_allows_runtime_workers() {
+        for option in SEALED_PLAN_SHAPING_OPTIONS {
+            let args = vec![
+                "--plan".into(),
+                "plan.dtp".into(),
+                option.into(),
+                "1".into(),
+            ];
+            assert_eq!(sealed_plan_shape_conflict(&args), Some(option));
+        }
+        assert_eq!(
+            sealed_plan_shape_conflict(&[
+                "--plan".into(),
+                "plan.dtp".into(),
+                "--workers".into(),
+                "1".into(),
+            ]),
+            None
         );
     }
 }

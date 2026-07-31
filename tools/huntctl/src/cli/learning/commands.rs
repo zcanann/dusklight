@@ -132,7 +132,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 mod route_plan;
-use route_plan::native_tactic_execution_plan;
+use route_plan::{native_tactic_execution_plan, sealed_plan_shape_conflict};
 
 const NATIVE_REPLAY_SOURCE_SCHEMA_V1: &str = "dusklight-native-replay-source/v1";
 
