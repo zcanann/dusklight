@@ -1,165 +1,111 @@
-# Tasks: make the learning framework learn, quickly
+# Tasks: build a learning framework that learns fast enough to use
 
-This is the unfinished work queue. Delete tasks when they are complete; history
-belongs in commits and benchmark bundles, not here.
+This file contains only unfinished work. Delete completed items; commits and
+retained benchmark bundles are the history.
 
-## Goal
+## Target
 
-Given a restorable game state, observations, the actions legal in that state,
-and a terminal predicate, discover and improve a route without an authored
-route or benchmark-specific reward. Do it quickly enough to be useful on
-larger problems.
+From a restorable game state, observable state, legal actions, and a real
+terminal predicate, the framework must discover and improve routes without an
+authored route, route-specific reward, or hidden scheduler policy.
 
-The Ordon load zone is the first acceptance case. The human replay is `131`
-native ticks. Reaching the real load-zone predicate from scratch proves basic
-discovery; beating `131` proves optimization; `123` or lower is the first
-credible route-quality result.
+The first acceptance problem is the Ordon load zone:
 
-## Current blockers
+- discover it reliably from scratch;
+- beat the 131-native-tick human replay;
+- reach 123 ticks or lower as the first credible quality result; and
+- do all of this within useful wall-clock time.
 
-- We have no retained current-build proof that learned ranking reaches the
-  terminal more efficiently than frozen-ranking or random-valid controls.
-- Fixed work is still slow: 256 useful expansions take about 115 seconds
-  (`2.22/s`). About 58 seconds is tactic execution, 20 seconds persistence,
-  and 9 seconds finalization.
-- Shared replay content removed duplicate replay admissions (`512` to `256`),
-  but did not improve total wall time. The bottleneck was displaced, not
-  removed.
-- We have no current proof of reliable scratch discovery, improvement after
-  the first terminal, a route below `131`, or transfer to another problem.
+## P0: prove the learning loop
 
-## 1. Prove that the learner actually changes search
-
-- [ ] Add tests that fail if terminal, censored, unsupported, or stale outcomes
-      are trained with the wrong meaning; restart must reproduce the same
-      learner state and rankings.
-- [ ] Verify that each state exposes every legal primitive action and its
-      parameters, including analog direction/duration, roll, camera modifier,
-      and prompted actions. Availability is state, not a hidden scheduler rule.
-- [ ] Verify that observations expose generic motion evidence needed to learn:
-      position, velocity, recent trajectory and momentum change, camera state,
-      contacts and their measured kinematic effect, action history, prompted
+- [ ] Pin terminal, censored, unsupported-action, and stale-outcome semantics
+      with end-to-end tests. Closing and reopening a campaign must reproduce
+      the exact learner state and action rankings.
+- [ ] Audit the learner's state/action interface. Every legal primitive and its
+      parameters must be visible when available, and observations must expose
+      generic evidence sufficient to infer progress and control effects:
+      motion/trajectory, camera, action history, contact kinematics, prompted
       actions, and terminal evidence. Missing values must be explicit.
-- [ ] Run matched learned-ranking, frozen-ranking, and random-valid native
-      cells with identical checkpoint, predicate, seeds, horizons, budgets,
-      action schema, and worker topology.
-- [ ] Show on development and held-out seeds that learning reduces unique
-      useful expansions to the real terminal. If it does not, repair the
-      learning target, features, exploration, or update cadence before tuning
-      route quality.
-- [ ] Treat an ordinary human replay as optional experience and run an
-      ablation. It may improve sample efficiency, but must not become a route,
-      waypoint source, incumbent policy, or requirement for success.
+- [ ] Run matched learned, frozen-ranking, and random-valid native campaigns.
+      Prove on development and held-out seeds that learning lowers useful
+      expansions to terminal. Repair the learner before tuning route quality
+      if it does not.
+- [ ] Ablate ordinary human replay as optional experience. It may improve sample
+      efficiency, but may not provide waypoints, route structure, an incumbent
+      policy, or be required for success.
 
-Done when learned ranking beats both controls in matched native search and the
-improvement can be explained from retained state/action/outcome evidence.
+## P0: make scratch discovery reliable
 
-## 2. Make exploration capable of finding the route
+- [ ] Give exploratory policies enough horizon to wander around the corner and
+      find the load zone. Budget exhaustion is censored/unknown, not failure.
+- [ ] Ensure concurrent workers lease distinct useful state/action expansions
+      and do not collapse onto the same greedy frontier or silently exclude
+      uncertain actions.
+- [ ] Retain compact per-seed evidence and discover the real load-zone predicate
+      from scratch on at least four development seeds and held-out seeds. No
+      authored coordinates, route-shaped reward, seed mining, or authored
+      action sequence is allowed.
 
-- [ ] Use horizons long enough for an unskilled policy to wander around the
-      corner and reach the load zone; budget exhaustion is unknown, not
-      terminal failure.
-- [ ] Ensure workers explore distinct useful node/action expansions instead of
-      repeating the same frontier, overcommitting to the greedy straight-line
-      local optimum, or silently pruning unsupported actions.
-- [ ] Retain per-seed time and useful expansions to first terminal, selection
-      mode, coverage, uncertainty, retries, and stop reason.
-- [ ] Reach the real load-zone predicate from scratch across four development
-      seeds and held-out seeds without authored coordinates, route-shaped
-      reward, seed mining, or a hand-authored action sequence.
+## P0: make discovery fast enough to matter
 
-Done when scratch discovery is repeatable, and failures can be classified as
-learning, exploration, action/observation coverage, throughput, or execution
-correctness rather than guessed at from a giant report.
+- [ ] Profile one fixed-work native campaign by checkpoint materialization,
+      restore/capture, controller preparation, simulation, IPC, scheduling,
+      persistence, model fitting/publication, finalization, and worker idle
+      time. The categories must account for wall time without overlap.
+- [ ] Remove hot-path whole-history work and prove checkpoint reuse, replay
+      admission, frontier leasing, persistence, and learner publication remain
+      bounded as history grows. Add scaling tests for repaired paths.
+- [ ] Run fixed-work 1/2/4/8/16-worker scaling cells after the serial path is
+      sound, then meet a throughput target derived from the observed
+      expansions-to-terminal distribution: five-minute median and fifteen-
+      minute worst-seed scratch discovery, with headroom.
 
-## 3. Raise useful-evidence throughput
+## P1: improve routes after discovery
 
-- [ ] Split tactic-execution time into checkpoint materialization,
-      restore/capture, controller preparation, native simulation, IPC, and
-      worker idle/queue time; optimize the largest measured component.
-- [ ] Split finalization time into graph/replay compaction, checkpoint writes,
-      validation, metrics, and report construction; remove work proportional
-      to the full campaign history.
-- [ ] Audit hot paths for repeated whole-graph, replay, route, checkpoint, or
-      model cloning, hashing, serialization, verification, and durable flushes.
-      Add growth tests for every repaired path.
-- [ ] Make checkpoint reuse, frontier leasing, dispatch, and result admission
-      scale without duplicate work, cache thrash, stale learners, or a serial
-      coordinator bottleneck.
-- [ ] Bound model-update cost and learner publication lag as replay grows.
-- [ ] After the serial path is repaired, run fixed-work 1/2/4/8/16-worker
-      curves and report useful expansions/second, parallel efficiency, worker
-      occupancy, memory, cache behavior, retries, and learner staleness.
-- [ ] Derive the required expansion rate from the measured
-      expansions-to-terminal distribution and meet it with headroom for a
-      five-minute median and fifteen-minute worst-seed discovery target.
+- [ ] Continue learning after the first terminal. Branch successful trajectories
+      from interior states at intervals no coarser than four native ticks and
+      rank counterfactuals by complete root-to-terminal outcome while retaining
+      exploration and unsuccessful evidence.
+- [ ] Demonstrate strict post-terminal improvement in at least three seeds,
+      then beat 131 ticks and reach 123 ticks or lower.
+- [ ] Cold-play the selected tape twice without the learner and require exact
+      controller bytes, terminal tick/evidence, identities, and fidelity.
 
-Done when added workers produce useful independent evidence and measured
-throughput makes the discovery target feasible.
+## P1: keep results trustworthy and the system operable
 
-## 4. Optimize successful routes
+- [ ] Replace raw-report archaeology with a compact campaign summary containing
+      outcome, route ticks, useful work, learned/control comparison, phase
+      timing, utilization, retries, learner lag, and dominant failure.
+- [ ] Split oversized production modules by responsibility and enforce the size
+      gate. In particular, separate campaign decision execution, durable
+      commit/recovery, and finalization/reporting.
+- [ ] Make long campaigns bounded and exactly resumable: versioned binary
+      content-addressed state, fail-closed identity/schema/fidelity checks, and
+      fault injection around dispatch, execution, commits, and learner
+      publication. JSON is only for small requests and exported reports.
+- [ ] Keep process ownership exact: a coordinator may stop only child handles
+      it directly created. Never kill by process name or broad ancestry.
+- [ ] Add clean-checkout validation for tests, schemas, retained evidence, and
+      deterministic replay.
 
-- [ ] Continue learning after the first terminal instead of ending the
-      campaign or freezing the first successful path.
-- [ ] Make successful paths branchable at intervals no coarser than four
-      native ticks and evaluate counterfactuals from their interior states.
-- [ ] Rank counterfactuals by predicted complete root-to-terminal outcome while
-      retaining broad exploration; exact native terminal results remain truth.
-- [ ] Demonstrate strict post-terminal improvement in at least three seeds.
-- [ ] Beat the `131`-tick human replay, then reach `123` ticks or lower.
-- [ ] Cold-replay the selected tape twice with the learner absent and require
-      identical controller bytes, terminal tick/evidence, identities, and
-      execution fidelity.
+## P2: prove this is a general framework
 
-Done when a `123`-tick-or-lower route is learned and reproduces exactly.
+- [ ] Learn parameterized action compositions from native experience and
+      promote them only when they improve held-out search without reducing
+      reliability or throughput. Keep primitive sequences and alternatives;
+      do not author blessed tactics.
+- [ ] Repeat scratch discovery and optimization on a second native route without
+      changing the reward model or authoring route structure for it.
 
-## 5. Learn reusable tactics and transfer
+## Experiment rules
 
-- [ ] Discover parameterized action compositions from successful paths and
-      counterfactuals; do not author blessed tactics in the UI or scheduler.
-- [ ] Learn state-conditioned applicability from multiple independent native
-      occurrences and retain the complete primitive sequence and realized
-      transition chain.
-- [ ] Promote a composition only when it beats its primitives on held-out
-      states; keep all legal primitives selectable.
-- [ ] Show that promoted tactics improve held-out search without reducing
-      terminal reliability or useful expansions/second.
-- [ ] Repeat discovery and optimization on a second native route without
-      changing rewards or authoring route structure for it.
-
-Done when at least one discovered tactic transfers and the same learner solves
-a second route problem.
-
-## 6. Keep the framework trustworthy and changeable
-
-- [ ] Replace raw-report archaeology with a compact campaign summary covering
-      terminal outcome, route ticks, useful expansions, learning/control
-      comparison, phase timing, utilization, retries, and dominant failure.
-- [ ] Split `native_tactic_route_runner/campaign.rs` by responsibility:
-      decision execution, durable commit/recovery, and finalization/reporting.
-- [ ] Add fault-injection coverage before dispatch, during execution, after
-      native completion, after recovery commit, and after decision commit.
-- [ ] Prove long campaigns have bounded checkpoint memory, persistence cost,
-      model-update cost, and learner staleness.
-- [ ] Keep operational state versioned, binary, content-addressed, and
-      fail-closed on identity/schema/fidelity mismatch. JSON remains limited
-      to small requests and exported reports.
-- [ ] Keep process ownership exact: coordinators may stop only child handles
-      they created; never use process-name or ancestry-wide killing.
-- [ ] Keep production modules below the enforced size gate and organized by
-      single responsibility; add clean-checkout validation for tests, schemas,
-      evidence bundles, and replayability.
-
-Done when another engineer can reproduce, explain, resume, profile, and modify
-a campaign without reverse-engineering a monolith or trusting hidden state.
-
-## Experiment discipline
-
-- Run the smallest experiment that can answer one named question.
-- Compare sample efficiency (useful expansions to outcome) and execution
-  efficiency (useful expansions per second); neither substitutes for the other.
-- Change one causal factor at a time and use matched controls.
-- Keep detailed history in immutable benchmark bundles, not this file.
-- Never encode desired Ordon behavior such as straightness, rolling, wall
-  avoidance, camera alignment, or waypoints as reward. Surface facts and legal
-  actions so the learner can discover their value.
+- Each experiment answers one named question with the smallest useful matched
+  comparison.
+- Report both sample efficiency (useful expansions to outcome) and execution
+  efficiency (useful expansions per second).
+- Do not treat a faster benchmark as learning unless learned ranking beats
+  frozen and random controls.
+- Do not encode Ordon-specific behavior such as straightness, rolling, wall
+  avoidance, camera alignment, or waypoints as reward. Expose observations and
+  legal actions and let the learner value them.
+- Keep detailed results in immutable benchmark bundles, not in this file.
