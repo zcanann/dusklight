@@ -33,6 +33,19 @@ pub struct NativeTacticThroughputCurveConfig<'a> {
     pub resume: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum NativeTacticThroughputCurveRun {
+    Complete {
+        report: Box<NativeTacticThroughputCurveReport>,
+    },
+    StoppedAfterSample {
+        completed_samples: u32,
+        total_samples: u32,
+        last_sample: NativeTacticThroughputCurveSample,
+    },
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticThroughputCurveSample {
@@ -569,6 +582,18 @@ impl DerivedCurve {
 pub fn run_native_tactic_throughput_curve(
     config: &NativeTacticThroughputCurveConfig<'_>,
 ) -> Result<NativeTacticThroughputCurveReport, NativeTacticRouteRunError> {
+    match run_native_tactic_throughput_curve_controlled(config, None)? {
+        NativeTacticThroughputCurveRun::Complete { report } => Ok(*report),
+        NativeTacticThroughputCurveRun::StoppedAfterSample { .. } => Err(route_message(
+            "unbounded native tactic throughput curve stopped unexpectedly",
+        )),
+    }
+}
+
+pub fn run_native_tactic_throughput_curve_controlled(
+    config: &NativeTacticThroughputCurveConfig<'_>,
+    stop_after_sample: Option<u32>,
+) -> Result<NativeTacticThroughputCurveRun, NativeTacticRouteRunError> {
     validate_curve_config(config)?;
     let execution_plan_sha256 = config.execution_plan.identity()?;
     let report_path = config.output_root.join(REPORT_FILE);
@@ -607,6 +632,7 @@ pub fn run_native_tactic_throughput_curve(
         .copied()
         .ok_or_else(|| route_message("throughput curve worker topology is empty"))?;
     let schedule = throughput_sample_schedule(config.repetitions)?;
+    validate_stop_after_sample(stop_after_sample, schedule.len())?;
     reject_detached_sample_roots(config.output_root, &schedule)?;
     let mut execution_order = Vec::new();
     let mut first_unfinished = schedule.len();
@@ -648,7 +674,12 @@ pub fn run_native_tactic_throughput_curve(
             &execution_order,
             &report,
         )?;
-        return Ok(report);
+        return Ok(NativeTacticThroughputCurveRun::Complete {
+            report: Box::new(report),
+        });
+    }
+    if stop_after_sample.is_some_and(|limit| execution_order.len() >= limit as usize) {
+        return stopped_curve_run(&schedule, &execution_order);
     }
 
     if let Some(first_unfinished) = curve_fleet_launch_start(first_unfinished, schedule.len())? {
@@ -704,6 +735,10 @@ pub fn run_native_tactic_throughput_curve(
             validate_completed_sample(config, execution_plan_sha256, &sample, &route_report)?;
             write_sample_commit(&progress_root, execution_plan_sha256, sample.clone())?;
             execution_order.push(sample);
+            if stop_after_sample.is_some_and(|limit| execution_order.len() >= limit as usize) {
+                fleet.shutdown()?;
+                return stopped_curve_run(&schedule, &execution_order);
+            }
         }
         fleet.shutdown()?;
     }
@@ -754,7 +789,36 @@ pub fn run_native_tactic_throughput_curve(
     report.refresh_content_sha256()?;
     report.validate()?;
     publish_curve_report(&report_path, &report.to_pretty_json()?)?;
-    Ok(report)
+    Ok(NativeTacticThroughputCurveRun::Complete {
+        report: Box::new(report),
+    })
+}
+
+fn validate_stop_after_sample(
+    stop_after_sample: Option<u32>,
+    sample_count: usize,
+) -> Result<(), NativeTacticRouteRunError> {
+    if stop_after_sample.is_some_and(|ordinal| ordinal == 0 || ordinal as usize > sample_count) {
+        return Err(route_message(
+            "native tactic throughput stop sample is outside its sample schedule",
+        ));
+    }
+    Ok(())
+}
+
+fn stopped_curve_run(
+    schedule: &[(u32, u32, usize)],
+    execution_order: &[NativeTacticThroughputCurveSample],
+) -> Result<NativeTacticThroughputCurveRun, NativeTacticRouteRunError> {
+    let last_sample = execution_order
+        .last()
+        .cloned()
+        .ok_or_else(|| route_message("native tactic throughput stop has no committed sample"))?;
+    Ok(NativeTacticThroughputCurveRun::StoppedAfterSample {
+        completed_samples: execution_order.len().try_into().map_err(route_error)?,
+        total_samples: schedule.len().try_into().map_err(route_error)?,
+        last_sample,
+    })
 }
 
 fn publish_curve_report(report_path: &Path, bytes: &[u8]) -> Result<(), NativeTacticRouteRunError> {

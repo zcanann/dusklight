@@ -259,7 +259,8 @@ pub use throughput_curve::{
     NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V3, NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V4,
     NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS, NativeTacticThroughputCurveCell,
     NativeTacticThroughputCurveConfig, NativeTacticThroughputCurveReport,
-    NativeTacticThroughputCurveSample, run_native_tactic_throughput_curve,
+    NativeTacticThroughputCurveRun, NativeTacticThroughputCurveSample,
+    run_native_tactic_throughput_curve, run_native_tactic_throughput_curve_controlled,
 };
 mod throughput_evidence_bundle;
 pub use throughput_evidence_bundle::{

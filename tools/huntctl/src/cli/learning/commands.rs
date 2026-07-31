@@ -103,10 +103,11 @@ use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticRouteDiagnosisReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
     NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
     NativeTacticScratchDiscoveryReport, NativeTacticScratchEvidenceBundle,
-    NativeTacticThroughputCurveConfig, NativeTacticThroughputEvidenceBundle,
-    audit_native_tactic_fault_recovery, read_and_validate_native_tactic_cold_replay,
-    run_native_tactic_cold_replay, run_native_tactic_restore_locality, run_native_tactic_route,
-    run_native_tactic_throughput_curve, tactic_macro_registry_identity,
+    NativeTacticThroughputCurveConfig, NativeTacticThroughputCurveRun,
+    NativeTacticThroughputEvidenceBundle, audit_native_tactic_fault_recovery,
+    read_and_validate_native_tactic_cold_replay, run_native_tactic_cold_replay,
+    run_native_tactic_restore_locality, run_native_tactic_route,
+    run_native_tactic_throughput_curve_controlled, tactic_macro_registry_identity,
 };
 use huntctl::search_evaluator::native_tactic_worker::NativeGenericExecutionStrategy;
 use huntctl::search_evaluator::optimization_request::OptimizationRequest;

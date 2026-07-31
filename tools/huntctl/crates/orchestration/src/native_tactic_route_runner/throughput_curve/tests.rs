@@ -172,6 +172,35 @@ fn aggregate_only_resealing_requires_zero_fleet_launches() {
 }
 
 #[test]
+fn bounded_curve_stop_must_address_a_scheduled_sample() {
+    assert!(validate_stop_after_sample(None, 10).is_ok());
+    assert!(validate_stop_after_sample(Some(1), 10).is_ok());
+    assert!(validate_stop_after_sample(Some(10), 10).is_ok());
+    assert!(validate_stop_after_sample(Some(0), 10).is_err());
+    assert!(validate_stop_after_sample(Some(11), 10).is_err());
+}
+
+#[test]
+fn bounded_curve_stop_reports_the_last_durable_sample() {
+    let schedule = throughput_sample_schedule(2).unwrap();
+    let completed = vec![
+        sample(1, 1, 1, 1_000),
+        sample(2, 1, 2, 900),
+        sample(3, 1, 4, 800),
+    ];
+    let stopped = stopped_curve_run(&schedule, &completed).unwrap();
+    assert_eq!(
+        stopped,
+        NativeTacticThroughputCurveRun::StoppedAfterSample {
+            completed_samples: 3,
+            total_samples: 10,
+            last_sample: completed[2].clone(),
+        }
+    );
+    assert!(stopped_curve_run(&schedule, &[]).is_err());
+}
+
+#[test]
 fn throughput_schedule_balances_worker_order_between_repetitions() {
     assert_eq!(
         throughput_sample_schedule(2).unwrap(),

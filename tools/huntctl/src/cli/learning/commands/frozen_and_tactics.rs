@@ -13,16 +13,16 @@ use super::{
     NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
     NativeTacticScratchComparisonReport, NativeTacticScratchDiscoveryReport,
     NativeTacticScratchEvidenceBundle, NativeTacticThroughputCurveConfig,
-    NativeTacticThroughputEvidenceBundle, OptimizationRequest, Sha256, TacticFrozenPolicy,
-    TacticProposalPolicy, TacticQCampaign, TacticQFinalResult, TacticQTrainingCorpus,
-    audit_native_tactic_fault_recovery, cli, command_conservative_q, flag,
+    NativeTacticThroughputCurveRun, NativeTacticThroughputEvidenceBundle, OptimizationRequest,
+    Sha256, TacticFrozenPolicy, TacticProposalPolicy, TacticQCampaign, TacticQFinalResult,
+    TacticQTrainingCorpus, audit_native_tactic_fault_recovery, cli, command_conservative_q, flag,
     native_frozen_policy_probe_model, native_tactic_execution_plan, option,
     prove_generalized_tactic_held_out_value, read_and_validate_native_tactic_cold_replay,
     realize_native_frozen_policy_tape, repeated_option, required_path,
     run_native_tactic_cold_replay, run_native_tactic_policy, run_native_tactic_restore_locality,
-    run_native_tactic_route, run_native_tactic_throughput_curve, tactic_macro_registry_identity,
-    u64_option, usage_error, usize_option, verify_native_frozen_policy_cold_replay,
-    verify_native_frozen_policy_reinference,
+    run_native_tactic_route, run_native_tactic_throughput_curve_controlled,
+    tactic_macro_registry_identity, u64_option, usage_error, usize_option,
+    verify_native_frozen_policy_cold_replay, verify_native_frozen_policy_reinference,
 };
 use serde_json::json;
 use sha2::Digest as _;
@@ -890,15 +890,33 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 NativeGenericExecutionStrategy::NativeController,
                 None,
             )?;
-            let report = run_native_tactic_throughput_curve(&NativeTacticThroughputCurveConfig {
-                repository_root: &repository_root,
-                optimization: &request,
-                execution: &execution,
-                execution_plan: &execution_plan,
-                output_root: &output,
-                repetitions: usize_option(learn_args, "--repetitions", 2)?.try_into()?,
-                resume: flag(learn_args, "--resume"),
-            })?;
+            let stop_after_sample = option(learn_args, "--stop-after-sample")
+                .map(|value| value.parse::<u32>())
+                .transpose()?;
+            if stop_after_sample.is_some() && option(learn_args, "--bundle").is_some() {
+                return Err(
+                    "tactic throughput curve cannot seal a bundle from a partial run".into(),
+                );
+            }
+            let run = run_native_tactic_throughput_curve_controlled(
+                &NativeTacticThroughputCurveConfig {
+                    repository_root: &repository_root,
+                    optimization: &request,
+                    execution: &execution,
+                    execution_plan: &execution_plan,
+                    output_root: &output,
+                    repetitions: usize_option(learn_args, "--repetitions", 2)?.try_into()?,
+                    resume: flag(learn_args, "--resume"),
+                },
+                stop_after_sample,
+            )?;
+            let report = match run {
+                NativeTacticThroughputCurveRun::Complete { report } => *report,
+                stopped @ NativeTacticThroughputCurveRun::StoppedAfterSample { .. } => {
+                    println!("{}", serde_json::to_string_pretty(&stopped)?);
+                    return Ok(());
+                }
+            };
             let report_path = output.join("throughput-curve.json");
             let bundle = option(learn_args, "--bundle")
                 .map(|argument| {
