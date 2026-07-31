@@ -423,6 +423,7 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "execute-tactic-policy"
             | "prove-generalized-tactics"
             | "tactic-route"
+            | "project-tactic-campaign-summary"
             | "validate-tactic-campaign-summary"
             | "prove-tactic-route-cold-replay"
             | "validate-tactic-route-cold-replay"
@@ -506,6 +507,7 @@ mod tests {
             "seal-tactic-fault-recovery",
             "validate-tactic-fault-recovery-bundle",
             "validate-tactic-campaign-summary",
+            "project-tactic-campaign-summary",
             "audit-post-terminal-tactic-controls",
             "audit-tactic-scratch-campaign",
             "audit-tactic-observations",

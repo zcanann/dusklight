@@ -269,9 +269,28 @@ fn condition(id: &str, passed: bool) -> NativeTacticScratchCondition {
 pub(super) fn route_report_sha256(
     route: &NativeTacticRouteReport,
 ) -> Result<Digest, NativeTacticRouteRunError> {
+    let canonical = canonical_json_value(serde_json::to_value(route).map_err(route_error)?);
     Ok(Digest(
-        Sha256::digest(serde_json::to_vec(route).map_err(route_error)?).into(),
+        Sha256::digest(serde_json::to_vec(&canonical).map_err(route_error)?).into(),
     ))
+}
+
+fn canonical_json_value(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.into_iter().map(canonical_json_value).collect())
+        }
+        serde_json::Value::Object(values) => {
+            let mut entries = values.into_iter().collect::<Vec<_>>();
+            entries.sort_by(|left, right| left.0.cmp(&right.0));
+            let mut canonical = serde_json::Map::new();
+            for (key, value) in entries {
+                canonical.insert(key, canonical_json_value(value));
+            }
+            serde_json::Value::Object(canonical)
+        }
+        scalar => scalar,
+    }
 }
 
 fn validate_seed_artifacts(

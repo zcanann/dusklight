@@ -21,12 +21,16 @@ required. Route-planner product work belongs in `TASKS_ROUTE_PLANNER.md`.
 ## Current truth
 
 - The pinned human replay reaches the real Ordon load zone in 125 native ticks.
-- Current scratch campaigns have not shown useful learning. Learned policy has
-  failed to reach the terminal and has underperformed frozen-policy and
-  random-valid controls.
+- Earlier scratch campaigns did not show useful learning. In the first matched
+  development run after sealing policy authority, learned reached the real
+  terminal at 262 authenticated ticks while frozen-policy and random-valid did
+  not reach it in the same 32-decision budget. The model earned deployment
+  authority at decision 16 and the terminal was discovered at decision 29.
+  This is promising single-seed evidence, not yet a repeated development or
+  held-out result.
 - Whole-source-state held-out calibration gates every current use of the
   goal-reachability model. Untrusted predictions remain visible, while v39
-  route reports and v3 campaign summaries reject unproven action or frontier
+  route reports and v4 campaign summaries reject unproven action or frontier
   policy deployment. Learned-versus-control results can now test learning
   rather than an authority leak.
 - The immediate problem is framework correctness and learning quality -- not

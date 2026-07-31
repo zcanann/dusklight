@@ -167,11 +167,12 @@ mod campaign_summary;
 pub use campaign_summary::{
     NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE, NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V1,
     NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V2, NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V3,
-    NativeTacticCampaignCausalSummary, NativeTacticCampaignEfficiencySummary,
-    NativeTacticCampaignGoalReachabilitySummary, NativeTacticCampaignIdentities,
-    NativeTacticCampaignOutcomeSummary, NativeTacticCampaignResourceSummary,
-    NativeTacticCampaignSummary, NativeTacticCampaignTimingSummary,
-    NativeTacticCampaignTreatmentSummary, NativeTacticCampaignWorkSummary, NativeTacticCausalLink,
+    NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4, NativeTacticCampaignCausalSummary,
+    NativeTacticCampaignEfficiencySummary, NativeTacticCampaignGoalReachabilitySummary,
+    NativeTacticCampaignIdentities, NativeTacticCampaignOutcomeSummary,
+    NativeTacticCampaignResourceSummary, NativeTacticCampaignSummary,
+    NativeTacticCampaignTimingSummary, NativeTacticCampaignTreatmentSummary,
+    NativeTacticCampaignWorkSummary, NativeTacticCausalLink,
 };
 mod lease_journal;
 use lease_journal::NativeTacticLeaseLedger;
@@ -251,9 +252,9 @@ pub use scratch_campaign_audit::{
 };
 mod scratch_comparison;
 pub use scratch_comparison::{
-    NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V2, NativeTacticScratchComparisonCell,
-    NativeTacticScratchComparisonReport, NativeTacticScratchEfficiencyMetrics,
-    NativeTacticScratchTreatment,
+    NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V2, NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V3,
+    NativeTacticScratchComparisonCell, NativeTacticScratchComparisonReport,
+    NativeTacticScratchEfficiencyMetrics, NativeTacticScratchTreatment,
 };
 mod route_diagnosis;
 pub use route_diagnosis::{

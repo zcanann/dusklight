@@ -29,7 +29,8 @@ use super::{
 use serde_json::json;
 use sha2::Digest as _;
 use std::error::Error;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -647,6 +648,40 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "worst_time_to_first_terminal_micros":
                         report.worst_time_to_first_terminal_micros,
                     "demonstration_transitions": report.demonstration_transitions,
+                }))?
+            );
+            Ok(())
+        }
+        Some("project-tactic-campaign-summary") => {
+            let learn_args = &args[1..];
+            let route: NativeTacticRouteReport =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            let plan = NativeTacticExecutionPlan::read(&required_path(learn_args, "--plan")?)?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "tactic campaign summary output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let summary = NativeTacticCampaignSummary::build(&route, &plan)?;
+            let mut file = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&output)?;
+            file.write_all(&summary.to_pretty_json()?)?;
+            file.sync_all()?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": summary.schema,
+                    "content_sha256": summary.content_sha256,
+                    "route_report_sha256": summary.route_report_sha256,
+                    "output": output,
                 }))?
             );
             Ok(())

@@ -7,6 +7,8 @@ pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V2: &str =
     "dusklight-native-tactic-campaign-summary/v2";
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V3: &str =
     "dusklight-native-tactic-campaign-summary/v3";
+pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4: &str =
+    "dusklight-native-tactic-campaign-summary/v4";
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE: &str = "campaign-summary.json";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -268,7 +270,7 @@ impl NativeTacticCampaignSummary {
         let peak_worker_resident_bytes = route.native_restore_accounting.peak_resident_bytes;
 
         let mut summary = Self {
-            schema: NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V3.into(),
+            schema: NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4.into(),
             content_sha256: Digest::ZERO,
             route_report_sha256: route_report_sha256(route)?,
             identities: NativeTacticCampaignIdentities {
@@ -371,7 +373,7 @@ impl NativeTacticCampaignSummary {
     }
 
     pub fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
-        if self.schema != NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V3
+        if self.schema != NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4
             || self.content_sha256 == Digest::ZERO
             || self.route_report_sha256 == Digest::ZERO
             || self.identities.optimization_request_sha256 == Digest::ZERO
@@ -454,7 +456,7 @@ impl NativeTacticCampaignSummary {
         identity.content_sha256 = Digest::ZERO;
         let bytes = serde_json::to_vec(&identity).map_err(route_error)?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight-native-tactic-campaign-summary/v3\0");
+        hasher.update(b"dusklight-native-tactic-campaign-summary/v4\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -800,6 +802,13 @@ mod tests {
         let summary = NativeTacticCampaignSummary::build(&route, &plan).unwrap();
         summary.validate_against(&route, &plan).unwrap();
         let encoded = summary.to_pretty_json().unwrap();
+        let reparsed_route: NativeTacticRouteReport =
+            serde_json::from_slice(&serde_json::to_vec_pretty(&route).unwrap()).unwrap();
+        let reparsed_summary: NativeTacticCampaignSummary =
+            serde_json::from_slice(&encoded).unwrap();
+        reparsed_summary
+            .validate_against(&reparsed_route, &plan)
+            .unwrap();
 
         assert!(
             summary

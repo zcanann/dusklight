@@ -3,6 +3,8 @@ use super::*;
 
 pub const NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V2: &str =
     "dusklight-native-tactic-scratch-comparison/v2";
+pub const NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V3: &str =
+    "dusklight-native-tactic-scratch-comparison/v3";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -168,7 +170,7 @@ impl NativeTacticScratchComparisonReport {
             ));
         }
         let mut report = Self {
-            schema: NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V2.into(),
+            schema: NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V3.into(),
             content_sha256: Digest::ZERO,
             optimization_request_sha256: first.optimization_request_sha256,
             execution_binding_sha256: first.execution_binding_sha256,
@@ -194,7 +196,7 @@ impl NativeTacticScratchComparisonReport {
             .iter()
             .map(|cell| cell.treatment)
             .collect::<BTreeSet<_>>();
-        if self.schema != NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V2
+        if self.schema != NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V3
             || self.content_sha256 == Digest::ZERO
             || self.optimization_request_sha256 == Digest::ZERO
             || self.execution_binding_sha256 == Digest::ZERO
