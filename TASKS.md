@@ -633,17 +633,38 @@ Exit gate:
       proposal vector; each such job rematerializes the same non-root frontier.
       Group counterfactual proposals per worker and materialize each worker's
       frontier once per decision while keeping the live-owner proposal
-      isolated. Require exact proposal order, action/tape/graph identities,
+      isolated. Require exact proposal order, action/tape/state semantics,
       retry accounting, and useful-expansion evidence before accepting the
-      throughput treatment. Source checkpoint `cfb55f7e02` implements that
+      throughput treatment. Whole state-graph identity is not a cross-run
+      oracle: even the two retained repetitions at a fixed worker count have
+      distinct graph digests while their exact useful-expansion-set identity
+      remains stable. Source checkpoint `cfb55f7e02` implements that
       grouping in a dedicated dispatch module. For a 16-proposal,
       16-decision sample, planned sibling frontier materializations fall from
       225 to 15, 15, 45, 105, and 225 at 1, 2, 4, 8, and 16 workers; the direct
       primary remains a separate job and still fails over through the exact
       replay path if its owner checkpoint is missing. Result cardinality is
       checked before proposal-index ordering is restored. All 334
-      orchestration tests pass. This is source-level evidence only: retain a
-      matched native treatment before claiming the measured wall-time win, and
+      orchestration tests pass. Checkpoint `f1a618fc78` separates the number
+      of active workers from the divisor used to reserve each worker's share
+      of the sealed aggregate checkpoint-memory budget. This permits an
+      isolated one-worker diagnostic to reproduce the retained curve's
+      16-worker fleet share without launching the other 15 workers; all 339
+      orchestration tests and the 555-file source-size gate pass. The exact
+      matched native treatment used one active worker, a capacity divisor of
+      16, and the same 335,544,320-byte cache as the retained control. It
+      reproduced the execution plan, all learner snapshots and 16 selected
+      options, all 256 proposal batches including emitted tapes and resulting
+      states, before/after snapshots, applicable tactics, 5,096 native ticks,
+      and useful-expansion-set identity. Grouping reduced tactic execution
+      from about `298.22` to `125.38` seconds, prefix materializations from
+      240 to 29, and cache evictions from 233 to 28. It is not an accepted
+      end-to-end throughput win: wall regressed from about `347.19` to
+      `945.43` seconds because model update rose from about `5.93` to `191.29`
+      seconds and persistence from about `27.28` to `328.88` seconds, with
+      orchestration also rising from about `0.66` to `12.13` seconds. Profile
+      and remove this repeatable direct-campaign coordinator growth before
+      retaining a treatment bundle or spending wider curve cells. Then
       continue from the widest cell's remaining per-decision barrier and
       persistence occupancy because grouping cannot improve the 16-worker
       cell when every sibling already has a worker.
