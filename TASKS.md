@@ -21,6 +21,9 @@ required. Route-planner product work belongs in `TASKS_ROUTE_PLANNER.md`.
 ## Current truth
 
 - The pinned human replay reaches the real Ordon load zone in 125 native ticks.
+- The four request-sealed seeds are split before further evaluation:
+  development uses `104729` and `155921`; untouched held-out evaluation uses
+  `130363` and `181081`.
 - Earlier scratch campaigns did not show useful learning. In the first matched
   development run after sealing policy authority, learned reached the real
   terminal at 262 authenticated ticks while frozen-policy and random-valid did
