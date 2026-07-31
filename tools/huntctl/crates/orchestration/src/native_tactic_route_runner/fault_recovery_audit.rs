@@ -290,7 +290,7 @@ fn expected_retryable_dispatches(point: NativeTacticFaultPoint, proposal_count: 
     }
 }
 
-fn semantic_trace_sha256_v2(
+pub(super) fn semantic_trace_sha256_v2(
     trace: &[NativeTacticDecisionTrace],
 ) -> Result<Digest, NativeTacticRouteRunError> {
     semantic_trace_value_sha256(serde_json::to_value(trace).map_err(route_error)?)
@@ -315,6 +315,14 @@ fn semantic_trace_value_sha256(
             "replay_only_frontiers",
         ] {
             decision.remove(physical_field);
+        }
+        if let Some(scheduler) = decision
+            .get_mut("scheduler_decision")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            for run_specific_seal in ["graph_sha256", "queue_sha256", "decision_sha256"] {
+                scheduler.remove(run_specific_seal);
+            }
         }
     }
     let mut hasher = Sha256::new();
@@ -484,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    fn semantic_trace_v2_ignores_only_physical_recovery_placement() {
+    fn semantic_trace_v2_ignores_physical_placement_and_run_specific_graph_seals() {
         let trace = serde_json::json!([{
             "decision_index": 2,
             "cumulative_wall_micros": 10,
@@ -493,6 +501,12 @@ mod tests {
             "restore_source": "process_local_checkpoint",
             "directly_restorable_native_frontiers": 3,
             "replay_only_frontiers": 1,
+            "scheduler_decision": {
+                "graph_sha256": "21",
+                "queue_sha256": "22",
+                "decision_sha256": "23",
+                "selected_expansion": "semantic"
+            },
             "reward": -0.25,
             "measurements": [{"name": "speed", "before": 4.0, "after": 3.0}],
             "proposal_batch": [{
@@ -506,6 +520,9 @@ mod tests {
         let decision = physical_change[0].as_object_mut().unwrap();
         decision.insert("cumulative_wall_micros".into(), 99.into());
         decision.insert("proposal_worker_slots".into(), serde_json::json!([7, 6]));
+        physical_change[0]["scheduler_decision"]["graph_sha256"] = serde_json::json!("31");
+        physical_change[0]["scheduler_decision"]["queue_sha256"] = serde_json::json!("32");
+        physical_change[0]["scheduler_decision"]["decision_sha256"] = serde_json::json!("33");
         assert_eq!(
             expected,
             semantic_trace_value_sha256(physical_change).unwrap()

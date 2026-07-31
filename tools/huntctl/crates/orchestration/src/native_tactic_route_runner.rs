@@ -274,6 +274,17 @@ pub use throughput_evidence_bundle::{
     NativeTacticThroughputCompressedArtifact, NativeTacticThroughputEvidenceBundle,
     NativeTacticThroughputSampleEvidence,
 };
+mod throughput_treatment_audit;
+pub use throughput_treatment_audit::{
+    NATIVE_TACTIC_THROUGHPUT_TREATMENT_AUDIT_SCHEMA_V1, NativeTacticThroughputTreatmentAudit,
+    NativeTacticThroughputTreatmentMetrics,
+};
+mod throughput_treatment_bundle;
+pub use throughput_treatment_bundle::{
+    NATIVE_TACTIC_THROUGHPUT_TREATMENT_BUNDLE_SCHEMA_V1,
+    NATIVE_TACTIC_THROUGHPUT_TREATMENT_MANIFEST, NativeTacticThroughputTreatmentBundle,
+    NativeTacticThroughputTreatmentSampleEvidence,
+};
 
 mod restore_locality;
 pub use restore_locality::{

@@ -105,9 +105,9 @@ use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
     NativeTacticScratchDiscoveryReport, NativeTacticScratchEvidenceBundle,
     NativeTacticThroughputCurveConfig, NativeTacticThroughputCurveRun,
-    NativeTacticThroughputEvidenceBundle, audit_native_tactic_fault_recovery,
-    read_and_validate_native_tactic_cold_replay, run_native_tactic_cold_replay,
-    run_native_tactic_restore_locality, run_native_tactic_route,
+    NativeTacticThroughputEvidenceBundle, NativeTacticThroughputTreatmentBundle,
+    audit_native_tactic_fault_recovery, read_and_validate_native_tactic_cold_replay,
+    run_native_tactic_cold_replay, run_native_tactic_restore_locality, run_native_tactic_route,
     run_native_tactic_throughput_curve_controlled, tactic_macro_registry_identity,
 };
 use huntctl::search_evaluator::native_tactic_worker::NativeGenericExecutionStrategy;
@@ -432,6 +432,8 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "tactic-throughput-curve"
             | "seal-tactic-throughput-curve"
             | "validate-tactic-throughput-curve-bundle"
+            | "seal-tactic-throughput-treatment"
+            | "validate-tactic-throughput-treatment-bundle"
             | "tactic-restore-locality"
             | "audit-tactic-fault-recovery"
             | "seal-tactic-fault-recovery"
@@ -514,6 +516,8 @@ mod tests {
             "run-tactic-launch-smoke",
             "seal-tactic-launch-smoke",
             "validate-tactic-launch-smoke",
+            "seal-tactic-throughput-treatment",
+            "validate-tactic-throughput-treatment-bundle",
         ] {
             assert!(is_frozen_and_tactic_command(command), "{command}");
         }

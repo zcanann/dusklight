@@ -14,9 +14,10 @@ use super::{
     NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
     NativeTacticScratchComparisonReport, NativeTacticScratchDiscoveryReport,
     NativeTacticScratchEvidenceBundle, NativeTacticThroughputCurveConfig,
-    NativeTacticThroughputCurveRun, NativeTacticThroughputEvidenceBundle, OptimizationRequest,
-    Sha256, TacticFrozenPolicy, TacticProposalPolicy, TacticQCampaign, TacticQFinalResult,
-    TacticQTrainingCorpus, audit_native_tactic_fault_recovery, cli, command_conservative_q, flag,
+    NativeTacticThroughputCurveRun, NativeTacticThroughputEvidenceBundle,
+    NativeTacticThroughputTreatmentBundle, OptimizationRequest, Sha256, TacticFrozenPolicy,
+    TacticProposalPolicy, TacticQCampaign, TacticQFinalResult, TacticQTrainingCorpus,
+    audit_native_tactic_fault_recovery, cli, command_conservative_q, flag,
     native_frozen_policy_probe_model, native_tactic_execution_plan, option,
     prove_generalized_tactic_held_out_value, read_and_validate_native_tactic_cold_replay,
     realize_native_frozen_policy_tape, repeated_option, required_path,
@@ -1000,6 +1001,40 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
         }
         Some("validate-tactic-throughput-curve-bundle") => {
             let bundle = NativeTacticThroughputEvidenceBundle::read_and_validate(&required_path(
+                &args[1..],
+                "--bundle",
+            )?)?;
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
+            Ok(())
+        }
+        Some("seal-tactic-throughput-treatment") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let resolve = |path: PathBuf| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    repository_root.join(path)
+                }
+            };
+            let bundle = NativeTacticThroughputTreatmentBundle::build(
+                &resolve(required_path(learn_args, "--bundle")?),
+                &repository_root,
+                &resolve(required_path(learn_args, "--control-bundle")?),
+                option(learn_args, "--control-sample-ordinal")
+                    .ok_or("throughput treatment requires --control-sample-ordinal")?
+                    .parse::<u32>()?,
+                &required_path(learn_args, "--treatment-report")?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
+            Ok(())
+        }
+        Some("validate-tactic-throughput-treatment-bundle") => {
+            let bundle = NativeTacticThroughputTreatmentBundle::read_and_validate(&required_path(
                 &args[1..],
                 "--bundle",
             )?)?;
