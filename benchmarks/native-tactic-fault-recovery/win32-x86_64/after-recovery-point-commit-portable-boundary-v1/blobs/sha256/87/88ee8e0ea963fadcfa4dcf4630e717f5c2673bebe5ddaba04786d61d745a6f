@@ -1,0 +1,61 @@
+{
+  "schema": "dusklight-native-residual-execution/v1",
+  "content_sha256": "a8f410ad3d2269efcc8de5de9937235350daf0dd19dd53caca6ad92a1bf6ab2a",
+  "optimization_request_sha256": "8b6a9ba9bd5e307fb8443fe39f2ea6233bc798b3e5a81abf3824c264d8ac2d9b",
+  "executable": {
+    "path": "build/diagnostics/current-native/execution-current-v3/dusklight.exe",
+    "sha256": "f8d6319e3e15269be0f4262d1e19f97a0476eb5bd4810f16138e239c5f0e85fd"
+  },
+  "runtime_dependencies": [
+    {
+      "path": "build/diagnostics/current-native/execution-current-v3/SDL3.dll",
+      "sha256": "38c9583844842c7a78cb4d0893c36eae332c43554077eff38482f9936e20f767"
+    },
+    {
+      "path": "build/diagnostics/current-native/execution-current-v3/dxcompiler.dll",
+      "sha256": "4ab3d55530a44380a64cfc93679d53a8fc69a1f4da635119db1e1289e75274a4"
+    },
+    {
+      "path": "build/diagnostics/current-native/execution-current-v3/dxil.dll",
+      "sha256": "fda4dde92222ddb8564c3173ce48faa56f7e1c7b46b0b67dada1182ee07a4123"
+    },
+    {
+      "path": "build/diagnostics/current-native/execution-current-v3/libpng16d.dll",
+      "sha256": "35e65caf9ee04cfa4e40a5b4d5b1eb564f1158820eac1278d4cc04ffb6263b7d"
+    },
+    {
+      "path": "build/diagnostics/current-native/execution-current-v3/nod.dll",
+      "sha256": "1186486bc236e16d7cdf114bcee9e998aeb89f83b9560078c5edc42eafbcd22b"
+    },
+    {
+      "path": "build/diagnostics/current-native/execution-current-v3/webgpu_dawn.dll",
+      "sha256": "9b09c3667f41d27c984440cb49dd102bef389c8ba72cfc287c202c9bd3fef0dc"
+    },
+    {
+      "path": "build/diagnostics/current-native/execution-current-v3/zlibd1.dll",
+      "sha256": "232e66ae1827edc7176b2c601543ffca760afbdb3be775b37a72ce7e6e31375a"
+    }
+  ],
+  "game_data": {
+    "path": "orig/GZ2E01/Legend of Zelda, The - Twilight Princess (USA).iso",
+    "sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814"
+  },
+  "process_boot_tape": {
+    "path": "build/diagnostics/current-native/execution-current-v3/process-route.tape",
+    "sha256": "827cb999dfaa0038c30764e971e0bae2f0ba0d18c99f7be9285825bc650d55f8"
+  },
+  "milestone_program": {
+    "path": "build/diagnostics/current-native/execution-current-v3/terminal.dmsp",
+    "sha256": "b5ef3a1440ca5a50b563b7afb7b0d9230f815d359998b3a2c403a68b5c76f653"
+  },
+  "world_context": {
+    "path": "build/world/ordon-context-current.json",
+    "sha256": "5417f084d4aec9812ab96f0bee6dbcbce37843be669d4f3a5e20cf771bf70dcf"
+  },
+  "card_fixture_manifest": {
+    "path": "routes/Glitch Exhibition/ordon-degraded-canary/benchmarks/process_boot.89e1737.fixture.json",
+    "sha256": "4781b1f1c223290af7ed25b827bc1a7199419a607246cb9d8136f1707a4f1225"
+  },
+  "checkpoint_validation_ticks": 8,
+  "verify_state_hashes": false
+}

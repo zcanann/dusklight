@@ -593,7 +593,8 @@ struct StoredOptionValueSample {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct StoredOptionIntermediateBoundary {
-    episode_shard_sha256: Digest,
+    #[serde(alias = "episode_shard_sha256")]
+    evidence_sha256: Digest,
     offset_ticks: u32,
     state_sha256: Digest,
     state: StoredContentRef,
@@ -1076,7 +1077,7 @@ fn encode_transition(
         .iter()
         .map(|boundary| {
             Ok(StoredOptionIntermediateBoundary {
-                episode_shard_sha256: boundary.episode_shard_sha256,
+                evidence_sha256: boundary.evidence_sha256,
                 offset_ticks: boundary.offset_ticks,
                 state_sha256: boundary.state_sha256,
                 state: store
@@ -1243,7 +1244,7 @@ fn load_transition(
         .iter()
         .map(|boundary| {
             Ok(OptionIntermediateBoundary {
-                episode_shard_sha256: boundary.episode_shard_sha256,
+                evidence_sha256: boundary.evidence_sha256,
                 offset_ticks: boundary.offset_ticks,
                 state_sha256: boundary.state_sha256,
                 state: store

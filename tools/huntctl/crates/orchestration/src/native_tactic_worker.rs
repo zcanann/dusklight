@@ -1132,13 +1132,8 @@ fn observe_outcome(
     {
         return Err(NativeTacticWorkerError::DetachedResult("next boundary"));
     }
-    let intermediate_boundaries = capture_intermediate_boundaries(
-        selected,
-        &execution,
-        loaded.shard_content_sha256,
-        episode,
-        candidate_prefix_ticks,
-    )?;
+    let intermediate_boundaries =
+        capture_intermediate_boundaries(selected, &execution, episode, candidate_prefix_ticks)?;
     let state_extraction_micros =
         u64::try_from(state_extraction_started.elapsed().as_micros()).unwrap_or(u64::MAX);
     let retained_native_checkpoint = validated.candidates[0].retained_checkpoint.clone();
@@ -1182,7 +1177,6 @@ fn observe_outcome(
 fn capture_intermediate_boundaries(
     selected: &SelectedTactic,
     execution: &OptionExecution,
-    episode_shard_sha256: Digest,
     episode: &NativeEpisode,
     candidate_prefix_ticks: usize,
 ) -> Result<Vec<OptionIntermediateBoundary>, NativeTacticWorkerError> {
@@ -1249,14 +1243,10 @@ fn capture_intermediate_boundaries(
         state
             .validate()
             .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
-        boundaries.push(OptionIntermediateBoundary {
-            episode_shard_sha256,
-            offset_ticks,
-            state_sha256: state
-                .content_sha256()
-                .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?,
-            state,
-        });
+        boundaries.push(
+            OptionIntermediateBoundary::capture(execution, offset_ticks, state)
+                .map_err(|error| NativeTacticWorkerError::Evidence(error.to_string()))?,
+        );
     }
     Ok(boundaries)
 }

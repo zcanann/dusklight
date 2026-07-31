@@ -254,7 +254,7 @@ impl StateGraph {
                 prepared_route,
                 false,
                 Some(NativeBoundaryLocator {
-                    episode_shard_sha256: boundary.episode_shard_sha256,
+                    evidence_sha256: boundary.evidence_sha256,
                     option_offset_ticks: boundary.offset_ticks,
                 }),
                 authority == ExpansionEvidenceAuthority::Executable,

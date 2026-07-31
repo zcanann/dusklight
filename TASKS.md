@@ -32,11 +32,6 @@ unblocks, not in an unrelated backlog.
 
 ### P0 - Trust the framework
 
-- [ ] Make native retry identity portable. Separate semantic boundary and
-      transition identity from process-local shard/checkpoint provenance, then
-      prove a fault-interrupted nontrivial campaign resumes to the same
-      decisions, learner, replay, graph, and result as its uninterrupted
-      control. Seal and cold-validate the evidence.
 - [ ] Make the learning loop auditable end to end: observed state and legal
       actions -> exploration -> published experience -> learner update ->
       deployed policy -> changed behavior. Emit one compact campaign report

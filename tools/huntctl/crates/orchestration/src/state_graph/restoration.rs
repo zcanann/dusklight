@@ -36,7 +36,7 @@ impl StateGraph {
                 .restoration
                 .native_boundary
                 .as_ref()
-                .map(|boundary| (boundary.episode_shard_sha256, boundary.option_offset_ticks)),
+                .map(|boundary| (boundary.evidence_sha256, boundary.option_offset_ticks)),
         );
         Ok(GraphRestorationPlan {
             schema: GRAPH_RESTORATION_PLAN_SCHEMA_V2.into(),
@@ -151,7 +151,7 @@ impl StateGraph {
             plan.route.tape_frames,
             plan.native_boundary
                 .as_ref()
-                .map(|boundary| (boundary.episode_shard_sha256, boundary.option_offset_ticks)),
+                .map(|boundary| (boundary.evidence_sha256, boundary.option_offset_ticks)),
         );
         if plan.dispatch_graph_sha256 == Digest::ZERO
             || plan.dispatch_graph_sha256 != expected_dispatch_sha256
@@ -221,7 +221,7 @@ fn restoration_node_authority_sha256(
     match &node.restoration.native_boundary {
         Some(boundary) => {
             hasher.update([1]);
-            hasher.update(boundary.episode_shard_sha256.0);
+            hasher.update(boundary.evidence_sha256.0);
             hasher.update(boundary.option_offset_ticks.to_le_bytes());
         }
         None => hasher.update([0]),

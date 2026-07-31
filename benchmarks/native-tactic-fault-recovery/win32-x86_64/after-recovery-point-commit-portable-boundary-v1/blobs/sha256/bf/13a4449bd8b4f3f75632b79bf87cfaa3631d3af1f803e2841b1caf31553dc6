@@ -1,0 +1,36 @@
+{
+  "schema": "dusklight-native-tactic-fault-recovery-audit/v2",
+  "content_sha256": "beefc2021423a7cf8084a0e418d5889dfd969fc34f40a2e5ea71c2303498097e",
+  "control_report_sha256": "e1f16a35a92b55282c29cffaf2b0450b30a28d0c832e0b6c5efd84bd681595d3",
+  "recovered_report_sha256": "392cf3f5dbe0dc2674e337c8c5ef597b05b2f24703c8ec69d6a91e38e60ee933",
+  "execution_plan_sha256": "e5dd653957b6b46f7a7e31f948f64f1e46e5a107ad55f36320c37e6e3fdadb7f",
+  "platform_os": "windows",
+  "platform_arch": "x86_64",
+  "marker": {
+    "schema": "dusklight-native-tactic-fault-injection/v1",
+    "execution_plan_sha256": "e5dd653957b6b46f7a7e31f948f64f1e46e5a107ad55f36320c37e6e3fdadb7f",
+    "seed": 155921,
+    "decision_index": 1,
+    "point": "after_recovery_point_commit"
+  },
+  "campaign_identity_equal": true,
+  "replay_snapshot_equal": true,
+  "learner_authority_equal": true,
+  "seed": {
+    "seed": 155921,
+    "control_semantic_trace_sha256": "5908b6e5661691787956862414a7f39b3655da8ad38586932feb2c888d181676",
+    "recovered_semantic_trace_sha256": "5908b6e5661691787956862414a7f39b3655da8ad38586932feb2c888d181676",
+    "semantic_trace_equal": true,
+    "useful_expansion_set_equal": true,
+    "state_graph_equal": true,
+    "graph_shape_equal": true,
+    "replay_shape_equal": true,
+    "terminal_result_equal": true,
+    "expected_retryable_dispatches": 2,
+    "observed_retryable_dispatches": 2,
+    "lease_accounting_exact": true,
+    "unresolved_leases": 0,
+    "passed": true
+  },
+  "passed": true
+}

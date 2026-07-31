@@ -1,0 +1,7 @@
+{
+  "schema": "dusklight-native-tactic-fault-injection/v1",
+  "execution_plan_sha256": "e5dd653957b6b46f7a7e31f948f64f1e46e5a107ad55f36320c37e6e3fdadb7f",
+  "seed": 155921,
+  "decision_index": 1,
+  "point": "after_recovery_point_commit"
+}

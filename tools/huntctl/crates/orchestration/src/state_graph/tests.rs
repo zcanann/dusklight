@@ -88,12 +88,8 @@ fn graph_and_transition() -> (StateGraph, OptionTransitionSample, InputTape) {
     .unwrap();
     transition.execution_authority_sha256 = identity.execution_authority_sha256;
     let interior = advanced_state(&before, 4);
-    transition.intermediate_boundaries = vec![OptionIntermediateBoundary {
-        episode_shard_sha256: Digest([5; 32]),
-        offset_ticks: 4,
-        state_sha256: interior.content_sha256().unwrap(),
-        state: interior,
-    }];
+    transition.intermediate_boundaries =
+        vec![OptionIntermediateBoundary::capture(&transition.execution, 4, interior).unwrap()];
     transition.validate().unwrap();
     (graph, transition, route)
 }
@@ -331,6 +327,14 @@ fn grown_graph_transaction_clone_remains_structurally_constant() {
         let option_id = format!("move-{index:03}");
         transition.execution.option_id.clone_from(&option_id);
         transition.value_sample.action.option_id = option_id;
+        for boundary in &mut transition.intermediate_boundaries {
+            *boundary = OptionIntermediateBoundary::capture(
+                &transition.execution,
+                boundary.offset_ticks,
+                boundary.state.clone(),
+            )
+            .unwrap();
+        }
         transition.validate().unwrap();
         graph
             .admit_completed_expansion(
@@ -468,18 +472,15 @@ fn forty_tick_option_exposes_and_executes_every_four_tick_counterfactual() {
     )
     .unwrap();
     long_transition.execution_authority_sha256 = identity.execution_authority_sha256;
-    long_transition.intermediate_boundaries = (4..40)
+    let intermediate_boundaries = (4..40)
         .step_by(4)
         .map(|offset| {
             let state = advanced_state(&before, offset);
-            OptionIntermediateBoundary {
-                episode_shard_sha256: Digest([offset as u8; 32]),
-                offset_ticks: offset as u32,
-                state_sha256: state.content_sha256().unwrap(),
-                state,
-            }
+            OptionIntermediateBoundary::capture(&long_transition.execution, offset as u32, state)
+                .unwrap()
         })
         .collect();
+    long_transition.intermediate_boundaries = intermediate_boundaries;
     terminalize(&mut long_transition);
     long_transition.validate().unwrap();
     let long = graph
@@ -660,16 +661,19 @@ fn optimization_schedules_interiors_from_every_authenticated_terminal_route() {
     )
     .unwrap();
     alternate_transition.execution_authority_sha256 = graph.identity.execution_authority_sha256;
-    alternate_transition.intermediate_boundaries = alternate_interior_states
+    let intermediate_boundaries = alternate_interior_states
         .into_iter()
         .enumerate()
-        .map(|(index, state)| OptionIntermediateBoundary {
-            episode_shard_sha256: Digest([11; 32]),
-            offset_ticks: 4 + index as u32 * 4,
-            state_sha256: state.content_sha256().unwrap(),
-            state,
+        .map(|(index, state)| {
+            OptionIntermediateBoundary::capture(
+                &alternate_transition.execution,
+                4 + index as u32 * 4,
+                state,
+            )
+            .unwrap()
         })
         .collect();
+    alternate_transition.intermediate_boundaries = intermediate_boundaries;
     terminalize(&mut alternate_transition);
     alternate_transition.validate().unwrap();
     graph
@@ -1315,7 +1319,17 @@ fn independently_captured_boundary_provenance_does_not_split_graph_truth() {
         )
         .unwrap();
     let mut independent_capture = transition;
-    independent_capture.intermediate_boundaries[0].episode_shard_sha256 = Digest([6; 32]);
+    let original_boundary = independent_capture.intermediate_boundaries[0].clone();
+    independent_capture.intermediate_boundaries[0] = OptionIntermediateBoundary::capture(
+        &independent_capture.execution,
+        original_boundary.offset_ticks,
+        original_boundary.state.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        independent_capture.intermediate_boundaries[0].evidence_sha256,
+        original_boundary.evidence_sha256
+    );
     independent_capture.validate().unwrap();
     let duplicate = graph
         .admit_completed_expansion(
@@ -1354,6 +1368,13 @@ fn conflicting_intermediate_game_state_still_fails_closed() {
         .state
         .content_sha256()
         .unwrap();
+    let conflicting_boundary = conflicting.intermediate_boundaries[0].clone();
+    conflicting.intermediate_boundaries[0] = OptionIntermediateBoundary::capture(
+        &conflicting.execution,
+        conflicting_boundary.offset_ticks,
+        conflicting_boundary.state,
+    )
+    .unwrap();
     conflicting.validate().unwrap();
     let error = graph
         .admit_completed_expansion(
@@ -1726,7 +1747,7 @@ fn legacy_whole_graph_restoration_plan_remains_valid() {
         legacy
             .native_boundary
             .as_ref()
-            .map(|boundary| (boundary.episode_shard_sha256, boundary.option_offset_ticks)),
+            .map(|boundary| (boundary.evidence_sha256, boundary.option_offset_ticks)),
     );
 
     assert_eq!(

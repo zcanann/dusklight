@@ -80,7 +80,7 @@ impl StateGraph {
                 ));
             }
             if let Some(native) = &node.restoration.native_boundary
-                && (native.episode_shard_sha256 == Digest::ZERO || native.option_offset_ticks == 0)
+                && (native.evidence_sha256 == Digest::ZERO || native.option_offset_ticks == 0)
             {
                 return Err(StateGraphError::Invariant(
                     "native restoration locator is invalid",

@@ -60,12 +60,14 @@ pub struct RouteRecord {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeBoundaryLocator {
-    pub episode_shard_sha256: Digest,
+    #[serde(alias = "episode_shard_sha256")]
+    pub evidence_sha256: Digest,
     pub option_offset_ticks: u32,
 }
 
-/// Portable route replay is always the fallback. A native episode locator is
-/// optional acceleration evidence and never replaces the portable identity.
+/// Portable route replay is always the fallback. Native boundary evidence is
+/// optional acceleration authority and never replaces the portable identity
+/// or embeds process-local shard provenance.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RestorationLocator {

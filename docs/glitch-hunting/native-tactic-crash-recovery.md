@@ -91,9 +91,9 @@ long-campaign evidence gate.
 The four pre-decision-commit faults must add exactly one dispatched batch of
 retryable leases. The post-decision-commit fault must add none.
 
-The five one-decision Windows native cells pass this audit. That local smoke
-proves the harness and repaired transaction boundaries, but it is not the
-retained long-campaign, cross-platform evidence required by `TASKS.md`.
+The five one-decision Windows native cells pass this audit. Those local smokes
+prove the harness and transaction boundaries, but do not prove that native
+retry identity remains portable after graph and replay growth.
 
 ## Portable fault evidence
 
@@ -119,6 +119,15 @@ the recomputable v2 recovery audit. Offline validation verifies every blob,
 reconstructs every typed record, revalidates both resource bindings, and
 recomputes the recovery audit from the bundled reports and marker.
 
-Retain one bundle for each of the five fault points. At least one pair must
-inject after the campaign has grown its state graph and learner replay; five
-one-decision bundles do not satisfy the long-campaign evidence gate.
+For an exhaustive platform recovery matrix, retain one bundle for each of the
+five fault points. The portable retry-identity gate requires at least one pair
+to inject after the campaign has grown its state graph and learner replay;
+one-decision bundles cannot satisfy that gate.
+
+The retained Windows proof at
+`benchmarks/native-tactic-fault-recovery/win32-x86_64/after-recovery-point-commit-portable-boundary-v1`
+injects at decision 1 of a two-decision, two-proposal campaign. Its v2 audit
+matches the uninterrupted control's semantic trace, learner authority, replay
+snapshot, state graph, shapes, and result, with exactly two retry dispatches
+and no unresolved leases. The cold-validated bundle identity is
+`fe11bcd4521b49738643f23e74d65c5d4cc23551033cc292b65eeb9068b69392`.

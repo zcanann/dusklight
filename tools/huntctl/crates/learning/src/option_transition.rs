@@ -14,6 +14,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 pub const OPTION_TRANSITION_SAMPLE_SCHEMA_V1: &str = "dusklight-option-transition-sample/v1";
+pub const OPTION_TRANSITION_SAMPLE_SCHEMA_V2: &str = "dusklight-option-transition-sample/v2";
 pub const MAX_OPTION_INTERMEDIATE_BOUNDARIES: usize = 256;
 
 fn digest_is_zero(value: &Digest) -> bool {
@@ -27,10 +28,45 @@ fn digest_is_zero(value: &Digest) -> bool {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OptionIntermediateBoundary {
-    pub episode_shard_sha256: Digest,
+    /// Portable evidence identity for this realized native boundary. Physical
+    /// episode-shard provenance belongs to the worker outcome and must not
+    /// influence replay or graph authority.
+    #[serde(alias = "episode_shard_sha256")]
+    pub evidence_sha256: Digest,
     pub offset_ticks: u32,
     pub state_sha256: Digest,
     pub state: FactSnapshot,
+}
+
+impl OptionIntermediateBoundary {
+    pub fn capture(
+        execution: &OptionExecution,
+        offset_ticks: u32,
+        state: FactSnapshot,
+    ) -> Result<Self, OptionTransitionError> {
+        execution
+            .validate()
+            .map_err(|error| OptionTransitionError::Execution(error.to_string()))?;
+        state
+            .validate()
+            .map_err(|error| OptionTransitionError::Facts(error.to_string()))?;
+        if offset_ticks == 0 || offset_ticks >= execution.duration.realized_ticks {
+            return Err(OptionTransitionError::Invalid(
+                "intermediate boundary offset is outside its native option",
+            ));
+        }
+        let state_sha256 = state
+            .content_sha256()
+            .map_err(|error| OptionTransitionError::Facts(error.to_string()))?;
+        let evidence_sha256 =
+            intermediate_boundary_evidence_sha256(execution, offset_ticks, state_sha256)?;
+        Ok(Self {
+            evidence_sha256,
+            offset_ticks,
+            state_sha256,
+            state,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -189,7 +225,7 @@ impl OptionTransitionSample {
             realized_tape_sha256: emitted_pad_digest(&execution)?,
         };
         let row = Self {
-            schema: OPTION_TRANSITION_SAMPLE_SCHEMA_V1.into(),
+            schema: OPTION_TRANSITION_SAMPLE_SCHEMA_V2.into(),
             execution_authority_sha256: Digest::ZERO,
             feature_schema_sha256,
             before_state_sha256,
@@ -207,8 +243,10 @@ impl OptionTransitionSample {
     }
 
     pub fn validate(&self) -> Result<(), OptionTransitionError> {
-        if self.schema != OPTION_TRANSITION_SAMPLE_SCHEMA_V1
-            || self.feature_schema_sha256 == Digest::ZERO
+        if !matches!(
+            self.schema.as_str(),
+            OPTION_TRANSITION_SAMPLE_SCHEMA_V1 | OPTION_TRANSITION_SAMPLE_SCHEMA_V2
+        ) || self.feature_schema_sha256 == Digest::ZERO
             || self.before_state_sha256 == Digest::ZERO
             || self.after_state_sha256 == Digest::ZERO
             || self.source_checkpoint_sha256 == Digest::ZERO
@@ -328,9 +366,7 @@ impl OptionTransitionSample {
                 .ok_or(OptionTransitionError::Invalid(
                     "intermediate simulation tick overflows",
                 ))?;
-            if boundary.episode_shard_sha256 == Digest::ZERO
-                || boundary.state_sha256 == Digest::ZERO
-            {
+            if boundary.evidence_sha256 == Digest::ZERO || boundary.state_sha256 == Digest::ZERO {
                 return Err(OptionTransitionError::Invalid(
                     "intermediate boundary has no evidence identity",
                 ));
@@ -373,6 +409,18 @@ impl OptionTransitionSample {
                     "intermediate boundary state digest is stale",
                 ));
             }
+            if self.schema == OPTION_TRANSITION_SAMPLE_SCHEMA_V2
+                && boundary.evidence_sha256
+                    != intermediate_boundary_evidence_sha256(
+                        &self.execution,
+                        boundary.offset_ticks,
+                        boundary.state_sha256,
+                    )?
+            {
+                return Err(OptionTransitionError::Invalid(
+                    "intermediate boundary evidence identity is detached",
+                ));
+            }
             previous_offset = boundary.offset_ticks;
         }
         Ok(())
@@ -385,6 +433,44 @@ fn descriptor(execution: &OptionExecution) -> OptionActionDescriptor {
         option_type: execution.option_type.clone(),
         parameters: execution.parameters.clone(),
     }
+}
+
+/// Derive an intermediate boundary identity from portable realized facts.
+///
+/// The full route-tape identity, action descriptor, absolute tape range,
+/// offset, and fact identity are stable across a cold retry. In contrast, the
+/// native shard bytes include process-local checkpoint metadata and therefore
+/// cannot define portable replay or graph authority.
+fn intermediate_boundary_evidence_sha256(
+    execution: &OptionExecution,
+    offset_ticks: u32,
+    state_sha256: Digest,
+) -> Result<Digest, OptionTransitionError> {
+    if state_sha256 == Digest::ZERO
+        || offset_ticks == 0
+        || offset_ticks >= execution.duration.realized_ticks
+    {
+        return Err(OptionTransitionError::Invalid(
+            "intermediate boundary evidence inputs are invalid",
+        ));
+    }
+    let action_sha256 = descriptor(execution)
+        .content_sha256()
+        .map_err(|error| OptionTransitionError::InvalidOwned(error.to_string()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-option-intermediate-boundary-evidence/v1\0");
+    hasher.update(action_sha256.0);
+    hasher.update(execution.tape_sha256.0);
+    hasher.update(execution.realized_tape_range.start_frame.to_le_bytes());
+    hasher.update(
+        execution
+            .realized_tape_range
+            .end_frame_exclusive
+            .to_le_bytes(),
+    );
+    hasher.update(offset_ticks.to_le_bytes());
+    hasher.update(state_sha256.0);
+    Ok(Digest(hasher.finalize().into()))
 }
 
 fn emitted_pad_digest(execution: &OptionExecution) -> Result<Digest, OptionTransitionError> {
@@ -557,13 +643,8 @@ mod tests {
         state.simulation_tick += 4;
         state.tape_frame += 4;
         state.state_identity = [4; 16];
-        let state_sha256 = state.content_sha256().unwrap();
-        row.intermediate_boundaries = vec![OptionIntermediateBoundary {
-            episode_shard_sha256: Digest([9; 32]),
-            offset_ticks: 4,
-            state_sha256,
-            state,
-        }];
+        row.intermediate_boundaries =
+            vec![OptionIntermediateBoundary::capture(&row.execution, 4, state).unwrap()];
         row
     }
 
@@ -660,13 +741,38 @@ mod tests {
         let original = row_with_intermediate_boundary();
         original.validate().unwrap();
         assert_eq!(original.intermediate_boundaries[0].offset_ticks, 4);
+        assert_ne!(
+            original.intermediate_boundaries[0].evidence_sha256,
+            Digest::ZERO
+        );
 
         let mut tampered = original.clone();
         tampered.intermediate_boundaries[0].offset_ticks = 8;
         assert!(tampered.validate().is_err());
 
-        tampered = original;
+        tampered = original.clone();
         tampered.intermediate_boundaries[0].state.tape_frame += 1;
         assert!(tampered.validate().is_err());
+
+        tampered = original;
+        tampered.intermediate_boundaries[0].evidence_sha256 = Digest([9; 32]);
+        assert!(tampered.validate().is_err());
+    }
+
+    #[test]
+    fn portable_intermediate_evidence_depends_only_on_realized_semantics() {
+        let original = row_with_intermediate_boundary();
+        let boundary = &original.intermediate_boundaries[0];
+        let independent_capture = OptionIntermediateBoundary::capture(
+            &original.execution,
+            boundary.offset_ticks,
+            boundary.state.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(&independent_capture, boundary);
+        let encoded = serde_json::to_value(boundary).unwrap();
+        assert!(encoded.get("evidence_sha256").is_some());
+        assert!(encoded.get("episode_shard_sha256").is_none());
     }
 }
