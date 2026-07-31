@@ -175,19 +175,35 @@ fn uncached_non_root_graph_expansion_materializes_before_its_action() {
 }
 
 #[test]
-fn counterfactuals_share_one_frontier_materialization_per_worker() {
+fn counterfactuals_balance_against_the_direct_primary_reservation() {
     let pool = proposal_pool(2);
     let frontier = cached_frontier(0);
     let dispatches = pool.proposal_dispatches(16, Some(&frontier), true, 40);
 
-    assert_eq!(dispatches.len(), 2);
-    let siblings = dispatches
+    assert_eq!(dispatches.len(), 3);
+    let sibling_dispatches = dispatches
         .iter()
-        .find(|dispatch| dispatch.checkpoint_source.is_none())
-        .unwrap();
-    assert_eq!(siblings.worker_slot, 1);
-    assert_eq!(siblings.proposal_indices, (1..16).collect::<Vec<_>>());
-    assert!(siblings.materialize_frontier);
+        .filter(|dispatch| dispatch.checkpoint_source.is_none())
+        .collect::<Vec<_>>();
+    assert_eq!(sibling_dispatches.len(), 2);
+    assert_eq!(
+        sibling_dispatches
+            .iter()
+            .map(|dispatch| dispatch.proposal_indices.len())
+            .collect::<Vec<_>>(),
+        vec![8, 7]
+    );
+    assert!(
+        sibling_dispatches
+            .iter()
+            .all(|dispatch| dispatch.materialize_frontier)
+    );
+    let mut sibling_indices = sibling_dispatches
+        .iter()
+        .flat_map(|dispatch| dispatch.proposal_indices.iter().copied())
+        .collect::<Vec<_>>();
+    sibling_indices.sort_unstable();
+    assert_eq!(sibling_indices, (1..16).collect::<Vec<_>>());
 
     let selected = dispatches
         .iter()
@@ -197,6 +213,27 @@ fn counterfactuals_share_one_frontier_materialization_per_worker() {
     assert_eq!(selected.proposal_indices, vec![0]);
     assert!(!selected.materialize_frontier);
     assert_eq!(selected.checkpoint_source, Some(frontier.source));
+}
+
+#[test]
+fn sub_width_direct_dispatch_balances_total_work_and_rearms_the_owner_last() {
+    let pool = proposal_pool(4);
+    let frontier = cached_frontier(0);
+    let dispatches = pool.proposal_dispatches(16, Some(&frontier), true, 40);
+
+    let mut proposals_per_worker = vec![0_usize; 4];
+    for dispatch in &dispatches {
+        proposals_per_worker[dispatch.worker_slot] += dispatch.proposal_indices.len();
+    }
+    assert_eq!(proposals_per_worker, vec![4, 4, 4, 4]);
+    assert_eq!(dispatches.len(), 5);
+    assert_eq!(dispatches.last().unwrap().worker_slot, 0);
+    assert_eq!(dispatches.last().unwrap().proposal_indices, vec![0]);
+    assert!(
+        dispatches[..dispatches.len() - 1]
+            .iter()
+            .all(|dispatch| dispatch.materialize_frontier)
+    );
 }
 
 #[test]

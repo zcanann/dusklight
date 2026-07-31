@@ -17,6 +17,12 @@ impl NativeTacticProposalPool {
         replayed_prefix: usize,
     ) -> Vec<NativeTacticProposalDispatch> {
         let mut dispatches = Vec::<NativeTacticProposalDispatch>::new();
+        let balance_direct_owner =
+            direct.is_some() && self.preferred_owner_slot.is_none() && self.senders.len() > 1;
+        let mut planned_proposals = vec![0_usize; self.senders.len()];
+        if balance_direct_owner {
+            planned_proposals[direct.expect("direct owner is present").worker_slot] = 1;
+        }
         for proposal_index in (1..proposal_count).chain(std::iter::once(0)) {
             let primary_source = (proposal_index == 0).then_some(direct).flatten();
             let worker_slot = primary_source.map_or_else(
@@ -25,12 +31,17 @@ impl NativeTacticProposalPool {
                         && let Some(owner) = self.preferred_owner_slot
                     {
                         owner
+                    } else if balance_direct_owner {
+                        self.next_least_loaded_worker(&planned_proposals)
                     } else {
                         self.next_counterfactual_worker(direct.map(|frontier| frontier.worker_slot))
                     }
                 },
                 |frontier| frontier.worker_slot,
             );
+            if !(balance_direct_owner && proposal_index == 0) {
+                planned_proposals[worker_slot] += 1;
+            }
             let materialize_frontier = requires_frontier_materialization(
                 restoration_present,
                 replayed_prefix,
@@ -58,5 +69,14 @@ impl NativeTacticProposalPool {
             });
         }
         dispatches
+    }
+
+    fn next_least_loaded_worker(&self, planned_proposals: &[usize]) -> usize {
+        let minimum = planned_proposals.iter().copied().min().unwrap_or(0);
+        let start = self.next_worker.fetch_add(1, Ordering::Relaxed) % planned_proposals.len();
+        (0..planned_proposals.len())
+            .map(|offset| (start + offset) % planned_proposals.len())
+            .find(|worker| planned_proposals[*worker] == minimum)
+            .expect("a least-loaded tactic worker is always present")
     }
 }
