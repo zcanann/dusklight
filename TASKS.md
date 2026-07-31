@@ -28,12 +28,6 @@ of them.
 
 ### 1. Make the learning claim trustworthy
 
-- [ ] Emit and validate one compact campaign summary that follows the causal
-      chain from observation and legal actions through exploration, experience,
-      learner update, deployed policy, and changed behavior. Include pinned
-      inputs, treatment, outcome, samples/time to terminal, throughput, phase
-      timing, utilization, learner lag, rejected/retried work, resource peaks,
-      and evidence identities.
 - [ ] Run learned, frozen-policy, and random-valid treatments with identical
       budgets on retained development and held-out seeds. Horizons must be long
       enough for unguided discovery. If learned does not beat both controls,

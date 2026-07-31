@@ -380,9 +380,8 @@ fn run_native_tactic_route_with_optional_fleet(
             config.output_root.display()
         )));
     }
-    if config.output_root.join("report.json").exists() {
-        return Err(route_message("completed tactic route cannot be resumed"));
-    }
+    let (report_path, summary_path) =
+        prepare_campaign_completion(config.output_root, config.resume)?;
     fs::create_dir_all(config.output_root).map_err(route_error)?;
     let execution_plan_path = config.output_root.join(NATIVE_TACTIC_EXECUTION_PLAN_FILE);
     let execution_plan_sha256 = if config.resume {
@@ -885,13 +884,12 @@ fn run_native_tactic_route_with_optional_fleet(
     serde_json::to_writer(std::io::sink(), &report).map_err(route_error)?;
     report.timing.reporting_micros = elapsed_micros(reporting_started.elapsed());
     let summary = NativeTacticCampaignSummary::build(&report, config.execution_plan)?;
-    write_new(
-        &config.output_root.join("report.json"),
+    publish_new_atomic(&summary_path, &summary.to_pretty_json()?)?;
+    // report.json is deliberately the last durable publication. Its presence
+    // therefore proves that every required completion artifact was published.
+    publish_new_atomic(
+        &report_path,
         &serde_json::to_vec_pretty(&report).map_err(route_error)?,
-    )?;
-    write_new(
-        &config.output_root.join(NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE),
-        &summary.to_pretty_json()?,
     )?;
     if let Some(fleet) = owned_fleet {
         fleet.shutdown()?;
@@ -1352,6 +1350,74 @@ pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<(), NativeTacticRou
         .map_err(route_error)?;
     file.write_all(bytes).map_err(route_error)?;
     file.sync_all().map_err(route_error)
+}
+
+fn publish_new_atomic(path: &Path, bytes: &[u8]) -> Result<(), NativeTacticRouteRunError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| route_message("published artifact has no parent directory"))?;
+    fs::create_dir_all(parent).map_err(route_error)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| route_message("published artifact filename is invalid"))?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(route_error)?
+        .as_nanos();
+    let partial = parent.join(format!(
+        ".{file_name}.{}.{}.partial",
+        std::process::id(),
+        nonce
+    ));
+    if let Err(error) = write_new(&partial, bytes) {
+        let _ = fs::remove_file(&partial);
+        return Err(error);
+    }
+    match fs::rename(&partial, path) {
+        Ok(()) => sync_published_artifact_parent(parent),
+        Err(error) => {
+            let _ = fs::remove_file(&partial);
+            Err(route_error(error))
+        }
+    }
+}
+
+fn prepare_campaign_completion(
+    output_root: &Path,
+    resume: bool,
+) -> Result<(PathBuf, PathBuf), NativeTacticRouteRunError> {
+    let report_path = output_root.join("report.json");
+    let summary_path = output_root.join(NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE);
+    if report_path.exists() {
+        return Err(route_message("completed tactic route cannot be resumed"));
+    }
+    // The report is the completion marker and is always published last. A
+    // summary without it can only be an interrupted finalization; discard that
+    // exact derived artifact so resume can rebuild it from durable campaign
+    // authority instead of treating a partial completion as final.
+    if resume && summary_path.exists() {
+        fs::remove_file(&summary_path).map_err(route_error)?;
+    }
+    Ok((report_path, summary_path))
+}
+
+#[cfg(not(windows))]
+fn sync_published_artifact_parent(parent: &Path) -> Result<(), NativeTacticRouteRunError> {
+    fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(route_error)
+}
+
+#[cfg(windows)]
+fn sync_published_artifact_parent(parent: &Path) -> Result<(), NativeTacticRouteRunError> {
+    if parent.is_dir() {
+        Ok(())
+    } else {
+        Err(route_message(
+            "published artifact parent is not a directory",
+        ))
+    }
 }
 
 pub(crate) fn path_text(path: &Path) -> String {

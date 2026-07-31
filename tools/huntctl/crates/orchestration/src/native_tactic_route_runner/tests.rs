@@ -1999,6 +1999,38 @@ fn route_attempts_are_append_only_across_resume_launches() {
 }
 
 #[test]
+fn report_is_the_completion_marker_and_resume_repairs_an_orphan_summary() {
+    let directory = std::env::temp_dir().join(format!(
+        "dusklight-tactic-completion-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).unwrap();
+    let summary = directory.join(NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE);
+    fs::write(&summary, b"interrupted summary").unwrap();
+
+    let (report_path, summary_path) = prepare_campaign_completion(&directory, true).unwrap();
+    assert_eq!(report_path, directory.join("report.json"));
+    assert_eq!(summary_path, summary);
+    assert!(!summary_path.exists());
+
+    publish_new_atomic(&summary_path, b"complete summary").unwrap();
+    publish_new_atomic(&report_path, b"complete report").unwrap();
+    assert_eq!(fs::read(&summary_path).unwrap(), b"complete summary");
+    assert_eq!(fs::read(&report_path).unwrap(), b"complete report");
+    assert!(prepare_campaign_completion(&directory, true).is_err());
+    assert_eq!(
+        fs::read_dir(&directory)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".partial"))
+            .count(),
+        0
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn checkpoint_cache_capacity_is_derived_from_the_sealed_aggregate_memory_budget() {
     assert_eq!(
         tactic_checkpoint_cache_capacity_per_worker(NativeTacticResourceLimit::Bounded(1_000), 4)
