@@ -618,7 +618,18 @@ Exit gate:
       frontier once per decision while keeping the live-owner proposal
       isolated. Require exact proposal order, action/tape/graph identities,
       retry accounting, and useful-expansion evidence before accepting the
-      throughput treatment.
+      throughput treatment. Source checkpoint `cfb55f7e02` implements that
+      grouping in a dedicated dispatch module. For a 16-proposal,
+      16-decision sample, planned sibling frontier materializations fall from
+      225 to 15, 15, 45, 105, and 225 at 1, 2, 4, 8, and 16 workers; the direct
+      primary remains a separate job and still fails over through the exact
+      replay path if its owner checkpoint is missing. Result cardinality is
+      checked before proposal-index ordering is restored. All 334
+      orchestration tests pass. This is source-level evidence only: retain a
+      matched native treatment before claiming the measured wall-time win, and
+      continue from the widest cell's remaining per-decision barrier and
+      persistence occupancy because grouping cannot improve the 16-worker
+      cell when every sibling already has a worker.
 - [x] Preserve native state, applicable actions, controller output, terminal
       evidence, and first-hit tick for every disabled presentation subsystem.
       Source checkpoint `703dcdbbba` advances the parity report to v2 and
