@@ -164,6 +164,16 @@ pub enum TacticReplayAdmissionOutcome {
     },
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct TacticReplayPublication<'a> {
+    pub publisher_lane: u32,
+    pub publisher_decision: u64,
+    pub learner_snapshot_sha256: Digest,
+    pub transition: &'a OptionTransitionSample,
+    pub route: &'a InputTape,
+    pub episode_group: u64,
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TacticReplayAdmissionMetrics {
@@ -193,8 +203,10 @@ impl TacticReplayAdmissionMetrics {
 /// One durable replay/frontier authority for a native route campaign.
 ///
 /// `publish` synchronizes the complete journal record before advancing the
-/// in-memory revision. Opening the journal removes only an incomplete final
-/// record; checksum failures and detached content are hard errors.
+/// in-memory revision. `publish_batch` preserves the same ordered record and
+/// snapshot semantics while synchronizing once for the complete caller-owned
+/// batch. Opening the journal removes only an incomplete final record;
+/// checksum failures and detached content are hard errors.
 pub struct TacticReplayControlPlane {
     identity: TacticReplayControlPlaneIdentity,
     journal_path: PathBuf,
@@ -414,117 +426,161 @@ impl TacticReplayControlPlane {
         route: &InputTape,
         episode_group: u64,
     ) -> Result<TacticReplayAdmissionOutcome, TacticReplayControlPlaneError> {
-        let started = Instant::now();
-        if learner_snapshot_sha256 == Digest::ZERO {
-            return Err(TacticReplayControlPlaneError::Invalid(
-                "published replay has no learner snapshot authority",
-            ));
-        }
-        self.validate_learner_snapshot(learner_snapshot_sha256)?;
-        let corpus = TacticQTrainingCorpus {
-            execution_authority_sha256: self.identity.execution_authority_sha256,
-            feature_schema_sha256: self.identity.feature_schema_sha256,
-            objective_sha256: self.identity.objective_sha256,
-            root_checkpoint_sha256: self.identity.root_checkpoint_sha256,
-            transitions: vec![transition.clone()],
-            routes: vec![route.clone()],
-            episode_groups: vec![episode_group],
-        };
-        validate_training_corpus(&corpus).map_err(domain_error)?;
-        let transition_identity_sha256 =
-            transition.replay_identity_sha256().map_err(domain_error)?;
-        if let Some(existing_sequence) = self
-            .transition_sequences
-            .get(&transition_identity_sha256)
-            .copied()
-        {
-            self.invocation_metrics.record(
-                false,
-                u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-            );
-            return Ok(TacticReplayAdmissionOutcome::Duplicate {
-                existing_sequence,
-                transition_identity_sha256,
-                replay_snapshot: self.replay_snapshot,
-            });
-        }
-        if self.entries.len() >= MAXIMUM_RECORDS {
-            return Err(TacticReplayControlPlaneError::Invalid(
-                "replay control-plane journal exceeds its record bound",
-            ));
-        }
-        let transition_ref = self
-            .content_store
-            .store_option_transition(transition, route)
-            .map_err(store_error)?;
-        let route_ref = self.content_store.store_tape(route).map_err(store_error)?;
-        let sequence = self.entries.len() as u64;
-        let mut entry = StoredTacticReplayAdmission {
-            schema: TACTIC_REPLAY_ADMISSION_SCHEMA_V2.into(),
-            sequence,
+        let outcomes = self.publish_batch(&[TacticReplayPublication {
             publisher_lane,
             publisher_decision,
             learner_snapshot_sha256,
-            transition_identity_sha256,
-            transition: transition_ref,
-            route: route_ref,
+            transition,
+            route,
             episode_group,
-            parent_replay_snapshot_sha256: self.replay_snapshot.sha256,
-            replay_snapshot_sha256: Digest::ZERO,
-        };
-        entry.replay_snapshot_sha256 = entry.expected_snapshot_sha256()?;
-        let raw = serde_cbor::to_vec(&entry).map_err(serialization_error)?;
-        if raw.is_empty() || raw.len() > MAXIMUM_RECORD_BYTES {
-            return Err(TacticReplayControlPlaneError::Invalid(
-                "replay control-plane record is oversized",
-            ));
+        }])?;
+        outcomes
+            .into_iter()
+            .next()
+            .ok_or(TacticReplayControlPlaneError::Invalid(
+                "single replay publication produced no outcome",
+            ))
+    }
+
+    pub fn publish_batch(
+        &mut self,
+        publications: &[TacticReplayPublication<'_>],
+    ) -> Result<Vec<TacticReplayAdmissionOutcome>, TacticReplayControlPlaneError> {
+        if publications.is_empty() {
+            return Ok(Vec::new());
         }
-        let compressed = zstd::stream::encode_all(Cursor::new(&raw), RECORD_COMPRESSION_LEVEL)
-            .map_err(io_error)?;
-        if compressed.is_empty() || compressed.len() > MAXIMUM_RECORD_BYTES {
-            return Err(TacticReplayControlPlaneError::Invalid(
-                "compressed replay control-plane record is oversized",
-            ));
+        let started = Instant::now();
+        let mut staged_entries = Vec::new();
+        let mut staged_sequences = BTreeMap::new();
+        let mut staged_snapshot = self.replay_snapshot;
+        let mut envelope = Vec::new();
+        let mut outcomes = Vec::with_capacity(publications.len());
+        for publication in publications {
+            if publication.learner_snapshot_sha256 == Digest::ZERO {
+                return Err(TacticReplayControlPlaneError::Invalid(
+                    "published replay has no learner snapshot authority",
+                ));
+            }
+            self.validate_learner_snapshot(publication.learner_snapshot_sha256)?;
+            let corpus = TacticQTrainingCorpus {
+                execution_authority_sha256: self.identity.execution_authority_sha256,
+                feature_schema_sha256: self.identity.feature_schema_sha256,
+                objective_sha256: self.identity.objective_sha256,
+                root_checkpoint_sha256: self.identity.root_checkpoint_sha256,
+                transitions: vec![publication.transition.clone()],
+                routes: vec![publication.route.clone()],
+                episode_groups: vec![publication.episode_group],
+            };
+            validate_training_corpus(&corpus).map_err(domain_error)?;
+            let transition_identity_sha256 = publication
+                .transition
+                .replay_identity_sha256()
+                .map_err(domain_error)?;
+            if let Some(existing_sequence) = staged_sequences
+                .get(&transition_identity_sha256)
+                .or_else(|| self.transition_sequences.get(&transition_identity_sha256))
+                .copied()
+            {
+                outcomes.push(TacticReplayAdmissionOutcome::Duplicate {
+                    existing_sequence,
+                    transition_identity_sha256,
+                    replay_snapshot: staged_snapshot,
+                });
+                continue;
+            }
+            if self.entries.len().saturating_add(staged_entries.len()) >= MAXIMUM_RECORDS {
+                return Err(TacticReplayControlPlaneError::Invalid(
+                    "replay control-plane journal exceeds its record bound",
+                ));
+            }
+            let transition_ref = self
+                .content_store
+                .store_option_transition(publication.transition, publication.route)
+                .map_err(store_error)?;
+            let route_ref = self
+                .content_store
+                .store_tape(publication.route)
+                .map_err(store_error)?;
+            let sequence = self.entries.len().saturating_add(staged_entries.len()) as u64;
+            let mut entry = StoredTacticReplayAdmission {
+                schema: TACTIC_REPLAY_ADMISSION_SCHEMA_V2.into(),
+                sequence,
+                publisher_lane: publication.publisher_lane,
+                publisher_decision: publication.publisher_decision,
+                learner_snapshot_sha256: publication.learner_snapshot_sha256,
+                transition_identity_sha256,
+                transition: transition_ref,
+                route: route_ref,
+                episode_group: publication.episode_group,
+                parent_replay_snapshot_sha256: staged_snapshot.sha256,
+                replay_snapshot_sha256: Digest::ZERO,
+            };
+            entry.replay_snapshot_sha256 = entry.expected_snapshot_sha256()?;
+            let raw = serde_cbor::to_vec(&entry).map_err(serialization_error)?;
+            if raw.is_empty() || raw.len() > MAXIMUM_RECORD_BYTES {
+                return Err(TacticReplayControlPlaneError::Invalid(
+                    "replay control-plane record is oversized",
+                ));
+            }
+            let compressed = zstd::stream::encode_all(Cursor::new(&raw), RECORD_COMPRESSION_LEVEL)
+                .map_err(io_error)?;
+            if compressed.is_empty() || compressed.len() > MAXIMUM_RECORD_BYTES {
+                return Err(TacticReplayControlPlaneError::Invalid(
+                    "compressed replay control-plane record is oversized",
+                ));
+            }
+            envelope.extend_from_slice(
+                &u32::try_from(compressed.len())
+                    .map_err(|_| {
+                        TacticReplayControlPlaneError::Invalid(
+                            "compressed replay control-plane record is oversized",
+                        )
+                    })?
+                    .to_le_bytes(),
+            );
+            envelope.extend_from_slice(
+                &u32::try_from(raw.len())
+                    .map_err(|_| {
+                        TacticReplayControlPlaneError::Invalid(
+                            "replay control-plane record is oversized",
+                        )
+                    })?
+                    .to_le_bytes(),
+            );
+            envelope.extend_from_slice(&sha256(&raw).0);
+            envelope.extend_from_slice(&compressed);
+            staged_snapshot = TacticReplaySnapshotVersion {
+                revision: sequence + 1,
+                sha256: entry.replay_snapshot_sha256,
+            };
+            staged_sequences.insert(transition_identity_sha256, sequence);
+            staged_entries.push(entry);
+            outcomes.push(TacticReplayAdmissionOutcome::Admitted {
+                sequence,
+                transition_identity_sha256,
+                replay_snapshot: staged_snapshot,
+            });
         }
-        let mut envelope = Vec::with_capacity(RECORD_HEADER_BYTES + compressed.len());
-        envelope.extend_from_slice(
-            &u32::try_from(compressed.len())
-                .map_err(|_| {
-                    TacticReplayControlPlaneError::Invalid(
-                        "compressed replay control-plane record is oversized",
-                    )
-                })?
-                .to_le_bytes(),
-        );
-        envelope.extend_from_slice(
-            &u32::try_from(raw.len())
-                .map_err(|_| {
-                    TacticReplayControlPlaneError::Invalid(
-                        "replay control-plane record is oversized",
-                    )
-                })?
-                .to_le_bytes(),
-        );
-        envelope.extend_from_slice(&sha256(&raw).0);
-        envelope.extend_from_slice(&compressed);
-        self.journal.write_all(&envelope).map_err(io_error)?;
-        self.journal.sync_data().map_err(io_error)?;
-        self.replay_snapshot = TacticReplaySnapshotVersion {
-            revision: sequence + 1,
-            sha256: entry.replay_snapshot_sha256,
-        };
-        self.transition_sequences
-            .insert(transition_identity_sha256, sequence);
-        self.entries.push(entry);
-        self.invocation_metrics.record(
-            true,
-            u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-        );
-        Ok(TacticReplayAdmissionOutcome::Admitted {
-            sequence,
-            transition_identity_sha256,
-            replay_snapshot: self.replay_snapshot,
-        })
+        if !envelope.is_empty() {
+            self.journal.write_all(&envelope).map_err(io_error)?;
+            self.journal.sync_data().map_err(io_error)?;
+        }
+        self.replay_snapshot = staged_snapshot;
+        self.transition_sequences.extend(staged_sequences);
+        self.entries.extend(staged_entries);
+        let elapsed_micros = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        let attempts = outcomes.len() as u64;
+        let elapsed_per_attempt = elapsed_micros / attempts;
+        let mut remainder = elapsed_micros % attempts;
+        for outcome in &outcomes {
+            let attributed = elapsed_per_attempt + u64::from(remainder > 0);
+            remainder = remainder.saturating_sub(1);
+            self.invocation_metrics.record(
+                matches!(outcome, TacticReplayAdmissionOutcome::Admitted { .. }),
+                attributed,
+            );
+        }
+        Ok(outcomes)
     }
 
     pub fn publish_learner_snapshot(
@@ -1065,6 +1121,83 @@ mod tests {
             } if duplicate_snapshot == replay_snapshot
         ));
         assert_eq!(reopened.len(), 1);
+        drop(reopened);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_publish_preserves_order_deduplication_and_durable_reopen() {
+        let root = test_root("batch");
+        let journal = root.join("replay.dtrp");
+        let objects = root.join("objects");
+        let expected = identity();
+        let mut service =
+            TacticReplayControlPlane::create(&journal, &objects, expected.clone()).unwrap();
+        let learner_snapshot_sha256 = learner_snapshot(&service);
+        let (first, first_route) = row(false);
+        let (second, second_route) = row(true);
+        let outcomes = service
+            .publish_batch(&[
+                TacticReplayPublication {
+                    publisher_lane: 2,
+                    publisher_decision: 7,
+                    learner_snapshot_sha256,
+                    transition: &first,
+                    route: &first_route,
+                    episode_group: 11,
+                },
+                TacticReplayPublication {
+                    publisher_lane: 2,
+                    publisher_decision: 7,
+                    learner_snapshot_sha256,
+                    transition: &second,
+                    route: &second_route,
+                    episode_group: 12,
+                },
+                TacticReplayPublication {
+                    publisher_lane: 2,
+                    publisher_decision: 7,
+                    learner_snapshot_sha256,
+                    transition: &first,
+                    route: &first_route,
+                    episode_group: 13,
+                },
+            ])
+            .unwrap();
+        assert!(matches!(
+            outcomes.as_slice(),
+            [
+                TacticReplayAdmissionOutcome::Admitted { sequence: 0, .. },
+                TacticReplayAdmissionOutcome::Admitted { sequence: 1, .. },
+                TacticReplayAdmissionOutcome::Duplicate {
+                    existing_sequence: 0,
+                    replay_snapshot: TacticReplaySnapshotVersion { revision: 2, .. },
+                    ..
+                },
+            ]
+        ));
+        assert_eq!(service.len(), 2);
+        assert_eq!(
+            service.invocation_metrics(),
+            TacticReplayAdmissionMetrics {
+                attempts: 3,
+                admitted: 2,
+                duplicates: 1,
+                admission_micros: service.invocation_metrics().admission_micros,
+                maximum_admission_micros: service.invocation_metrics().maximum_admission_micros,
+                mean_admission_micros: service.invocation_metrics().mean_admission_micros,
+            }
+        );
+        let expected_snapshot = service.replay_snapshot();
+        drop(service);
+
+        let reopened = TacticReplayControlPlane::open(&journal, &objects, &expected).unwrap();
+        assert_eq!(reopened.len(), 2);
+        assert_eq!(reopened.replay_snapshot(), expected_snapshot);
+        assert_eq!(
+            reopened.snapshot().unwrap().corpus.episode_groups,
+            vec![11, 12]
+        );
         drop(reopened);
         fs::remove_dir_all(root).unwrap();
     }

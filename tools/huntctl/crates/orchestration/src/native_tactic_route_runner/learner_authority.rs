@@ -210,6 +210,13 @@ impl CampaignTacticLearnerAuthority {
             .map_err(route_error)
     }
 
+    pub(super) fn publish_batch(
+        &mut self,
+        publications: &[TacticReplayPublication<'_>],
+    ) -> Result<Vec<TacticReplayAdmissionOutcome>, NativeTacticRouteRunError> {
+        self.replay.publish_batch(publications).map_err(route_error)
+    }
+
     pub(super) fn finish_decision(
         &mut self,
         publisher_lane: u32,
