@@ -553,9 +553,22 @@ Exit gate:
       accepting the treatment. If frontier retention collapses, choose the
       next treatment from the new phase occupancy rather than launching the
       remaining curve cells. The first attempted treatment run was interrupted
-      after its fifteenth decision and committed no sample, so it is recovery
-      state rather than performance evidence. Checkpoints `692f8bc3b5` and
-      `a159fbe156` make diagnostic process ownership explicit before retrying:
+      repeatedly and eventually committed one sample under bounded resume, but
+      it is not matched performance evidence. Decisions zero through nine
+      reproduced the control; each process restart then refit the learner
+      immediately instead of preserving the sealed four-decision cadence.
+      Decisions ten through fifteen consequently changed learner snapshots,
+      selected actions, proposal tapes, native ticks, graph identity, and the
+      useful-expansion-set identity. Checkpoint `7556ce9777` reconstructs the
+      latest referenced learner snapshot at its exact replay prefix and model
+      revision, restores completed decision identities, performs only a
+      genuinely missing cadence update, and reports cumulative model revisions
+      and snapshots instead of invocation-local counts. The invalid resumed
+      sample did independently confirm the source-level diagnosis:
+      frontier-retention time fell from about `219.64` seconds to `0.006`
+      seconds, but a fresh uninterrupted matched sample is still required.
+      Checkpoints `692f8bc3b5` and `a159fbe156` make diagnostic process
+      ownership explicit before retrying:
       every persistent native worker is suspended and resumed through the
       exact child handle owned by its transport; process names, global process
       scans, and ancestry-wide termination are not control mechanisms. The
