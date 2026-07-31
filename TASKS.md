@@ -576,7 +576,22 @@ Exit gate:
       gracefully shuts down only its owned fleet, emits typed partial progress,
       and resumes an already committed stop without launching native workers.
       All 330 orchestration tests, ten worker-protocol tests, and five
-      process-roundtrip tests pass, including same-session suspend/resume.
+      process-roundtrip tests pass, including same-session suspend/resume. The
+      fresh uninterrupted one-worker sample at source checkpoint `7556ce9777`
+      passes the required semantic comparison with the `de63af15e5` control:
+      the request, execution plan, all 16 selected actions, all 256 proposal
+      batches and emitted tapes, every consumed learner snapshot, 5,096 native
+      ticks, five learner updates, six published model snapshots, 256 useful
+      expansions, and the useful-expansion-set identity are exact. Campaign
+      wall fell 82.3%, from about `1,956.6` to `347.2` seconds, and useful
+      expansion throughput rose 5.63x, from about `0.131` to `0.737` per
+      second. Campaign admission fell from `224.08` seconds to `0.232`
+      seconds; frontier retention fell from `219.64` seconds to `830`
+      microseconds. With idle workers now quiescent, persistence and model
+      update also fell to about `27.3` and `5.9` seconds. Tactic execution is
+      now the dominant measured phase at about `298.2` seconds. Continue the
+      bounded curve one durable sample at a time to locate useful-work
+      saturation; do not infer multi-worker scaling from this one-worker win.
 - [x] Preserve native state, applicable actions, controller output, terminal
       evidence, and first-hit tick for every disabled presentation subsystem.
       Source checkpoint `703dcdbbba` advances the parity report to v2 and
