@@ -678,11 +678,28 @@ Exit gate:
       Bundle identity
       `f8dc93c3f520985af4d81fcdbf91fa038e9791f24fee85651e67a8bdc2bb58ef`;
       all 341 orchestration tests, the 557-file source-size gate, workspace
-      check, and the complete clean-checkout evidence audit pass. Continue
-      with matched wider cells to locate the new saturation point, then attack
-      the widest cell's remaining per-decision barrier and persistence
-      occupancy because grouping cannot improve the 16-worker cell when every
-      sibling already has a worker.
+      check, and the complete clean-checkout evidence audit pass. Checkpoint
+      `b7762af560` retains the matched two-worker release treatment at
+      `benchmarks/native-tactic-throughput-treatment/win32-x86_64/grouped-dispatch-f1a618fc78-w2`
+      under bundle identity
+      `a837229be03af51fdb82050fcae3e3ca8ad643e334b2201ff49ad1683fdd7883`.
+      It preserves the same exact semantic and fixed-work authorities while
+      reducing the retained two-worker control wall from about `309.56` to
+      `153.01` seconds, tactic execution from about `261.76` to `92.18`
+      seconds, prefix materializations from 226 to 16, and cache evictions
+      from 212 to 14. Useful-expansion throughput rises from about `0.827` to
+      `1.673` per second, a `2.023x` end-to-end treatment improvement. The
+      treatment itself gains only `1.128x` wall throughput over its matched
+      one-worker treatment, or about 56.4% two-worker parallel efficiency;
+      the new saturation point is therefore already visible at two workers.
+      Its remaining measured wall is dominated by tactic execution at about
+      `92.18` seconds and persistence at about `28.47` seconds, while model
+      update, orchestration, and admission use about `6.33`, `0.70`, and
+      `0.27` seconds. Diagnose this two-worker efficiency loss before spending
+      a wider cell, then confirm the repaired saturation curve. The widest
+      cell's persistence occupancy remains independently relevant because
+      grouping cannot improve the 16-worker cell when every sibling already
+      has a worker.
 - [x] Preserve native state, applicable actions, controller output, terminal
       evidence, and first-hit tick for every disabled presentation subsystem.
       Source checkpoint `703dcdbbba` advances the parity report to v2 and
