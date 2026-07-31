@@ -20,8 +20,7 @@ separate product work.
 
 ## Current state
 
-- Development seeds: `104729`, `155921`.
-- Untouched held-out seeds: `130363`, `181081`.
+- Development seeds: `104729`, `155921`. Held-out seeds: `130363`, `181081`.
 - The corrected matched development comparison is valid and causally complete
   (`build/benchmarks/ordon-native-matched-dev-seeds104729-155921-d32-v1-comparison-accounting-v2.json`,
   content `048c1024...6278f`). Learned reached the real terminal on 2/2 seeds;
@@ -29,20 +28,20 @@ separate product work.
 - Learned required a 123.36-second median and 170 useful graph expansions to
   first terminal. Total unique useful work was closely matched: learned 254,
   frozen 255, random 256. This proves a development advantage, not held-out
-  generalization or route quality; the best discovered route was still 304
-  ticks versus the 125-tick human replay.
+  generalization or route quality.
+- The one predeclared held-out comparison also passed
+  (`build/benchmarks/ordon-native-matched-heldout-seeds130363-181081-d32-v1-comparison.json`,
+  content `67cbf116...a9678`). Learned reached 2/2 terminals at a 119.24-second
+  median and 166 useful expansions to first terminal; both controls reached
+  0/2 under closely matched work. Across all four predeclared seeds, learned
+  is 4/4 and both controls are 0/4. The learning claim is established at this
+  scope, but route quality remains poor: the best development and held-out
+  routes were 304 and 286 ticks versus the 125-tick human replay.
 
 ## Queue
 
 Complete these gates in order. When a gate fails, repair the first demonstrated
 cause instead of starting a larger campaign.
-
-### P0 - Prove that learning is real
-
-- [ ] Repeat the matched learned, frozen-policy, and random-valid evaluation
-      once on the sealed held-out seeds. Accept the learning claim only if the
-      learned advantage repeats in terminal rate and sample/time-to-terminal.
-      Do not tune against, replace, or mine held-out seeds.
 
 ### P1 - Make it fast enough to use
 
@@ -55,9 +54,6 @@ cause instead of starting a larger campaign.
 - [ ] Optimize the largest measured bottleneck and retain matched before/after
       evidence. Scale only while useful throughput improves without changing
       learning semantics.
-- [ ] Reach scratch discovery in a median of five minutes or less, with no
-      retained development or held-out seed above fifteen minutes under a
-      documented resource budget.
 
 ### P2 - Harden the machinery
 
