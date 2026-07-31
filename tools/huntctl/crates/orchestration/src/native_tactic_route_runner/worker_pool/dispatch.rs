@@ -17,7 +17,8 @@ impl NativeTacticProposalPool {
         replayed_prefix: usize,
     ) -> Vec<NativeTacticProposalDispatch> {
         let mut dispatches = Vec::<NativeTacticProposalDispatch>::new();
-        let balance_direct_owner = direct.is_some() && self.preferred_owner_slot.is_none();
+        let balance_direct_owner =
+            direct.is_some() && self.preferred_owner_slot.is_none() && self.senders.len() > 1;
         let mut planned_proposals = vec![0_usize; self.senders.len()];
         if balance_direct_owner {
             planned_proposals[direct.expect("direct owner is present").worker_slot] = 1;
@@ -41,35 +42,29 @@ impl NativeTacticProposalPool {
             if !(balance_direct_owner && proposal_index == 0) {
                 planned_proposals[worker_slot] += 1;
             }
-            let local_direct = primary_source.or_else(|| {
-                (balance_direct_owner
-                    && direct.is_some_and(|frontier| frontier.worker_slot == worker_slot))
-                .then_some(direct)
-                .flatten()
-            });
             let materialize_frontier = requires_frontier_materialization(
                 restoration_present,
                 replayed_prefix,
-                local_direct.is_some(),
+                primary_source.is_some(),
             );
 
-            // A process-local source can anchor every proposal assigned to its
-            // owning worker. Other workers share one portable materialization
-            // each. The selected proposal is appended last, leaving the owner
-            // at the retained live endpoint after its local batch completes.
-            let checkpoint_source = local_direct.map(|frontier| frontier.source.clone());
-            if let Some(dispatch) = dispatches.iter_mut().find(|dispatch| {
-                dispatch.worker_slot == worker_slot
-                    && dispatch.checkpoint_source == checkpoint_source
-                    && dispatch.materialize_frontier == materialize_frontier
-            }) {
+            // A process-local direct source belongs only to the selected
+            // proposal. Every other proposal assigned to the same worker can
+            // share one portable frontier materialization for this decision.
+            if primary_source.is_none()
+                && let Some(dispatch) = dispatches.iter_mut().find(|dispatch| {
+                    dispatch.worker_slot == worker_slot
+                        && dispatch.checkpoint_source.is_none()
+                        && dispatch.materialize_frontier == materialize_frontier
+                })
+            {
                 dispatch.proposal_indices.push(proposal_index);
                 continue;
             }
             dispatches.push(NativeTacticProposalDispatch {
                 worker_slot,
                 proposal_indices: vec![proposal_index],
-                checkpoint_source,
+                checkpoint_source: primary_source.map(|frontier| frontier.source.clone()),
                 materialize_frontier,
             });
         }

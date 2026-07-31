@@ -180,34 +180,39 @@ fn counterfactuals_balance_against_the_direct_primary_reservation() {
     let frontier = cached_frontier(0);
     let dispatches = pool.proposal_dispatches(16, Some(&frontier), true, 40);
 
-    assert_eq!(dispatches.len(), 2);
+    assert_eq!(dispatches.len(), 3);
     let sibling_dispatches = dispatches
         .iter()
         .filter(|dispatch| dispatch.checkpoint_source.is_none())
         .collect::<Vec<_>>();
-    assert_eq!(sibling_dispatches.len(), 1);
-    assert_eq!(sibling_dispatches[0].proposal_indices.len(), 8);
+    assert_eq!(sibling_dispatches.len(), 2);
+    assert_eq!(
+        sibling_dispatches
+            .iter()
+            .map(|dispatch| dispatch.proposal_indices.len())
+            .collect::<Vec<_>>(),
+        vec![8, 7]
+    );
     assert!(
         sibling_dispatches
             .iter()
             .all(|dispatch| dispatch.materialize_frontier)
     );
+    let mut sibling_indices = sibling_dispatches
+        .iter()
+        .flat_map(|dispatch| dispatch.proposal_indices.iter().copied())
+        .collect::<Vec<_>>();
+    sibling_indices.sort_unstable();
+    assert_eq!(sibling_indices, (1..16).collect::<Vec<_>>());
 
     let selected = dispatches
         .iter()
         .find(|dispatch| dispatch.checkpoint_source.is_some())
         .unwrap();
     assert_eq!(selected.worker_slot, 0);
-    assert_eq!(selected.proposal_indices.len(), 8);
-    assert_eq!(selected.proposal_indices.last(), Some(&0));
+    assert_eq!(selected.proposal_indices, vec![0]);
     assert!(!selected.materialize_frontier);
     assert_eq!(selected.checkpoint_source, Some(frontier.source));
-    let mut proposal_indices = dispatches
-        .iter()
-        .flat_map(|dispatch| dispatch.proposal_indices.iter().copied())
-        .collect::<Vec<_>>();
-    proposal_indices.sort_unstable();
-    assert_eq!(proposal_indices, (0..16).collect::<Vec<_>>());
 }
 
 #[test]
@@ -221,18 +226,12 @@ fn sub_width_direct_dispatch_balances_total_work_and_rearms_the_owner_last() {
         proposals_per_worker[dispatch.worker_slot] += dispatch.proposal_indices.len();
     }
     assert_eq!(proposals_per_worker, vec![4, 4, 4, 4]);
-    assert_eq!(dispatches.len(), 4);
-    let owner = dispatches
-        .iter()
-        .find(|dispatch| dispatch.worker_slot == 0)
-        .unwrap();
-    assert_eq!(owner.proposal_indices.last(), Some(&0));
-    assert_eq!(owner.checkpoint_source, Some(frontier.source));
-    assert!(!owner.materialize_frontier);
+    assert_eq!(dispatches.len(), 5);
+    assert_eq!(dispatches.last().unwrap().worker_slot, 0);
+    assert_eq!(dispatches.last().unwrap().proposal_indices, vec![0]);
     assert!(
-        dispatches
+        dispatches[..dispatches.len() - 1]
             .iter()
-            .filter(|dispatch| dispatch.worker_slot != 0)
             .all(|dispatch| dispatch.materialize_frontier)
     );
 }
@@ -262,15 +261,16 @@ fn root_proposals_are_grouped_without_losing_indices_or_dispatch_balance() {
 }
 
 #[test]
-fn sole_worker_reuses_its_direct_frontier_and_rearms_the_primary_last() {
+fn sole_worker_keeps_direct_primary_separate_from_grouped_siblings() {
     let pool = proposal_pool(1);
     let frontier = cached_frontier(0);
     let dispatches = pool.proposal_dispatches(4, Some(&frontier), true, 40);
 
-    assert_eq!(dispatches.len(), 1);
-    assert_eq!(dispatches[0].proposal_indices, vec![1, 2, 3, 0]);
-    assert!(!dispatches[0].materialize_frontier);
-    assert_eq!(dispatches[0].checkpoint_source, Some(frontier.source));
+    assert_eq!(dispatches.len(), 2);
+    assert_eq!(dispatches[0].proposal_indices, vec![1, 2, 3]);
+    assert!(dispatches[0].materialize_frontier);
+    assert_eq!(dispatches[1].proposal_indices, vec![0]);
+    assert!(!dispatches[1].materialize_frontier);
 }
 
 #[test]
