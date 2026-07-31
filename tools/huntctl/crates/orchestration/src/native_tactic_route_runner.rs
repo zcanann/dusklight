@@ -905,6 +905,7 @@ pub(crate) use action_surface_audit::{
 mod worker_fleet;
 use worker_fleet::NativeTacticWorkerFleet;
 mod campaign;
+mod campaign_schedule;
 use campaign::{NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1, run_seed, tactic_graph_metrics};
 mod timing_metrics;
 use timing_metrics::{

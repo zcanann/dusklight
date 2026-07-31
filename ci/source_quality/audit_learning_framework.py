@@ -17,6 +17,12 @@ LAUNCH_SMOKE_SCHEMA = "dusklight-native-tactic-launch-smoke-bundle/v1"
 LAUNCH_SMOKE_SCHEMA_PREFIX = "dusklight-native-tactic-launch-smoke-bundle/"
 THROUGHPUT_BUNDLE_SCHEMA = "dusklight-native-tactic-throughput-evidence-bundle/v1"
 THROUGHPUT_BUNDLE_SCHEMA_PREFIX = "dusklight-native-tactic-throughput-evidence-bundle/"
+FAULT_RECOVERY_BUNDLE_SCHEMA = (
+    "dusklight-native-tactic-fault-recovery-evidence-bundle/v1"
+)
+FAULT_RECOVERY_BUNDLE_SCHEMA_PREFIX = (
+    "dusklight-native-tactic-fault-recovery-evidence-bundle/"
+)
 COLD_REPLAY_BUNDLE_SCHEMA = "dusklight-native-tactic-cold-replay-evidence-bundle/v1"
 COLD_REPLAY_BUNDLE_SCHEMA_PREFIX = (
     "dusklight-native-tactic-cold-replay-evidence-bundle/"
@@ -35,7 +41,7 @@ def run(command: list[str], cwd: Path) -> None:
 
 
 def tracked_evidence_bundles() -> tuple[
-    list[Path], list[Path], list[Path], list[Path], list[Path]
+    list[Path], list[Path], list[Path], list[Path], list[Path], list[Path]
 ]:
     output = subprocess.check_output(
         ["git", "ls-files", "--", "*.json"],
@@ -45,6 +51,7 @@ def tracked_evidence_bundles() -> tuple[
     bundles: list[Path] = []
     launch_smokes: list[Path] = []
     throughput_bundles: list[Path] = []
+    fault_recovery_bundles: list[Path] = []
     cold_replay_bundles: list[Path] = []
     subsystem_parity_bundles: list[Path] = []
     for relative in output.splitlines():
@@ -74,6 +81,14 @@ def tracked_evidence_bundles() -> tuple[
             raise RuntimeError(
                 f"unsupported committed throughput evidence bundle schema in {relative}: {schema}"
             )
+        elif schema == FAULT_RECOVERY_BUNDLE_SCHEMA:
+            fault_recovery_bundles.append(path.parent)
+        elif isinstance(schema, str) and schema.startswith(
+            FAULT_RECOVERY_BUNDLE_SCHEMA_PREFIX
+        ):
+            raise RuntimeError(
+                f"unsupported committed fault-recovery evidence bundle schema in {relative}: {schema}"
+            )
         elif schema == COLD_REPLAY_BUNDLE_SCHEMA:
             cold_replay_bundles.append(path.parent)
         elif isinstance(schema, str) and schema.startswith(COLD_REPLAY_BUNDLE_SCHEMA_PREFIX):
@@ -92,6 +107,7 @@ def tracked_evidence_bundles() -> tuple[
         sorted(set(bundles)),
         sorted(set(launch_smokes)),
         sorted(set(throughput_bundles)),
+        sorted(set(fault_recovery_bundles)),
         sorted(set(cold_replay_bundles)),
         sorted(set(subsystem_parity_bundles)),
     )
@@ -107,6 +123,7 @@ def main() -> int:
         bundles,
         launch_smokes,
         throughput_bundles,
+        fault_recovery_bundles,
         cold_replay_bundles,
         subsystem_parity_bundles,
     ) = tracked_evidence_bundles()
@@ -152,6 +169,20 @@ def main() -> int:
             ],
             HUNTCTL_ROOT,
         )
+    for bundle in fault_recovery_bundles:
+        run(
+            [
+                "cargo",
+                "run",
+                "--quiet",
+                "--",
+                "learn",
+                "validate-tactic-fault-recovery-bundle",
+                "--bundle",
+                str(bundle),
+            ],
+            HUNTCTL_ROOT,
+        )
     for bundle in cold_replay_bundles:
         run(
             [
@@ -185,6 +216,7 @@ def main() -> int:
         f"({len(bundles)} committed scratch evidence bundles and "
         f"{len(launch_smokes)} native launch smoke bundles and "
         f"{len(throughput_bundles)} throughput evidence bundles and "
+        f"{len(fault_recovery_bundles)} fault-recovery evidence bundles and "
         f"{len(cold_replay_bundles)} cold replay evidence bundles and "
         f"{len(subsystem_parity_bundles)} subsystem parity bundles validated)."
     )

@@ -19,6 +19,8 @@ The command checks:
   `dusklight-native-tactic-launch-smoke-bundle/v1`;
 - every tracked long-running throughput bundle whose manifest uses
   `dusklight-native-tactic-throughput-evidence-bundle/v1`; and
+- every tracked fault-recovery bundle whose manifest uses
+  `dusklight-native-tactic-fault-recovery-evidence-bundle/v1`;
 - every tracked exact final-route replay bundle whose manifest uses
   `dusklight-native-tactic-cold-replay-evidence-bundle/v1`.
 
