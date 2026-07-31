@@ -745,6 +745,18 @@ Exit gate:
       checkpoints, `0.121` seconds of decision journaling, and less than
       `0.032` seconds across all other persistence phases. Finalization and
       replay publication now account for 90.6% of measured persistence.
+      Source checkpoint `6cef79ba89` attacks replay publication at its measured
+      durability boundary: the learner stages each decision's ordered replay
+      admissions, preserves within-batch deduplication and snapshot chaining,
+      appends their authenticated records together, and performs one durable
+      journal flush per decision instead of one per proposal. Single-row
+      callers retain their original durable behavior. All 343 orchestration
+      tests pass, including a new batch-order/deduplication/reopen test, and
+      the 558-file source-size gate passes. Native timing evidence for this
+      treatment remains open because the owned release-build cell was
+      interrupted before it reported completion; do not claim a throughput
+      win until the matched two-worker report passes the existing semantic and
+      fixed-work audit.
       Eliminate or amortize those two serial paths before spending a wider
       cell; then confirm the repaired saturation curve. The widest cell's
       persistence occupancy remains independently relevant because grouping
