@@ -929,6 +929,7 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
                 source_tape_micros: 10_000,
                 recovery_checkpoint_micros: 20_000,
                 decision_journal_micros: 30_000,
+                replay_content_micros: 0,
                 replay_publication_micros: 40_000,
                 lease_resolution_micros: 10_000,
                 recovery_prune_micros: 10_000,

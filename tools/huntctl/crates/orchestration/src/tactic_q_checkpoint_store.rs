@@ -135,6 +135,10 @@ impl TacticQContentStore {
         })
     }
 
+    pub(crate) fn root(&self) -> &Path {
+        self.store.root()
+    }
+
     pub fn store_transition(
         &self,
         before: &FactSnapshot,

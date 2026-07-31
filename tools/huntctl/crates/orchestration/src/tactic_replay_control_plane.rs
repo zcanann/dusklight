@@ -273,16 +273,24 @@ impl TacticReplayControlPlane {
         content_root: impl Into<PathBuf>,
         identity: TacticReplayControlPlaneIdentity,
     ) -> Result<Self, TacticReplayControlPlaneError> {
+        let content_store =
+            TacticQContentStore::initialize(content_root.into()).map_err(store_error)?;
+        Self::create_with_content_store(journal_path, content_store, identity)
+    }
+
+    pub(crate) fn create_with_content_store(
+        journal_path: impl Into<PathBuf>,
+        content_store: TacticQContentStore,
+        identity: TacticReplayControlPlaneIdentity,
+    ) -> Result<Self, TacticReplayControlPlaneError> {
         identity.validate()?;
         let journal_path = journal_path.into();
-        let content_root = content_root.into();
         let parent = journal_path
             .parent()
             .ok_or(TacticReplayControlPlaneError::Invalid(
                 "replay journal path has no parent",
             ))?;
         fs::create_dir_all(parent).map_err(io_error)?;
-        let content_store = TacticQContentStore::initialize(content_root).map_err(store_error)?;
         let mut journal = OpenOptions::new()
             .create_new(true)
             .read(true)
@@ -331,9 +339,17 @@ impl TacticReplayControlPlane {
         content_root: impl Into<PathBuf>,
         expected_identity: &TacticReplayControlPlaneIdentity,
     ) -> Result<Self, TacticReplayControlPlaneError> {
+        let content_store = TacticQContentStore::open(content_root.into()).map_err(store_error)?;
+        Self::open_with_content_store(journal_path, content_store, expected_identity)
+    }
+
+    pub(crate) fn open_with_content_store(
+        journal_path: impl Into<PathBuf>,
+        content_store: TacticQContentStore,
+        expected_identity: &TacticReplayControlPlaneIdentity,
+    ) -> Result<Self, TacticReplayControlPlaneError> {
         expected_identity.validate()?;
         let journal_path = journal_path.into();
-        let content_store = TacticQContentStore::open(content_root.into()).map_err(store_error)?;
         let mut journal = OpenOptions::new()
             .read(true)
             .write(true)
@@ -626,6 +642,14 @@ impl TacticReplayControlPlane {
 
     pub fn invocation_metrics(&self) -> TacticReplayAdmissionMetrics {
         self.invocation_metrics
+    }
+
+    pub fn contains_transition(
+        &self,
+        transition: &OptionTransitionSample,
+    ) -> Result<bool, TacticReplayControlPlaneError> {
+        let identity = transition.replay_identity_sha256().map_err(domain_error)?;
+        Ok(self.transition_sequences.contains_key(&identity))
     }
 
     pub fn admissions(&self) -> Vec<TacticReplayAdmissionMetadata> {

@@ -461,17 +461,22 @@ fn run_native_tactic_route_with_optional_fleet(
     let replay_content_root = config
         .output_root
         .join(NATIVE_TACTIC_CONTENT_STORE_DIRECTORY);
+    if campaign_content_store.root() != replay_content_root {
+        return Err(route_message(
+            "campaign and replay content authorities use different roots",
+        ));
+    }
     let replay_control_plane = if replay_control_plane_path.exists() {
-        TacticReplayControlPlane::open(
+        TacticReplayControlPlane::open_with_content_store(
             &replay_control_plane_path,
-            &replay_content_root,
+            campaign_content_store.clone(),
             &replay_control_plane_identity,
         )
         .map_err(route_error)?
     } else {
-        TacticReplayControlPlane::create(
+        TacticReplayControlPlane::create_with_content_store(
             &replay_control_plane_path,
-            &replay_content_root,
+            campaign_content_store.clone(),
             replay_control_plane_identity,
         )
         .map_err(route_error)?
@@ -551,6 +556,7 @@ fn run_native_tactic_route_with_optional_fleet(
                             let initial_facts = &initial_facts;
                             let route_prefix = &route_prefix;
                             let live_learner = live_learner.clone();
+                            let content_store = campaign_content_store.clone();
                             let inherited_learner_snapshot =
                                 Arc::clone(&inherited_learner_snapshot);
                             generation_scope.spawn(move || {
@@ -566,6 +572,7 @@ fn run_native_tactic_route_with_optional_fleet(
                                     promoted_tactics,
                                     root_checkpoint_sha256,
                                     root_tape_ref,
+                                    content_store,
                                     inherited_learner_snapshot,
                                     live_learner,
                                     seed_index,
@@ -898,6 +905,8 @@ use replay_sharing::{
     BoundedStalenessReplaySession, build_replay_session, deterministic_generation_barrier_revision,
     lane_generated_training_corpus, publish_completed_seed_replay, publish_demonstration_replay,
 };
+mod replay_content;
+use replay_content::{persist_evaluated_replay_content, retained_replay_components};
 
 mod worker_pool;
 use worker_pool::{

@@ -318,6 +318,10 @@ fn publish_trace_replay(
                 "generated replay learner authority is detached",
             ));
         }
+        if learner.contains_transition(transition)? {
+            duplicate_rows = duplicate_rows.saturating_add(1);
+            continue;
+        }
         let outcome = learner
             .publish(
                 u32::try_from(decision.lane_index).map_err(route_error)?,

@@ -19,6 +19,7 @@ pub(super) fn run_seed(
     promoted_tactics: &[ImportedPromotedTactic],
     root_checkpoint_sha256: Digest,
     root_tape_ref: StoredContentRef,
+    shared_content_store: TacticQContentStore,
     inherited_learner_snapshot: Arc<TacticQImmutableLearnerSnapshot>,
     live_learner: Option<SharedTacticLearnerAuthority>,
     seed_index: usize,
@@ -177,8 +178,11 @@ pub(super) fn run_seed(
         .filter(|acquisition| acquisition.expansion_count == 0)
         .count();
     let checkpoint_content_root = tactic_content_store_path(&seed_root);
-    let decision_content_store =
-        TacticQContentStore::initialize(&checkpoint_content_root).map_err(route_error)?;
+    let decision_content_store = if shared_content_store.root() == checkpoint_content_root {
+        shared_content_store
+    } else {
+        TacticQContentStore::initialize(&checkpoint_content_root).map_err(route_error)?
+    };
     // Process-local handles intentionally do not survive campaign resume.
     let mut cached_frontier: Option<CachedTacticFrontier> = None;
     let mut branch_acquisition: Option<TacticFrontierAcquisition> = None;
@@ -1130,38 +1134,12 @@ pub(super) fn run_seed(
         if decision_trace_is_useful(&decision_trace) {
             useful_decisions = useful_decisions.saturating_add(1);
         }
-        let proposal_records = evaluated
-            .iter()
-            .zip(&decision_trace.proposal_batch)
-            .map(|(proposal, trace)| {
-                let retain_component = trace.retained
-                    || trace.terminal
-                    || trace.reward > 0.0
-                    || trace.goal_distance_after < before_features[encoder.goal_distance_feature()];
-                let component = if retain_component {
-                    let entry = proposal_catalog
-                        .entry(&proposal.outcome.selected.descriptor.option_id)
-                        .filter(|entry| {
-                            entry.description().option == proposal.outcome.selected.descriptor
-                        })
-                        .ok_or_else(|| {
-                            route_message(
-                                "executed proposal is detached from its executable tactic source",
-                            )
-                        })?;
-                    Some(TacticMacroComponent::from_catalog_entry(entry).map_err(route_error)?)
-                } else {
-                    None
-                };
-                Ok(NativeTacticProposalRecord {
-                    trace: trace.clone(),
-                    component,
-                    transition: None,
-                    inline_transition: Some(proposal.transition.as_ref().clone()),
-                })
-            })
-            .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
-        let transition = evaluated[winner_index].transition.clone();
+        let proposal_components = retained_replay_components(
+            &evaluated,
+            &decision_trace.proposal_batch,
+            &proposal_catalog,
+            before_features[encoder.goal_distance_feature()],
+        )?;
         let evidence_micros = elapsed_micros(evidence_started.elapsed());
         timing.evidence_projection_micros = timing
             .evidence_projection_micros
@@ -1171,6 +1149,22 @@ pub(super) fn run_seed(
             .saturating_add(evidence_micros);
         let persistence_started = Instant::now();
         let model_update_micros_before = timing.model_update_micros;
+        let replay_content_started = Instant::now();
+        let replay_content = persist_evaluated_replay_content(&decision_content_store, &evaluated)?;
+        let replay_content_micros = elapsed_micros(replay_content_started.elapsed());
+        let proposal_records = decision_trace
+            .proposal_batch
+            .iter()
+            .zip(proposal_components)
+            .zip(&replay_content)
+            .map(|((trace, component), content)| NativeTacticProposalRecord {
+                trace: trace.clone(),
+                component,
+                transition: Some(content.transition),
+                inline_transition: None,
+            })
+            .collect::<Vec<_>>();
+        let transition_ref = replay_content[winner_index].transition;
         timing.wall_micros =
             prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
         let recovery_decision_index = campaign.decision_index;
@@ -1203,8 +1197,8 @@ pub(super) fn run_seed(
             campaign.root_checkpoint_sha256,
             root_tape_ref,
             Some(source_route_tape_ref),
+            Some(transition_ref),
             None,
-            Some(transition.as_ref().clone()),
             proposal_records,
         ))?;
         let decision_journal_micros = elapsed_micros(decision_journal_started.elapsed());
@@ -1270,6 +1264,7 @@ pub(super) fn run_seed(
             .model_update_micros
             .saturating_sub(model_update_micros_before);
         let mut persistence_breakdown = NativeTacticPersistenceTiming {
+            replay_content_micros,
             recovery_checkpoint_micros,
             decision_journal_micros,
             replay_publication_micros,

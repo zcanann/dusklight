@@ -296,6 +296,15 @@ impl CampaignTacticLearnerAuthority {
         &self.replay
     }
 
+    pub(super) fn contains_transition(
+        &self,
+        transition: &OptionTransitionSample,
+    ) -> Result<bool, NativeTacticRouteRunError> {
+        self.replay
+            .contains_transition(transition)
+            .map_err(route_error)
+    }
+
     pub(super) fn invocation_metrics(&self) -> CampaignLearnerUpdateMetrics {
         self.invocation_metrics
     }

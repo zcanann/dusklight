@@ -300,6 +300,10 @@ pub struct NativeTacticPersistenceTiming {
     pub source_tape_micros: u64,
     pub recovery_checkpoint_micros: u64,
     pub decision_journal_micros: u64,
+    /// Content-addressed transition and route objects shared by the decision
+    /// journal and replay control plane.
+    #[serde(default)]
+    pub replay_content_micros: u64,
     /// Replay-control-plane publication excluding the separately reported
     /// learner model update.
     pub replay_publication_micros: u64,
@@ -315,6 +319,7 @@ impl NativeTacticPersistenceTiming {
         self.source_tape_micros
             .saturating_add(self.recovery_checkpoint_micros)
             .saturating_add(self.decision_journal_micros)
+            .saturating_add(self.replay_content_micros)
             .saturating_add(self.replay_publication_micros)
             .saturating_add(self.lease_resolution_micros)
             .saturating_add(self.recovery_prune_micros)
@@ -333,6 +338,9 @@ impl NativeTacticPersistenceTiming {
         self.decision_journal_micros = self
             .decision_journal_micros
             .saturating_add(other.decision_journal_micros);
+        self.replay_content_micros = self
+            .replay_content_micros
+            .saturating_add(other.replay_content_micros);
         self.replay_publication_micros = self
             .replay_publication_micros
             .saturating_add(other.replay_publication_micros);
