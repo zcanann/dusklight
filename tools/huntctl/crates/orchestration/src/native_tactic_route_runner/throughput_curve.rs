@@ -840,9 +840,27 @@ fn publish_curve_report(report_path: &Path, bytes: &[u8]) -> Result<(), NativeTa
     ));
     write_new(&partial, bytes)?;
     fs::rename(&partial, report_path).map_err(route_error)?;
+    sync_curve_report_parent(parent)
+}
+
+#[cfg(not(windows))]
+fn sync_curve_report_parent(parent: &Path) -> Result<(), NativeTacticRouteRunError> {
     fs::File::open(parent)
         .and_then(|directory| directory.sync_all())
         .map_err(route_error)
+}
+
+#[cfg(windows)]
+fn sync_curve_report_parent(parent: &Path) -> Result<(), NativeTacticRouteRunError> {
+    // Standard Windows file opening rejects directory handles. The report
+    // file itself is flushed before the atomic rename; validate the parent
+    // instead of converting a successful publication into ERROR_ACCESS_DENIED.
+    if !parent.is_dir() {
+        return Err(route_message(
+            "native tactic throughput report parent is not a directory",
+        ));
+    }
+    Ok(())
 }
 
 fn prepare_curve_output(

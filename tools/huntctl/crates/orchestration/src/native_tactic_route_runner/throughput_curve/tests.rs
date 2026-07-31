@@ -84,6 +84,14 @@ fn throughput_output_mode_requires_explicit_resume() {
 }
 
 #[test]
+fn aggregate_report_publication_is_supported_on_the_host_platform() {
+    let test = TestDirectory::new("aggregate-publish");
+    let report_path = test.path.join("throughput-curve.json");
+    publish_curve_report(&report_path, b"durable report").unwrap();
+    assert_eq!(fs::read(report_path).unwrap(), b"durable report");
+}
+
+#[test]
 fn admission_breakdown_is_exact_and_legacy_samples_remain_wire_compatible() {
     let mut current = sample(1, 1, 1, 1_000);
     let legacy_json = serde_json::to_value(&current).unwrap();
