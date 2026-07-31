@@ -521,8 +521,16 @@ Exit gate:
       exact state-graph, replay-snapshot, and learner-authority identities in
       addition to graph/replay shape and lease accounting. Legacy v1 digest
       validation remains compatible but cannot close this gate. All 337
-      orchestration tests pass. The task remains open for portable retention
-      and the five grown-campaign native fault cells.
+      orchestration tests pass. Checkpoint `3759903689` adds the portable,
+      content-addressed retention format and offline validator. Each bundle
+      carries the exact request, execution binding and plan, all six source
+      authorities, compressed control and recovered reports, both v3 resource
+      audits, durable fault marker, and recomputable v2 recovery audit. The
+      builder fails closed on detached authorities and the validator rebuilds
+      the semantic audit from bundled bytes; all 338 orchestration tests and an
+      end-to-end seal/validate smoke pass. The task remains open only for the
+      five real native fault cells, including at least one after graph and
+      replay growth.
 - [ ] Remove the measured end-to-end saturation bottleneck until the reference
       workstation sustains enough useful evidence to meet the P4 wall-time
       gate. Prefer reducing restore/replay and idle time before adding capacity.
