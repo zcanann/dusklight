@@ -222,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn sealed_plan_rejects_every_shape_override_but_allows_runtime_workers() {
+    fn sealed_plan_rejects_shape_overrides_but_allows_runtime_capacity_controls() {
         for option in SEALED_PLAN_SHAPING_OPTIONS {
             let args = vec![
                 "--plan".into(),
@@ -238,6 +238,8 @@ mod tests {
                 "plan.dtp".into(),
                 "--workers".into(),
                 "1".into(),
+                "--checkpoint-capacity-workers".into(),
+                "16".into(),
             ]),
             None
         );

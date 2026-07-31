@@ -1906,3 +1906,12 @@ fn checkpoint_cache_capacity_is_derived_from_the_sealed_aggregate_memory_budget(
             .is_err()
     );
 }
+
+#[test]
+fn checkpoint_capacity_can_reserve_a_wider_fleet_share_without_launching_it() {
+    assert!(valid_worker_capacity_counts(1, 16));
+    assert!(valid_worker_capacity_counts(16, 16));
+    assert!(!valid_worker_capacity_counts(0, 16));
+    assert!(!valid_worker_capacity_counts(2, 1));
+    assert!(!valid_worker_capacity_counts(1, MAX_ROUTE_WORKERS + 1));
+}

@@ -537,6 +537,8 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 "--workers",
                 usize::from(request.execution.workers),
             )?;
+            let checkpoint_capacity_workers =
+                usize_option(learn_args, "--checkpoint-capacity-workers", workers)?;
             let promoted_tactic_registry =
                 option(learn_args, "--promoted-tactic-registry").map(PathBuf::from);
             let promoted_tactic_registry_sha256 =
@@ -617,6 +619,7 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 execution_plan: &execution_plan,
                 promoted_tactic_registry: promoted_tactic_registry.as_deref(),
                 output_root: &output,
+                checkpoint_capacity_workers,
                 workers,
                 cancellation: None,
                 fault_injection: fault_injection.as_ref(),
@@ -803,6 +806,7 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 execution_plan: &execution_plan,
                 promoted_tactic_registry: None,
                 output_root: &output,
+                checkpoint_capacity_workers: 1,
                 workers: 1,
                 cancellation: None,
                 fault_injection: None,

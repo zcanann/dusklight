@@ -14,6 +14,10 @@ pub struct NativeTacticRouteRunConfig<'a> {
     /// sealed into `execution_plan`; the path is only a local artifact locator.
     pub promoted_tactic_registry: Option<&'a Path>,
     pub output_root: &'a Path,
+    /// Divisor used to reserve each worker's share of the aggregate checkpoint
+    /// memory budget. This may exceed `workers` for an isolated diagnostic
+    /// that must reproduce one view of a wider persistent fleet.
+    pub checkpoint_capacity_workers: usize,
     pub workers: usize,
     pub cancellation: Option<&'a AtomicBool>,
     /// Explicit destructive diagnostic used by the crash-recovery campaign.

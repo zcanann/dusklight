@@ -15,6 +15,7 @@ pub(super) struct NativeTacticWorkerFleet {
     initial_facts: FactSnapshot,
     root_checkpoint_sha256: Digest,
     checkpoint_cache_capacity_bytes: usize,
+    checkpoint_capacity_workers: usize,
     launch_micros: u64,
 }
 
@@ -33,7 +34,7 @@ impl NativeTacticWorkerFleet {
         }
         let checkpoint_cache_capacity_bytes = tactic_checkpoint_cache_capacity_per_worker(
             config.execution_plan.budgets.memory_bytes,
-            worker_count,
+            config.checkpoint_capacity_workers,
         )?;
         let execution_plan_sha256 = config.execution_plan.identity()?;
         if initial_batch
@@ -138,6 +139,7 @@ impl NativeTacticWorkerFleet {
             initial_facts,
             root_checkpoint_sha256,
             checkpoint_cache_capacity_bytes,
+            checkpoint_capacity_workers: config.checkpoint_capacity_workers,
             launch_micros,
         })
     }
@@ -151,6 +153,7 @@ impl NativeTacticWorkerFleet {
             || config.execution_plan.identity()? != self.execution_plan_sha256
             || config.workers == 0
             || config.workers > self.senders.len()
+            || config.checkpoint_capacity_workers != self.checkpoint_capacity_workers
             || self.initial_facts.tape_frame != config.optimization.route.source_boundary_index
             || self.initial_facts.terminal.reached != Some(false)
         {

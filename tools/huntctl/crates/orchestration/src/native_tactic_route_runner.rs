@@ -1014,7 +1014,7 @@ fn initial_probe_batch(
     let mut batch = tactic_root_probe_batch_with_ticks(config.optimization, config.execution, 1)?;
     let capacity = tactic_checkpoint_cache_capacity_per_worker(
         config.execution_plan.budgets.memory_bytes,
-        config.workers,
+        config.checkpoint_capacity_workers,
     )?;
     attach_root_probe_checkpoint_cache(&mut batch, capacity);
     Ok(batch)
@@ -1173,12 +1173,11 @@ fn validate_config(
     validate_unassisted_discovery_horizon(config)?;
     tactic_checkpoint_cache_capacity_per_worker(
         config.execution_plan.budgets.memory_bytes,
-        config.workers,
+        config.checkpoint_capacity_workers,
     )?;
     let maximum_demonstration_chunk_ticks =
         maximum_demonstration_chunk_ticks(config.optimization.budgets.exploration_horizon_ticks)?;
-    if config.workers == 0
-        || config.workers > MAX_ROUTE_WORKERS
+    if !valid_worker_capacity_counts(config.workers, config.checkpoint_capacity_workers)
         || config.execution_plan.budgets.decisions_per_lane > MAX_ROUTE_DECISIONS
         || config
             .execution_plan
@@ -1207,6 +1206,13 @@ fn validate_config(
         ));
     }
     Ok(())
+}
+
+fn valid_worker_capacity_counts(workers: usize, checkpoint_capacity_workers: usize) -> bool {
+    workers > 0
+        && workers <= MAX_ROUTE_WORKERS
+        && checkpoint_capacity_workers >= workers
+        && checkpoint_capacity_workers <= MAX_ROUTE_WORKERS
 }
 
 fn planned_decisions_fit_candidate_budget(

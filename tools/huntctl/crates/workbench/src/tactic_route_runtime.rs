@@ -423,6 +423,7 @@ fn launch_tactic_route_learning(
                     execution_plan: &execution_plan,
                     promoted_tactic_registry: None,
                     output_root: &output,
+                    checkpoint_capacity_workers: usize::from(optimization.execution.workers),
                     workers: usize::from(optimization.execution.workers),
                     cancellation: Some(&thread_cancellation),
                     fault_injection: None,
