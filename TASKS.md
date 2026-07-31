@@ -695,11 +695,45 @@ Exit gate:
       Its remaining measured wall is dominated by tactic execution at about
       `92.18` seconds and persistence at about `28.47` seconds, while model
       update, orchestration, and admission use about `6.33`, `0.70`, and
-      `0.27` seconds. Diagnose this two-worker efficiency loss before spending
-      a wider cell, then confirm the repaired saturation curve. The widest
-      cell's persistence occupancy remains independently relevant because
-      grouping cannot improve the 16-worker cell when every sibling already
-      has a worker.
+      `0.27` seconds. Checkpoint `9e8f2db661` accounts for the selected
+      proposal as one unit of owner load and balances all counterfactuals
+      across a sub-width fleet, with the selected proposal queued last on its
+      owner. The retained intermediate bundle at
+      `benchmarks/native-tactic-throughput-treatment/win32-x86_64/balanced-owner-9e8f2db661-w2`
+      passes exact semantic and fixed-work validation under identity
+      `8e22432add73c87a30cd7609be72bb57d024695581b4d1052843697b6a13e2b9`;
+      wall falls to about `131.48` seconds and tactic execution to `72.56`
+      seconds. It also exposes 14 direct-restore fallbacks because the owner's
+      sibling materialization evicts its single-use live endpoint. Reusing
+      that endpoint across siblings correctly failed closed and was reverted.
+      Checkpoint `56c73d14bf` instead appends the selected proposal to the
+      owner's one portable sibling batch, so one materialization serves the
+      whole owner batch and the selected proposal still executes last. The
+      matched one- and two-worker bundles are retained at
+      `benchmarks/native-tactic-throughput-treatment/win32-x86_64/portable-owner-56c73d14bf-w1`
+      and
+      `benchmarks/native-tactic-throughput-treatment/win32-x86_64/portable-owner-56c73d14bf-w2`
+      under identities
+      `9c68b59f52cbe2c37a1cb0eaf43a3897e75f03cc46e8ad1db51ab0881a9fb12d`
+      and
+      `01cb657dd4b90ef93a28cbd8e39d47c96b4a53944c0141c6462edea44275db5b`.
+      Both preserve the complete semantic trace, learner/replay/campaign
+      authorities, graph shape, fixed work, resource contract, and terminal
+      result. One-worker wall is about `148.73` seconds with `93.41` seconds
+      of tactic execution and `1.721` useful expansions per second.
+      Two-worker wall is about `117.63` seconds with `60.37` seconds of tactic
+      execution and `2.176` useful expansions per second. Both have zero
+      direct-restore fallback replays; prefix materializations/cache evictions
+      are 15/14 and 30/28 respectively. Two-worker speedup is now `1.264x`
+      end to end at 63.2% efficiency and `1.547x` in tactic execution. The
+      remaining non-tactic wall is effectively fixed at about 55-57 seconds,
+      including about 25-26 seconds of persistence and about 6 seconds of
+      model update. Reduce this serial occupancy before spending a wider cell;
+      then confirm the repaired saturation curve. The widest cell's
+      persistence occupancy remains independently relevant because grouping
+      cannot improve the 16-worker cell when every sibling already has a
+      worker. All 342 orchestration tests and the 557-file source-size gate
+      pass.
 - [x] Preserve native state, applicable actions, controller output, terminal
       evidence, and first-hit tick for every disabled presentation subsystem.
       Source checkpoint `703dcdbbba` advances the parity report to v2 and
