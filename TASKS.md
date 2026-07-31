@@ -49,7 +49,7 @@ The incoming 2026-07-29 work made substantial, useful progress:
   files are below 1,500 physical lines. The four final oversized orchestration
   files are split by result tests, launch preparation, proposal-pool execution,
   frontier policy, and checkpoint validation responsibilities. The complete
-  orchestration suite is hermetic and passes all 328 tests.
+  orchestration suite is hermetic and passes all 330 tests.
 - Scratch validation now publishes a movable content-addressed bundle carrying
   request, execution, plan, route, per-seed, graph checkpoint, terminal
   tape/result, source-authority evidence, and a content-bound campaign audit.
@@ -552,7 +552,18 @@ Exit gate:
       matched one-worker diagnostic and require semantic identity before
       accepting the treatment. If frontier retention collapses, choose the
       next treatment from the new phase occupancy rather than launching the
-      remaining curve cells.
+      remaining curve cells. The first attempted treatment run was interrupted
+      after its fifteenth decision and committed no sample, so it is recovery
+      state rather than performance evidence. Checkpoints `692f8bc3b5` and
+      `a159fbe156` make diagnostic process ownership explicit before retrying:
+      every persistent native worker is suspended and resumed through the
+      exact child handle owned by its transport; process names, global process
+      scans, and ancestry-wide termination are not control mechanisms. The
+      throughput command can stop after an absolute durable sample ordinal,
+      gracefully shuts down only its owned fleet, emits typed partial progress,
+      and resumes an already committed stop without launching native workers.
+      All 330 orchestration tests, ten worker-protocol tests, and five
+      process-roundtrip tests pass, including same-session suspend/resume.
 - [x] Preserve native state, applicable actions, controller output, terminal
       evidence, and first-hit tick for every disabled presentation subsystem.
       Source checkpoint `703dcdbbba` advances the parity report to v2 and
