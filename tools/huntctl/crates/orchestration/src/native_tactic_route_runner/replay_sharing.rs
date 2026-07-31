@@ -100,6 +100,8 @@ impl BoundedStalenessReplaySession {
             }
         }
         learner.finish_decision(
+            u32::try_from(self.lane.lane_index).map_err(route_error)?,
+            publisher_decision,
             admitted_rows,
             duplicate_rows,
             evaluated.iter().any(|proposal| proposal.outcome.terminal),
@@ -117,14 +119,17 @@ impl BoundedStalenessReplaySession {
         }
         let generated = lane_generated_training_corpus(campaign, &self.lane);
         let mut learner = lock_learner_authority(&self.learner)?;
-        let (admitted_rows, duplicate_rows) =
-            publish_trace_replay(&mut learner, trace, &generated)?;
-        learner.finish_decision(
-            admitted_rows,
-            duplicate_rows,
-            trace.iter().any(|decision| decision.terminal),
-            self.maximum_stale_replay_revisions,
-        )?;
+        publish_trace_replay(&mut learner, trace, &generated)?;
+        for decision in trace {
+            learner.finish_decision(
+                u32::try_from(decision.lane_index).map_err(route_error)?,
+                decision.decision_index,
+                0,
+                0,
+                decision.terminal,
+                self.maximum_stale_replay_revisions,
+            )?;
+        }
         Ok(())
     }
 

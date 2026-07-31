@@ -7,6 +7,7 @@ pub(super) struct CampaignLearnerUpdateMetrics {
     pub(super) updates: u64,
     pub(super) update_micros: u64,
     pub(super) snapshots_published: u64,
+    pub(super) reconstruction_micros: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -27,7 +28,8 @@ pub(super) struct CampaignTacticLearnerAuthority {
     goal_distance_feature: usize,
     value_treatment: TacticValueTreatment,
     refit_every_decisions: u64,
-    completed_decisions: u64,
+    completed_decisions: BTreeSet<(u32, u64)>,
+    published_snapshot_sha256s: BTreeSet<Digest>,
     latest: Arc<TacticQImmutableLearnerSnapshot>,
     invocation_metrics: CampaignLearnerUpdateMetrics,
 }
@@ -39,63 +41,133 @@ impl CampaignTacticLearnerAuthority {
         goal_distance_feature: usize,
         value_treatment: TacticValueTreatment,
         refit_every_decisions: u64,
+        maximum_stale_replay_revisions: Option<u64>,
     ) -> Result<Self, NativeTacticRouteRunError> {
         if refit_every_decisions == 0 {
             return Err(route_message(
                 "campaign learner refit cadence must be positive",
             ));
         }
-        let prior_model_revision = replay
-            .admissions()
-            .into_iter()
-            .map(|admission| {
+        let admissions = replay.admissions();
+        let completed_decisions = admissions
+            .iter()
+            .filter(|admission| admission.publisher_lane != u32::MAX)
+            .map(|admission| (admission.publisher_lane, admission.publisher_decision))
+            .collect::<BTreeSet<_>>();
+        let admission_snapshot_sha256s = admissions
+            .iter()
+            .map(|admission| admission.learner_snapshot_sha256)
+            .collect::<BTreeSet<_>>();
+        let prior_snapshots = admission_snapshot_sha256s
+            .iter()
+            .map(|sha256| {
                 replay
-                    .learner_snapshot(admission.learner_snapshot_sha256)
-                    .map(|snapshot| snapshot.model_revision)
+                    .learner_snapshot(*sha256)
+                    .map(|snapshot| (*sha256, snapshot))
                     .map_err(route_error)
             })
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
-            .max()
-            .unwrap_or(0);
-        let replay_snapshot = replay.snapshot().map_err(route_error)?;
-        let has_training = !replay_snapshot.corpus.transitions.is_empty();
-        let model_revision = prior_model_revision.saturating_add(u64::from(has_training));
-        let started = Instant::now();
-        let snapshot = TacticQImmutableLearnerSnapshot::fit(
-            replay_snapshot.corpus,
-            replay_snapshot.version.revision,
-            model_revision,
-            model_config.clone(),
-            goal_distance_feature,
-            value_treatment,
-        )
-        .map_err(route_error)?;
-        let update_micros = has_training
-            .then(|| elapsed_micros(started.elapsed()))
-            .unwrap_or(0);
-        let stored_sha256 = replay
-            .publish_learner_snapshot(&snapshot.manifest)
-            .map_err(route_error)?;
-        if stored_sha256 != snapshot.sha256 {
-            return Err(route_message(
-                "campaign learner snapshot store changed its identity",
-            ));
-        }
-        Ok(Self {
+            .filter(|(_, snapshot)| snapshot.kind == TacticQLearnerSnapshotKind::Learned)
+            .collect::<Vec<_>>();
+        let published_snapshot_sha256s = prior_snapshots
+            .iter()
+            .map(|(sha256, _)| *sha256)
+            .collect::<BTreeSet<_>>();
+        let prior_snapshot = prior_snapshots
+            .into_iter()
+            .max_by_key(|(_, snapshot)| (snapshot.model_revision, snapshot.training_replay_rows));
+        let (snapshot, invocation_metrics, mut published_snapshot_sha256s) =
+            if let Some((expected_sha256, manifest)) = prior_snapshot {
+                if manifest.model_config != model_config
+                    || manifest.value_treatment != value_treatment
+                    || manifest.training_replay_rows > replay.replay_snapshot().revision
+                {
+                    return Err(route_message(
+                        "durable campaign learner snapshot is detached from its execution plan",
+                    ));
+                }
+                let replay_snapshot = replay
+                    .snapshot_through(manifest.training_replay_rows)
+                    .map_err(route_error)?;
+                let started = Instant::now();
+                let snapshot = TacticQImmutableLearnerSnapshot::fit(
+                    replay_snapshot.corpus,
+                    replay_snapshot.version.revision,
+                    manifest.model_revision,
+                    model_config.clone(),
+                    goal_distance_feature,
+                    value_treatment,
+                )
+                .map_err(route_error)?;
+                if snapshot.sha256 != expected_sha256 || snapshot.manifest != manifest {
+                    return Err(route_message(
+                        "durable campaign learner snapshot cannot be reconstructed exactly",
+                    ));
+                }
+                (
+                    snapshot,
+                    CampaignLearnerUpdateMetrics {
+                        updates: 0,
+                        update_micros: 0,
+                        snapshots_published: 0,
+                        reconstruction_micros: elapsed_micros(started.elapsed()),
+                    },
+                    published_snapshot_sha256s,
+                )
+            } else {
+                if !replay.is_empty() {
+                    return Err(route_message(
+                        "campaign replay has no durable learner snapshot authority",
+                    ));
+                }
+                let replay_snapshot = replay.snapshot().map_err(route_error)?;
+                let snapshot = TacticQImmutableLearnerSnapshot::fit(
+                    replay_snapshot.corpus,
+                    replay_snapshot.version.revision,
+                    0,
+                    model_config.clone(),
+                    goal_distance_feature,
+                    value_treatment,
+                )
+                .map_err(route_error)?;
+                let stored_sha256 = replay
+                    .publish_learner_snapshot(&snapshot.manifest)
+                    .map_err(route_error)?;
+                if stored_sha256 != snapshot.sha256 {
+                    return Err(route_message(
+                        "campaign learner snapshot store changed its identity",
+                    ));
+                }
+                let mut published = BTreeSet::new();
+                published.insert(snapshot.sha256);
+                (
+                    snapshot,
+                    CampaignLearnerUpdateMetrics {
+                        updates: 0,
+                        update_micros: 0,
+                        snapshots_published: 1,
+                        reconstruction_micros: 0,
+                    },
+                    published,
+                )
+            };
+        published_snapshot_sha256s.insert(snapshot.sha256);
+        let mut authority = Self {
             replay,
             model_config,
             goal_distance_feature,
             value_treatment,
             refit_every_decisions,
-            completed_decisions: 0,
+            completed_decisions,
+            published_snapshot_sha256s,
             latest: Arc::new(snapshot),
-            invocation_metrics: CampaignLearnerUpdateMetrics {
-                updates: u64::from(has_training),
-                update_micros,
-                snapshots_published: 1,
-            },
-        })
+            invocation_metrics,
+        };
+        if let Some(maximum_stale_replay_revisions) = maximum_stale_replay_revisions {
+            authority.restore_missing_update(maximum_stale_replay_revisions)?;
+        }
+        Ok(authority)
     }
 
     pub(super) fn snapshot(&self) -> Arc<TacticQImmutableLearnerSnapshot> {
@@ -140,18 +212,29 @@ impl CampaignTacticLearnerAuthority {
 
     pub(super) fn finish_decision(
         &mut self,
+        publisher_lane: u32,
+        publisher_decision: u64,
         admitted_rows: u64,
         duplicate_rows: u64,
         force_update: bool,
         maximum_stale_replay_revisions: u64,
     ) -> Result<CampaignLearnerPublishResult, NativeTacticRouteRunError> {
-        self.completed_decisions = self.completed_decisions.saturating_add(1);
+        if !self
+            .completed_decisions
+            .insert((publisher_lane, publisher_decision))
+        {
+            return Ok(CampaignLearnerPublishResult {
+                admitted_rows,
+                duplicate_rows,
+                update: CampaignLearnerUpdateMetrics::default(),
+            });
+        }
         let current_revision = self.replay.replay_snapshot().revision;
         let pending_revisions = current_revision.saturating_sub(self.latest.replay_revision);
         let update_required = learner_update_required(
             pending_revisions,
             self.latest.manifest.model_revision,
-            self.completed_decisions,
+            self.completed_decisions.len() as u64,
             self.refit_every_decisions,
             force_update,
             maximum_stale_replay_revisions,
@@ -172,6 +255,7 @@ impl CampaignTacticLearnerAuthority {
                     .invocation_metrics
                     .snapshots_published
                     .saturating_sub(before.snapshots_published),
+                reconstruction_micros: 0,
             }
         } else {
             CampaignLearnerUpdateMetrics::default()
@@ -204,6 +288,7 @@ impl CampaignTacticLearnerAuthority {
                 .invocation_metrics
                 .snapshots_published
                 .saturating_sub(before.snapshots_published),
+            reconstruction_micros: 0,
         })
     }
 
@@ -213,6 +298,33 @@ impl CampaignTacticLearnerAuthority {
 
     pub(super) fn invocation_metrics(&self) -> CampaignLearnerUpdateMetrics {
         self.invocation_metrics
+    }
+
+    pub(super) fn total_updates(&self) -> u64 {
+        self.latest.manifest.model_revision
+    }
+
+    pub(super) fn published_snapshot_count(&self) -> u64 {
+        self.published_snapshot_sha256s.len() as u64
+    }
+
+    fn restore_missing_update(
+        &mut self,
+        maximum_stale_replay_revisions: u64,
+    ) -> Result<(), NativeTacticRouteRunError> {
+        let current_revision = self.replay.replay_snapshot().revision;
+        let pending_revisions = current_revision.saturating_sub(self.latest.replay_revision);
+        if learner_update_required(
+            pending_revisions,
+            self.latest.manifest.model_revision,
+            self.completed_decisions.len() as u64,
+            self.refit_every_decisions,
+            false,
+            maximum_stale_replay_revisions,
+        ) {
+            self.fit_current()?;
+        }
+        Ok(())
     }
 
     fn fit_current(
@@ -247,6 +359,7 @@ impl CampaignTacticLearnerAuthority {
             ));
         }
         let snapshot = Arc::new(snapshot);
+        self.published_snapshot_sha256s.insert(snapshot.sha256);
         self.latest = Arc::clone(&snapshot);
         self.invocation_metrics.updates = self.invocation_metrics.updates.saturating_add(1);
         self.invocation_metrics.snapshots_published = self
@@ -296,5 +409,12 @@ mod tests {
         assert!(learner_update_required(17, 1, 5, 4, false, 16));
         assert!(learner_update_required(1, 1, 5, 4, true, 16));
         assert!(!learner_update_required(0, 1, 8, 4, true, 0));
+
+        // Reopening after decision ten must preserve the revision fitted after
+        // decision eight. Process restart is not a refit boundary.
+        assert!(!learner_update_required(32, 3, 10, 4, false, 64));
+        // If decision twelve committed but its scheduled publication did not,
+        // recovery performs exactly that missing cadence update.
+        assert!(learner_update_required(64, 3, 12, 4, false, 64));
     }
 }

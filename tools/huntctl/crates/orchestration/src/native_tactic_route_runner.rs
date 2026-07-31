@@ -27,8 +27,8 @@ use crate::tactic_q_campaign::{
     TacticCampaignGraphProjectionEdge, TacticCampaignGraphProjectionNode, TacticExpansionLease,
     TacticFrontierAcquisition, TacticQCampaign, TacticQCampaignError, TacticQDecision,
     TacticQFinalResult, TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot,
-    TacticQTrainingCorpus, TacticRestorationContract, TacticSchedulerDecisionTrace,
-    has_no_progress_loop, route_checkpoint, validate_training_corpus,
+    TacticQLearnerSnapshotKind, TacticQTrainingCorpus, TacticRestorationContract,
+    TacticSchedulerDecisionTrace, has_no_progress_loop, route_checkpoint, validate_training_corpus,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use crate::tactic_replay_control_plane::{
@@ -466,6 +466,12 @@ fn run_native_tactic_route_with_optional_fleet(
             encoder.goal_distance_feature(),
             config.execution_plan.value_treatment,
             config.execution_plan.refit_every_decisions,
+            match config.execution_plan.replay_sharing {
+                NativeTacticReplaySharingPlan::BoundedStaleness {
+                    maximum_stale_replay_revisions,
+                } => Some(maximum_stale_replay_revisions),
+                NativeTacticReplaySharingPlan::GenerationBarrier => None,
+            },
         )?));
 
     let pool = fleet.pool(config, execution_plan_sha256, root_source_frame)?;
@@ -715,8 +721,11 @@ fn run_native_tactic_route_with_optional_fleet(
     let final_replay_snapshot = final_replay.version;
     let replay_admission = learner_authority.replay().invocation_metrics();
     let learner_metrics = learner_authority.invocation_metrics();
-    let learner_updates = learner_metrics.updates;
-    timing.model_update_micros = learner_metrics.update_micros;
+    let learner_updates = learner_authority.total_updates();
+    timing.model_update_micros = timing
+        .model_update_micros
+        .max(learner_metrics.update_micros)
+        .saturating_add(learner_metrics.reconstruction_micros);
     let latest_learner_snapshot = learner_authority.snapshot();
     let declared_model_snapshots_consumed = seed_results
         .iter()
@@ -727,7 +736,7 @@ fn run_native_tactic_route_with_optional_fleet(
         .len() as u64;
     let lane_local_model_updates = seed_results.iter().map(|seed| seed.learner_updates).sum();
     let learner_authority_report = NativeTacticLearnerAuthorityReport {
-        model_snapshots_published: learner_metrics.snapshots_published,
+        model_snapshots_published: learner_authority.published_snapshot_count(),
         latest_model_snapshot_sha256: latest_learner_snapshot.sha256,
         latest_model_revision: latest_learner_snapshot.manifest.model_revision,
         latest_training_replay_rows: latest_learner_snapshot.manifest.training_replay_rows,
