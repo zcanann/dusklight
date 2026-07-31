@@ -25,8 +25,22 @@ pub const EPSILON_SCALE: u32 = 1_000_000;
 #[serde(rename_all = "snake_case")]
 pub enum TacticProposalPolicy {
     Learned,
+    /// Execute the learned-policy selector against the campaign's initial
+    /// immutable learner snapshot while retaining experience only as shadow
+    /// evidence. No update may be deployed into subsequent decisions.
+    FrozenPolicy,
     RandomValid,
     StructuredNonLearning,
+}
+
+impl TacticProposalPolicy {
+    pub fn uses_learned_selector(self) -> bool {
+        matches!(self, Self::Learned | Self::FrozenPolicy)
+    }
+
+    pub fn deploys_policy_updates(self) -> bool {
+        self == Self::Learned
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -386,13 +400,15 @@ pub fn choose_tactic_batch_for_policy(
     policy: TacticProposalPolicy,
 ) -> Result<Vec<SelectedTactic>, TacticExplorationError> {
     match policy {
-        TacticProposalPolicy::Learned => choose_tactic_batch_with_state_untried(
-            ranking,
-            decision_index,
-            config,
-            state_untried,
-            maximum_proposals,
-        ),
+        TacticProposalPolicy::Learned | TacticProposalPolicy::FrozenPolicy => {
+            choose_tactic_batch_with_state_untried(
+                ranking,
+                decision_index,
+                config,
+                state_untried,
+                maximum_proposals,
+            )
+        }
         TacticProposalPolicy::StructuredNonLearning => {
             let mut baseline = ranking.clone();
             baseline.values.ranked.clear();

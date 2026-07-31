@@ -468,7 +468,7 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
             }
         }
     }
-    let learning_expected = route.proposal_policy == TacticProposalPolicy::Learned;
+    let learning_expected = route.proposal_policy.deploys_policy_updates();
     let decision_count = traces.len() as u64;
     let first_incomplete_link = if decision_count == 0
         || decisions_with_observed_state != decision_count

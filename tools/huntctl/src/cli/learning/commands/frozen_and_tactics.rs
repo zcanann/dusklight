@@ -574,11 +574,12 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 let proposal_policy = match proposal_policy_argument.as_deref().unwrap_or("learned")
                 {
                     "learned" => TacticProposalPolicy::Learned,
+                    "frozen-policy" => TacticProposalPolicy::FrozenPolicy,
                     "random-valid" => TacticProposalPolicy::RandomValid,
                     "structured-non-learning" => TacticProposalPolicy::StructuredNonLearning,
                     value => {
                         return Err(format!(
-                                "unknown tactic proposal policy {value:?}; expected learned, random-valid, or structured-non-learning"
+                            "unknown tactic proposal policy {value:?}; expected learned, frozen-policy, random-valid, or structured-non-learning"
                             )
                             .into());
                     }
@@ -1363,7 +1364,7 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .map(PathBuf::from)
                     .unwrap_or(std::env::current_dir()?),
             )?;
-            let routes = ["--learned-report", "--scheduler-report", "--random-report"]
+            let routes = ["--learned-report", "--frozen-report", "--random-report"]
                 .into_iter()
                 .map(|argument| {
                     Ok::<_, Box<dyn Error>>(serde_json::from_slice::<NativeTacticRouteReport>(

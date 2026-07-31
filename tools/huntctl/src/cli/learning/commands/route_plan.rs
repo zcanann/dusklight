@@ -163,6 +163,10 @@ mod tests {
             }
         );
         assert_eq!(
+            default_replay_sharing(TacticProposalPolicy::FrozenPolicy, 4, 2).unwrap(),
+            NativeTacticReplaySharingPlan::GenerationBarrier
+        );
+        assert_eq!(
             default_replay_sharing(TacticProposalPolicy::StructuredNonLearning, 4, 2).unwrap(),
             NativeTacticReplaySharingPlan::GenerationBarrier
         );

@@ -1,23 +1,26 @@
 use super::scratch_discovery::route_report_sha256;
 use super::*;
 
-pub const NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V1: &str =
-    "dusklight-native-tactic-scratch-comparison/v1";
+pub const NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V2: &str =
+    "dusklight-native-tactic-scratch-comparison/v2";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NativeTacticScratchTreatment {
     LearnedRanking,
-    SchedulerOnlyCoverage,
+    FrozenPolicy,
     RandomValidRanking,
 }
 
 impl NativeTacticScratchTreatment {
-    fn from_policy(policy: TacticProposalPolicy) -> Self {
+    fn from_policy(policy: TacticProposalPolicy) -> Result<Self, NativeTacticRouteRunError> {
         match policy {
-            TacticProposalPolicy::Learned => Self::LearnedRanking,
-            TacticProposalPolicy::StructuredNonLearning => Self::SchedulerOnlyCoverage,
-            TacticProposalPolicy::RandomValid => Self::RandomValidRanking,
+            TacticProposalPolicy::Learned => Ok(Self::LearnedRanking),
+            TacticProposalPolicy::FrozenPolicy => Ok(Self::FrozenPolicy),
+            TacticProposalPolicy::RandomValid => Ok(Self::RandomValidRanking),
+            TacticProposalPolicy::StructuredNonLearning => Err(route_message(
+                "structured non-learning is diagnostic, not the frozen-policy control",
+            )),
         }
     }
 }
@@ -88,6 +91,8 @@ pub struct NativeTacticScratchComparisonCell {
     pub treatment: NativeTacticScratchTreatment,
     pub proposal_policy: TacticProposalPolicy,
     pub route_report_sha256: Digest,
+    pub campaign_summary_sha256: Digest,
+    pub causal_chain: NativeTacticCampaignCausalSummary,
     pub campaign_audit_sha256: Digest,
     pub execution_plan_sha256: Digest,
     pub replay_sharing: NativeTacticReplaySharingPlan,
@@ -134,10 +139,13 @@ impl NativeTacticScratchComparisonReport {
             validate_matched_route(first, route)?;
             validate_matched_plan(&first_plan, &plan)?;
             let audit = NativeTacticScratchCampaignAudit::build(&repository_root, route)?;
+            let summary = NativeTacticCampaignSummary::build(route, &plan)?;
             cells.push(NativeTacticScratchComparisonCell {
-                treatment: NativeTacticScratchTreatment::from_policy(route.proposal_policy),
+                treatment: NativeTacticScratchTreatment::from_policy(route.proposal_policy)?,
                 proposal_policy: route.proposal_policy,
                 route_report_sha256: route_report_sha256(route)?,
+                campaign_summary_sha256: summary.content_sha256,
+                causal_chain: summary.causal_chain,
                 campaign_audit_sha256: audit.content_sha256,
                 execution_plan_sha256: route.execution_plan_sha256,
                 replay_sharing: plan.replay_sharing,
@@ -151,7 +159,7 @@ impl NativeTacticScratchComparisonReport {
             .collect::<BTreeSet<_>>()
             != BTreeSet::from([
                 NativeTacticScratchTreatment::LearnedRanking,
-                NativeTacticScratchTreatment::SchedulerOnlyCoverage,
+                NativeTacticScratchTreatment::FrozenPolicy,
                 NativeTacticScratchTreatment::RandomValidRanking,
             ])
         {
@@ -160,7 +168,7 @@ impl NativeTacticScratchComparisonReport {
             ));
         }
         let mut report = Self {
-            schema: NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V1.into(),
+            schema: NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
             optimization_request_sha256: first.optimization_request_sha256,
             execution_binding_sha256: first.execution_binding_sha256,
@@ -186,7 +194,7 @@ impl NativeTacticScratchComparisonReport {
             .iter()
             .map(|cell| cell.treatment)
             .collect::<BTreeSet<_>>();
-        if self.schema != NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V1
+        if self.schema != NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V2
             || self.content_sha256 == Digest::ZERO
             || self.optimization_request_sha256 == Digest::ZERO
             || self.execution_binding_sha256 == Digest::ZERO
@@ -201,10 +209,12 @@ impl NativeTacticScratchComparisonReport {
             || treatments.len() != 3
             || self.cells.iter().any(|cell| {
                 cell.route_report_sha256 == Digest::ZERO
+                    || cell.campaign_summary_sha256 == Digest::ZERO
                     || cell.campaign_audit_sha256 == Digest::ZERO
                     || cell.execution_plan_sha256 == Digest::ZERO
-                    || cell.treatment
-                        != NativeTacticScratchTreatment::from_policy(cell.proposal_policy)
+                    || NativeTacticScratchTreatment::from_policy(cell.proposal_policy)
+                        .map_or(true, |treatment| cell.treatment != treatment)
+                    || !treatment_causal_chain_valid(cell)
                     || !metrics_valid(&cell.metrics, self.workers)
             })
             || self.compute_content_sha256()? != self.content_sha256
@@ -227,6 +237,19 @@ impl NativeTacticScratchComparisonReport {
         Ok(Digest(
             Sha256::digest(serde_json::to_vec(&unsigned).map_err(route_error)?).into(),
         ))
+    }
+}
+
+fn treatment_causal_chain_valid(cell: &NativeTacticScratchComparisonCell) -> bool {
+    match cell.proposal_policy {
+        TacticProposalPolicy::Learned => cell.causal_chain.learning_expected,
+        TacticProposalPolicy::FrozenPolicy => {
+            !cell.causal_chain.learning_expected
+                && cell.causal_chain.distinct_model_snapshots_consumed == 1
+                && cell.causal_chain.post_update_policy_decisions == 0
+        }
+        TacticProposalPolicy::RandomValid => !cell.causal_chain.learning_expected,
+        TacticProposalPolicy::StructuredNonLearning => false,
     }
 }
 
@@ -641,13 +664,17 @@ mod tests {
     fn every_policy_maps_to_a_distinct_required_treatment() {
         let treatments = [
             TacticProposalPolicy::Learned,
-            TacticProposalPolicy::StructuredNonLearning,
+            TacticProposalPolicy::FrozenPolicy,
             TacticProposalPolicy::RandomValid,
         ]
-        .map(NativeTacticScratchTreatment::from_policy)
+        .map(|policy| NativeTacticScratchTreatment::from_policy(policy).unwrap())
         .into_iter()
         .collect::<BTreeSet<_>>();
         assert_eq!(treatments.len(), 3);
+        assert!(
+            NativeTacticScratchTreatment::from_policy(TacticProposalPolicy::StructuredNonLearning)
+                .is_err()
+        );
     }
 
     #[test]
@@ -662,6 +689,11 @@ mod tests {
             TacticProposalPolicy::RandomValid,
             NativeTacticReplaySharingPlan::GenerationBarrier,
         );
+        let frozen = plan(
+            TacticProposalPolicy::FrozenPolicy,
+            NativeTacticReplaySharingPlan::GenerationBarrier,
+        );
+        validate_matched_plan(&learned, &frozen).unwrap();
         validate_matched_plan(&learned, &random).unwrap();
 
         let mut budget_drift = random.clone();

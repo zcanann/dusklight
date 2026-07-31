@@ -243,7 +243,7 @@ impl TacticQCampaign {
             ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
         }
         let mut goal_reachability_estimates = Vec::new();
-        if policy == TacticProposalPolicy::Learned {
+        if policy.uses_learned_selector() {
             let context = GeneralizedTacticContext::from_facts(&self.current.snapshot)?;
             let applicable_descriptors = ranking
                 .choices
@@ -719,6 +719,74 @@ impl TacticQCampaign {
         F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
         A: Fn(&TacticAssetDescription) -> bool,
     {
+        self.retain_rewarded_with_update_mode(
+            decision,
+            outcome,
+            catalog,
+            blueprints,
+            registry,
+            encode,
+            entry_applicable,
+            reward_spec,
+            refit_model,
+            true,
+        )
+    }
+
+    /// Retain authenticated experience and graph evidence without changing the
+    /// policy model, including after a terminal outcome. This is the explicit
+    /// frozen-policy control path; ordinary learning must use
+    /// [`Self::retain_and_refit_rewarded`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn retain_rewarded_without_policy_update<E, F, A>(
+        &mut self,
+        decision: TacticQDecision,
+        outcome: NativeTacticWorkerOutcome,
+        catalog: &TacticAssetCatalog,
+        blueprints: &[TacticBlueprint],
+        registry: &FactRegistry,
+        encode: &F,
+        entry_applicable: A,
+        reward_spec: &TacticRewardSpec,
+    ) -> Result<RewardedTacticQCampaignStep, TacticQCampaignError>
+    where
+        E: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+        A: Fn(&TacticAssetDescription) -> bool,
+    {
+        self.retain_rewarded_with_update_mode(
+            decision,
+            outcome,
+            catalog,
+            blueprints,
+            registry,
+            encode,
+            entry_applicable,
+            reward_spec,
+            false,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn retain_rewarded_with_update_mode<E, F, A>(
+        &mut self,
+        decision: TacticQDecision,
+        outcome: NativeTacticWorkerOutcome,
+        catalog: &TacticAssetCatalog,
+        blueprints: &[TacticBlueprint],
+        registry: &FactRegistry,
+        encode: &F,
+        entry_applicable: A,
+        reward_spec: &TacticRewardSpec,
+        refit_model: bool,
+        refit_terminal: bool,
+    ) -> Result<RewardedTacticQCampaignStep, TacticQCampaignError>
+    where
+        E: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+        A: Fn(&TacticAssetDescription) -> bool,
+    {
         let state = encode(&self.current.snapshot)
             .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
         let next_state = encode(&outcome.next_facts)
@@ -738,7 +806,7 @@ impl TacticQCampaign {
                 .and_then(|option| option.trajectory),
         )?;
         let training_reward = reward.training_reward;
-        let refit_model = refit_model || outcome.terminal;
+        let refit_model = refit_model || (refit_terminal && outcome.terminal);
         let step = self.retain_and_refit(
             decision,
             outcome,

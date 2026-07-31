@@ -246,7 +246,7 @@ pub use scratch_campaign_audit::{
 };
 mod scratch_comparison;
 pub use scratch_comparison::{
-    NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V1, NativeTacticScratchComparisonCell,
+    NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V2, NativeTacticScratchComparisonCell,
     NativeTacticScratchComparisonReport, NativeTacticScratchEfficiencyMetrics,
     NativeTacticScratchTreatment,
 };
@@ -505,6 +505,12 @@ fn run_native_tactic_route_with_optional_fleet(
                 NativeTacticReplaySharingPlan::GenerationBarrier => None,
             },
         )?));
+    let frozen_policy_snapshot =
+        if config.execution_plan.proposal_policy == TacticProposalPolicy::FrozenPolicy {
+            Some(lock_learner_authority(&learner_authority)?.snapshot())
+        } else {
+            None
+        };
 
     let pool = fleet.pool(config, execution_plan_sha256, root_source_frame)?;
     let checkpoint_cache_capacity_per_worker_bytes =
@@ -528,7 +534,9 @@ fn run_native_tactic_route_with_optional_fleet(
                 publish_demonstration_replay(&mut learner, demonstration)?;
             }
             for generation in &config.execution_plan.generations {
-                let inherited_learner_snapshot = {
+                let inherited_learner_snapshot = if let Some(snapshot) = &frozen_policy_snapshot {
+                    Arc::clone(snapshot)
+                } else {
                     let mut learner = lock_learner_authority(&learner_authority)?;
                     match config.execution_plan.replay_sharing {
                         NativeTacticReplaySharingPlan::GenerationBarrier => {
@@ -543,10 +551,14 @@ fn run_native_tactic_route_with_optional_fleet(
                         }
                     }
                 };
-                let live_learner = matches!(
-                    config.execution_plan.replay_sharing,
-                    NativeTacticReplaySharingPlan::BoundedStaleness { .. }
-                )
+                let live_learner = (config
+                    .execution_plan
+                    .proposal_policy
+                    .deploys_policy_updates()
+                    && matches!(
+                        config.execution_plan.replay_sharing,
+                        NativeTacticReplaySharingPlan::BoundedStaleness { .. }
+                    ))
                 .then(|| Arc::clone(&learner_authority));
                 let mut generation_results = std::thread::scope(|generation_scope| {
                     let coordinator_handles = generation

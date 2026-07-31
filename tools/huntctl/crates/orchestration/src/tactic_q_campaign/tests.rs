@@ -1464,6 +1464,29 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             .unwrap()
     );
     assert!(uninterrupted.final_result().is_err());
+    let mut frozen = TacticQCampaign::resume(uninterrupted.checkpoint().unwrap()).unwrap();
+    let frozen_model_revision = frozen.model_revision;
+    let frozen_model = frozen.model.clone();
+    let frozen_step = frozen
+        .retain_rewarded_without_policy_update(
+            uninterrupted_decision.clone(),
+            terminal_outcome.clone(),
+            &catalog,
+            &[],
+            &registry,
+            &encode,
+            |_| true,
+            &reward_spec,
+        )
+        .unwrap();
+    assert!(frozen_step.step.transition.value_sample.terminal);
+    assert_eq!(frozen.model_revision, frozen_model_revision);
+    assert!(match (&frozen.model, &frozen_model) {
+        (Some(actual), Some(expected)) => Arc::ptr_eq(actual, expected),
+        (None, None) => true,
+        _ => false,
+    });
+    assert_eq!(frozen.training_replay_len(), 2);
     let uninterrupted_step = uninterrupted
         .retain_and_refit_rewarded(
             uninterrupted_decision,

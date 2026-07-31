@@ -502,6 +502,7 @@ mod tests {
     fn ranking_treatments_share_one_graph_acquisition_schedule() {
         let plans = [
             TacticProposalPolicy::Learned,
+            TacticProposalPolicy::FrozenPolicy,
             TacticProposalPolicy::StructuredNonLearning,
             TacticProposalPolicy::RandomValid,
         ]
@@ -519,6 +520,7 @@ mod tests {
 
         let single_seed = [
             TacticProposalPolicy::Learned,
+            TacticProposalPolicy::FrozenPolicy,
             TacticProposalPolicy::StructuredNonLearning,
             TacticProposalPolicy::RandomValid,
         ]

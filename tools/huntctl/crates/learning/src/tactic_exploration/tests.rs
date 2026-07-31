@@ -1222,6 +1222,25 @@ fn equal_budget_baselines_ignore_learned_values_and_remain_seeded() {
         TacticProposalPolicy::StructuredNonLearning,
     )
     .unwrap();
+    let learned = choose_tactic_batch_for_policy(
+        &ranking,
+        7,
+        config,
+        &choices,
+        3,
+        TacticProposalPolicy::Learned,
+    )
+    .unwrap();
+    let frozen = choose_tactic_batch_for_policy(
+        &ranking,
+        7,
+        config,
+        &choices,
+        3,
+        TacticProposalPolicy::FrozenPolicy,
+    )
+    .unwrap();
+    assert_eq!(frozen, learned);
     ranking.values.ranked[0].mean_q = -100.0;
     assert_eq!(
         random,
@@ -1342,6 +1361,7 @@ fn learned_and_structured_batches_obey_the_live_applicability_mask() {
 
     for policy in [
         TacticProposalPolicy::Learned,
+        TacticProposalPolicy::FrozenPolicy,
         TacticProposalPolicy::StructuredNonLearning,
     ] {
         let selected = choose_tactic_batch_for_policy(

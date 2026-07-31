@@ -59,7 +59,11 @@ pub(super) fn run_seed(
             seed,
         )?;
         let mut resumed_campaign = resumed.0;
-        let imported = if config.execution_plan.proposal_policy == TacticProposalPolicy::Learned {
+        let imported = if config
+            .execution_plan
+            .proposal_policy
+            .uses_learned_selector()
+        {
             resumed_campaign
                 .consume_learner_snapshot(&inherited_learner_snapshot)
                 .map_err(route_error)?;
@@ -118,7 +122,11 @@ pub(super) fn run_seed(
         campaign
             .bind_execution_authority(execution_plan_sha256)
             .map_err(route_error)?;
-        let imported = if config.execution_plan.proposal_policy == TacticProposalPolicy::Learned {
+        let imported = if config
+            .execution_plan
+            .proposal_policy
+            .uses_learned_selector()
+        {
             campaign
                 .consume_learner_snapshot(&inherited_learner_snapshot)
                 .map_err(route_error)?;
@@ -874,19 +882,34 @@ pub(super) fn run_seed(
         )?;
         let next_action_catalog_micros = elapsed_micros(next_action_catalog_started.elapsed());
         let graph_admission_started = Instant::now();
-        let step = campaign
-            .retain_and_refit_rewarded(
-                decision,
-                winning_outcome.clone(),
-                &next_proposals.catalog,
-                &next_proposals.blueprints,
-                registry,
-                &encode,
-                |_| true,
-                reward_spec,
-                false,
-            )
-            .map_err(route_error)?;
+        let step = if config.execution_plan.proposal_policy == TacticProposalPolicy::FrozenPolicy {
+            campaign
+                .retain_rewarded_without_policy_update(
+                    decision,
+                    winning_outcome.clone(),
+                    &next_proposals.catalog,
+                    &next_proposals.blueprints,
+                    registry,
+                    &encode,
+                    |_| true,
+                    reward_spec,
+                )
+                .map_err(route_error)?
+        } else {
+            campaign
+                .retain_and_refit_rewarded(
+                    decision,
+                    winning_outcome.clone(),
+                    &next_proposals.catalog,
+                    &next_proposals.blueprints,
+                    registry,
+                    &encode,
+                    |_| true,
+                    reward_spec,
+                    false,
+                )
+                .map_err(route_error)?
+        };
         let selected_outcome_retention_micros = elapsed_micros(graph_admission_started.elapsed());
         timing.graph_admission_micros = timing
             .graph_admission_micros
