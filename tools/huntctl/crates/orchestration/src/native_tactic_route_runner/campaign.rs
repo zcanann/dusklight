@@ -140,6 +140,12 @@ pub(super) fn run_seed(
         }
     };
     let mut timing = performance.timing;
+    if timing.persistence_micros > 0 && timing.persistence_breakdown.is_none() {
+        timing.persistence_breakdown = Some(NativeTacticPersistenceTiming {
+            unattributed_micros: timing.persistence_micros,
+            ..NativeTacticPersistenceTiming::default()
+        });
+    }
     let mut native_restore_accounting = performance.native_restore_accounting;
     let prior_wall_micros = timing.wall_micros;
     let traced_useful_decisions = trace
@@ -230,6 +236,7 @@ pub(super) fn run_seed(
         prune_tactic_recovery_points(&seed_root, campaign.decision_index)?;
     } else {
         let recovery_decision_index = campaign.decision_index;
+        let initial_recovery_started = Instant::now();
         persist_tactic_recovery_point(
             &seed_root,
             &mut campaign,
@@ -242,6 +249,14 @@ pub(super) fn run_seed(
                 timing: timing.clone(),
             },
         )?;
+        let initial_recovery_micros = elapsed_micros(initial_recovery_started.elapsed());
+        record_persistence_timing(
+            &mut timing,
+            NativeTacticPersistenceTiming {
+                recovery_checkpoint_micros: initial_recovery_micros,
+                ..NativeTacticPersistenceTiming::default()
+            },
+        );
     }
     let mut decision_journal = TacticDecisionJournalAppender::open(&seed_root)?;
     if decision_journal.next_decision_index() != campaign.decision_index {
@@ -627,12 +642,13 @@ pub(super) fn run_seed(
             .map_err(route_error)?;
         let source_tape_persistence_micros =
             elapsed_micros(source_tape_persistence_started.elapsed());
-        timing.persistence_micros = timing
-            .persistence_micros
-            .saturating_add(source_tape_persistence_micros);
-        timing.evidence_projection_and_persistence_micros = timing
-            .evidence_projection_and_persistence_micros
-            .saturating_add(source_tape_persistence_micros);
+        record_persistence_timing(
+            &mut timing,
+            NativeTacticPersistenceTiming {
+                source_tape_micros: source_tape_persistence_micros,
+                ..NativeTacticPersistenceTiming::default()
+            },
+        );
         let source_snapshot_sha256 = source_snapshot.content_sha256().map_err(route_error)?;
         let matching_cached_frontier = cached_frontier.as_ref().filter(|frontier| {
             frontier.state_sha256 == source_snapshot_sha256
@@ -1154,9 +1170,11 @@ pub(super) fn run_seed(
             .evidence_projection_and_persistence_micros
             .saturating_add(evidence_micros);
         let persistence_started = Instant::now();
+        let model_update_micros_before = timing.model_update_micros;
         timing.wall_micros =
             prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
         let recovery_decision_index = campaign.decision_index;
+        let recovery_checkpoint_started = Instant::now();
         persist_tactic_recovery_point(
             &seed_root,
             &mut campaign,
@@ -1169,6 +1187,7 @@ pub(super) fn run_seed(
                 timing: timing.clone(),
             },
         )?;
+        let recovery_checkpoint_micros = elapsed_micros(recovery_checkpoint_started.elapsed());
         inject_tactic_fault(
             config,
             NativeTacticFaultPoint::AfterRecoveryPointCommit,
@@ -1177,6 +1196,7 @@ pub(super) fn run_seed(
             decision_index,
             &seed_root,
         )?;
+        let decision_journal_started = Instant::now();
         decision_journal.append(&decision_record(
             &decision_trace,
             campaign.episode_group,
@@ -1187,6 +1207,7 @@ pub(super) fn run_seed(
             Some(transition.as_ref().clone()),
             proposal_records,
         ))?;
+        let decision_journal_micros = elapsed_micros(decision_journal_started.elapsed());
         inject_tactic_fault(
             config,
             NativeTacticFaultPoint::AfterDecisionCommit,
@@ -1195,13 +1216,16 @@ pub(super) fn run_seed(
             decision_index,
             &seed_root,
         )?;
+        let mut replay_publication_micros = 0;
         if let Some(session) = replay_session.as_ref() {
+            let replay_publication_started = Instant::now();
             let publish = session.publish_evaluated(
                 decision_index,
                 learner_snapshot_sha256,
                 &evaluated,
                 &evaluated_episode_groups,
             )?;
+            let replay_publication_elapsed = elapsed_micros(replay_publication_started.elapsed());
             if publish.admitted_rows.saturating_add(publish.duplicate_rows)
                 != evaluated.len() as u64
             {
@@ -1209,13 +1233,20 @@ pub(super) fn run_seed(
                     "campaign learner did not account for every committed proposal",
                 ));
             }
+            replay_publication_micros =
+                replay_publication_elapsed.saturating_sub(publish.update.update_micros);
             timing.model_update_micros = timing
                 .model_update_micros
                 .saturating_add(publish.update.update_micros);
         }
+        let lease_resolution_started = Instant::now();
         lease_ledger.resolve(lease_batch_sha256, NativeTacticLeaseOutcome::Completed)?;
+        let lease_resolution_micros = elapsed_micros(lease_resolution_started.elapsed());
         trace.push(decision_trace);
+        let recovery_prune_started = Instant::now();
         prune_tactic_recovery_points(&seed_root, campaign.decision_index)?;
+        let recovery_prune_micros = elapsed_micros(recovery_prune_started.elapsed());
+        let retained_terminal_started = Instant::now();
         for candidate in terminal_candidates {
             if !campaign
                 .final_result_matches_graph_terminal(&candidate)
@@ -1230,14 +1261,27 @@ pub(super) fn run_seed(
                 &mut best_success,
             )?;
         }
+        let retained_terminal_micros = elapsed_micros(retained_terminal_started.elapsed());
         if cancellation_requested(config) {
             return Err(route_cancelled("native tactic route paused"));
         }
-        let persistence_micros = elapsed_micros(persistence_started.elapsed());
-        timing.persistence_micros = timing.persistence_micros.saturating_add(persistence_micros);
-        timing.evidence_projection_and_persistence_micros = timing
-            .evidence_projection_and_persistence_micros
-            .saturating_add(persistence_micros);
+        let persistence_elapsed = elapsed_micros(persistence_started.elapsed());
+        let model_update_micros = timing
+            .model_update_micros
+            .saturating_sub(model_update_micros_before);
+        let mut persistence_breakdown = NativeTacticPersistenceTiming {
+            recovery_checkpoint_micros,
+            decision_journal_micros,
+            replay_publication_micros,
+            lease_resolution_micros,
+            recovery_prune_micros,
+            retained_terminal_micros,
+            ..NativeTacticPersistenceTiming::default()
+        };
+        persistence_breakdown.unattributed_micros = persistence_elapsed
+            .saturating_sub(model_update_micros)
+            .saturating_sub(persistence_breakdown.total_micros());
+        record_persistence_timing(&mut timing, persistence_breakdown);
     }
 
     let wall_budget_reached =
@@ -1360,12 +1404,13 @@ pub(super) fn run_seed(
         (None, None)
     };
     let final_persistence_micros = elapsed_micros(final_persistence_started.elapsed());
-    timing.persistence_micros = timing
-        .persistence_micros
-        .saturating_add(final_persistence_micros);
-    timing.evidence_projection_and_persistence_micros = timing
-        .evidence_projection_and_persistence_micros
-        .saturating_add(final_persistence_micros);
+    record_persistence_timing(
+        &mut timing,
+        NativeTacticPersistenceTiming {
+            finalization_micros: final_persistence_micros,
+            ..NativeTacticPersistenceTiming::default()
+        },
+    );
     timing.wall_micros =
         prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
     timing.useful_decisions_per_second_millionths =
@@ -1440,47 +1485,5 @@ pub(super) fn run_seed(
             trace,
         },
         generated_training,
-    })
-}
-
-pub(super) fn tactic_graph_metrics(
-    graph: &crate::state_graph::StateGraph,
-    graph_sha256: Digest,
-    trace: &[NativeTacticDecisionTrace],
-    lease_accounting: NativeTacticLeaseAccounting,
-) -> Result<NativeTacticGraphMetrics, NativeTacticRouteRunError> {
-    let graph_report =
-        GraphSearchReport::from_validated_graph(graph, graph_sha256).map_err(route_error)?;
-    let completed_trace_dispatches = trace.iter().try_fold(0_u64, |total, decision| {
-        total
-            .checked_add(u64::try_from(decision.proposal_batch.len()).map_err(route_error)?)
-            .ok_or_else(|| route_message("completed tactic lease count overflowed"))
-    })?;
-    lease_accounting.validate()?;
-    if lease_accounting.completed_leases != completed_trace_dispatches
-        || lease_accounting.unresolved_leases != 0
-    {
-        return Err(route_message(
-            "native tactic lease accounting is detached from durable completed decisions",
-        ));
-    }
-    let duplicate_transpositions = graph_report
-        .observed_segments
-        .saturating_add(1)
-        .saturating_sub(graph_report.nodes);
-    let terminal_paths =
-        u64::try_from(graph.nodes().filter(|node| node.terminal).count()).map_err(route_error)?;
-    if terminal_paths == 0 && graph_report.best_terminal.is_some()
-        || terminal_paths > 0 && graph_report.best_terminal.is_none()
-    {
-        return Err(route_message(
-            "native tactic graph metrics are detached from terminal paths",
-        ));
-    }
-    Ok(NativeTacticGraphMetrics {
-        graph: graph_report,
-        lease_accounting,
-        duplicate_transpositions,
-        terminal_paths,
     })
 }

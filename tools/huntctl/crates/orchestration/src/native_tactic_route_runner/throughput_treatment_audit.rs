@@ -61,6 +61,8 @@ impl NativeTacticThroughputTreatmentAudit {
             || control.seeds.len() != 1
             || treatment.seeds.len() != 1
             || control.seeds[0].seed != treatment.seeds[0].seed
+            || !control.timing.persistence_attribution_is_valid()
+            || !treatment.timing.persistence_attribution_is_valid()
         {
             return Err(route_message(
                 "throughput treatment requires matched single-seed v37 native tactic reports",

@@ -925,6 +925,17 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
             evidence_projection_and_persistence_micros: 300_000,
             evidence_projection_micros: 100_000,
             persistence_micros: 200_000,
+            persistence_breakdown: Some(NativeTacticPersistenceTiming {
+                source_tape_micros: 10_000,
+                recovery_checkpoint_micros: 20_000,
+                decision_journal_micros: 30_000,
+                replay_publication_micros: 40_000,
+                lease_resolution_micros: 10_000,
+                recovery_prune_micros: 10_000,
+                retained_terminal_micros: 10_000,
+                finalization_micros: 20_000,
+                unattributed_micros: 50_000,
+            }),
             orchestration_micros: 50_000,
             result_validation_and_fact_extraction_micros: 20_000,
             campaign_admission_micros: 20_000,
@@ -966,6 +977,17 @@ fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
     assert_eq!(timing.native_simulation_micros, 900_000);
     assert_eq!(timing.evidence_projection_micros, 100_000);
     assert_eq!(timing.persistence_micros, 200_000);
+    assert_eq!(
+        timing
+            .persistence_breakdown
+            .expect("fixture has persistence attribution")
+            .total_micros(),
+        timing.persistence_micros
+    );
+    assert!(timing.persistence_attribution_is_valid());
+    let mut detached_timing = timing.clone();
+    detached_timing.persistence_micros += 1;
+    assert!(!detached_timing.persistence_attribution_is_valid());
     assert_eq!(timing.orchestration_micros, 50_000);
     assert_eq!(timing.result_validation_and_fact_extraction_micros, 20_000);
     assert_eq!(timing.campaign_admission_micros, 20_000);

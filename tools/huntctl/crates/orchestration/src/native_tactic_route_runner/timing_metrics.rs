@@ -130,6 +130,17 @@ pub(super) fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> Native
         timing.persistence_micros = timing
             .persistence_micros
             .saturating_add(seed.timing.persistence_micros);
+        if let Some(persistence_breakdown) = seed.timing.persistence_breakdown {
+            timing
+                .persistence_breakdown
+                .get_or_insert_default()
+                .merge(persistence_breakdown);
+        } else if seed.timing.persistence_micros > 0 {
+            let persistence_breakdown = timing.persistence_breakdown.get_or_insert_default();
+            persistence_breakdown.unattributed_micros = persistence_breakdown
+                .unattributed_micros
+                .saturating_add(seed.timing.persistence_micros);
+        }
         timing.orchestration_micros = timing
             .orchestration_micros
             .saturating_add(seed.timing.orchestration_micros);
@@ -157,6 +168,21 @@ pub(super) fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> Native
     }
     refresh_route_throughput(&mut timing, seeds);
     timing
+}
+
+pub(super) fn record_persistence_timing(
+    timing: &mut NativeTacticRouteTiming,
+    breakdown: NativeTacticPersistenceTiming,
+) {
+    let persistence_micros = breakdown.total_micros();
+    timing.persistence_micros = timing.persistence_micros.saturating_add(persistence_micros);
+    timing.evidence_projection_and_persistence_micros = timing
+        .evidence_projection_and_persistence_micros
+        .saturating_add(persistence_micros);
+    timing
+        .persistence_breakdown
+        .get_or_insert_default()
+        .merge(breakdown);
 }
 
 pub(super) fn accumulated_coordinator_wall_micros(

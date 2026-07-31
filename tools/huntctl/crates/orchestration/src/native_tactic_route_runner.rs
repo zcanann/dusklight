@@ -154,10 +154,10 @@ pub use report::{
     NativeTacticDemonstrationReport, NativeTacticFrontierAvailability, NativeTacticGraphMetrics,
     NativeTacticImportedMacroReport, NativeTacticLearnerAuthorityReport,
     NativeTacticMacroDiscoveryReport, NativeTacticMacroReuseReport, NativeTacticMeasurementTrace,
-    NativeTacticProposalTrace, NativeTacticReplaySharingTelemetry, NativeTacticRestoreAccounting,
-    NativeTacticRestoreSource, NativeTacticRouteReport, NativeTacticRouteRunConfig,
-    NativeTacticRouteTiming, NativeTacticSeedResult, NativeTacticSeedStopReason,
-    NativeTacticStateTrace, NativeTacticValueTrace,
+    NativeTacticPersistenceTiming, NativeTacticProposalTrace, NativeTacticReplaySharingTelemetry,
+    NativeTacticRestoreAccounting, NativeTacticRestoreSource, NativeTacticRouteReport,
+    NativeTacticRouteRunConfig, NativeTacticRouteTiming, NativeTacticSeedResult,
+    NativeTacticSeedStopReason, NativeTacticStateTrace, NativeTacticValueTrace,
 };
 mod lease_journal;
 use lease_journal::NativeTacticLeaseLedger;
@@ -917,12 +917,15 @@ mod worker_fleet;
 use worker_fleet::NativeTacticWorkerFleet;
 mod campaign;
 mod campaign_schedule;
-use campaign::{NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1, run_seed, tactic_graph_metrics};
+use campaign::{NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1, run_seed};
+mod graph_metrics;
+use graph_metrics::tactic_graph_metrics;
 mod timing_metrics;
 use timing_metrics::{
     accumulated_coordinator_wall_micros, aggregate_route_timing, censored_training_transitions,
     decision_evaluated_ticks, decision_trace_is_useful, elapsed_micros, per_second_millionths,
-    ratio_per_million, refresh_route_throughput, useful_training_transitions,
+    ratio_per_million, record_persistence_timing, refresh_route_throughput,
+    useful_training_transitions,
 };
 mod candidate_retention;
 use candidate_retention::{

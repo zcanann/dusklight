@@ -294,6 +294,66 @@ impl NativeTacticCampaignAdmissionTiming {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticPersistenceTiming {
+    pub source_tape_micros: u64,
+    pub recovery_checkpoint_micros: u64,
+    pub decision_journal_micros: u64,
+    /// Replay-control-plane publication excluding the separately reported
+    /// learner model update.
+    pub replay_publication_micros: u64,
+    pub lease_resolution_micros: u64,
+    pub recovery_prune_micros: u64,
+    pub retained_terminal_micros: u64,
+    pub finalization_micros: u64,
+    pub unattributed_micros: u64,
+}
+
+impl NativeTacticPersistenceTiming {
+    pub fn total_micros(self) -> u64 {
+        self.source_tape_micros
+            .saturating_add(self.recovery_checkpoint_micros)
+            .saturating_add(self.decision_journal_micros)
+            .saturating_add(self.replay_publication_micros)
+            .saturating_add(self.lease_resolution_micros)
+            .saturating_add(self.recovery_prune_micros)
+            .saturating_add(self.retained_terminal_micros)
+            .saturating_add(self.finalization_micros)
+            .saturating_add(self.unattributed_micros)
+    }
+
+    pub(super) fn merge(&mut self, other: Self) {
+        self.source_tape_micros = self
+            .source_tape_micros
+            .saturating_add(other.source_tape_micros);
+        self.recovery_checkpoint_micros = self
+            .recovery_checkpoint_micros
+            .saturating_add(other.recovery_checkpoint_micros);
+        self.decision_journal_micros = self
+            .decision_journal_micros
+            .saturating_add(other.decision_journal_micros);
+        self.replay_publication_micros = self
+            .replay_publication_micros
+            .saturating_add(other.replay_publication_micros);
+        self.lease_resolution_micros = self
+            .lease_resolution_micros
+            .saturating_add(other.lease_resolution_micros);
+        self.recovery_prune_micros = self
+            .recovery_prune_micros
+            .saturating_add(other.recovery_prune_micros);
+        self.retained_terminal_micros = self
+            .retained_terminal_micros
+            .saturating_add(other.retained_terminal_micros);
+        self.finalization_micros = self
+            .finalization_micros
+            .saturating_add(other.finalization_micros);
+        self.unattributed_micros = self
+            .unattributed_micros
+            .saturating_add(other.unattributed_micros);
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticRouteTiming {
@@ -327,6 +387,8 @@ pub struct NativeTacticRouteTiming {
     pub evidence_projection_micros: u64,
     #[serde(default)]
     pub persistence_micros: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persistence_breakdown: Option<NativeTacticPersistenceTiming>,
     /// Active coordinator work outside learner updates, evidence projection,
     /// persistence, and time blocked on native workers.
     #[serde(default)]
@@ -351,6 +413,13 @@ pub struct NativeTacticRouteTiming {
     pub unique_useful_graph_expansions_per_second_millionths: u64,
     pub native_ticks_per_second_millionths: u64,
     pub episodes_per_second_millionths: u64,
+}
+
+impl NativeTacticRouteTiming {
+    pub fn persistence_attribution_is_valid(&self) -> bool {
+        self.persistence_breakdown
+            .is_none_or(|breakdown| breakdown.total_micros() == self.persistence_micros)
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

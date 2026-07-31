@@ -1108,6 +1108,7 @@ fn validate_completed_sample(
         || route.execution_plan_sha256 != execution_plan_sha256
         || route.workers != sample.workers
         || route.timing.process_launch_micros != 0
+        || !route.timing.persistence_attribution_is_valid()
         || route
             .timing
             .campaign_admission_breakdown
