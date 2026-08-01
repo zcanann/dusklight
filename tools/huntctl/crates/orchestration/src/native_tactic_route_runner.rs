@@ -104,6 +104,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39: &str = "dusklight-native-tactic-route-report/v39";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V40: &str = "dusklight-native-tactic-route-report/v40";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V41: &str = "dusklight-native-tactic-route-report/v41";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V42: &str = "dusklight-native-tactic-route-report/v42";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -270,8 +271,9 @@ mod scratch_comparison;
 pub use scratch_comparison::{
     NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V2, NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V3,
     NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V4, NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V5,
-    NativeTacticScratchComparisonCell, NativeTacticScratchComparisonReport,
-    NativeTacticScratchCriticalPathTiming, NativeTacticScratchEfficiencyMetrics,
+    NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V6, NativeTacticScratchComparisonCell,
+    NativeTacticScratchComparisonReport, NativeTacticScratchCriticalPathTiming,
+    NativeTacticScratchEfficiencyMetrics, NativeTacticScratchRouteProgress,
     NativeTacticScratchTreatment,
 };
 mod route_diagnosis;
@@ -385,6 +387,7 @@ fn run_native_tactic_route_with_optional_fleet(
     external_fleet: Option<&NativeTacticWorkerFleet>,
 ) -> Result<NativeTacticRouteReport, NativeTacticRouteRunError> {
     let campaign_started = Instant::now();
+    let orchestrator_executable_sha256 = current_executable_sha256()?;
     validate_config(config)?;
     let imported_promoted_tactics = load_imported_promoted_tactics(config)?;
     let root = config.repository_root.canonicalize().map_err(route_error)?;
@@ -865,7 +868,8 @@ fn run_native_tactic_route_with_optional_fleet(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let mut report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V41.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V42.into(),
+        orchestrator_executable_sha256: Some(orchestrator_executable_sha256),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
@@ -1010,7 +1014,23 @@ pub(super) fn supports_current_route_report_schema(schema: &str) -> bool {
         NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39
             | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V40
             | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V41
+            | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V42
     )
+}
+
+fn current_executable_sha256() -> Result<Digest, NativeTacticRouteRunError> {
+    let path = std::env::current_exe().map_err(route_error)?;
+    let mut file = fs::File::open(path).map_err(route_error)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 1024 * 1024];
+    loop {
+        let count = file.read(&mut buffer).map_err(route_error)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(Digest(hasher.finalize().into()))
 }
 
 mod macro_discovery;

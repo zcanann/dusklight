@@ -35,6 +35,10 @@ pub struct NativeTacticRouteRunConfig<'a> {
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticRouteReport {
     pub schema: String,
+    /// Exact host executable that owned orchestration and learning semantics.
+    /// Legacy reports predate this identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orchestrator_executable_sha256: Option<Digest>,
     pub optimization_request_sha256: Digest,
     pub execution_binding_sha256: Digest,
     pub execution_plan_sha256: Digest,

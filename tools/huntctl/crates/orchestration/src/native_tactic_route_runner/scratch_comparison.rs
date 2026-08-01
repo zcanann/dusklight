@@ -1,6 +1,10 @@
 use super::scratch_discovery::route_report_sha256;
 use super::*;
 
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
 pub const NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V2: &str =
     "dusklight-native-tactic-scratch-comparison/v2";
 pub const NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V3: &str =
@@ -9,6 +13,8 @@ pub const NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V4: &str =
     "dusklight-native-tactic-scratch-comparison/v4";
 pub const NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V5: &str =
     "dusklight-native-tactic-scratch-comparison/v5";
+pub const NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V6: &str =
+    "dusklight-native-tactic-scratch-comparison/v6";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -57,6 +63,8 @@ pub struct NativeTacticScratchEfficiencyMetrics {
     pub failed_lease_attempts: u64,
     pub total_useful_graph_expansions: u64,
     pub total_observed_interior_segments: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub duplicate_transpositions: u64,
     pub useful_graph_expansions_per_second_millionths: u64,
     pub search_native_ticks: u64,
     pub non_search_native_ticks: u64,
@@ -90,10 +98,29 @@ pub struct NativeTacticScratchEfficiencyMetrics {
     pub orchestration_micros: u64,
     pub learner_updates: u64,
     pub restore_accounting: NativeTacticRestoreAccounting,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub route_quality_over_time: Vec<NativeTacticScratchRouteProgress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_utilization: Option<NativeTacticWorkerUtilization>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work: Option<NativeTacticCampaignWorkSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources: Option<NativeTacticCampaignResourceAudit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persistence_breakdown: Option<NativeTacticPersistenceTiming>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orchestration_breakdown: Option<NativeTacticOrchestrationTiming>,
     /// Critical-path wall attribution, distinct from the additive phase
     /// occupancy fields retained above for work and utilization analysis.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub critical_path: Option<NativeTacticScratchCriticalPathTiming>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticScratchRouteProgress {
+    pub seed: u64,
+    pub terminal_improvements: Vec<NativeTacticScratchTerminalImprovementAudit>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -126,6 +153,8 @@ pub struct NativeTacticScratchComparisonCell {
     pub treatment: NativeTacticScratchTreatment,
     pub proposal_policy: TacticProposalPolicy,
     pub route_report_sha256: Digest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub campaign_completion_sha256: Option<Digest>,
     pub campaign_summary_sha256: Digest,
     pub causal_chain: NativeTacticCampaignCausalSummary,
     pub campaign_audit_sha256: Digest,
@@ -139,6 +168,8 @@ pub struct NativeTacticScratchComparisonCell {
 pub struct NativeTacticScratchComparisonReport {
     pub schema: String,
     pub content_sha256: Digest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orchestrator_executable_sha256: Option<Digest>,
     pub optimization_request_sha256: Digest,
     pub execution_binding_sha256: Digest,
     pub objective_sha256: Digest,
@@ -170,17 +201,25 @@ impl NativeTacticScratchComparisonReport {
         let first_plan = read_plan(&repository_root, first)?;
         let mut cells = Vec::with_capacity(routes.len());
         for route in &routes {
-            if !matches!(
-                route.schema.as_str(),
-                NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V40 | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V41
-            ) || route
-                .seeds
-                .iter()
-                .any(|seed| !seed.timing.seed_wall_attribution_is_exact())
+            if !matches!(route.schema.as_str(), NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V42)
+                || route
+                    .seeds
+                    .iter()
+                    .any(|seed| !seed.timing.seed_wall_attribution_is_exact())
                 || !route.timing.orchestration_attribution_is_valid()
+                || !route.timing.persistence_attribution_is_valid()
+                || route
+                    .orchestrator_executable_sha256
+                    .is_none_or(|sha256| sha256 == Digest::ZERO)
+                || route
+                    .worker_utilization
+                    .as_ref()
+                    .is_none_or(|utilization| !utilization.validate())
+                || route.timing.orchestration_breakdown.is_none()
+                || route.timing.persistence_breakdown.is_none()
             {
                 return Err(route_message(
-                    "scratch comparison requires exact v40 campaign timing",
+                    "scratch comparison v6 requires complete v42 campaign evidence",
                 ));
             }
             let plan = read_plan(&repository_root, route)?;
@@ -198,12 +237,13 @@ impl NativeTacticScratchComparisonReport {
                 treatment: NativeTacticScratchTreatment::from_policy(route.proposal_policy)?,
                 proposal_policy: route.proposal_policy,
                 route_report_sha256: route_report_sha256(route)?,
+                campaign_completion_sha256: Some(completion.content_sha256),
                 campaign_summary_sha256: summary.content_sha256,
-                causal_chain: summary.causal_chain,
+                causal_chain: summary.causal_chain.clone(),
                 campaign_audit_sha256: audit.content_sha256,
                 execution_plan_sha256: route.execution_plan_sha256,
                 replay_sharing: plan.replay_sharing,
-                metrics: efficiency_metrics(route, &audit, &plan, &completion)?,
+                metrics: efficiency_metrics(route, &audit, &plan, &completion, &summary)?,
             });
         }
         cells.sort_by_key(|cell| cell.treatment);
@@ -222,8 +262,9 @@ impl NativeTacticScratchComparisonReport {
             ));
         }
         let mut report = Self {
-            schema: NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V5.into(),
+            schema: NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V6.into(),
             content_sha256: Digest::ZERO,
+            orchestrator_executable_sha256: first.orchestrator_executable_sha256,
             optimization_request_sha256: first.optimization_request_sha256,
             execution_binding_sha256: first.execution_binding_sha256,
             objective_sha256: first.objective_sha256,
@@ -252,6 +293,7 @@ impl NativeTacticScratchComparisonReport {
             NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V3 => 0,
             NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V4 => 4,
             NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V5 => 5,
+            NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V6 => 6,
             _ => return Err(route_message("scratch comparison schema is unsupported")),
         };
         if self.content_sha256 == Digest::ZERO
@@ -260,6 +302,10 @@ impl NativeTacticScratchComparisonReport {
             || self.objective_sha256 == Digest::ZERO
             || self.feature_schema_sha256 == Digest::ZERO
             || self.action_schema_sha256 == Digest::ZERO
+            || (critical_path_version >= 6
+                && self
+                    .orchestrator_executable_sha256
+                    .is_none_or(|sha256| sha256 == Digest::ZERO))
             || self.seeds.is_empty()
             || self.workers == 0
             || self.decisions_per_seed == 0
@@ -268,6 +314,10 @@ impl NativeTacticScratchComparisonReport {
             || treatments.len() != 3
             || self.cells.iter().any(|cell| {
                 cell.route_report_sha256 == Digest::ZERO
+                    || (critical_path_version >= 6
+                        && cell
+                            .campaign_completion_sha256
+                            .is_none_or(|sha256| sha256 == Digest::ZERO))
                     || cell.campaign_summary_sha256 == Digest::ZERO
                     || cell.campaign_audit_sha256 == Digest::ZERO
                     || cell.execution_plan_sha256 == Digest::ZERO
@@ -318,6 +368,7 @@ fn validate_matched_route(
 ) -> Result<(), NativeTacticRouteRunError> {
     if expected.optimization_request_sha256 != actual.optimization_request_sha256
         || expected.execution_binding_sha256 != actual.execution_binding_sha256
+        || expected.orchestrator_executable_sha256 != actual.orchestrator_executable_sha256
         || expected.objective_sha256 != actual.objective_sha256
         || expected.feature_schema_sha256 != actual.feature_schema_sha256
         || expected.action_schema_sha256 != actual.action_schema_sha256
@@ -593,6 +644,7 @@ fn efficiency_metrics(
     audit: &NativeTacticScratchCampaignAudit,
     plan: &NativeTacticExecutionPlan,
     completion: &NativeTacticCampaignCompletion,
+    summary: &NativeTacticCampaignSummary,
 ) -> Result<NativeTacticScratchEfficiencyMetrics, NativeTacticRouteRunError> {
     let first_useful = audit
         .seeds
@@ -724,6 +776,31 @@ fn efficiency_metrics(
         .filter_map(|seed| seed.graph_metrics.as_ref())
         .map(|metrics| metrics.graph.observed_segments)
         .sum();
+    let duplicate_transpositions = route
+        .seeds
+        .iter()
+        .filter_map(|seed| seed.graph_metrics.as_ref())
+        .map(|metrics| metrics.duplicate_transpositions)
+        .sum();
+    let route_quality_over_time = audit
+        .seeds
+        .iter()
+        .map(|seed| {
+            let mut terminal_improvements = seed.terminal_improvements.clone();
+            for improvement in &mut terminal_improvements {
+                improvement.cumulative_wall_micros = improvement
+                    .cumulative_wall_micros
+                    .checked_add(route.timing.process_launch_micros)
+                    .ok_or_else(|| {
+                        route_message("scratch comparison progress wall timing overflowed")
+                    })?;
+            }
+            Ok::<_, NativeTacticRouteRunError>(NativeTacticScratchRouteProgress {
+                seed: seed.seed,
+                terminal_improvements,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let critical_path = critical_path_timing(route, plan, completion)?;
     Ok(NativeTacticScratchEfficiencyMetrics {
         seed_count,
@@ -746,6 +823,7 @@ fn efficiency_metrics(
         failed_lease_attempts: lease_accounting.failed_leases,
         total_useful_graph_expansions: route.unique_useful_graph_expansions,
         total_observed_interior_segments,
+        duplicate_transpositions,
         useful_graph_expansions_per_second_millionths: per_second_millionths(
             route.unique_useful_graph_expansions,
             critical_path.campaign_wall_micros,
@@ -784,6 +862,12 @@ fn efficiency_metrics(
         orchestration_micros: timing.orchestration_micros,
         learner_updates: route.learner_updates,
         restore_accounting: route.native_restore_accounting.clone(),
+        route_quality_over_time,
+        worker_utilization: route.worker_utilization.clone(),
+        work: Some(summary.work.clone()),
+        resources: Some(audit.resources.clone()),
+        persistence_breakdown: timing.persistence_breakdown,
+        orchestration_breakdown: timing.orchestration_breakdown,
         critical_path: Some(critical_path),
     })
 }
@@ -817,6 +901,7 @@ fn metrics_valid(
     };
     metrics.seed_count > 0
         && wall_attribution_valid
+        && (critical_path_version < 6 || canonical_metrics_valid(metrics, workers))
         && metrics.terminal_seed_count <= metrics.seed_count
         && metrics.terminal_rate_per_million
             == ratio_per_million(metrics.terminal_seed_count, metrics.seed_count)
@@ -866,6 +951,126 @@ fn metrics_valid(
                 && metrics
                     .median_proposal_expansions_to_best_terminal
                     .is_none()))
+}
+
+fn canonical_metrics_valid(metrics: &NativeTacticScratchEfficiencyMetrics, workers: usize) -> bool {
+    let Some(utilization) = metrics.worker_utilization.as_ref() else {
+        return false;
+    };
+    let Some(work) = metrics.work.as_ref() else {
+        return false;
+    };
+    let Some(resources) = metrics.resources.as_ref() else {
+        return false;
+    };
+    let Some(persistence) = metrics.persistence_breakdown else {
+        return false;
+    };
+    let Some(orchestration) = metrics.orchestration_breakdown else {
+        return false;
+    };
+    utilization.validate()
+        && utilization.worker_processes == workers as u64
+        && utilization.proposal_jobs > 0
+        && utilization.native_process_cpu_micros.is_some()
+        && work.lease_accounting_complete
+        && work.unresolved_leases == 0
+        && work.proposal_dispatches == metrics.total_proposal_dispatches
+        && work.completed_leases == metrics.completed_lease_attempts
+        && work.retryable_leases == metrics.retryable_lease_attempts
+        && work.cancelled_leases == metrics.cancelled_lease_attempts
+        && work.failed_leases == metrics.failed_lease_attempts
+        && resources.declared_memory_bound_bytes.is_some()
+        && resources.memory_bound_satisfied
+        && resources.passed
+        && persistence.checked_total_micros() == Some(metrics.persistence_micros)
+        && orchestration.checked_total_micros() == Some(metrics.orchestration_micros)
+        && metrics.sample_efficiency_timeline_complete
+        && metrics.terminal_improvement_timing_complete
+        && metrics.action_surface_timeline_complete
+        && route_quality_timeline_valid(metrics)
+}
+
+fn route_quality_timeline_valid(metrics: &NativeTacticScratchEfficiencyMetrics) -> bool {
+    if metrics.route_quality_over_time.len() as u64 != metrics.seed_count
+        || metrics
+            .route_quality_over_time
+            .iter()
+            .map(|seed| seed.seed)
+            .collect::<BTreeSet<_>>()
+            .len()
+            != metrics.route_quality_over_time.len()
+    {
+        return false;
+    }
+    let terminal_timelines = metrics
+        .route_quality_over_time
+        .iter()
+        .filter(|seed| !seed.terminal_improvements.is_empty())
+        .collect::<Vec<_>>();
+    if terminal_timelines.len() as u64 != metrics.terminal_seed_count
+        || terminal_timelines.iter().any(|seed| {
+            seed.terminal_improvements.windows(2).any(|pair| {
+                pair[0].authenticated_tick <= pair[1].authenticated_tick
+                    || pair[0].decision_index > pair[1].decision_index
+                    || pair[0].cumulative_wall_micros > pair[1].cumulative_wall_micros
+                    || pair[0].cumulative_proposal_expansions
+                        > pair[1].cumulative_proposal_expansions
+                    || pair[0].cumulative_useful_graph_expansions
+                        > pair[1].cumulative_useful_graph_expansions
+            })
+        })
+    {
+        return false;
+    }
+    let first = terminal_timelines
+        .iter()
+        .filter_map(|seed| seed.terminal_improvements.first())
+        .collect::<Vec<_>>();
+    let best = terminal_timelines
+        .iter()
+        .filter_map(|seed| seed.terminal_improvements.last())
+        .collect::<Vec<_>>();
+    metrics.best_authenticated_tick == best.iter().map(|point| point.authenticated_tick).min()
+        && metrics.median_time_to_first_terminal_micros
+            == median(
+                first
+                    .iter()
+                    .map(|point| point.cumulative_wall_micros)
+                    .collect(),
+            )
+        && metrics.median_useful_graph_expansions_to_first_terminal
+            == median(
+                first
+                    .iter()
+                    .map(|point| point.cumulative_useful_graph_expansions)
+                    .collect(),
+            )
+        && metrics.median_proposal_expansions_to_first_terminal
+            == median(
+                first
+                    .iter()
+                    .map(|point| point.cumulative_proposal_expansions)
+                    .collect(),
+            )
+        && metrics.median_time_to_best_terminal_micros
+            == median(
+                best.iter()
+                    .map(|point| point.cumulative_wall_micros)
+                    .collect(),
+            )
+        && metrics.median_useful_graph_expansions_to_best_terminal
+            == median(
+                best.iter()
+                    .map(|point| point.cumulative_useful_graph_expansions)
+                    .collect(),
+            )
+        && metrics.median_proposal_expansions_to_best_terminal
+            == median(
+                best.iter()
+                    .map(|point| point.cumulative_proposal_expansions)
+                    .collect(),
+            )
 }
 
 fn median(mut values: Vec<u64>) -> Option<u64> {

@@ -448,6 +448,7 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "audit-tactic-scratch-campaign"
             | "audit-tactic-observations"
             | "compare-tactic-scratch-campaigns"
+            | "validate-tactic-scratch-comparison"
             | "diagnose-tactic-terminal-routes"
             | "validate-tactic-scratch-discovery"
             | "validate-tactic-scratch-bundle"
@@ -517,6 +518,7 @@ mod tests {
             "audit-tactic-scratch-campaign",
             "audit-tactic-observations",
             "compare-tactic-scratch-campaigns",
+            "validate-tactic-scratch-comparison",
             "diagnose-tactic-terminal-routes",
             "validate-tactic-scratch-bundle",
             "prove-tactic-route-cold-replay",

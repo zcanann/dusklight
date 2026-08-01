@@ -256,6 +256,7 @@ fn print_usage() {
     eprintln!(
         "  huntctl learn seal-tactic-throughput-treatment --control-bundle CURVE-BUNDLE --control-sample-ordinal N --treatment-report ROUTE.json --bundle EVIDENCE-DIR [--repository-root DIR]\n  huntctl learn validate-tactic-throughput-treatment-bundle --bundle EVIDENCE-DIR"
     );
+    eprintln!("  huntctl learn validate-tactic-scratch-comparison --report COMPARISON.json");
     eprintln!(
         "\nSemantic oracles:\n  huntctl oracle evaluate --program ORACLES.json --trace RUN.trace [--supplemental OBSERVATIONS.json] [--run-outcome OUTCOME.json] [--output REPORT.json]\n  huntctl oracle compose --manifest COMPOSITION.json [--output EVIDENCE.json]\n  huntctl oracle compare --program ORACLES.json --evidence COMPARISON.json [--output REPORT.json]"
     );

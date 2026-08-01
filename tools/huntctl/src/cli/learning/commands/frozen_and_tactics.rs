@@ -1472,6 +1472,23 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
+        Some("validate-tactic-scratch-comparison") => {
+            let learn_args = &args[1..];
+            let report: NativeTacticScratchComparisonReport =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            report.validate()?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": report.schema,
+                    "content_sha256": report.content_sha256,
+                    "seeds": report.seeds,
+                    "workers": report.workers,
+                    "cells": report.cells.len(),
+                }))?
+            );
+            Ok(())
+        }
         Some("validate-tactic-campaign-completion") => {
             let learn_args = &args[1..];
             let report_path = fs::canonicalize(required_path(learn_args, "--report")?)?;
