@@ -33,11 +33,19 @@ report, summary, and audit SHA-256 values are respectively
 `2e2444f4d547dc355cbd8ccce1dc925a2871a96a949f68b939f1841b1e29c610`,
 and `6cd49f225d973b297499b22aba1787706e88869bed66dcbd8c1c86818a3b037d`.
 
-The treatment is rejected despite the real utilization gain. Delaying
-cross-seed experience until a generation boundary removed a known terminal,
-so it cannot replace fresh sequential learning. Future parallel schedules must
-preserve rapid propagation of valuable experience or demonstrate equal/better
-terminal discovery under matched native budgets.
+Trace inspection changes the interpretation of the terminal regression. The
+314-tick route was produced by two unselected `batch_coverage` proposals at
+decision 12. The policy selected `neutral` with reason
+`unsupported_bootstrap`, and that selected trajectory did not terminate. The
+control therefore proves that exploration can discover and authenticate a
+terminal, but it does not prove that live replay learned, selected, or
+reproduced the route. The barrier treatment lost a stochastic coverage hit,
+not an established learned behavior.
+
+The schedule is not promoted as the default: the utilization gain is real, but
+neither treatment supplies causal learning evidence. Future schedule decisions
+must report discovery separately from policy adoption and compare learned,
+frozen, and random-valid treatments under matched native budgets.
 
 ## Multi-generation follow-up
 
@@ -57,12 +65,14 @@ Both cells passed completion validation and the V6 scratch audit.
 | Aggregate worker idle | 194.174 s | 58.793 s | -69.7% |
 | Terminal seeds | 0 | 0 | no proof |
 
-The sequential cell also lost the previously observed terminal after adding two
-earlier seeds and changing update cadence. This prevents a terminal-quality
-claim for either schedule and exposes a more fundamental problem: learned
-behavior is brittle to ordinary curriculum composition. Improving raw capacity
-alone will not make the framework useful until successful behavior survives
-additional valid replay and reasonable cadence changes.
+The sequential cell also lost the previously observed coverage terminal after
+adding two earlier seeds and changing update cadence. This prevents a
+terminal-quality claim for either schedule. More importantly, no retained cell
+yet proves that experience caused a policy to adopt terminal-producing
+behavior. Improving raw capacity alone will not make the framework useful; the
+next evaluation must distinguish exploration luck from learning and show that
+successful experience changes subsequent choices under ordinary curriculum and
+cadence changes.
 
 The sequential report/audit SHA-256 values are
 `a66abfaa769a6c28058edb58c34bd94247d66bcd6dec40bf379ddd08a7229744`

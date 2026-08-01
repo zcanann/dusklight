@@ -76,6 +76,10 @@ route-specific exception.
   different method learns more effectively from the available samples.
 - Learn from both successful and unsuccessful trajectories with sparse terminal
   value and authenticated native tick cost.
+- Separate exploration discovery from policy adoption and optimization. A
+  terminal reached by an unselected coverage proposal proves only that search
+  found it; learning counts only when retained experience makes future policy
+  choices reproduce or improve terminal-producing behavior.
 - Support online collection, off-policy replay, prioritized reuse, temporal
   credit assignment, continued exploration, and escape from local optima.
 - Make useful behavior stable across ordinary seed ordering, campaign
