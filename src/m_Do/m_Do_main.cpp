@@ -263,6 +263,9 @@ static bool headlessRetainImGuiFrameLifecycle;
 static bool headlessRetainPresentationLifecycle;
 static bool headlessRetainHostPacing;
 static bool headlessSubmitGpuFrames;
+static bool headlessSuppressCpuDrawTraversal;
+static bool headlessSuppressDeterministicAudioEmulation;
+static bool headlessSuppressGameAudioUpdate;
 static std::uint16_t fixedStepSpeedPercent = 100;
 static bool pipelineWarmupGateEnabled;
 static std::uint8_t recordInputHandoffCountdownSeconds;
@@ -462,10 +465,18 @@ void main01(void) {
                     }
                     fapGm_Execute();
                     dusk::automation::suffix_batch_runner().beginAudioEmulationProfile();
-                    dusk::audio::AdvanceDeterministicAutomationTick();
+                    if (!dusk::automation::suffix_batch_runner().executingCandidate() ||
+                        !mDoAutomationSuppressDeterministicAudioEmulation())
+                    {
+                        dusk::audio::AdvanceDeterministicAutomationTick();
+                    }
                     dusk::automation::suffix_batch_runner().endAudioEmulationProfile();
                     dusk::automation::suffix_batch_runner().beginGameAudioProfile();
-                    mDoAud_Execute();
+                    if (!dusk::automation::suffix_batch_runner().executingCandidate() ||
+                        !mDoAutomationSuppressGameAudioUpdate())
+                    {
+                        mDoAud_Execute();
+                    }
                     dusk::automation::suffix_batch_runner().endGameAudioProfile();
                     dusk::game_clock::commit_sim_tick();
                     if (!finish_simulation_tick()) {
@@ -515,10 +526,18 @@ void main01(void) {
                 fapGm_Execute();
 
                 dusk::automation::suffix_batch_runner().beginAudioEmulationProfile();
-                dusk::audio::AdvanceDeterministicAutomationTick();
+                if (!dusk::automation::suffix_batch_runner().executingCandidate() ||
+                    !mDoAutomationSuppressDeterministicAudioEmulation())
+                {
+                    dusk::audio::AdvanceDeterministicAutomationTick();
+                }
                 dusk::automation::suffix_batch_runner().endAudioEmulationProfile();
                 dusk::automation::suffix_batch_runner().beginGameAudioProfile();
-                mDoAud_Execute();
+                if (!dusk::automation::suffix_batch_runner().executingCandidate() ||
+                    !mDoAutomationSuppressGameAudioUpdate())
+                {
+                    mDoAud_Execute();
+                }
                 dusk::automation::suffix_batch_runner().endGameAudioProfile();
                 if (finish_simulation_tick()) {
                     if (dusk::automation::suffix_batch_runner().ownsPostSimulation()) {
@@ -799,6 +818,18 @@ bool mDoAutomationSkipRendererSubmission() {
 
 bool mDoAutomationHeadlessActive() {
     return headlessMainLoop;
+}
+
+bool mDoAutomationSuppressCpuDrawTraversal() {
+    return headlessMainLoop && headlessSuppressCpuDrawTraversal;
+}
+
+bool mDoAutomationSuppressDeterministicAudioEmulation() {
+    return headlessMainLoop && headlessSuppressDeterministicAudioEmulation;
+}
+
+bool mDoAutomationSuppressGameAudioUpdate() {
+    return headlessMainLoop && headlessSuppressGameAudioUpdate;
 }
 
 bool mDoAutomationUnpaced() {
@@ -2284,6 +2315,15 @@ int game_main(int argc, char* argv[]) {
             "Audit comparator: open the muted host playback device while deterministic headless "
             "audio emulation remains synchronous",
             cxxopts::value<bool>()->default_value("false")->implicit_value("true"))(
+            "headless-suppress-cpu-draw-traversal",
+            "Audit treatment: suppress game CPU draw traversal on suffix candidate ticks",
+            cxxopts::value<bool>()->default_value("false")->implicit_value("true"))(
+            "headless-suppress-deterministic-audio-emulation",
+            "Audit treatment: suppress deterministic audio emulation on suffix candidate ticks",
+            cxxopts::value<bool>()->default_value("false")->implicit_value("true"))(
+            "headless-suppress-game-audio-update",
+            "Audit treatment: suppress the game audio update on suffix candidate ticks",
+            cxxopts::value<bool>()->default_value("false")->implicit_value("true"))(
             "deterministic-time-start",
             "Initial signed OS timer tick for fixed-step modes (default 0)",
             cxxopts::value<std::int64_t>())("input-tape",
@@ -2477,6 +2517,12 @@ int game_main(int argc, char* argv[]) {
         parsed_arg_options["headless-retain-host-pacing"].as<bool>();
     headlessRetainHostAudioDevice =
         parsed_arg_options["headless-retain-host-audio-device"].as<bool>();
+    headlessSuppressCpuDrawTraversal =
+        parsed_arg_options["headless-suppress-cpu-draw-traversal"].as<bool>();
+    headlessSuppressDeterministicAudioEmulation =
+        parsed_arg_options["headless-suppress-deterministic-audio-emulation"].as<bool>();
+    headlessSuppressGameAudioUpdate =
+        parsed_arg_options["headless-suppress-game-audio-update"].as<bool>();
     if (headlessSubmitGpuFrames && !headlessMainLoop) {
         fprintf(stderr, "Headless Error: --headless-submit-gpu-frames requires --headless\n");
         return 1;
@@ -2487,7 +2533,9 @@ int game_main(int argc, char* argv[]) {
         return 1;
     }
     if ((headlessRetainImGuiFrameLifecycle || headlessRetainPresentationLifecycle ||
-            headlessRetainHostPacing || headlessRetainHostAudioDevice) &&
+            headlessRetainHostPacing || headlessRetainHostAudioDevice ||
+            headlessSuppressCpuDrawTraversal || headlessSuppressDeterministicAudioEmulation ||
+            headlessSuppressGameAudioUpdate) &&
         !headlessMainLoop)
     {
         fprintf(stderr, "Headless Error: headless audit comparators require --headless\n");

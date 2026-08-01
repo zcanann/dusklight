@@ -42,8 +42,6 @@ sealed campaign artifacts.
   evidence.
 - Remove the largest measured cost, retain a matched before/after comparison,
   and repeat in descending measured order.
-- Determine which rendering, audio, presentation, and synchronization work can
-  be disabled in native headless execution without changing authoritative state.
 - Measure whether save-state branching beats replay from an authority point;
   simplify or remove it wherever it does not.
 - Eliminate worker starvation, redundant native work, unnecessary serialization,

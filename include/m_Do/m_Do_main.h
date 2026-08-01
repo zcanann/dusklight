@@ -20,6 +20,9 @@ void mDoAutomationInputTick(bool tapeWasPlaying);
 // Callers must still limit suppression to automation-owned ticks.
 bool mDoAutomationSkipRendererSubmission();
 bool mDoAutomationHeadlessActive();
+bool mDoAutomationSuppressCpuDrawTraversal();
+bool mDoAutomationSuppressDeterministicAudioEmulation();
+bool mDoAutomationSuppressGameAudioUpdate();
 bool mDoAutomationUnpaced();
 bool mDoAutomationRetainsImGuiFrameLifecycle();
 bool mDoAutomationRetainsGpuFrameSubmission();

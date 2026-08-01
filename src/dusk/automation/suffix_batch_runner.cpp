@@ -1913,9 +1913,13 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
             {"imgui_frame_lifecycle", mDoAutomationRetainsImGuiFrameLifecycle()
                     ? "retained_audit_comparator" : "suppressed_on_candidate_ticks"},
             {"host_audio_device", dusk::audio::HostOutputActive() ? "active" : "suppressed"},
-            {"deterministic_audio_emulation", "retained"},
-            {"game_audio_update", "retained"},
-            {"gameplay_draw_traversal", "retained"},
+            {"deterministic_audio_emulation",
+                mDoAutomationSuppressDeterministicAudioEmulation()
+                    ? "suppressed_on_candidate_ticks" : "retained"},
+            {"game_audio_update", mDoAutomationSuppressGameAudioUpdate()
+                    ? "suppressed_on_candidate_ticks" : "retained"},
+            {"gameplay_draw_traversal", mDoAutomationSuppressCpuDrawTraversal()
+                    ? "suppressed_on_candidate_ticks" : "retained"},
             {"cpu_renderer_submission", mDoAutomationSkipRendererSubmission()
                     ? "suppressed_on_candidate_ticks" : "retained_audit_comparator"},
             {"gpu_frame_submission", mDoAutomationRetainsGpuFrameSubmission()

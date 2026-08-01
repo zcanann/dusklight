@@ -30,22 +30,25 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const NATIVE_SUBSYSTEM_PARITY_SCHEMA: &str = "dusklight-native-subsystem-parity/v2";
+pub const NATIVE_SUBSYSTEM_PARITY_SCHEMA: &str = "dusklight-native-subsystem-parity/v3";
 mod evidence_bundle;
 pub use evidence_bundle::{
     NATIVE_SUBSYSTEM_PARITY_EVIDENCE_BUNDLE_SCHEMA_V1, NATIVE_SUBSYSTEM_PARITY_EVIDENCE_MANIFEST,
     NativeSubsystemParityBundleArtifact, NativeSubsystemParityConditionEvidence,
     NativeSubsystemParityEvidenceBundle,
 };
-const DISABLED_SUBSYSTEMS: [&str; 7] = [
+const DISABLED_SUBSYSTEMS: [&str; 9] = [
     "gpu_frame_submission",
     "cpu_renderer_submission",
     "presentation_lifecycle",
     "imgui_frame_lifecycle",
     "host_pacing",
     "host_audio_device",
+    "deterministic_audio_emulation",
+    "game_audio_update",
     "state_hash_proof",
 ];
+const MAX_CONCURRENT_PARITY_CONDITIONS: usize = 2;
 
 pub struct NativeSubsystemParityConfig<'a> {
     pub repository_root: &'a Path,
@@ -89,7 +92,13 @@ pub struct NativeSubsystemConditionMeasurement {
     pub launch: NativeSuffixWorkerLaunchTiming,
     pub batch_wall_micros: u64,
     pub simulation_micros: u64,
+    #[serde(default)]
+    pub cpu_draw_traversal_micros: u64,
     pub cpu_renderer_submission_micros: u64,
+    #[serde(default)]
+    pub deterministic_audio_emulation_micros: u64,
+    #[serde(default)]
+    pub game_audio_update_micros: u64,
     pub headless_audit: Value,
     pub gpu_work: Value,
     pub state_validation: Value,
@@ -177,7 +186,7 @@ impl NativeSubsystemParityReport {
             let expected_comparators = if index < expected_names.len() - 1 {
                 condition_definitions()[index].comparators
             } else {
-                NativeHeadlessAuditComparators::default()
+                NativeHeadlessAuditComparators::production()
             };
             let expected_reference = if index < expected_names.len() - 1 {
                 condition_definitions()[index].reference
@@ -308,25 +317,29 @@ pub fn run_native_subsystem_parity(
     };
 
     let definitions = condition_definitions();
-    let mut runs = std::thread::scope(|scope| {
-        definitions
-            .iter()
-            .copied()
-            .map(|definition| {
-                let inputs = &inputs;
-                let output_root = &output_root;
-                scope.spawn(move || run_condition(inputs, output_root, definition))
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|handle| {
-                handle
-                    .join()
-                    .map_err(|_| "native subsystem parity worker thread panicked".to_owned())?
-            })
-            .collect::<Result<Vec<_>, String>>()
-    })
-    .map_err(|message| -> Box<dyn Error> { message.into() })?;
+    let mut runs = Vec::with_capacity(definitions.len());
+    for batch in definitions.chunks(MAX_CONCURRENT_PARITY_CONDITIONS) {
+        let mut completed = std::thread::scope(|scope| {
+            batch
+                .iter()
+                .copied()
+                .map(|definition| {
+                    let inputs = &inputs;
+                    let output_root = &output_root;
+                    scope.spawn(move || run_condition(inputs, output_root, definition))
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .map_err(|_| "native subsystem parity worker thread panicked".to_owned())?
+                })
+                .collect::<Result<Vec<_>, String>>()
+        })
+        .map_err(|message| -> Box<dyn Error> { message.into() })?;
+        runs.append(&mut completed);
+    }
 
     let production_evidence = runs
         .iter()
@@ -539,7 +552,10 @@ fn measurement(
         launch,
         batch_wall_micros: raw.timing.batch_wall_micros,
         simulation_micros: phase_micros(raw, "simulation")?,
+        cpu_draw_traversal_micros: phase_micros(raw, "cpu_draw_traversal")?,
         cpu_renderer_submission_micros,
+        deterministic_audio_emulation_micros: phase_micros(raw, "audio_emulation")?,
+        game_audio_update_micros: phase_micros(raw, "game_audio_update")?,
         headless_audit: raw.timing.headless_audit.clone(),
         gpu_work,
         state_validation,
@@ -738,13 +754,26 @@ fn validate_configuration_projection(
         .get("discarded_frames")
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let expected_suppression = |suppressed| {
+        if suppressed {
+            "suppressed_on_candidate_ticks"
+        } else {
+            "retained"
+        }
+    };
     audit.get("active").and_then(Value::as_bool) == Some(true)
         && audit
             .get("deterministic_audio_emulation")
             .and_then(Value::as_str)
-            == Some("retained")
-        && audit.get("game_audio_update").and_then(Value::as_str) == Some("retained")
-        && audit.get("gameplay_draw_traversal").and_then(Value::as_str) == Some("retained")
+            == Some(expected_suppression(
+                comparators.suppress_deterministic_audio_emulation,
+            ))
+        && audit.get("game_audio_update").and_then(Value::as_str)
+            == Some(expected_suppression(comparators.suppress_game_audio_update))
+        && audit.get("gameplay_draw_traversal").and_then(Value::as_str)
+            == Some(expected_suppression(
+                comparators.suppress_cpu_draw_traversal,
+            ))
         && audit.get("gpu_frame_submission").and_then(Value::as_str)
             == Some(expected(
                 comparators.gpu_frame_submission,
@@ -823,7 +852,7 @@ fn make_batch(
 }
 
 fn condition_definitions() -> Vec<ConditionDefinition> {
-    let suppressed = NativeHeadlessAuditComparators::default();
+    let suppressed = NativeHeadlessAuditComparators::production();
     let retained = NativeHeadlessAuditComparators {
         gpu_frame_submission: true,
         cpu_renderer_submission: true,
@@ -831,6 +860,7 @@ fn condition_definitions() -> Vec<ConditionDefinition> {
         imgui_frame_lifecycle: true,
         host_pacing: true,
         host_audio_device: true,
+        ..NativeHeadlessAuditComparators::default()
     };
     vec![
         ConditionDefinition {
@@ -889,6 +919,22 @@ fn condition_definitions() -> Vec<ConditionDefinition> {
             reference: "production_all_disabled",
             comparators: NativeHeadlessAuditComparators {
                 host_audio_device: true,
+                ..suppressed
+            },
+        },
+        ConditionDefinition {
+            name: "deterministic_audio_emulation_retained",
+            reference: "production_all_disabled",
+            comparators: NativeHeadlessAuditComparators {
+                suppress_deterministic_audio_emulation: false,
+                ..suppressed
+            },
+        },
+        ConditionDefinition {
+            name: "game_audio_update_retained",
+            reference: "production_all_disabled",
+            comparators: NativeHeadlessAuditComparators {
+                suppress_game_audio_update: false,
                 ..suppressed
             },
         },
@@ -987,10 +1033,10 @@ mod tests {
     #[test]
     fn conditions_retain_each_subsystem_against_a_legal_reference() {
         let conditions = condition_definitions();
-        assert_eq!(conditions.len(), 8);
+        assert_eq!(conditions.len(), 10);
         assert_eq!(conditions[0].name, "production_all_disabled");
-        assert_eq!(conditions[7].name, "all_retained_composite");
-        for condition in &conditions[1..7] {
+        assert_eq!(conditions[9].name, "all_retained_composite");
+        for condition in &conditions[1..9] {
             let reference = conditions
                 .iter()
                 .find(|candidate| candidate.name == condition.reference)
@@ -1006,6 +1052,12 @@ mod tests {
                     != reference.comparators.imgui_frame_lifecycle,
                 condition.comparators.host_pacing != reference.comparators.host_pacing,
                 condition.comparators.host_audio_device != reference.comparators.host_audio_device,
+                condition.comparators.suppress_cpu_draw_traversal
+                    != reference.comparators.suppress_cpu_draw_traversal,
+                condition.comparators.suppress_deterministic_audio_emulation
+                    != reference.comparators.suppress_deterministic_audio_emulation,
+                condition.comparators.suppress_game_audio_update
+                    != reference.comparators.suppress_game_audio_update,
             ]
             .into_iter()
             .filter(|changed| *changed)

@@ -38,6 +38,25 @@ pub struct NativeHeadlessAuditComparators {
     pub imgui_frame_lifecycle: bool,
     pub host_pacing: bool,
     pub host_audio_device: bool,
+    #[serde(default)]
+    pub suppress_cpu_draw_traversal: bool,
+    #[serde(default)]
+    pub suppress_deterministic_audio_emulation: bool,
+    #[serde(default)]
+    pub suppress_game_audio_update: bool,
+}
+
+impl NativeHeadlessAuditComparators {
+    /// Headless farming defaults that have passed native subsystem parity.
+    /// Audit runs pass explicit comparator sets and retain unsuppressed
+    /// treatments for comparison.
+    pub fn production() -> Self {
+        Self {
+            suppress_deterministic_audio_emulation: true,
+            suppress_game_audio_update: true,
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -196,7 +215,7 @@ impl NativeSuffixWorkerSession {
         Self::launch_prevalidated_with_comparators(
             config,
             identities,
-            NativeHeadlessAuditComparators::default(),
+            NativeHeadlessAuditComparators::production(),
             require_compact_batch_run,
         )
     }

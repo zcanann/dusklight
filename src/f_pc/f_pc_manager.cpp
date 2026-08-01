@@ -108,8 +108,12 @@ void fpcM_Management(fpcM_ManagementFunc i_preExecuteFn, fpcM_ManagementFunc i_p
 
             if (!fapGm_HIO_c::isCaptureScreen() || fapGm_HIO_c::getCaptureScreenDivH() != 1) {
                 suffixBatch.beginCpuDrawTraversalProfile();
-                fpcDw_Handler(
-                    (fpcDw_HandlerFuncFunc)fpcM_DrawIterater, (fpcDw_HandlerFunc)fpcM_Draw);
+                if (!suffixBatch.executingCandidate() ||
+                    !mDoAutomationSuppressCpuDrawTraversal())
+                {
+                    fpcDw_Handler(
+                        (fpcDw_HandlerFuncFunc)fpcM_DrawIterater, (fpcDw_HandlerFunc)fpcM_Draw);
+                }
                 suffixBatch.endCpuDrawTraversalProfile();
             }
 

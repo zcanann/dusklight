@@ -7,8 +7,8 @@ fn headless_audit() -> Value {
         "host_pacing": "disabled",
         "imgui_frame_lifecycle": "suppressed_on_candidate_ticks",
         "host_audio_device": "suppressed",
-        "deterministic_audio_emulation": "retained",
-        "game_audio_update": "retained",
+        "deterministic_audio_emulation": "suppressed_on_candidate_ticks",
+        "game_audio_update": "suppressed_on_candidate_ticks",
         "gameplay_draw_traversal": "retained",
         "cpu_renderer_submission": "suppressed_on_candidate_ticks"
     })

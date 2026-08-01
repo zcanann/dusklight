@@ -197,6 +197,18 @@ pub(super) fn prepare_launch(
             comparators.host_audio_device,
             "--headless-retain-host-audio-device",
         ),
+        (
+            comparators.suppress_cpu_draw_traversal,
+            "--headless-suppress-cpu-draw-traversal",
+        ),
+        (
+            comparators.suppress_deterministic_audio_emulation,
+            "--headless-suppress-deterministic-audio-emulation",
+        ),
+        (
+            comparators.suppress_game_audio_update,
+            "--headless-suppress-game-audio-update",
+        ),
     ] {
         if enabled {
             args.push(argument.into());

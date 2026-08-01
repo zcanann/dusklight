@@ -200,6 +200,9 @@ fn launch_preflight_materializes_every_headless_audit_comparator() {
             imgui_frame_lifecycle: true,
             host_pacing: true,
             host_audio_device: true,
+            suppress_cpu_draw_traversal: true,
+            suppress_deterministic_audio_emulation: true,
+            suppress_game_audio_update: true,
         },
     )
     .unwrap();
@@ -211,9 +214,38 @@ fn launch_preflight_materializes_every_headless_audit_comparator() {
         "--headless-retain-imgui-frame-lifecycle",
         "--headless-retain-host-pacing",
         "--headless-retain-host-audio-device",
+        "--headless-suppress-cpu-draw-traversal",
+        "--headless-suppress-deterministic-audio-emulation",
+        "--headless-suppress-game-audio-update",
     ] {
         assert!(prepared.args.iter().any(|actual| actual == argument));
     }
+}
+
+#[test]
+fn production_headless_suppresses_only_parity_proven_audio_work() {
+    let (_root, launch) = fixture();
+    let prepared =
+        prepare_launch(&launch, None, NativeHeadlessAuditComparators::production()).unwrap();
+
+    assert!(
+        prepared
+            .args
+            .iter()
+            .any(|argument| argument == "--headless-suppress-deterministic-audio-emulation")
+    );
+    assert!(
+        prepared
+            .args
+            .iter()
+            .any(|argument| argument == "--headless-suppress-game-audio-update")
+    );
+    assert!(
+        !prepared
+            .args
+            .iter()
+            .any(|argument| argument == "--headless-suppress-cpu-draw-traversal")
+    );
 }
 
 #[test]
