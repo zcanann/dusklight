@@ -1,107 +1,96 @@
-# Learning framework roadmap
+# Learning framework work queue
 
-## Mission
+## Purpose
 
-Build a generic framework that learns useful behavior from restorable native
-state, observations, legal actions, transition outcomes, optional human
-experience, and an authoritative terminal predicate. It must learn from scratch,
-improve with experience, and run fast enough for useful iteration.
+Track only work required to build a generic framework that actually learns from
+native experience and does so fast enough to use. This includes learning,
+save-state execution, observations and actions, orchestration, introspection,
+and the architecture needed to trust and extend them.
 
-Ordon is the first proving problem, not the product. A route of 123 native ticks
-or fewer is evidence that the framework works, not a target to encode into it.
-Authored routes, waypoints, shaped route rewards, blessed tactics, proxy
-terminals, favorable-seed mining, and benchmark-specific exceptions do not
-count as learning.
+Ordon is the first proof, not the product. A route of 123 native ticks or fewer
+is evidence of success, never a value to encode. Authored routes, waypoints,
+route-shaped rewards, blessed tactics, proxy terminals, favorable-seed mining,
+and benchmark-specific exceptions do not count as learning.
 
-## Definition of done
+## Done means
 
-- Scratch learning reliably beats frozen-policy and random-valid controls on
-  predeclared held-out Ordon seeds under matched budgets.
-- Learning continues after discovery and produces a route of 123 ticks or fewer
-  that cold-replays twice with identical inputs, state identities, terminal
+- Scratch reliably beats frozen-policy and random-valid controls on repeated,
+  predeclared, budget-matched held-out Ordon experiments.
+- Learning keeps improving after first success and produces a 123-tick-or-faster
+  route that cold-replays twice with identical inputs, state identity, terminal
   proof, and tick count.
-- A standard experiment has an interactive turnaround and scales predictably
-  within explicit CPU, memory, worker, and storage limits.
-- The same framework discovers and improves a second native route without
-  learner or contract changes.
+- A matched standard Ordon comparison finishes within ten minutes on the named
+  two-worker Windows host; more workers predictably increase unique useful
+  transitions per second.
+- The unchanged framework discovers and improves a second native route.
 
-## Current reality
+## Current evidence
 
-- The latest deterministic held-out run found 1/2 terminals with a 251-tick best
-  learned route; frozen and random controls found 0/2. That is weak evidence of
-  learning, not a robust result.
-- An earlier stronger result was invalidated by wall-clock-dependent cross-lane
-  publication. Live replay remains single-lane until ordering is deterministic.
-- The learned cell took about 375 seconds. Several phases are expensive, but
-  current reports cannot yet identify the real useful-throughput bottleneck.
+Canonical comparison V43 (`530e544671681f137f16c90f39bc5010554fb6ef69e765e74842257dd2062588`)
+found 1/2 terminals at 407 ticks with learned ranking and 0/2 with both controls.
+That is encouraging, not proof. Learned ranking was also the slowest cell: 368.6
+seconds, 0.694 useful expansions/second, and 39% two-worker utilization. We need
+repeatability and throughput before spending more time on large searches.
 
 ## Ordered work
 
-### P0 — Trust the experiment
+### P0 - Trust the loop and the baseline
 
-- [ ] Emit one self-validating canonical artifact with inputs/build identity,
-  terminal proof, success and route-quality curves, useful and duplicate work,
-  CPU/memory/queue/worker utilization, failures, and exclusive phase timing.
-  Every total must reconcile and missing evidence must fail validation.
-- [ ] Prove the complete learning path—observation, legal actions, exploration,
-  transition, replay, update, policy, checkpoint—can change future choices from
-  new evidence. Prove frozen and random controls cannot receive that benefit.
-- [ ] Run repeatable one-worker and bounded multi-worker baselines on the same
-  predeclared workload, report variance, and name the largest measured loss of
-  unique useful transitions per second.
+- [ ] Prove end to end that new native evidence passes through observation,
+  legal actions, exploration, replay, update, and snapshot publication to change
+  future choices. Prove frozen and random controls cannot receive that benefit.
+- [ ] Run repeated one-worker and two-worker versions of the same predeclared
+  workload. Report outcome, wall-time, and unique-useful-throughput variance and
+  identify the largest reconciled loss in the learned cell.
+- [ ] Make the learning path auditable: split oversized runner/orchestration
+  files by responsibility, enforce source-size and dependency boundaries, and
+  cover each contract with focused unit, integration, fault, and replay tests.
 
-### P1 — Raise useful throughput
+### P1 - Make useful experience cheap
 
-- [ ] Optimize the largest measured loss and retain matched before/after
-  evidence. Repeat until framework overhead no longer dominates and added
-  workers increase useful—not merely attempted—transitions per second.
-- [ ] Prove save-state restore and branching pay for themselves. Measure restore
-  and branch latency, state reuse, unique descendants, duplicate suppression,
-  and useful work per restored state; redesign or remove machinery that loses.
-- [ ] Bound and backpressure workers, native processes, queues, memory,
-  checkpoints, replay, and artifacts. Make cancellation, timeout, failure,
-  cleanup, and resume exact; manage only directly owned processes.
+- [ ] Optimize the largest measured throughput loss with matched before/after
+  evidence. Repeat until the standard comparison meets the ten-minute budget
+  and two workers outperform one in unique useful transitions per second.
+- [ ] Prove save-state capture, restore, reuse, and branching save time. Account
+  for restore latency, fallback replay, duplicate descendants, memory, and useful
+  work per state; redesign or remove machinery that does not pay for itself.
+- [ ] Eliminate invisible waste and operational fragility. Account for every
+  duplicate, stale, censored, discarded, retried, or failed sample; bound and
+  backpressure owned processes, workers, queues, memory, replay, checkpoints,
+  and artifacts; make progress, ETA, cancellation, cleanup, recovery, and resume
+  exact.
 
-### P2 — Make the learner solve and optimize
+### P2 - Make the learner solve and optimize sparse-terminal routes
 
-- [ ] Give exploration enough temporal reach and branching breadth to complete
-  sparse-terminal attempts, with explicit comparable budgets rather than short
-  horizons that cannot reach the goal.
-- [ ] Expose route-independent native facts and choices: motion history,
-  velocity, camera, analog input, legal prompts, action availability, and
-  transition outcomes. Let learning determine predictive value; do not encode
-  “straight”, “wall”, “roll”, coordinates, or the human path as route rewards.
-- [ ] Learn reusable parameterized multi-frame actions while retaining primitive
-  inputs. Discover, compare, compose, promote, and retire tactics from evidence;
-  do not require authored movement or camera sequences.
-- [ ] Continue exploration and updates after first success, optimizing terminal
-  success first and native tick count second. Report quality versus useful
-  experience and wall time, not only the best sample.
-- [ ] Evaluate human replay as optional off-policy experience under matched
-  budgets. Scratch must remain viable and learning must be able to surpass it.
-- [ ] Demonstrate repeatable held-out Ordon success over both controls, then
-  produce and twice cold-replay an authenticated route of 123 ticks or fewer.
+- [ ] Give exploration enough horizon and breadth to discover a human-reachable
+  terminal from scratch. Compare by useful native experience, not arbitrary
+  decision counts or short trials that cannot reach the goal.
+- [ ] Expose route-independent motion history, velocity, orientation, camera,
+  analog input, legal prompts, action availability, and transition outcomes.
+  Retain primitive inputs while learning, composing, promoting, and retiring
+  parameterized multi-frame tactics from evidence rather than authorship.
+- [ ] Validate a learner that propagates sparse terminal value, escapes local
+  optima, tolerates replay staleness, and continues exploration and updates after
+  first success. Optimize terminal success first and authenticated ticks second;
+  use ordinary human replay only as optional off-policy experience.
+- [ ] Pass the repeated held-out Ordon comparison and twice cold-replay an
+  authenticated 123-tick-or-faster learned route.
 
-### P3 — Harden and generalize
+### P3 - Harden and generalize
 
-- [ ] Define deterministic logical ordering for concurrent publication,
-  sampling, updates, and snapshots. Require identical fresh/resumed decisions,
-  identities, accounting, and terminal evidence before enabling multiple lanes.
-- [ ] Separate execution, restoration, observation/action contracts, learning,
-  search, persistence, orchestration, and reporting into focused testable
-  modules. Split oversized files and enforce dependency and source-size gates.
-- [ ] Keep durable state bounded, binary, versioned, checksummed, atomic, and
-  migration-tested. Reject corrupt, partial, incompatible, or inconsistent data
-  before it affects learning; make every campaign auditable from artifacts alone.
-- [ ] Repeat scratch discovery, controlled evaluation, optimization, and replay
-  on a second route without changing learner or framework contracts.
+- [ ] Make concurrent publication, sampling, updates, and snapshots logically
+  deterministic. Fresh and resumed runs must reproduce decisions, identities,
+  accounting, and terminal evidence before adding concurrent lanes.
+- [ ] Keep hot-path and durable state compact, bounded, binary, versioned,
+  checksummed, atomic, and migration-tested. Reject corrupt, partial,
+  incompatible, or inconsistent state before it reaches learning.
+- [ ] Pass the same scratch discovery, controlled evaluation, optimization, and
+  replay gates on a second native route without changing framework contracts.
 
-## Rules of work
+## Queue rules
 
-- The native terminal predicate is the only success authority.
-- Predeclare seeds and budgets. Do not mine seeds, rerun unchanged failures, or
-  count near misses and proxy thresholds as wins.
-- Each experiment answers one question; each optimization needs matched evidence;
-  each milestone needs a falsifiable test or sealed artifact.
-- Remove completed tasks. Keep history and detailed evidence in versioned reports,
-  not in this queue.
+- Work in priority order unless a later item directly unblocks the current one.
+- The native load-zone predicate is the only success authority.
+- Every experiment answers one falsifiable question; every optimization retains
+  matched evidence and auditable build/input identity.
+- Remove completed items. History belongs in commits and sealed artifacts.
