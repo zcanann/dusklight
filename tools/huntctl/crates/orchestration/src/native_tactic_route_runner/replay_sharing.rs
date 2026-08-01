@@ -25,11 +25,13 @@ impl BoundedStalenessReplaySession {
         })
     }
 
-    pub(super) fn refresh_if_required(
+    /// Return a newer immutable learner publication without mutating the lane.
+    /// This lets the coordinator evaluate the same native state and legal
+    /// action surface immediately before and after consuming the publication.
+    pub(super) fn pending_snapshot(
         &mut self,
-        campaign: &mut TacticQCampaign,
     ) -> Result<Option<Arc<TacticQImmutableLearnerSnapshot>>, NativeTacticRouteRunError> {
-        let snapshot = {
+        {
             let learner = lock_learner_authority(&self.learner)?;
             let snapshot = learner.snapshot();
             let replay_revision = learner.replay().replay_snapshot().revision;
@@ -51,8 +53,20 @@ impl BoundedStalenessReplaySession {
             if !replay_refresh_required(self.consumed_revision, current_revision) {
                 return Ok(None);
             }
-            snapshot
-        };
+            Ok(Some(snapshot))
+        }
+    }
+
+    pub(super) fn consume_snapshot(
+        &mut self,
+        campaign: &mut TacticQCampaign,
+        snapshot: &Arc<TacticQImmutableLearnerSnapshot>,
+    ) -> Result<(), NativeTacticRouteRunError> {
+        if snapshot.replay_revision <= self.consumed_revision {
+            return Err(route_message(
+                "campaign lane learner refresh did not advance replay revision",
+            ));
+        }
         let admitted = campaign
             .consume_learner_snapshot_with_exploration_filter(&snapshot, |episode_group| {
                 self.lane.owns_episode_group(episode_group)
@@ -61,7 +75,7 @@ impl BoundedStalenessReplaySession {
         self.consumed_revision = snapshot.replay_revision;
         self.telemetry.refreshes = self.telemetry.refreshes.saturating_add(1);
         self.telemetry.imported_rows = self.telemetry.imported_rows.saturating_add(admitted as u64);
-        Ok(Some(snapshot))
+        Ok(())
     }
 
     pub(super) fn publish_evaluated(

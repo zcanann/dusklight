@@ -28,8 +28,8 @@ use crate::tactic_q_campaign::{
     TacticCampaignGraphProjectionNode, TacticExpansionLease, TacticFrontierAcquisition,
     TacticQCampaign, TacticQCampaignError, TacticQDecision, TacticQFinalResult,
     TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot, TacticQLearnerSnapshotKind,
-    TacticQTrainingCorpus, TacticRestorationContract, TacticSchedulerDecisionTrace,
-    has_no_progress_loop, route_checkpoint, validate_training_corpus,
+    TacticQProposalBatch, TacticQTrainingCorpus, TacticRestorationContract,
+    TacticSchedulerDecisionTrace, has_no_progress_loop, route_checkpoint, validate_training_corpus,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use crate::tactic_replay_control_plane::{
@@ -106,6 +106,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V40: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V41: &str = "dusklight-native-tactic-route-report/v41";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V42: &str = "dusklight-native-tactic-route-report/v42";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V43: &str = "dusklight-native-tactic-route-report/v43";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44: &str = "dusklight-native-tactic-route-report/v44";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -168,6 +169,11 @@ pub use report::{
     NativeTacticSeedResult, NativeTacticSeedStopReason, NativeTacticStateTrace,
     NativeTacticValueTrace, NativeTacticWorkerUtilization,
 };
+mod causal_policy_probe;
+pub use causal_policy_probe::NativeTacticPolicyUpdateProbe;
+#[cfg(test)]
+use causal_policy_probe::build_policy_update_probe;
+use causal_policy_probe::{PolicyUpdateProbeContext, consume_policy_update_with_probe};
 mod completion_marker;
 use completion_marker::publish_completion;
 mod exclusive_timing;
@@ -184,12 +190,12 @@ mod campaign_summary;
 pub use campaign_summary::{
     NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE, NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V1,
     NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V2, NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V3,
-    NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4, NativeTacticCampaignCausalSummary,
-    NativeTacticCampaignEfficiencySummary, NativeTacticCampaignGoalReachabilitySummary,
-    NativeTacticCampaignIdentities, NativeTacticCampaignOutcomeSummary,
-    NativeTacticCampaignResourceSummary, NativeTacticCampaignSummary,
-    NativeTacticCampaignTimingSummary, NativeTacticCampaignTreatmentSummary,
-    NativeTacticCampaignWorkSummary, NativeTacticCausalLink,
+    NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4, NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V5,
+    NativeTacticCampaignCausalSummary, NativeTacticCampaignEfficiencySummary,
+    NativeTacticCampaignGoalReachabilitySummary, NativeTacticCampaignIdentities,
+    NativeTacticCampaignOutcomeSummary, NativeTacticCampaignResourceSummary,
+    NativeTacticCampaignSummary, NativeTacticCampaignTimingSummary,
+    NativeTacticCampaignTreatmentSummary, NativeTacticCampaignWorkSummary, NativeTacticCausalLink,
 };
 mod lease_journal;
 use lease_journal::NativeTacticLeaseLedger;
@@ -272,10 +278,10 @@ mod scratch_comparison;
 pub use scratch_comparison::{
     NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V2, NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V3,
     NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V4, NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V5,
-    NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V6, NativeTacticScratchComparisonCell,
-    NativeTacticScratchComparisonReport, NativeTacticScratchCriticalPathTiming,
-    NativeTacticScratchEfficiencyMetrics, NativeTacticScratchRouteProgress,
-    NativeTacticScratchTreatment,
+    NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V6, NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V7,
+    NativeTacticScratchComparisonCell, NativeTacticScratchComparisonReport,
+    NativeTacticScratchCriticalPathTiming, NativeTacticScratchEfficiencyMetrics,
+    NativeTacticScratchRouteProgress, NativeTacticScratchTreatment,
 };
 mod route_diagnosis;
 pub use route_diagnosis::{
@@ -869,7 +875,7 @@ fn run_native_tactic_route_with_optional_fleet(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let mut report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V43.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44.into(),
         orchestrator_executable_sha256: Some(orchestrator_executable_sha256),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
@@ -1017,6 +1023,7 @@ pub(super) fn supports_current_route_report_schema(schema: &str) -> bool {
             | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V41
             | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V42
             | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V43
+            | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44
     )
 }
 

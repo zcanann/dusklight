@@ -315,9 +315,45 @@ pub(super) fn run_seed(
         if cancellation_requested(config) {
             return Err(route_cancelled("native tactic route paused"));
         }
+        let planned_acquisition_rank = lane.acquisition.rank(campaign.decision_index);
+        let mut policy_update_probes = Vec::new();
         if let Some(session) = replay_session.as_mut() {
             let learner_refresh_started = Instant::now();
-            if let Some(snapshot) = session.refresh_if_required(&mut campaign)? {
+            if let Some(snapshot) = session.pending_snapshot()? {
+                let fixed_feedback = parameterized_feedback_for_state(
+                    &campaign,
+                    &campaign.current.snapshot,
+                    encoder,
+                )?;
+                let fixed = parameterized_catalog_for_state_with_promoted(
+                    seed,
+                    campaign.decision_index,
+                    &campaign.current.snapshot,
+                    encoder,
+                    u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                    fixed_feedback,
+                    action_schema_sha256,
+                    promoted_tactics,
+                )?;
+                let fixed_catalog = Arc::new(fixed.catalog);
+                let fixed_blueprints = Arc::new(fixed.blueprints);
+                policy_update_probes.push(consume_policy_update_with_probe(
+                    session,
+                    &mut campaign,
+                    &consumed_learner_snapshot,
+                    &snapshot,
+                    None,
+                    PolicyUpdateProbeContext {
+                        catalog: &fixed_catalog,
+                        blueprints: &fixed_blueprints,
+                        action_schema_sha256,
+                        encoder,
+                        maximum_proposals: config.execution_plan.proposal_width_per_decision,
+                        acquisition_partition: planned_acquisition_rank,
+                        proposal_policy: config.execution_plan.proposal_policy,
+                        force_exploration: false,
+                    },
+                )?);
                 consumed_learner_snapshot = snapshot;
             }
             record_orchestration_detail(
@@ -327,7 +363,6 @@ pub(super) fn run_seed(
             )?;
         }
         let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
-        let planned_acquisition_rank = lane.acquisition.rank(campaign.decision_index);
         let terminal_support_acquisition = campaign
             .graph_terminal_path_available()
             .map_err(route_error)?
@@ -511,7 +546,24 @@ pub(super) fn run_seed(
             )?;
             if let Some(session) = replay_session.as_mut() {
                 let learner_refresh_started = Instant::now();
-                if let Some(snapshot) = session.refresh_if_required(&mut campaign)? {
+                if let Some(snapshot) = session.pending_snapshot()? {
+                    policy_update_probes.push(consume_policy_update_with_probe(
+                        session,
+                        &mut campaign,
+                        &consumed_learner_snapshot,
+                        &snapshot,
+                        Some(&preview),
+                        PolicyUpdateProbeContext {
+                            catalog: &proposal_catalog,
+                            blueprints: &proposal_blueprints,
+                            action_schema_sha256,
+                            encoder,
+                            maximum_proposals: config.execution_plan.proposal_width_per_decision,
+                            acquisition_partition: planned_acquisition_rank,
+                            proposal_policy: config.execution_plan.proposal_policy,
+                            force_exploration: demonstration_intervention_pending,
+                        },
+                    )?);
                     consumed_learner_snapshot = snapshot;
                     record_orchestration_detail(
                         &mut timing,
@@ -1219,6 +1271,7 @@ pub(super) fn run_seed(
             lane_index: lane.lane_index,
             lane_role: Some(lane.role),
             acquisition_rank,
+            policy_update_probes,
             frontier_identity: source_snapshot_sha256,
             checkpoint_owner_worker_slot,
             proposal_worker_slots,

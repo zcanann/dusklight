@@ -472,6 +472,7 @@ pub(super) fn decision_record(
         lane_index: trace.lane_index,
         lane_role: trace.lane_role,
         acquisition_rank: trace.acquisition_rank,
+        policy_update_probes: trace.policy_update_probes.clone(),
         frontier_identity: trace.frontier_identity,
         checkpoint_owner_worker_slot: trace.checkpoint_owner_worker_slot,
         proposal_worker_slots: trace.proposal_worker_slots.clone(),
@@ -658,6 +659,22 @@ pub(super) fn project_tactic_decision_record(
             ));
         }
     }
+    for probe in &record.policy_update_probes {
+        probe.validate()?;
+    }
+    if !record.policy_update_probes.is_empty()
+        && (record.policy_update_probes.last().is_none_or(|probe| {
+            probe.after_learner_snapshot_sha256 != record.learner_snapshot_sha256
+        }) || record.policy_update_probes.windows(2).any(|pair| {
+            pair[0].after_learner_snapshot_sha256 != pair[1].before_learner_snapshot_sha256
+                || pair[0].after_replay_rows != pair[1].before_replay_rows
+                || pair[0].after_model_revision != pair[1].before_model_revision
+        }))
+    {
+        return Err(route_message(
+            "tactic policy-update probes are detached from their decision learner model",
+        ));
+    }
     Ok(NativeTacticDecisionTrace {
         execution_plan_sha256: record.execution_plan_sha256,
         decision_index: record.decision_index,
@@ -668,6 +685,7 @@ pub(super) fn project_tactic_decision_record(
         lane_index: record.lane_index,
         lane_role: record.lane_role,
         acquisition_rank: record.acquisition_rank,
+        policy_update_probes: record.policy_update_probes,
         frontier_identity: record.frontier_identity,
         checkpoint_owner_worker_slot: record.checkpoint_owner_worker_slot,
         proposal_worker_slots: record.proposal_worker_slots,

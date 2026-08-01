@@ -1,6 +1,10 @@
 use super::scratch_discovery::route_report_sha256;
 use super::*;
 
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-campaign-summary/v1";
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V2: &str =
@@ -9,6 +13,8 @@ pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V3: &str =
     "dusklight-native-tactic-campaign-summary/v3";
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4: &str =
     "dusklight-native-tactic-campaign-summary/v4";
+pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V5: &str =
+    "dusklight-native-tactic-campaign-summary/v5";
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE: &str = "campaign-summary.json";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -20,6 +26,7 @@ pub enum NativeTacticCausalLink {
     ExperiencePublication,
     LearnerUpdate,
     PolicyDeployment,
+    PolicyEffect,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -85,6 +92,15 @@ pub struct NativeTacticCampaignCausalSummary {
     pub model_snapshots_consumed: u64,
     pub distinct_model_snapshots_consumed: u64,
     pub post_update_policy_decisions: u64,
+    /// Controlled reassessments with state and legal action surface held fixed.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub policy_update_probes: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub valid_policy_update_probes: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub selected_action_changes_from_policy_update: u64,
+    /// Legacy adjacent-decision diagnostic. State changes between adjacent
+    /// decisions, so this is not causal proof of a policy effect.
     pub selected_action_changes_at_model_change: u64,
     pub causal_chain_ready_for_matched_evaluation: bool,
     pub first_incomplete_link: Option<NativeTacticCausalLink>,
@@ -270,7 +286,11 @@ impl NativeTacticCampaignSummary {
         let peak_worker_resident_bytes = route.native_restore_accounting.peak_resident_bytes;
 
         let mut summary = Self {
-            schema: NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4.into(),
+            schema: if route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44 {
+                NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V5.into()
+            } else {
+                NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4.into()
+            },
             content_sha256: Digest::ZERO,
             route_report_sha256: route_report_sha256(route)?,
             identities: NativeTacticCampaignIdentities {
@@ -373,8 +393,10 @@ impl NativeTacticCampaignSummary {
     }
 
     pub fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
-        if self.schema != NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4
-            || self.content_sha256 == Digest::ZERO
+        if !matches!(
+            self.schema.as_str(),
+            NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4 | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V5
+        ) || self.content_sha256 == Digest::ZERO
             || self.route_report_sha256 == Digest::ZERO
             || self.identities.optimization_request_sha256 == Digest::ZERO
             || self.identities.execution_binding_sha256 == Digest::ZERO
@@ -401,6 +423,17 @@ impl NativeTacticCampaignSummary {
                     .saturating_add(self.work.unresolved_leases)
             || self.causal_chain.causal_chain_ready_for_matched_evaluation
                 == self.causal_chain.first_incomplete_link.is_some()
+            || self.causal_chain.valid_policy_update_probes > self.causal_chain.policy_update_probes
+            || self.causal_chain.selected_action_changes_from_policy_update
+                > self.causal_chain.valid_policy_update_probes
+            || (!self.causal_chain.learning_expected && self.causal_chain.policy_update_probes != 0)
+            || (self.schema == NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V5
+                && self.causal_chain.learning_expected
+                && self.causal_chain.causal_chain_ready_for_matched_evaluation
+                && (self.causal_chain.policy_update_probes == 0
+                    || self.causal_chain.valid_policy_update_probes
+                        != self.causal_chain.policy_update_probes
+                    || self.causal_chain.selected_action_changes_from_policy_update == 0))
             || self.goal_reachability.calibration_decisions
                 != self
                     .goal_reachability
@@ -658,6 +691,21 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
         .collect::<BTreeSet<_>>();
     let mut post_update_policy_decisions = 0_u64;
     let mut selected_action_changes_at_model_change = 0_u64;
+    let policy_update_probes = traces
+        .iter()
+        .flat_map(|decision| &decision.policy_update_probes)
+        .collect::<Vec<_>>();
+    let valid_policy_update_probes = traces
+        .iter()
+        .filter(|decision| policy_update_probe_chain_valid(decision))
+        .map(|decision| decision.policy_update_probes.len() as u64)
+        .sum();
+    let selected_action_changes_from_policy_update = traces
+        .iter()
+        .filter(|decision| policy_update_probe_chain_valid(decision))
+        .flat_map(|decision| &decision.policy_update_probes)
+        .filter(|probe| probe.selected_action_changed)
+        .count() as u64;
     for seed in &route.seeds {
         let Some(first) = seed.trace.first() else {
             continue;
@@ -694,6 +742,13 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
             || post_update_policy_decisions == 0)
     {
         Some(NativeTacticCausalLink::PolicyDeployment)
+    } else if learning_expected
+        && route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44
+        && (policy_update_probes.is_empty()
+            || valid_policy_update_probes != policy_update_probes.len() as u64
+            || selected_action_changes_from_policy_update == 0)
+    {
+        Some(NativeTacticCausalLink::PolicyEffect)
     } else {
         None
     };
@@ -711,11 +766,29 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
         model_snapshots_consumed: route.learner_authority.declared_model_snapshots_consumed,
         distinct_model_snapshots_consumed: consumed.len() as u64,
         post_update_policy_decisions,
+        policy_update_probes: policy_update_probes.len() as u64,
+        valid_policy_update_probes,
+        selected_action_changes_from_policy_update,
         selected_action_changes_at_model_change,
         causal_chain_ready_for_matched_evaluation: first_incomplete_link.is_none(),
         first_incomplete_link,
         outcome_effect_requires_matched_control: learning_expected,
     }
+}
+
+fn policy_update_probe_chain_valid(decision: &NativeTacticDecisionTrace) -> bool {
+    decision
+        .policy_update_probes
+        .iter()
+        .all(|probe| probe.validate().is_ok())
+        && decision.policy_update_probes.last().is_none_or(|probe| {
+            probe.after_learner_snapshot_sha256 == decision.learner_snapshot_sha256
+        })
+        && decision.policy_update_probes.windows(2).all(|pair| {
+            pair[0].after_learner_snapshot_sha256 == pair[1].before_learner_snapshot_sha256
+                && pair[0].after_replay_rows == pair[1].before_replay_rows
+                && pair[0].after_model_revision == pair[1].before_model_revision
+        })
 }
 
 fn work_summary(
@@ -832,6 +905,58 @@ mod tests {
         assert!(summary.resources.memory_bound_satisfied);
         assert!(encoded.len() < 16 * 1024);
         assert!(raw.len() > encoded.len() * 40);
+    }
+
+    #[test]
+    fn v44_summary_requires_a_same_state_policy_effect() {
+        let (_, mut route, _) = retained_report_and_plan();
+        route.schema = NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44.into();
+        let snapshots = route
+            .seeds
+            .iter()
+            .flat_map(|seed| &seed.trace)
+            .map(|decision| decision.learner_snapshot_sha256)
+            .collect::<Vec<_>>();
+        let decision = route
+            .seeds
+            .iter_mut()
+            .flat_map(|seed| &mut seed.trace)
+            .nth(1)
+            .unwrap();
+        decision.policy_update_probes = vec![NativeTacticPolicyUpdateProbe {
+            state_sha256: Digest([21; 32]),
+            before_action_surface_sha256: Digest([22; 32]),
+            after_action_surface_sha256: Digest([22; 32]),
+            before_learner_snapshot_sha256: snapshots[0],
+            after_learner_snapshot_sha256: decision.learner_snapshot_sha256,
+            before_replay_rows: 1,
+            after_replay_rows: 2,
+            before_model_revision: 1,
+            after_model_revision: 2,
+            before_selected_option_id: "before".into(),
+            after_selected_option_id: "after".into(),
+            before_selection_reason: TacticSelectionReason::Greedy,
+            after_selection_reason: TacticSelectionReason::Greedy,
+            selected_action_changed: true,
+        }];
+
+        let summary = causal_summary(&route);
+        assert!(summary.causal_chain_ready_for_matched_evaluation);
+        assert_eq!(summary.policy_update_probes, 1);
+        assert_eq!(summary.valid_policy_update_probes, 1);
+        assert_eq!(summary.selected_action_changes_from_policy_update, 1);
+
+        route
+            .seeds
+            .iter_mut()
+            .flat_map(|seed| &mut seed.trace)
+            .for_each(|decision| decision.policy_update_probes.clear());
+        let incomplete = causal_summary(&route);
+        assert!(!incomplete.causal_chain_ready_for_matched_evaluation);
+        assert_eq!(
+            incomplete.first_incomplete_link,
+            Some(NativeTacticCausalLink::PolicyEffect)
+        );
     }
 
     #[test]

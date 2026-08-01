@@ -15,6 +15,8 @@ pub const NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V5: &str =
     "dusklight-native-tactic-scratch-comparison/v5";
 pub const NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V6: &str =
     "dusklight-native-tactic-scratch-comparison/v6";
+pub const NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V7: &str =
+    "dusklight-native-tactic-scratch-comparison/v7";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -198,10 +200,19 @@ impl NativeTacticScratchComparisonReport {
         let first = routes
             .first()
             .ok_or_else(|| route_message("scratch comparison has no routes"))?;
+        let comparison_schema = match first.schema.as_str() {
+            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V43 => NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V6,
+            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44 => NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V7,
+            _ => {
+                return Err(route_message(
+                    "scratch comparison requires complete v43 or v44 campaign evidence",
+                ));
+            }
+        };
         let first_plan = read_plan(&repository_root, first)?;
         let mut cells = Vec::with_capacity(routes.len());
         for route in &routes {
-            if !matches!(route.schema.as_str(), NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V43)
+            if route.schema != first.schema
                 || route
                     .seeds
                     .iter()
@@ -219,7 +230,7 @@ impl NativeTacticScratchComparisonReport {
                 || route.timing.persistence_breakdown.is_none()
             {
                 return Err(route_message(
-                    "scratch comparison v6 requires complete v43 campaign evidence",
+                    "scratch comparison requires one matched campaign evidence version",
                 ));
             }
             let plan = read_plan(&repository_root, route)?;
@@ -262,7 +273,7 @@ impl NativeTacticScratchComparisonReport {
             ));
         }
         let mut report = Self {
-            schema: NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V6.into(),
+            schema: comparison_schema.into(),
             content_sha256: Digest::ZERO,
             orchestrator_executable_sha256: first.orchestrator_executable_sha256,
             optimization_request_sha256: first.optimization_request_sha256,
@@ -294,6 +305,7 @@ impl NativeTacticScratchComparisonReport {
             NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V4 => 4,
             NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V5 => 5,
             NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V6 => 6,
+            NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V7 => 7,
             _ => return Err(route_message("scratch comparison schema is unsupported")),
         };
         if self.content_sha256 == Digest::ZERO
@@ -323,7 +335,7 @@ impl NativeTacticScratchComparisonReport {
                     || cell.execution_plan_sha256 == Digest::ZERO
                     || NativeTacticScratchTreatment::from_policy(cell.proposal_policy)
                         .map_or(true, |treatment| cell.treatment != treatment)
-                    || !treatment_causal_chain_valid(cell)
+                    || !treatment_causal_chain_valid(cell, critical_path_version)
                     || !metrics_valid(&cell.metrics, self.workers, critical_path_version)
             })
             || self.compute_content_sha256()? != self.content_sha256
@@ -349,16 +361,108 @@ impl NativeTacticScratchComparisonReport {
     }
 }
 
-fn treatment_causal_chain_valid(cell: &NativeTacticScratchComparisonCell) -> bool {
-    match cell.proposal_policy {
-        TacticProposalPolicy::Learned => cell.causal_chain.learning_expected,
-        TacticProposalPolicy::FrozenPolicy => {
-            !cell.causal_chain.learning_expected
-                && cell.causal_chain.distinct_model_snapshots_consumed == 1
-                && cell.causal_chain.post_update_policy_decisions == 0
+fn treatment_causal_chain_valid(
+    cell: &NativeTacticScratchComparisonCell,
+    comparison_version: u8,
+) -> bool {
+    policy_causal_chain_valid(cell.proposal_policy, &cell.causal_chain, comparison_version)
+}
+
+fn policy_causal_chain_valid(
+    proposal_policy: TacticProposalPolicy,
+    causal_chain: &NativeTacticCampaignCausalSummary,
+    comparison_version: u8,
+) -> bool {
+    let controlled_policy_effect_valid = comparison_version < 7
+        || (causal_chain.causal_chain_ready_for_matched_evaluation
+            && causal_chain.policy_update_probes > 0
+            && causal_chain.valid_policy_update_probes == causal_chain.policy_update_probes
+            && causal_chain.selected_action_changes_from_policy_update > 0);
+    match proposal_policy {
+        TacticProposalPolicy::Learned => {
+            causal_chain.learning_expected && controlled_policy_effect_valid
         }
-        TacticProposalPolicy::RandomValid => !cell.causal_chain.learning_expected,
+        TacticProposalPolicy::FrozenPolicy => {
+            !causal_chain.learning_expected
+                && causal_chain.distinct_model_snapshots_consumed == 1
+                && causal_chain.post_update_policy_decisions == 0
+                && causal_chain.policy_update_probes == 0
+        }
+        TacticProposalPolicy::RandomValid => {
+            !causal_chain.learning_expected && causal_chain.policy_update_probes == 0
+        }
         TacticProposalPolicy::StructuredNonLearning => false,
+    }
+}
+
+#[cfg(test)]
+mod causal_control_tests {
+    use super::*;
+
+    fn learned_chain() -> NativeTacticCampaignCausalSummary {
+        NativeTacticCampaignCausalSummary {
+            learning_expected: true,
+            decisions_with_observed_state: 2,
+            decisions_with_complete_action_surface: 2,
+            decisions_with_native_proposals: 2,
+            realized_native_proposals: 4,
+            newly_published_training_rows: 4,
+            final_training_replay_rows: 4,
+            learner_updates: 1,
+            model_snapshots_published: 2,
+            model_snapshots_consumed: 2,
+            distinct_model_snapshots_consumed: 2,
+            post_update_policy_decisions: 1,
+            policy_update_probes: 1,
+            valid_policy_update_probes: 1,
+            selected_action_changes_from_policy_update: 1,
+            selected_action_changes_at_model_change: 1,
+            causal_chain_ready_for_matched_evaluation: true,
+            first_incomplete_link: None,
+            outcome_effect_requires_matched_control: true,
+        }
+    }
+
+    #[test]
+    fn v7_requires_a_controlled_policy_effect_only_for_learning() {
+        let learned = learned_chain();
+        assert!(policy_causal_chain_valid(
+            TacticProposalPolicy::Learned,
+            &learned,
+            7
+        ));
+
+        let mut frozen = learned.clone();
+        frozen.learning_expected = false;
+        frozen.distinct_model_snapshots_consumed = 1;
+        frozen.post_update_policy_decisions = 0;
+        frozen.policy_update_probes = 0;
+        frozen.valid_policy_update_probes = 0;
+        frozen.selected_action_changes_from_policy_update = 0;
+        frozen.causal_chain_ready_for_matched_evaluation = true;
+        frozen.outcome_effect_requires_matched_control = false;
+        assert!(policy_causal_chain_valid(
+            TacticProposalPolicy::FrozenPolicy,
+            &frozen,
+            7
+        ));
+        assert!(policy_causal_chain_valid(
+            TacticProposalPolicy::RandomValid,
+            &frozen,
+            7
+        ));
+
+        frozen.policy_update_probes = 1;
+        assert!(!policy_causal_chain_valid(
+            TacticProposalPolicy::FrozenPolicy,
+            &frozen,
+            7
+        ));
+        assert!(!policy_causal_chain_valid(
+            TacticProposalPolicy::RandomValid,
+            &frozen,
+            7
+        ));
     }
 }
 

@@ -944,6 +944,10 @@ pub struct NativeTacticDecisionTrace {
     pub lane_role: Option<NativeTacticLaneRole>,
     #[serde(default)]
     pub acquisition_rank: u64,
+    /// Controlled same-state reassessments performed when this lane consumed a
+    /// newer fitted learner snapshot.
+    #[serde(default)]
+    pub policy_update_probes: Vec<NativeTacticPolicyUpdateProbe>,
     #[serde(default)]
     pub frontier_identity: Digest,
     /// Worker that owns the matching process-local source checkpoint, even
@@ -1139,6 +1143,8 @@ pub(super) struct NativeTacticDecisionRecord {
     pub(super) lane_role: Option<NativeTacticLaneRole>,
     #[serde(default)]
     pub(super) acquisition_rank: u64,
+    #[serde(default)]
+    pub(super) policy_update_probes: Vec<NativeTacticPolicyUpdateProbe>,
     #[serde(default)]
     pub(super) frontier_identity: Digest,
     #[serde(default)]

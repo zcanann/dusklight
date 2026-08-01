@@ -591,6 +591,23 @@ fn journal_projects_graph_and_materializes_routes_from_content_objects() {
     let root_ref = store.store_tape(&root_tape).unwrap();
     let mut trace = journal_trace(0);
     trace.reward_components.duration_ticks = 1;
+    trace.learner_snapshot_sha256 = Digest([5; 32]);
+    trace.policy_update_probes = vec![NativeTacticPolicyUpdateProbe {
+        state_sha256: transition.before_state_sha256,
+        before_action_surface_sha256: Digest([6; 32]),
+        after_action_surface_sha256: Digest([6; 32]),
+        before_learner_snapshot_sha256: Digest([4; 32]),
+        after_learner_snapshot_sha256: trace.learner_snapshot_sha256,
+        before_replay_rows: 1,
+        after_replay_rows: 2,
+        before_model_revision: 1,
+        after_model_revision: 2,
+        before_selected_option_id: "neutral".into(),
+        after_selected_option_id: "wait".into(),
+        before_selection_reason: TacticSelectionReason::Greedy,
+        after_selection_reason: TacticSelectionReason::Greedy,
+        selected_action_changed: true,
+    }];
     let proposal_trace = NativeTacticProposalTrace {
         execution_plan_sha256: Digest::ZERO,
         option_id: transition.value_sample.action.option_id.clone(),
@@ -649,6 +666,9 @@ fn journal_projects_graph_and_materializes_routes_from_content_objects() {
         .unwrap(),
     );
     assert!(project_tactic_decision_record(&store, detached).is_err());
+    let mut detached = record.clone();
+    detached.policy_update_probes[0].after_learner_snapshot_sha256 = Digest([7; 32]);
+    assert!(project_tactic_decision_record(&store, detached).is_err());
     append_tactic_decision_record(&root, &record).unwrap();
 
     let projected_trace = read_tactic_decision_journal(&root).unwrap();
@@ -660,6 +680,10 @@ fn journal_projects_graph_and_materializes_routes_from_content_objects() {
     assert_eq!(
         projected_trace[0].cumulative_wall_micros,
         trace.cumulative_wall_micros
+    );
+    assert_eq!(
+        projected_trace[0].policy_update_probes,
+        trace.policy_update_probes
     );
     let graph = project_tactic_decision_graph(&root).unwrap().unwrap();
     assert!(graph.root_connected);

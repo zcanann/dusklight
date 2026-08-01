@@ -628,6 +628,9 @@ mod tests {
         );
         let encode = |facts: &FactSnapshot| Ok::<_, &'static str>(vec![facts.tape_frame as f32]);
         let cold_decision = campaign.decide(&catalog, &[], &encode).unwrap();
+        let cold_probe_batch = campaign
+            .decide_parameterized_batch(&catalog, &[], Digest([9; 32]), &encode, 1)
+            .unwrap();
         assert_eq!(
             cold_decision.selected.reason,
             TacticSelectionReason::UnsupportedBootstrap
@@ -662,6 +665,29 @@ mod tests {
             1
         );
         let learned_decision = campaign.decide(&catalog, &[], &encode).unwrap();
+        let learned_probe_batch = campaign
+            .decide_parameterized_batch(&catalog, &[], Digest([9; 32]), &encode, 1)
+            .unwrap();
+        let policy_update_probe = build_policy_update_probe(
+            campaign.current.snapshot_sha256,
+            &cold_snapshot,
+            &learned_snapshot,
+            &cold_probe_batch,
+            &learned_probe_batch,
+        )
+        .unwrap();
+        assert_eq!(
+            policy_update_probe.before_action_surface_sha256,
+            policy_update_probe.after_action_surface_sha256
+        );
+        assert_eq!(
+            policy_update_probe.before_selection_reason,
+            TacticSelectionReason::UnsupportedBootstrap
+        );
+        assert_eq!(
+            policy_update_probe.after_selection_reason,
+            TacticSelectionReason::Greedy
+        );
         assert_eq!(
             learned_decision.ranking.learner_snapshot_sha256, campaign.current.snapshot_sha256,
             "the legacy ranking field binds the state snapshot, not the fitted policy"
