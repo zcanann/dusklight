@@ -8,6 +8,7 @@ use dusklight_learning::fact_snapshot::{FactPhase, FactSnapshot};
 use dusklight_learning::option_transition::{
     AuthenticatedOptionTransition, OptionIntermediateBoundary, OptionTransitionSample,
 };
+use sha2::Sha256;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -1279,6 +1280,10 @@ fn binary_restart_preserves_graph_identity_and_pending_truth() {
     let restored = StateGraph::decode(&encoded).unwrap();
 
     assert_eq!(restored, graph);
+    assert_eq!(
+        graph.content_sha256().unwrap(),
+        Digest(Sha256::digest(&encoded).into())
+    );
     assert_eq!(
         restored.content_sha256().unwrap(),
         graph.content_sha256().unwrap()
