@@ -30,13 +30,19 @@ separate product work.
   frozen 255, random 256. This proves a development advantage, not held-out
   generalization or route quality.
 - The one predeclared held-out comparison also passed
-  (`build/benchmarks/ordon-native-matched-heldout-seeds130363-181081-d32-v1-comparison.json`,
-  content `67cbf116...a9678`). Learned reached 2/2 terminals at a 119.24-second
+  (`build/benchmarks/ordon-native-matched-heldout-seeds130363-181081-d32-v1-comparison-v4.json`,
+  content `df75f271...0b1f1`). Learned reached 2/2 terminals at a 119.24-second
   median and 166 useful expansions to first terminal; both controls reached
   0/2 under closely matched work. Across all four predeclared seeds, learned
   is 4/4 and both controls are 0/4. The learning claim is established at this
   scope, but route quality remains poor: the best development and held-out
   routes were 304 and 286 ticks versus the 125-tick human replay.
+- Critical-path and additive occupancy are now reported separately. The
+  held-out learned critical path is 331.47 seconds: 105.72 seconds waiting on
+  proposal execution, 99.22 seconds still unattributed, 64.59 seconds of
+  persistence, 45.93 seconds of learner updates, 9.65 seconds of launch, and
+  6.33 seconds of known orchestration. The parts reconcile exactly; the
+  unattributed 29.9% is the first P1 instrumentation defect to repair.
 
 ## Queue
 
@@ -45,9 +51,12 @@ cause instead of starting a larger campaign.
 
 ### P1 - Make it fast enough to use
 
-- [ ] Attribute campaign time and utilization to native simulation, save-state
-      operations, transport, scheduling/idle time, learning, and persistence;
-      reconcile the parts with total time and useful transitions.
+- [ ] Eliminate the 99.22-second held-out learned critical-path attribution gap.
+      Separate learner refresh, action-catalog construction, graph scheduling
+      and leasing, seed setup/finalization, campaign setup/finalization, and
+      final report persistence/shutdown. Require checked reconciliation to the
+      actual completion-marker wall; never hide overlap or missing time with
+      saturating arithmetic.
 - [ ] Establish a reproducible one-worker baseline and bounded scaling curve.
       Track useful transitions/second, terminal samples/time, CPU, memory,
       queues, duplicate work, and idle capacity.

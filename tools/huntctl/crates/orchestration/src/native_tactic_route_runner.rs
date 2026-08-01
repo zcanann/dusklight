@@ -254,7 +254,8 @@ pub use scratch_campaign_audit::{
 mod scratch_comparison;
 pub use scratch_comparison::{
     NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V2, NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V3,
-    NativeTacticScratchComparisonCell, NativeTacticScratchComparisonReport,
+    NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V4, NativeTacticScratchComparisonCell,
+    NativeTacticScratchComparisonReport, NativeTacticScratchCriticalPathTiming,
     NativeTacticScratchEfficiencyMetrics, NativeTacticScratchTreatment,
 };
 mod route_diagnosis;

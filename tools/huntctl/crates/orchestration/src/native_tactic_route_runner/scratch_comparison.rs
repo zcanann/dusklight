@@ -5,6 +5,8 @@ pub const NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V2: &str =
     "dusklight-native-tactic-scratch-comparison/v2";
 pub const NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V3: &str =
     "dusklight-native-tactic-scratch-comparison/v3";
+pub const NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V4: &str =
+    "dusklight-native-tactic-scratch-comparison/v4";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -57,9 +59,10 @@ pub struct NativeTacticScratchEfficiencyMetrics {
     pub search_native_ticks: u64,
     pub non_search_native_ticks: u64,
     pub simulated_ticks_per_useful_expansion_millionths: u64,
-    /// Sum of per-seed coordinator wall time. Concurrent lanes intentionally
-    /// remain additive so phase occupancy has the same denominator.
+    /// Actual campaign critical-path wall. Phase fields below are additive
+    /// occupancy and therefore do not use this as an attribution denominator.
     pub coordinator_wall_micros: u64,
+    /// Legacy field. V4 binds this to `critical_path.unattributed_micros`.
     pub coordinator_unattributed_micros: u64,
     /// Native worker occupancy divided by coordinator wait capacity
     /// (`tactic_execution_micros * workers`), scaled by one million.
@@ -85,6 +88,26 @@ pub struct NativeTacticScratchEfficiencyMetrics {
     pub orchestration_micros: u64,
     pub learner_updates: u64,
     pub restore_accounting: NativeTacticRestoreAccounting,
+    /// Critical-path wall attribution, distinct from the additive phase
+    /// occupancy fields retained above for work and utilization analysis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub critical_path: Option<NativeTacticScratchCriticalPathTiming>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticScratchCriticalPathTiming {
+    pub campaign_wall_micros: u64,
+    pub coordinator_lane_occupancy_micros: u64,
+    pub generation_critical_path_micros: u64,
+    pub campaign_overhead_micros: u64,
+    pub process_launch_micros: u64,
+    pub tactic_execution_micros: u64,
+    pub model_update_micros: u64,
+    pub evidence_projection_micros: u64,
+    pub persistence_micros: u64,
+    pub orchestration_micros: u64,
+    pub unattributed_micros: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -151,7 +174,7 @@ impl NativeTacticScratchComparisonReport {
                 campaign_audit_sha256: audit.content_sha256,
                 execution_plan_sha256: route.execution_plan_sha256,
                 replay_sharing: plan.replay_sharing,
-                metrics: efficiency_metrics(route, &audit)?,
+                metrics: efficiency_metrics(route, &audit, &plan)?,
             });
         }
         cells.sort_by_key(|cell| cell.treatment);
@@ -170,7 +193,7 @@ impl NativeTacticScratchComparisonReport {
             ));
         }
         let mut report = Self {
-            schema: NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V3.into(),
+            schema: NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V4.into(),
             content_sha256: Digest::ZERO,
             optimization_request_sha256: first.optimization_request_sha256,
             execution_binding_sha256: first.execution_binding_sha256,
@@ -196,8 +219,12 @@ impl NativeTacticScratchComparisonReport {
             .iter()
             .map(|cell| cell.treatment)
             .collect::<BTreeSet<_>>();
-        if self.schema != NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V3
-            || self.content_sha256 == Digest::ZERO
+        let requires_critical_path = match self.schema.as_str() {
+            NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V3 => false,
+            NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V4 => true,
+            _ => return Err(route_message("scratch comparison schema is unsupported")),
+        };
+        if self.content_sha256 == Digest::ZERO
             || self.optimization_request_sha256 == Digest::ZERO
             || self.execution_binding_sha256 == Digest::ZERO
             || self.objective_sha256 == Digest::ZERO
@@ -217,7 +244,7 @@ impl NativeTacticScratchComparisonReport {
                     || NativeTacticScratchTreatment::from_policy(cell.proposal_policy)
                         .map_or(true, |treatment| cell.treatment != treatment)
                     || !treatment_causal_chain_valid(cell)
-                    || !metrics_valid(&cell.metrics, self.workers)
+                    || !metrics_valid(&cell.metrics, self.workers, requires_critical_path)
             })
             || self.compute_content_sha256()? != self.content_sha256
         {
@@ -313,9 +340,205 @@ fn validate_matched_plan(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TopLevelPhaseTiming {
+    tactic_execution_micros: u64,
+    model_update_micros: u64,
+    evidence_projection_micros: u64,
+    persistence_micros: u64,
+    orchestration_micros: u64,
+}
+
+impl TopLevelPhaseTiming {
+    fn from_route_timing(timing: &NativeTacticRouteTiming) -> Self {
+        Self {
+            tactic_execution_micros: timing.tactic_execution_micros,
+            model_update_micros: timing.model_update_micros,
+            evidence_projection_micros: timing.evidence_projection_micros,
+            persistence_micros: timing.persistence_micros,
+            orchestration_micros: timing.orchestration_micros,
+        }
+    }
+
+    fn checked_add(self, other: Self) -> Result<Self, NativeTacticRouteRunError> {
+        Ok(Self {
+            tactic_execution_micros: checked_timing_add(
+                self.tactic_execution_micros,
+                other.tactic_execution_micros,
+            )?,
+            model_update_micros: checked_timing_add(
+                self.model_update_micros,
+                other.model_update_micros,
+            )?,
+            evidence_projection_micros: checked_timing_add(
+                self.evidence_projection_micros,
+                other.evidence_projection_micros,
+            )?,
+            persistence_micros: checked_timing_add(
+                self.persistence_micros,
+                other.persistence_micros,
+            )?,
+            orchestration_micros: checked_timing_add(
+                self.orchestration_micros,
+                other.orchestration_micros,
+            )?,
+        })
+    }
+
+    fn checked_sub(self, other: Self) -> Result<Self, NativeTacticRouteRunError> {
+        Ok(Self {
+            tactic_execution_micros: checked_timing_sub(
+                self.tactic_execution_micros,
+                other.tactic_execution_micros,
+            )?,
+            model_update_micros: checked_timing_sub(
+                self.model_update_micros,
+                other.model_update_micros,
+            )?,
+            evidence_projection_micros: checked_timing_sub(
+                self.evidence_projection_micros,
+                other.evidence_projection_micros,
+            )?,
+            persistence_micros: checked_timing_sub(
+                self.persistence_micros,
+                other.persistence_micros,
+            )?,
+            orchestration_micros: checked_timing_sub(
+                self.orchestration_micros,
+                other.orchestration_micros,
+            )?,
+        })
+    }
+
+    fn total(self) -> Result<u64, NativeTacticRouteRunError> {
+        [
+            self.tactic_execution_micros,
+            self.model_update_micros,
+            self.evidence_projection_micros,
+            self.persistence_micros,
+            self.orchestration_micros,
+        ]
+        .into_iter()
+        .try_fold(0_u64, checked_timing_add)
+    }
+}
+
+impl NativeTacticScratchCriticalPathTiming {
+    fn validate(&self) -> bool {
+        self.generation_critical_path_micros <= self.campaign_wall_micros
+            && self.campaign_overhead_micros
+                == self
+                    .campaign_wall_micros
+                    .saturating_sub(self.generation_critical_path_micros)
+            && [
+                self.process_launch_micros,
+                self.tactic_execution_micros,
+                self.model_update_micros,
+                self.evidence_projection_micros,
+                self.persistence_micros,
+                self.orchestration_micros,
+                self.unattributed_micros,
+            ]
+            .into_iter()
+            .try_fold(0_u64, u64::checked_add)
+                == Some(self.campaign_wall_micros)
+    }
+}
+
+fn critical_path_timing(
+    route: &NativeTacticRouteReport,
+    plan: &NativeTacticExecutionPlan,
+) -> Result<NativeTacticScratchCriticalPathTiming, NativeTacticRouteRunError> {
+    if route.seeds.len() != plan.lanes.len() || route.seeds.len() != plan.seeds.len() {
+        return Err(route_message(
+            "scratch comparison timing lanes differ from the execution plan",
+        ));
+    }
+    let seed_occupancy = route
+        .seeds
+        .iter()
+        .try_fold(TopLevelPhaseTiming::default(), |total, seed| {
+            total.checked_add(TopLevelPhaseTiming::from_route_timing(&seed.timing))
+        })?;
+    let route_occupancy = TopLevelPhaseTiming::from_route_timing(&route.timing);
+    let mut critical_phases = route_occupancy.checked_sub(seed_occupancy)?;
+    let coordinator_lane_occupancy_micros = route.seeds.iter().try_fold(0_u64, |total, seed| {
+        checked_timing_add(total, seed.timing.wall_micros)
+    })?;
+    let mut generation_critical_path_micros = 0_u64;
+    for generation in &plan.generations {
+        let critical_lane_index = generation
+            .lane_indices
+            .iter()
+            .copied()
+            .try_fold(None::<usize>, |current, lane_index| {
+                let lane = route.seeds.get(lane_index).ok_or_else(|| {
+                    route_message("scratch comparison generation names an absent timing lane")
+                })?;
+                let replace = current.is_none_or(|current_index| {
+                    let current_lane = &route.seeds[current_index];
+                    lane.timing.wall_micros > current_lane.timing.wall_micros
+                        || lane.timing.wall_micros == current_lane.timing.wall_micros
+                            && lane_index < current_index
+                });
+                Ok::<_, NativeTacticRouteRunError>(replace.then_some(lane_index).or(current))
+            })?
+            .ok_or_else(|| route_message("scratch comparison generation has no timing lane"))?;
+        let critical_lane = &route.seeds[critical_lane_index];
+        generation_critical_path_micros = checked_timing_add(
+            generation_critical_path_micros,
+            critical_lane.timing.wall_micros,
+        )?;
+        critical_phases = critical_phases.checked_add(TopLevelPhaseTiming::from_route_timing(
+            &critical_lane.timing,
+        ))?;
+    }
+    let campaign_wall_micros = route.timing.wall_micros;
+    let campaign_overhead_micros = campaign_wall_micros
+        .checked_sub(generation_critical_path_micros)
+        .ok_or_else(|| route_message("scratch comparison critical path exceeds campaign wall"))?;
+    let accounted_micros =
+        checked_timing_add(route.timing.process_launch_micros, critical_phases.total()?)?;
+    let unattributed_micros = campaign_wall_micros
+        .checked_sub(accounted_micros)
+        .ok_or_else(|| {
+            route_message("scratch comparison critical-path phases exceed campaign wall")
+        })?;
+    let critical = NativeTacticScratchCriticalPathTiming {
+        campaign_wall_micros,
+        coordinator_lane_occupancy_micros,
+        generation_critical_path_micros,
+        campaign_overhead_micros,
+        process_launch_micros: route.timing.process_launch_micros,
+        tactic_execution_micros: critical_phases.tactic_execution_micros,
+        model_update_micros: critical_phases.model_update_micros,
+        evidence_projection_micros: critical_phases.evidence_projection_micros,
+        persistence_micros: critical_phases.persistence_micros,
+        orchestration_micros: critical_phases.orchestration_micros,
+        unattributed_micros,
+    };
+    if !critical.validate() {
+        return Err(route_message(
+            "scratch comparison critical-path timing does not reconcile",
+        ));
+    }
+    Ok(critical)
+}
+
+fn checked_timing_add(left: u64, right: u64) -> Result<u64, NativeTacticRouteRunError> {
+    left.checked_add(right)
+        .ok_or_else(|| route_message("scratch comparison timing overflowed"))
+}
+
+fn checked_timing_sub(left: u64, right: u64) -> Result<u64, NativeTacticRouteRunError> {
+    left.checked_sub(right)
+        .ok_or_else(|| route_message("scratch comparison timing aggregate is detached"))
+}
+
 fn efficiency_metrics(
     route: &NativeTacticRouteReport,
     audit: &NativeTacticScratchCampaignAudit,
+    plan: &NativeTacticExecutionPlan,
 ) -> Result<NativeTacticScratchEfficiencyMetrics, NativeTacticRouteRunError> {
     let first_useful = audit
         .seeds
@@ -447,12 +670,7 @@ fn efficiency_metrics(
         .filter_map(|seed| seed.graph_metrics.as_ref())
         .map(|metrics| metrics.graph.observed_segments)
         .sum();
-    let accounted = timing
-        .tactic_execution_micros
-        .saturating_add(timing.model_update_micros)
-        .saturating_add(timing.evidence_projection_micros)
-        .saturating_add(timing.persistence_micros)
-        .saturating_add(timing.orchestration_micros);
+    let critical_path = critical_path_timing(route, plan)?;
     Ok(NativeTacticScratchEfficiencyMetrics {
         seed_count,
         terminal_seed_count: terminal_count,
@@ -483,7 +701,7 @@ fn efficiency_metrics(
             route.unique_useful_graph_expansions,
         ),
         coordinator_wall_micros: timing.wall_micros,
-        coordinator_unattributed_micros: timing.wall_micros.saturating_sub(accounted),
+        coordinator_unattributed_micros: critical_path.unattributed_micros,
         native_worker_occupancy_per_million: ratio_per_million(
             timing.native_simulation_micros,
             timing
@@ -510,11 +728,36 @@ fn efficiency_metrics(
         orchestration_micros: timing.orchestration_micros,
         learner_updates: route.learner_updates,
         restore_accounting: route.native_restore_accounting.clone(),
+        critical_path: Some(critical_path),
     })
 }
 
-fn metrics_valid(metrics: &NativeTacticScratchEfficiencyMetrics, workers: usize) -> bool {
+fn metrics_valid(
+    metrics: &NativeTacticScratchEfficiencyMetrics,
+    workers: usize,
+    requires_critical_path: bool,
+) -> bool {
+    let wall_attribution_valid = if requires_critical_path {
+        metrics.critical_path.as_ref().is_some_and(|critical| {
+            critical.validate()
+                && critical.campaign_wall_micros == metrics.coordinator_wall_micros
+                && critical.process_launch_micros == metrics.process_launch_micros
+                && critical.unattributed_micros == metrics.coordinator_unattributed_micros
+        })
+    } else {
+        metrics.critical_path.is_none()
+            && metrics.coordinator_unattributed_micros
+                == metrics.coordinator_wall_micros.saturating_sub(
+                    metrics
+                        .tactic_execution_micros
+                        .saturating_add(metrics.model_update_micros)
+                        .saturating_add(metrics.evidence_projection_micros)
+                        .saturating_add(metrics.persistence_micros)
+                        .saturating_add(metrics.orchestration_micros),
+                )
+    };
     metrics.seed_count > 0
+        && wall_attribution_valid
         && metrics.terminal_seed_count <= metrics.seed_count
         && metrics.terminal_rate_per_million
             == ratio_per_million(metrics.terminal_seed_count, metrics.seed_count)
@@ -535,15 +778,6 @@ fn metrics_valid(metrics: &NativeTacticScratchEfficiencyMetrics, workers: usize)
             == per_second_millionths(
                 metrics.total_useful_graph_expansions,
                 metrics.coordinator_wall_micros,
-            )
-        && metrics.coordinator_unattributed_micros
-            == metrics.coordinator_wall_micros.saturating_sub(
-                metrics
-                    .tactic_execution_micros
-                    .saturating_add(metrics.model_update_micros)
-                    .saturating_add(metrics.evidence_projection_micros)
-                    .saturating_add(metrics.persistence_micros)
-                    .saturating_add(metrics.orchestration_micros),
             )
         && metrics.native_worker_occupancy_per_million
             == ratio_per_million(
@@ -656,6 +890,44 @@ mod tests {
         assert_eq!(median(vec![9, 3, 5]), Some(5));
         assert_eq!(median(vec![4, 9]), Some(7));
         assert_eq!(median(vec![u64::MAX, u64::MAX]), Some(u64::MAX));
+    }
+
+    #[test]
+    fn critical_path_timing_requires_exact_wall_reconciliation() {
+        let timing = NativeTacticScratchCriticalPathTiming {
+            campaign_wall_micros: 1_000,
+            coordinator_lane_occupancy_micros: 1_500,
+            generation_critical_path_micros: 800,
+            campaign_overhead_micros: 200,
+            process_launch_micros: 100,
+            tactic_execution_micros: 300,
+            model_update_micros: 100,
+            evidence_projection_micros: 10,
+            persistence_micros: 100,
+            orchestration_micros: 90,
+            unattributed_micros: 300,
+        };
+        assert!(timing.validate());
+
+        let mut detached = timing.clone();
+        detached.unattributed_micros += 1;
+        assert!(!detached.validate());
+        let mut detached = timing;
+        detached.campaign_overhead_micros += 1;
+        assert!(!detached.validate());
+    }
+
+    #[test]
+    fn phase_occupancy_never_uses_saturating_subtraction() {
+        let route = TopLevelPhaseTiming {
+            tactic_execution_micros: 10,
+            ..TopLevelPhaseTiming::default()
+        };
+        let detached_seed_sum = TopLevelPhaseTiming {
+            tactic_execution_micros: 11,
+            ..TopLevelPhaseTiming::default()
+        };
+        assert!(route.checked_sub(detached_seed_sum).is_err());
     }
 
     #[test]
