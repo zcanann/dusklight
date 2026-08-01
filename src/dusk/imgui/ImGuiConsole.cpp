@@ -13,6 +13,7 @@
 #include "fmt/format.h"
 #include "ImGuiConsole.hpp"
 #include "dusk/trigger_view.hpp"
+#include "dusk/epona_blocker_view.hpp"
 #include "ImGuiEngine.hpp"
 #include "JSystem/JUtility/JUTGamePad.h"
 #include "dusk/action_bindings.h"
@@ -254,6 +255,7 @@ namespace dusk {
 
         UpdateSettings();
         draw_trigger_view();
+        draw_epona_blocker_view();
 
         if (ImGui::IsKeyPressed(ImGuiKey_F11)) {
             getSettings().video.enableFullscreen.setValue(!getSettings().video.enableFullscreen);

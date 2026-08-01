@@ -3,16 +3,16 @@
  * DZB Collision handling
  */
 
-#include "d/dolzel.h" // IWYU pragma: keep
+#include "d/dolzel.h"  // IWYU pragma: keep
 
-#include "d/d_bg_w.h"
 #include "SSystem/SComponent/c_bg_s_shdw_draw.h"
 #include "SSystem/SComponent/c_m2d.h"
 #include "SSystem/SComponent/c_math.h"
+#include "d/actor/d_a_horse.h"
 #include "d/d_bg_s_capt_poly.h"
 #include "d/d_bg_s_sph_chk.h"
+#include "d/d_bg_w.h"
 #include "d/d_com_inf_game.h"
-#include "d/actor/d_a_horse.h"
 
 #include "d/d_debug_viewer.h"
 
@@ -44,7 +44,8 @@ static void ASSERT_SOLDHEAP() {
             "必ず、カレントヒープをソリッドヒープにしてください。\n"
             "ここでnewされた領域は二度と開放されることはありません。\n"
             "慢性的にメモリーリークを繰り返し、いずれ確実にＡバグを引き起こすことでしょう。\n"
-            "必ず修正してください。この下の水色のメッセージにアクターの名前が書いてあるはずです。\n");
+            "必ず修正してください。この下の水色のメッセージにアクターの名前が書いてあるはずです。"
+            "\n");
     }
 }
 #endif
@@ -102,19 +103,12 @@ void cBgW::GlobalVtx() {
             }
         } else {
             // TODO: supposed to be *pm_base, type must be wrong
-            JUT_ASSERT(201,
-                !isnan((*pm_base)[0][0]) &&
-                !isnan((*pm_base)[0][1]) &&
-                !isnan((*pm_base)[0][2]) &&
-                !isnan((*pm_base)[0][3]) &&
-                !isnan((*pm_base)[1][0]) &&
-                !isnan((*pm_base)[1][1]) &&
-                !isnan((*pm_base)[1][2]) &&
-                !isnan((*pm_base)[1][3]) &&
-                !isnan((*pm_base)[2][0]) &&
-                !isnan((*pm_base)[2][1]) &&
-                !isnan((*pm_base)[2][2]) &&
-                !isnan((*pm_base)[2][3]));
+            JUT_ASSERT(201, !isnan((*pm_base)[0][0]) && !isnan((*pm_base)[0][1]) &&
+                                !isnan((*pm_base)[0][2]) && !isnan((*pm_base)[0][3]) &&
+                                !isnan((*pm_base)[1][0]) && !isnan((*pm_base)[1][1]) &&
+                                !isnan((*pm_base)[1][2]) && !isnan((*pm_base)[1][3]) &&
+                                !isnan((*pm_base)[2][0]) && !isnan((*pm_base)[2][1]) &&
+                                !isnan((*pm_base)[2][2]) && !isnan((*pm_base)[2][3]));
 
             for (int i = 0; i < pm_bgd->m_v_num; i++) {
                 PSMTXMultVec(*pm_base, &pm_bgd->m_v_tbl[i], &pm_vtx_tbl[i]);
@@ -131,9 +125,9 @@ void cBgW::DebugLocalPos() {
 #endif
 
 bool cBgW::SetVtx() {
-    #if DEBUG
+#if DEBUG
     ASSERT_SOLDHEAP();
-    #endif
+#endif
 
     if (mFlags & NO_VTX_TBL_e) {
         pm_vtx_tbl = NULL;
@@ -175,23 +169,19 @@ void cBgW::CalcPlane() {
                 Vec copy1 = pm_vtx_tbl[tri[i].m_vtx_idx0];
                 Vec copy2 = pm_vtx_tbl[tri[i].m_vtx_idx1];
                 Vec copy3 = pm_vtx_tbl[tri[i].m_vtx_idx2];
-                pm_tri[i].m_plane.SetupFrom3Vtx(
-                    &copy1,
-                    &copy2,
-                    &copy3);
+                pm_tri[i].m_plane.SetupFrom3Vtx(&copy1, &copy2, &copy3);
 #else
                 pm_tri[i].m_plane.SetupFrom3Vtx(&pm_vtx_tbl[tri[i].m_vtx_idx0],
-                                                &pm_vtx_tbl[tri[i].m_vtx_idx1],
-                                                &pm_vtx_tbl[tri[i].m_vtx_idx2]);
-                
-                #if DEBUG
+                    &pm_vtx_tbl[tri[i].m_vtx_idx1], &pm_vtx_tbl[tri[i].m_vtx_idx2]);
+
+#if DEBUG
                 cXyz vec;
                 vec = pm_tri[i].m_plane.mNormal;
-                
+
                 JUT_ASSERT(327, -1.1f <= vec.x && vec.x <= 1.1f);
                 JUT_ASSERT(328, -1.1f <= vec.y && vec.y <= 1.1f);
                 JUT_ASSERT(329, -1.1f <= vec.z && vec.z <= 1.1f);
-                #endif
+#endif
 #endif
             }
         }
@@ -199,9 +189,9 @@ void cBgW::CalcPlane() {
 }
 
 bool cBgW::SetTri() {
-    #if DEBUG
+#if DEBUG
     ASSERT_SOLDHEAP();
-    #endif
+#endif
 
     pm_tri = JKR_NEW_ARRAY(cBgW_TriElm, pm_bgd->m_t_num);
 
@@ -319,7 +309,7 @@ void cBgW::MakeBlckBnd(int blck_index, cXyz* pmin, cXyz* pmax) {
         MakeBlckTransMinMax(pmin, pmax);
     } else {
         pmin->x = pmin->y = pmin->z = G_CM3D_F_INF;
-        pmax->x = pmax->y = pmax->z =-G_CM3D_F_INF;
+        pmax->x = pmax->y = pmax->z = -G_CM3D_F_INF;
 
         for (int i = start; i <= max; i++) {
             MakeBlckMinMax(pm_bgd->m_t_tbl[i].m_vtx_idx0, pmin, pmax);
@@ -343,7 +333,8 @@ void cBgW::MakeNodeTreeRp(int node_index) {
         int child_idx = pnode->m_id[0];
 
         if (child_idx != 0xFFFF) {
-            MakeBlckBnd(child_idx, pm_node_tree[node_index].GetMinP(), pm_node_tree[node_index].GetMaxP());
+            MakeBlckBnd(
+                child_idx, pm_node_tree[node_index].GetMinP(), pm_node_tree[node_index].GetMaxP());
         }
     } else {
         pm_node_tree[node_index].ClearForMinMax();
@@ -363,10 +354,8 @@ void cBgW::MakeNodeTreeRp(int node_index) {
 void cBgW::MakeNodeTreeGrpRp(int g) {
     if (pm_bgd->m_g_tbl[g].m_tree_idx != 0xFFFF) {
         MakeNodeTreeRp(pm_bgd->m_g_tbl[g].m_tree_idx);
-        pm_grp[g].m_aab.SetMin(
-            *pm_node_tree[pm_bgd->m_g_tbl[g].m_tree_idx].GetMinP());
-        pm_grp[g].m_aab.SetMax(
-            *pm_node_tree[pm_bgd->m_g_tbl[g].m_tree_idx].GetMaxP());
+        pm_grp[g].m_aab.SetMin(*pm_node_tree[pm_bgd->m_g_tbl[g].m_tree_idx].GetMinP());
+        pm_grp[g].m_aab.SetMax(*pm_node_tree[pm_bgd->m_g_tbl[g].m_tree_idx].GetMaxP());
     }
 
     int child_idx = pm_bgd->m_g_tbl[g].m_first_child;
@@ -414,9 +403,9 @@ bool cBgW::ChkMemoryError() {
 }
 
 bool cBgW::Set(cBgD_t* pbgd, u32 flags, Mtx* pbase_mtx) {
-    #if DEBUG
+#if DEBUG
     ASSERT_SOLDHEAP();
-    #endif
+#endif
 
     mFlags = GLOBAL_e;
     pm_vtx_tbl = NULL;
@@ -496,17 +485,17 @@ bool cBgW::RwgLineCheck(u16 poly_index, cBgS_LinChk* plinchk) {
         cBgD_Tri_t* tri_t = &pm_bgd->m_t_tbl[poly_index];
 
         tri.setBg(&pm_vtx_tbl[tri_t->m_vtx_idx0], &pm_vtx_tbl[tri_t->m_vtx_idx1],
-                  &pm_vtx_tbl[tri_t->m_vtx_idx2], &pm_tri[poly_index].m_plane);
+            &pm_vtx_tbl[tri_t->m_vtx_idx2], &pm_tri[poly_index].m_plane);
 
         cXyz cross;
-        if (tri.cross(plinchk->GetLinP(), &cross, plinchk->ChkFrontFlag(),
-                      plinchk->ChkBackFlag()))
+        if (tri.cross(plinchk->GetLinP(), &cross, plinchk->ChkFrontFlag(), plinchk->ChkBackFlag()))
         {
             if (!ChkPolyThrough(poly_index, plinchk->GetPolyPassChk())) {
                 JUT_ASSERT(1080, !isnan(cross.x));
                 JUT_ASSERT(1081, !isnan(cross.y));
                 JUT_ASSERT(1082, !isnan(cross.z));
-                JUT_ASSERT(1088, -INF < cross.x && cross.x < INF && -INF < cross.y && cross.y < INF && -INF < cross.z && cross.z < INF);
+                JUT_ASSERT(1088, -INF < cross.x && cross.x < INF && -INF < cross.y &&
+                                     cross.y < INF && -INF < cross.z && cross.z < INF);
 
                 plinchk->SetCross(cross);
                 plinchk->SetPolyIndex(poly_index);
@@ -528,9 +517,8 @@ bool cBgW::RwgLineCheck(u16 poly_index, cBgS_LinChk* plinchk) {
 bool cBgW::LineCheckRp(cBgS_LinChk* plinchk, int node_index) {
     cBgW_NodeTree* node = &pm_node_tree[node_index];
 
-    if (!cM3d_Cross_MinMaxBoxLine(node->GetMinP(), node->GetMaxP(),
-                                  plinchk->GetLinP()->GetStartP(),
-                                  plinchk->GetLinP()->GetEndP()))
+    if (!cM3d_Cross_MinMaxBoxLine(node->GetMinP(), node->GetMaxP(), plinchk->GetLinP()->GetStartP(),
+            plinchk->GetLinP()->GetEndP()))
     {
         return false;
     }
@@ -612,7 +600,7 @@ bool cBgW::RwgGroundCheckCommon(f32 cy, u16 poly_index, cBgS_GndChk* pgndchk) {
     if (cy < pgndchk->GetPointP().y && cy > pgndchk->GetNowY()) {
         cBgD_Tri_t* tri = &pm_bgd->m_t_tbl[poly_index];
         if (cM3d_CrossY_Tri_Front(pm_vtx_tbl[tri->m_vtx_idx0], pm_vtx_tbl[tri->m_vtx_idx1],
-                                  pm_vtx_tbl[tri->m_vtx_idx2], (const Vec*)&pgndchk->GetPointP()))
+                pm_vtx_tbl[tri->m_vtx_idx2], (const Vec*)&pgndchk->GetPointP()))
         {
             if (!ChkPolyThrough(poly_index, pgndchk->GetPolyPassChk())) {
                 pgndchk->SetNowY(cy);
@@ -810,13 +798,13 @@ void cBgW::RwgShdwDraw(int index, cBgS_ShdwDraw* pshdw) {
     while (true) {
         rwg = &pm_rwg[index];
         if (!ChkShdwDrawThrough(index, pshdw->GetPolyPassChk())) {
-            #if DEBUG
+#if DEBUG
             pshdw->field_0x34++;
-            #endif
+#endif
 
             (pshdw->mCallbackFun)(pshdw, pm_vtx_tbl, pm_bgd->m_t_tbl[index].m_vtx_idx0,
-                                   pm_bgd->m_t_tbl[index].m_vtx_idx1,
-                                   pm_bgd->m_t_tbl[index].m_vtx_idx2, &pm_tri[index].m_plane);
+                pm_bgd->m_t_tbl[index].m_vtx_idx1, pm_bgd->m_t_tbl[index].m_vtx_idx2,
+                &pm_tri[index].m_plane);
         }
 
         if (rwg->m_next == 0xFFFF)
@@ -892,11 +880,14 @@ int cBgW::GetGrpRoomIndex(const cBgS_PolyInfo& polyinfo) const {
     int grp_index = GetTriGrp(poly_index);
     JUT_ASSERT(1850, 0 <= grp_index && grp_index < pm_bgd->m_g_num);
 
-    if (pm_bgd->m_g_tbl[grp_index].m_parent == 0xFFFF || pm_bgd->m_g_tbl[pm_bgd->m_g_tbl[grp_index].m_parent].m_parent == 0xFFFF) {
+    if (pm_bgd->m_g_tbl[grp_index].m_parent == 0xFFFF ||
+        pm_bgd->m_g_tbl[pm_bgd->m_g_tbl[grp_index].m_parent].m_parent == 0xFFFF)
+    {
         return 0xFF;
     }
 
-    int room_index = pm_bgd->m_g_tbl[pm_bgd->m_g_tbl[pm_bgd->m_g_tbl[grp_index].m_parent].m_parent].m_room_id;
+    int room_index =
+        pm_bgd->m_g_tbl[pm_bgd->m_g_tbl[pm_bgd->m_g_tbl[grp_index].m_parent].m_parent].m_room_id;
     if (room_index >= 0xFF) {
         room_index = 0xFF;
     }
@@ -1137,7 +1128,7 @@ void dBgW::DrawBox() const {
     points[2].x = min.x;
     points[2].y = max.y;
     points[2].z = max.z;
-    
+
     points[3].x = max.x;
     points[3].y = max.y;
     points[3].z = max.z;
@@ -1153,7 +1144,7 @@ void dBgW::DrawBox() const {
     points[6].x = min.x;
     points[6].y = min.y;
     points[6].z = max.z;
-    
+
     points[7].x = max.x;
     points[7].y = min.y;
     points[7].z = max.z;
@@ -1245,8 +1236,8 @@ void dBgW::Move() {
     cBgW::Move();
 }
 
-void dBgW::positionWallCorrect(dBgS_Acch* pwi, f32 dist, cM3dGPla& plane, cXyz* pupper_pos,
-                               f32 speed) {
+void dBgW::positionWallCorrect(
+    dBgS_Acch* pwi, f32 dist, cM3dGPla& plane, cXyz* pupper_pos, f32 speed) {
     pwi->SetWallHit();
 
     speed -= 1.0f;
@@ -1377,9 +1368,8 @@ bool dBgW::RwgWallCorrect(dBgS_Acch* pwi, u16 poly_index) {
                             cy1 += sp50.z;
 
                             f32 spC8, spCC, spD0;
-                            bool sp107 =
-                                cM3d_Len2dSqPntAndSegLine(pwi->GetCx(), pwi->GetCz(), cx0, cy0, cx1,
-                                                          cy1, &spCC, &spD0, &spC8);
+                            bool sp107 = cM3d_Len2dSqPntAndSegLine(pwi->GetCx(), pwi->GetCz(), cx0,
+                                cy0, cx1, cy1, &spCC, &spD0, &spC8);
 
                             f32 spD4 = spCC - pwi->GetCx();
                             f32 spD8 = spD0 - pwi->GetCz();
@@ -1387,13 +1377,14 @@ bool dBgW::RwgWallCorrect(dBgS_Acch* pwi, u16 poly_index) {
 
                             if (!(spC8 > spDC) && !(spD4 * sp50.x + spD8 * sp50.z < 0.0f)) {
                                 if (sp107 == 1) {
-                                    positionWallCorrect(pwi, sp6C, tri->m_plane, pwi->GetPos(),
-                                                        JMAFastSqrt(spC8));
+                                    positionWallCorrect(
+                                        pwi, sp6C, tri->m_plane, pwi->GetPos(), JMAFastSqrt(spC8));
                                     pwi->CalcMovePosWork();
                                     pwi->SetWallCirHit(cir_index);
                                     pwi->SetWallPolyIndex(cir_index, poly_index);
 
-                                    s16 sp10 = cM_atan2s(tri->m_plane.GetNP()->x, tri->m_plane.GetNP()->z);
+                                    s16 sp10 =
+                                        cM_atan2s(tri->m_plane.GetNP()->x, tri->m_plane.GetNP()->z);
                                     pwi->SetWallAngleY(cir_index, sp10);
                                     correct = true;
                                 } else {
@@ -1402,10 +1393,10 @@ bool dBgW::RwgWallCorrect(dBgS_Acch* pwi, u16 poly_index) {
                                     cx1 -= sp50.x;
                                     cy1 -= sp50.z;
 
-                                    JUT_ASSERT(2920, pwi->GetPos()->x ==
-                                               pwi->GetWallCirP(cir_index)->GetCx());
-                                    JUT_ASSERT(2922, pwi->GetPos()->z ==
-                                               pwi->GetWallCirP(cir_index)->GetCy());
+                                    JUT_ASSERT(2920,
+                                        pwi->GetPos()->x == pwi->GetWallCirP(cir_index)->GetCx());
+                                    JUT_ASSERT(2922,
+                                        pwi->GetPos()->z == pwi->GetWallCirP(cir_index)->GetCy());
 
                                     f32 spE0 =
                                         cM3d_Len2dSq(cx0, cy0, pwi->GetPos()->x, pwi->GetPos()->z);
@@ -1424,7 +1415,7 @@ bool dBgW::RwgWallCorrect(dBgS_Acch* pwi, u16 poly_index) {
 
                                             f32 spF0, spF4;
                                             cM2d_CrossCirLin(*pwi->GetWallCirP(cir_index), cx0, cy0,
-                                                             onx, ony, &spF0, &spF4);
+                                                onx, ony, &spF0, &spF4);
                                             pwi->GetPos()->x += cx0 - spF0;
                                             pwi->GetPos()->z += cy0 - spF4;
 
@@ -1434,7 +1425,8 @@ bool dBgW::RwgWallCorrect(dBgS_Acch* pwi, u16 poly_index) {
                                             pwi->CalcMovePosWork();
                                             pwi->SetWallCirHit(cir_index);
                                             pwi->SetWallPolyIndex(cir_index, poly_index);
-                                            s16 spE = cM_atan2s(tri->m_plane.GetNP()->x, tri->m_plane.GetNP()->z);
+                                            s16 spE = cM_atan2s(
+                                                tri->m_plane.GetNP()->x, tri->m_plane.GetNP()->z);
                                             pwi->SetWallAngleY(cir_index, spE);
                                             correct = true;
                                             pwi->SetWallHit();
@@ -1445,7 +1437,7 @@ bool dBgW::RwgWallCorrect(dBgS_Acch* pwi, u16 poly_index) {
 
                                         f32 spF8, spFC;
                                         cM2d_CrossCirLin(*pwi->GetWallCirP(cir_index), cx1, cy1,
-                                                         onx, ony, &spF8, &spFC);
+                                            onx, ony, &spF8, &spFC);
                                         pwi->GetPos()->x += cx1 - spF8;
                                         pwi->GetPos()->z += cy1 - spFC;
 
@@ -1456,7 +1448,8 @@ bool dBgW::RwgWallCorrect(dBgS_Acch* pwi, u16 poly_index) {
                                         pwi->SetWallCirHit(cir_index);
                                         pwi->SetWallPolyIndex(cir_index, poly_index);
 
-                                        s16 spC = cM_atan2s(tri->m_plane.GetNP()->x, tri->m_plane.GetNP()->z);
+                                        s16 spC = cM_atan2s(
+                                            tri->m_plane.GetNP()->x, tri->m_plane.GetNP()->z);
                                         pwi->SetWallAngleY(cir_index, spC);
                                         correct = true;
                                         pwi->SetWallHit();
@@ -1591,7 +1584,7 @@ void dBgW::RwgWallCorrectSort(dBgS_Acch* pwi, u16 poly_index) {
 
             f32 var_f29 = 1.0f / var_f30;
             f32 var_f31 = var_f29 * ((sp88.x * tri_elm->m_plane.GetNP()->x) +
-                                     (sp88.z * tri_elm->m_plane.GetNP()->z));
+                                        (sp88.z * tri_elm->m_plane.GetNP()->z));
 
             if (l_start == NULL) {
                 if (l_wcsbuf_num < 84) {
@@ -1601,9 +1594,9 @@ void dBgW::RwgWallCorrectSort(dBgS_Acch* pwi, u16 poly_index) {
                     l_start = &l_wcsbuf[l_wcsbuf_num];
                     l_wcsbuf_num++;
                 } else {
-                    #if DEBUG
+#if DEBUG
                     lbl_8074C7F0 = 1;
-                    #endif
+#endif
                 }
             } else if (poly_index != l_start->poly_idx) {
                 if (var_f31 > l_start->field_0x0) {
@@ -1614,9 +1607,9 @@ void dBgW::RwgWallCorrectSort(dBgS_Acch* pwi, u16 poly_index) {
                         l_start = &l_wcsbuf[l_wcsbuf_num];
                         l_wcsbuf_num++;
                     } else {
-                        #if DEBUG
+#if DEBUG
                         lbl_8074C7F0 = 1;
-                        #endif
+#endif
                     }
                 } else {
                     wcs_data* data = l_start;
@@ -1629,9 +1622,9 @@ void dBgW::RwgWallCorrectSort(dBgS_Acch* pwi, u16 poly_index) {
                                 data->next = &l_wcsbuf[l_wcsbuf_num];
                                 l_wcsbuf_num++;
                             } else {
-                                #if DEBUG
+#if DEBUG
                                 lbl_8074C7F0 = 1;
-                                #endif
+#endif
                             }
                             break;
                         } else if (poly_index == data->next->poly_idx) {
@@ -1646,9 +1639,9 @@ void dBgW::RwgWallCorrectSort(dBgS_Acch* pwi, u16 poly_index) {
                                 data->next = &l_wcsbuf[l_wcsbuf_num];
                                 l_wcsbuf_num++;
                             } else {
-                                #if DEBUG
+#if DEBUG
                                 lbl_8074C7F0 = 1;
-                                #endif
+#endif
                             }
                             break;
                         }
@@ -1840,8 +1833,8 @@ bool dBgW::WallCorrectSort(dBgS_Acch* pwi) {
                         cy1 += sp50.z;
 
                         f32 spC8, spCC, spD0;
-                        bool sp107 = cM3d_Len2dSqPntAndSegLine(pwi->GetCx(), pwi->GetCz(), cx0, cy0,
-                                                               cx1, cy1, &spCC, &spD0, &spC8);
+                        bool sp107 = cM3d_Len2dSqPntAndSegLine(
+                            pwi->GetCx(), pwi->GetCz(), cx0, cy0, cx1, cy1, &spCC, &spD0, &spC8);
 
                         f32 spD4 = spCC - pwi->GetCx();
                         f32 spD8 = spD0 - pwi->GetCz();
@@ -1849,12 +1842,13 @@ bool dBgW::WallCorrectSort(dBgS_Acch* pwi) {
 
                         if (!(spC8 > spDC) && !(spD4 * sp50.x + spD8 * sp50.z < 0.0f)) {
                             if (sp107 == 1) {
-                                positionWallCorrect(pwi, sp6C, tri->m_plane, pwi->GetPos(),
-                                                    JMAFastSqrt(spC8));
+                                positionWallCorrect(
+                                    pwi, sp6C, tri->m_plane, pwi->GetPos(), JMAFastSqrt(spC8));
                                 pwi->CalcMovePosWork();
                                 pwi->SetWallCirHit(cir_index);
                                 pwi->SetWallPolyIndex(cir_index, poly_index);
-                                s16 sp10 = cM_atan2s(tri->m_plane.GetNP()->x, tri->m_plane.GetNP()->z);
+                                s16 sp10 =
+                                    cM_atan2s(tri->m_plane.GetNP()->x, tri->m_plane.GetNP()->z);
                                 pwi->SetWallAngleY(cir_index, sp10);
                                 correct = true;
                             } else {
@@ -1863,10 +1857,10 @@ bool dBgW::WallCorrectSort(dBgS_Acch* pwi) {
                                 cx1 -= sp50.x;
                                 cy1 -= sp50.z;
 
-                                JUT_ASSERT(3625, pwi->GetPos()->x ==
-                                           pwi->GetWallCirP(cir_index)->GetCx());
-                                JUT_ASSERT(3627, pwi->GetPos()->z ==
-                                           pwi->GetWallCirP(cir_index)->GetCy());
+                                JUT_ASSERT(
+                                    3625, pwi->GetPos()->x == pwi->GetWallCirP(cir_index)->GetCx());
+                                JUT_ASSERT(
+                                    3627, pwi->GetPos()->z == pwi->GetWallCirP(cir_index)->GetCy());
 
                                 f32 spE0 =
                                     cM3d_Len2dSq(cx0, cy0, pwi->GetPos()->x, pwi->GetPos()->z);
@@ -1885,7 +1879,7 @@ bool dBgW::WallCorrectSort(dBgS_Acch* pwi) {
 
                                         f32 spF0, spF4;
                                         cM2d_CrossCirLin(*pwi->GetWallCirP(cir_index), cx0, cy0,
-                                                         onx, ony, &spF0, &spF4);
+                                            onx, ony, &spF0, &spF4);
                                         pwi->GetPos()->x += cx0 - spF0;
                                         pwi->GetPos()->z += cy0 - spF4;
 
@@ -1895,7 +1889,8 @@ bool dBgW::WallCorrectSort(dBgS_Acch* pwi) {
                                         pwi->CalcMovePosWork();
                                         pwi->SetWallCirHit(cir_index);
                                         pwi->SetWallPolyIndex(cir_index, poly_index);
-                                        s16 spE = cM_atan2s(tri->m_plane.GetNP()->x, tri->m_plane.GetNP()->z);
+                                        s16 spE = cM_atan2s(
+                                            tri->m_plane.GetNP()->x, tri->m_plane.GetNP()->z);
                                         pwi->SetWallAngleY(cir_index, spE);
                                         correct = true;
                                         pwi->SetWallHit();
@@ -1906,7 +1901,7 @@ bool dBgW::WallCorrectSort(dBgS_Acch* pwi) {
 
                                     f32 spF8, spFC;
                                     cM2d_CrossCirLin(*pwi->GetWallCirP(cir_index), cx1, cy1, onx,
-                                                     ony, &spF8, &spFC);
+                                        ony, &spF8, &spFC);
                                     pwi->GetPos()->x += cx1 - spF8;
                                     pwi->GetPos()->z += cy1 - spFC;
 
@@ -1916,7 +1911,8 @@ bool dBgW::WallCorrectSort(dBgS_Acch* pwi) {
                                     pwi->CalcMovePosWork();
                                     pwi->SetWallCirHit(cir_index);
                                     pwi->SetWallPolyIndex(cir_index, poly_index);
-                                    s16 spC = cM_atan2s(tri->m_plane.GetNP()->x, tri->m_plane.GetNP()->z);
+                                    s16 spC =
+                                        cM_atan2s(tri->m_plane.GetNP()->x, tri->m_plane.GetNP()->z);
                                     pwi->SetWallAngleY(cir_index, spC);
                                     correct = true;
                                     pwi->SetWallHit();
@@ -1945,8 +1941,8 @@ bool dBgW::RwgRoofChk(u16 poly_index, dBgS_RoofChk* proofchk) {
         {
             cBgD_Tri_t* tri = &pm_bgd->m_t_tbl[poly_index];
             if (cM3d_CrossY_Tri(pm_vtx_tbl[tri->m_vtx_idx0], pm_vtx_tbl[tri->m_vtx_idx1],
-                                pm_vtx_tbl[tri->m_vtx_idx2], pm_tri[poly_index].m_plane,
-                                (const Vec*)proofchk->GetPosP()))
+                    pm_vtx_tbl[tri->m_vtx_idx2], pm_tri[poly_index].m_plane,
+                    (const Vec*)proofchk->GetPosP()))
             {
                 if (!ChkPolyThrough(poly_index, proofchk->GetPolyPassChk())) {
                     proofchk->SetNowY(cy);
@@ -2053,8 +2049,8 @@ bool dBgW::RwgSplGrpChk(u16 poly_index, dBgS_SplGrpChk* psplchk) {
         {
             cBgD_Tri_t* tri = &pm_bgd->m_t_tbl[poly_index];
             if (cM3d_CrossY_Tri(pm_vtx_tbl[tri->m_vtx_idx0], pm_vtx_tbl[tri->m_vtx_idx1],
-                                pm_vtx_tbl[tri->m_vtx_idx2], pm_tri[poly_index].m_plane,
-                                (const Vec*)&psplchk->GetPosP()))
+                    pm_vtx_tbl[tri->m_vtx_idx2], pm_tri[poly_index].m_plane,
+                    (const Vec*)&psplchk->GetPosP()))
             {
                 if (!ChkPolyThrough(poly_index, psplchk->GetPolyPassChk())) {
                     psplchk->SetHeight(cy);
@@ -2157,8 +2153,8 @@ void dBgW::RwgCaptPoly(int index, dBgS_CaptPoly& capt) {
     while (true) {
         rwg = &pm_rwg[index];
         capt.m_callback(&capt, pm_vtx_tbl, pm_bgd->m_t_tbl[index].m_vtx_idx0,
-                        pm_bgd->m_t_tbl[index].m_vtx_idx1, pm_bgd->m_t_tbl[index].m_vtx_idx2,
-                        &pm_tri[index].m_plane);
+            pm_bgd->m_t_tbl[index].m_vtx_idx1, pm_bgd->m_t_tbl[index].m_vtx_idx2,
+            &pm_tri[index].m_plane);
 
         if (rwg->m_next == 0xFFFF)
             break;
@@ -2234,11 +2230,11 @@ bool dBgW::RwgSphChk(u16 poly_index, dBgS_SphChk* psphchk, void* i_data) {
         if (!ChkPolyThrough(poly_index, psphchk->GetPolyPassChk())) {
             tri_t = &pm_bgd->m_t_tbl[poly_index];
             tri.setBg(&pm_vtx_tbl[tri_t->m_vtx_idx0], &pm_vtx_tbl[tri_t->m_vtx_idx1],
-                      &pm_vtx_tbl[tri_t->m_vtx_idx2], &pm_tri[poly_index].m_plane);
+                &pm_vtx_tbl[tri_t->m_vtx_idx2], &pm_tri[poly_index].m_plane);
 
             if (psphchk->cross(&tri)) {
                 psphchk->mCallback(psphchk, pm_vtx_tbl, tri_t->m_vtx_idx0, tri_t->m_vtx_idx1,
-                                    tri_t->m_vtx_idx2, &pm_tri[poly_index].m_plane, i_data);
+                    tri_t->m_vtx_idx2, &pm_tri[poly_index].m_plane, i_data);
                 psphchk->SetPolyIndex(poly_index);
                 chk = true;
             }
@@ -2341,21 +2337,21 @@ int dBgW::GetGrpSoundId(const cBgS_PolyInfo& polyinfo) {
 }
 
 void dBgW::CrrPos(const cBgS_PolyInfo& polyinfo, void* actor_ptr, bool param_2, cXyz* ppos,
-                  csXyz* pangle, csXyz* pshapeangle) {
+    csXyz* pangle, csXyz* pshapeangle) {
     if (m_crr_func) {
         m_crr_func(this, actor_ptr, polyinfo, param_2, ppos, pangle, pshapeangle);
     }
 }
 
 void dBgW::TransPos(const cBgS_PolyInfo& polyinfo, void* actor_ptr, bool param_2, cXyz* ppos,
-                    csXyz* pangle, csXyz* pshapeangle) {
+    csXyz* pangle, csXyz* pshapeangle) {
     if (m_crr_func) {
         m_crr_func(this, actor_ptr, polyinfo, param_2, ppos, pangle, pshapeangle);
     }
 }
 
 void dBgW::MatrixCrrPos(const cBgS_PolyInfo& polyinfo, void* actor_ptr, bool param_2, cXyz* ppos,
-                        csXyz* pangle, csXyz* pshapeangle) {
+    csXyz* pangle, csXyz* pshapeangle) {
     CrrPos(polyinfo, actor_ptr, param_2, ppos, pangle, pshapeangle);
 }
 
@@ -2451,14 +2447,12 @@ bool dBgW::ChkGrpThrough(int g, cBgS_GrpPassChk* ppasschk, int depth) {
     dBgS_GrpPassChk* var_r31 = (dBgS_GrpPassChk*)ppasschk;
 
     u32 var_r29 = pm_bgd->m_g_tbl[g].m_info & 0x100;
-    if (!var_r29 && var_r31->MaskNormalGrp())
-    {
+    if (!var_r29 && var_r31->MaskNormalGrp()) {
         return false;
     }
 
     u32 var_r28 = pm_bgd->m_g_tbl[g].m_info & 0x100;
-    if (var_r28 && var_r31->MaskWaterGrp())
-    {
+    if (var_r28 && var_r31->MaskWaterGrp()) {
         return false;
     }
 

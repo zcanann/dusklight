@@ -3,7 +3,7 @@
  * Background (Map) Collision main handler
  */
 
-#include "d/dolzel.h" // IWYU pragma: keep
+#include "d/dolzel.h"  // IWYU pragma: keep
 
 #include "d/d_bg_s.h"
 #include "d/d_bg_s_sph_chk.h"
@@ -11,8 +11,8 @@
 #include "d/d_com_inf_game.h"
 #include "f_op/f_op_actor_mng.h"
 
-#include "d/d_debug_viewer.h"
 #include "d/d_bg_s_capt_poly.h"
+#include "d/d_debug_viewer.h"
 
 #if TARGET_PC
 #include <cmath>
@@ -33,7 +33,6 @@ int g_sph_counter;
 int g_capt_poly_counter;
 #endif
 
-
 void dBgS_HIO::genMessage(JORMContext* mctx) {
 #if DEBUG
     mctx->genLabel("zelda地形チェック", 0);
@@ -44,12 +43,15 @@ void dBgS_HIO::genMessage(JORMContext* mctx) {
     mctx->genLabel("平均処理時間(Mean) -----------", 0);
     mctx->genCheckBox("ラインチェック時間(->terminal)", &m_flags2, FLAG2_LINE_TIMER_e);
     mctx->genCheckBox("アクターチェック時間[壁、床（+天井、水面）](->terminal)", &m_flags, 1);
-    mctx->genCheckBox("アクターチェック 壁チェック時間(->terminal)", &m_flags, FLAG_ACCH_WALL_TIMER_e);
+    mctx->genCheckBox(
+        "アクターチェック 壁チェック時間(->terminal)", &m_flags, FLAG_ACCH_WALL_TIMER_e);
     mctx->genCheckBox("天井チェック時間(->terminal)", &m_flags, FLAG_ROOF_TIMER_e);
-    mctx->genCheckBox("Splチェック(水、溶岩、毒水面)時間(->terminal)", &m_flags2, FLAG2_SPL_TIMER_e);
+    mctx->genCheckBox(
+        "Splチェック(水、溶岩、毒水面)時間(->terminal)", &m_flags2, FLAG2_SPL_TIMER_e);
     mctx->genCheckBox("床チェック時間(->terminal)", &m_flags2, FLAG2_GROUND_CHECK_TIMER_e);
     mctx->genCheckBox("リアル影描画時間(->terminal)", &m_flags2, FLAG2_SHDW_DRAW_TIMER_e);
-    mctx->genCheckBox("球チェック時間[コールバック処理含む](->terminal)", &m_flags2, FLAG2_SPH_CHK_TIMER_e);
+    mctx->genCheckBox(
+        "球チェック時間[コールバック処理含む](->terminal)", &m_flags2, FLAG2_SPH_CHK_TIMER_e);
     mctx->genCheckBox("ポリゴンキャプチャ時間", &m_flags2, FLAG2_CAPTPOLY_TIMER_e);
 
     mctx->genLabel("処理off ----------", 0);
@@ -166,15 +168,21 @@ bool cBgS::Regist(dBgW_Base* pbgw, fpc_ProcID actor_id, void* pactor) {
         return true;
     }
 
-    #if DEBUG
+#if DEBUG
     for (int i = 0; i < 0x100; i++) {
         if (m_chk_element[i].ChkUsed() && m_chk_element[i].m_bgw_base_ptr == pbgw) {
-            // "cBgS::Regist() will continue processing, but an entry with the same address (address:%x, id = %d) is already registered. This is probably a duplicate entry. Duplicate registrations are dangerous. !!"
-            OS_REPORT_ERROR("cBgS::Regist() 処理は続けますが、同じアドレスのもの(address:%x, id = %d)がすでに登録されています。多分ですが多重登録です。多重登録ならキケンです。！！\n", pbgw, i);
+            // "cBgS::Regist() will continue processing, but an entry with the same address
+            // (address:%x, id = %d) is already registered. This is probably a duplicate entry.
+            // Duplicate registrations are dangerous. !!"
+            OS_REPORT_ERROR(
+                "cBgS::Regist() 処理は続けますが、同じアドレスのもの(address:%x, id = "
+                "%d)"
+                "がすでに登録されています。多分ですが多重登録です。多重登録ならキケンです。！！\n",
+                pbgw, i);
             JUT_WARN(368, "%s", "cBgS::Regist() double regist");
         }
     }
-    #endif
+#endif
 
     int i = l_SetCounter;
     JUT_ASSERT(376, 0 <= i && i < 256);
@@ -210,24 +218,32 @@ bool cBgS::Release(dBgW_Base* pbgw) {
 
     int id = pbgw->GetId();
     if (pbgw->ChkUsed() && id >= 0 && id < 0x100 && m_chk_element[id].ChkUsed()) {
-        #if DEBUG
+#if DEBUG
         if (m_chk_element[id].m_bgw_base_ptr != pbgw) {
-            // "[ERROR] cBgS::Release() the work area pointer registered to %d differs from pointer passed as an argument to Release(). (%x,%x) [Releasing]"
-            OS_REPORT_ERROR("[ERROR] cBgS::Release() %dに登録されている作業領域のポインターと、Release()に引数で渡されているポインターが異なる。(%x,%x) [解放実行]", id, m_chk_element[id].m_bgw_base_ptr, pbgw);
+            // "[ERROR] cBgS::Release() the work area pointer registered to %d differs from pointer
+            // passed as an argument to Release(). (%x,%x) [Releasing]"
+            OS_REPORT_ERROR("[ERROR] cBgS::Release() "
+                            "%dに登録されている作業領域のポインターと、Release()"
+                            "に引数で渡されているポインターが異なる。(%x,%x) [解放実行]",
+                id, m_chk_element[id].m_bgw_base_ptr, pbgw);
             JUT_WARN(431, "%s", "cBgS::Release() data error.");
         }
-        #endif
+#endif
 
         m_chk_element[id].Release();
         pbgw->Release();
     } else {
-        #if DEBUG
+#if DEBUG
         if (id == 0x100) {
-            // "cBgS::Release() attempting to release unregistered terrain. operation won't be processed."
-            OS_WARNING("cBgS::Release() 登録していない地形をReleaseしようとしています。処理しません。\n");
+            // "cBgS::Release() attempting to release unregistered terrain. operation won't be
+            // processed."
+            OS_WARNING(
+                "cBgS::Release() 登録していない地形をReleaseしようとしています。処理しません。\n");
         } else {
             // "[Error] cBgS::Release() Error[Check id=%d won't be released.](dBgW_Base=%x)"
-            OS_REPORT_ERROR("[Error] cBgS::Release() Error[id=%d番のチェックはリリースしません。](dBgW_Base=%x)\n", id, pbgw);
+            OS_REPORT_ERROR("[Error] cBgS::Release() "
+                            "Error[id=%d番のチェックはリリースしません。](dBgW_Base=%x)\n",
+                id, pbgw);
 
             if (!pbgw->ChkUsed()) {
                 // "Data [%d] is not being used."
@@ -239,7 +255,7 @@ bool cBgS::Release(dBgW_Base* pbgw) {
                 OS_REPORT_ERROR("テーブル[%d]は使っていません。\n", id);
             }
         }
-        #endif
+#endif
 
         return 1;
     }
@@ -258,17 +274,19 @@ void cBgS::Ct() {
         m_chk_element[i].Init();
     }
 
-    #if DEBUG
+#if DEBUG
     lbl_8074C7F8 = 0;
     lbl_8074C7F0 = 0;
-    #endif
+#endif
 }
 
 void cBgS::Dt() {
     for (int i = 0; i < 0x100; i++) {
         if (m_chk_element[i].ChkUsed()) {
             JUT_WARN(499, "%s", "cBgS::Dt() release error.");
-            OS_REPORT_ERROR("[ERROR] ========== cBgS::Dt() 消し残し地形チェックがあります。id=%d ==========\n", i);
+            OS_REPORT_ERROR(
+                "[ERROR] ========== cBgS::Dt() 消し残し地形チェックがあります。id=%d ==========\n",
+                i);
             OS_REPORT_ERROR("!!!!!!!!! 勝手に消しときます !!!!!!!!\n");
             m_chk_element[i].Release();
         }
@@ -362,7 +380,8 @@ void* cBgS::ConvDzb(void* pdzb) {
     pbgd->m_ti_tbl += (uintptr_t)pdzb;
 
     for (int i = 0; i < pbgd->m_g_num; i++) {
-        ((cBgD_Grp_t_*)pbgd->m_g_tbl)[i].strOffset = (uintptr_t)pdzb + ((cBgD_Grp_t_*)pbgd->m_g_tbl)[i].strOffset;
+        ((cBgD_Grp_t_*)pbgd->m_g_tbl)[i].strOffset =
+            (uintptr_t)pdzb + ((cBgD_Grp_t_*)pbgd->m_g_tbl)[i].strOffset;
     }
 #endif
 
@@ -397,7 +416,8 @@ bool cBgS::ChkPolySafe(const cBgS_PolyInfo& polyinfo) {
         return false;
     }
 
-    return polyinfo.ChkSafe(m_chk_element[bg_index].m_bgw_base_ptr, m_chk_element[bg_index].m_actor_id);    
+    return polyinfo.ChkSafe(
+        m_chk_element[bg_index].m_bgw_base_ptr, m_chk_element[bg_index].m_actor_id);
 }
 
 s32 cBgS::GetGrpRoomId(const cBgS_PolyInfo& polyinfo) const {
@@ -471,7 +491,7 @@ static dBgS_InsideHIO s_InsideHio;
 void dBgS::Ct() {
     cBgS::Ct();
 
-    #if DEBUG
+#if DEBUG
     g_ground_counter = 0;
     g_line_counter = 0;
     g_acch_wall_counter = 0;
@@ -507,16 +527,16 @@ void dBgS::Ct() {
 
     OSInitStopwatch(&s_capt_poly_sw, "CaptPoly()");
     OSResetStopwatch(&s_capt_poly_sw);
-    #endif
+#endif
 }
 
 void dBgS::Dt() {
     cBgS::Dt();
 
-    #if DEBUG
+#if DEBUG
     mDoHIO_DELETE_CHILD(m_hio.id);
     mDoHIO_DELETE_CHILD(s_InsideHio.id);
-    #endif
+#endif
 }
 
 void dBgS::ClrMoveFlag() {
@@ -538,7 +558,7 @@ void dBgS::Move() {
         elm++;
     }
 
-    #if DEBUG
+#if DEBUG
     if (lbl_8074C7F8 == TRUE) {
         JUTReport(20, 100, "WARNING:kcl:WCS(wall/roof poly num) is over.");
     }
@@ -546,7 +566,7 @@ void dBgS::Move() {
     if (lbl_8074C7F0 == TRUE) {
         JUTReport(20, 200, "WARNING:dzb:wcs(wall/roof poly num) is over.");
     }
-    #endif
+#endif
 }
 
 void dBgS_AabDraw(cM3dGAab& aab, GXColor& color) {
@@ -563,7 +583,7 @@ void dBgS_AabDraw(cM3dGAab& aab, GXColor& color) {
     points[2].x = aab.GetMinP()->x;
     points[2].y = aab.GetMaxP()->y;
     points[2].z = aab.GetMaxP()->z;
-    
+
     points[3].x = aab.GetMaxP()->x;
     points[3].y = aab.GetMaxP()->y;
     points[3].z = aab.GetMaxP()->z;
@@ -579,7 +599,7 @@ void dBgS_AabDraw(cM3dGAab& aab, GXColor& color) {
     points[6].x = aab.GetMinP()->x;
     points[6].y = aab.GetMinP()->y;
     points[6].z = aab.GetMaxP()->z;
-    
+
     points[7].x = aab.GetMaxP()->x;
     points[7].y = aab.GetMinP()->y;
     points[7].z = aab.GetMaxP()->z;
@@ -600,7 +620,8 @@ static bool collision_view_shows_plane(const cM3dGPla* plane) {
 }
 #endif
 
-static int white_draw(dBgS_CaptPoly* capt, cBgD_Vtx_t* vtxList, int v0, int v1, int v2, cM3dGPla* plane) {
+static int white_draw(
+    dBgS_CaptPoly* capt, cBgD_Vtx_t* vtxList, int v0, int v1, int v2, cM3dGPla* plane) {
 #if TARGET_PC
     if (!collision_view_shows_plane(plane)) {
         return 0;
@@ -635,25 +656,24 @@ static int white_draw(dBgS_CaptPoly* capt, cBgD_Vtx_t* vtxList, int v0, int v1, 
 }
 
 #if TARGET_PC
-static cXyz expand_ceiling_vertex_xz(const cXyz points[3], int index, const cM3dGPla* plane,
-                                     float extent) {
+static cXyz expand_ceiling_vertex_xz(
+    const cXyz points[3], int index, const cM3dGPla* plane, float extent) {
     if (extent <= 0.0f) {
         return points[index];
     }
 
     const int previous = (index + 2) % 3;
     const int next = (index + 1) % 3;
-    const float twiceArea =
-        (points[1].x - points[0].x) * (points[2].z - points[0].z) -
-        (points[1].z - points[0].z) * (points[2].x - points[0].x);
+    const float twiceArea = (points[1].x - points[0].x) * (points[2].z - points[0].z) -
+                            (points[1].z - points[0].z) * (points[2].x - points[0].x);
     const float winding = twiceArea >= 0.0f ? 1.0f : -1.0f;
 
     const float previousEdgeX = points[index].x - points[previous].x;
     const float previousEdgeZ = points[index].z - points[previous].z;
     const float nextEdgeX = points[next].x - points[index].x;
     const float nextEdgeZ = points[next].z - points[index].z;
-    const float previousLength = std::sqrt(previousEdgeX * previousEdgeX +
-                                           previousEdgeZ * previousEdgeZ);
+    const float previousLength =
+        std::sqrt(previousEdgeX * previousEdgeX + previousEdgeZ * previousEdgeZ);
     const float nextLength = std::sqrt(nextEdgeX * nextEdgeX + nextEdgeZ * nextEdgeZ);
 
     float offsetX = 0.0f;
@@ -669,8 +689,7 @@ static cXyz expand_ceiling_vertex_xz(const cXyz points[3], int index, const cM3d
         if (miterLength > 0.001f) {
             const float unitMiterX = miterX / miterLength;
             const float unitMiterZ = miterZ / miterLength;
-            const float denominator = unitMiterX * previousNormalX +
-                                      unitMiterZ * previousNormalZ;
+            const float denominator = unitMiterX * previousNormalX + unitMiterZ * previousNormalZ;
             if (denominator > 0.1f) {
                 const float scale = extent / denominator;
                 offsetX = unitMiterX * scale;
@@ -697,14 +716,14 @@ static cXyz expand_ceiling_vertex_xz(const cXyz points[3], int index, const cM3d
     expanded.x += offsetX;
     expanded.z += offsetZ;
     if (std::abs(plane->mNormal.y) > 0.001f) {
-        expanded.y -= (plane->mNormal.x * offsetX + plane->mNormal.z * offsetZ) /
-                      plane->mNormal.y;
+        expanded.y -= (plane->mNormal.x * offsetX + plane->mNormal.z * offsetZ) / plane->mNormal.y;
     }
     return expanded;
 }
 #endif
 
-static int poly_draw(dBgS_CaptPoly* capt, cBgD_Vtx_t* vtxList, int v0, int v1, int v2, cM3dGPla* plane) {
+static int poly_draw(
+    dBgS_CaptPoly* capt, cBgD_Vtx_t* vtxList, int v0, int v1, int v2, cM3dGPla* plane) {
     UNUSED(capt);
 
     cXyz points[3];
@@ -745,8 +764,8 @@ static int poly_draw(dBgS_CaptPoly* capt, cBgD_Vtx_t* vtxList, int v0, int v1, i
 #if TARGET_PC
             if (collisionViewSettings.enableCeilingExtent &&
                 (collisionViewSettings.ceilingExtentUp > 0.0f ||
-                 collisionViewSettings.ceilingExtentDown > 0.0f ||
-                 collisionViewSettings.ceilingExtentOutward > 0.0f))
+                    collisionViewSettings.ceilingExtentDown > 0.0f ||
+                    collisionViewSettings.ceilingExtentOutward > 0.0f))
             {
                 // drawCube's eight-point strip becomes a triangular prism when
                 // its fourth corner is duplicated. This keeps each ceiling
@@ -770,8 +789,7 @@ static int poly_draw(dBgS_CaptPoly* capt, cBgD_Vtx_t* vtxList, int v0, int v1, i
         if (!s_InsideHio.ChkWallOff()) {
             GXColor draw_color = wall_color;
             if (collisionViewSettings.colorNearVerticalWalls) {
-                const dusk::CollisionWallTint tint =
-                    dusk::collision_wall_tint(plane->mNormal.y);
+                const dusk::CollisionWallTint tint = dusk::collision_wall_tint(plane->mNormal.y);
                 if (tint.active) {
                     draw_color.r = tint.red;
                     draw_color.g = tint.green;
@@ -781,7 +799,7 @@ static int poly_draw(dBgS_CaptPoly* capt, cBgD_Vtx_t* vtxList, int v0, int v1, i
             dDbVw_drawTriangleOpa(points, draw_color, TRUE);
         }
     }
-    
+
     return 0;
 }
 
@@ -789,12 +807,12 @@ void dBgS::Draw() {
     cBgS::Draw();
 
 #if TARGET_PC
-    #define DUSK_TOGGLE_HIO_FLAG(status, flag) \
-        if (status) { \
-            s_InsideHio.m_flags |= flag; \
-        } else { \
-            s_InsideHio.m_flags &= ~flag; \
-        }
+#define DUSK_TOGGLE_HIO_FLAG(status, flag)                                                         \
+    if (status) {                                                                                  \
+        s_InsideHio.m_flags |= flag;                                                               \
+    } else {                                                                                       \
+        s_InsideHio.m_flags &= ~flag;                                                              \
+    }
 
     const auto& collisionViewSettings = dusk::getTransientSettings().collisionView;
     DUSK_TOGGLE_HIO_FLAG(collisionViewSettings.enableTerrainView, dBgS_InsideHIO::FLAG_DISP_POLY_e);
@@ -852,7 +870,7 @@ void dBgS::Draw() {
         CaptPoly(capt);
     }
 
-    #if DEBUG
+#if DEBUG
     if (m_hio.ChkCheckCounter()) {
         OSReport("ラインチェック %d回\n", g_line_counter);
         g_line_counter = 0;
@@ -878,18 +896,22 @@ void dBgS::Draw() {
         OSReport("ポリゴンキャプチャ %d\n", g_capt_poly_counter);
         g_capt_poly_counter = 0;
     }
-    #endif
+#endif
 
     if (m_hio.ChkObjLineCheck()) {
         dBgS_LinChk linechk;
         linechk.Set(&m_hio.m_linecheck_start, &m_hio.m_linecheck_end, NULL);
 
-        dDbVw_drawLineOpa(m_hio.m_linecheck_start, m_hio.m_linecheck_end, COMPOUND_LITERAL(GXColor){0xFF, 0xFF, 0xFF, 0xFF}, TRUE, 12);
-        dDbVw_drawSphereOpa(m_hio.m_linecheck_start, 10.0f, COMPOUND_LITERAL(GXColor){0xFF, 0, 0, 0xFF}, TRUE);
-        dDbVw_drawSphereOpa(m_hio.m_linecheck_end, 10.0f, COMPOUND_LITERAL(GXColor){0, 0, 0xFF, 0xFF}, TRUE);
+        dDbVw_drawLineOpa(m_hio.m_linecheck_start, m_hio.m_linecheck_end,
+            COMPOUND_LITERAL(GXColor){0xFF, 0xFF, 0xFF, 0xFF}, TRUE, 12);
+        dDbVw_drawSphereOpa(
+            m_hio.m_linecheck_start, 10.0f, COMPOUND_LITERAL(GXColor){0xFF, 0, 0, 0xFF}, TRUE);
+        dDbVw_drawSphereOpa(
+            m_hio.m_linecheck_end, 10.0f, COMPOUND_LITERAL(GXColor){0, 0, 0xFF, 0xFF}, TRUE);
 
         if (LineCross(&linechk)) {
-            dDbVw_drawSphereOpa(*linechk.GetCrossP(), 10.0f, COMPOUND_LITERAL(GXColor){0, 0xFF, 0, 0xFF}, TRUE);
+            dDbVw_drawSphereOpa(
+                *linechk.GetCrossP(), 10.0f, COMPOUND_LITERAL(GXColor){0, 0xFF, 0, 0xFF}, TRUE);
         }
     }
 
@@ -923,7 +945,7 @@ void dBgS::Draw() {
 
 void dBgS::CaptPoly(dBgS_CaptPoly& capt) {
     if (!m_hio.ChkCaptPolyOff()) {
-        #if DEBUG
+#if DEBUG
         if (m_hio.ChkCheckCounter()) {
             g_capt_poly_counter++;
         }
@@ -931,7 +953,7 @@ void dBgS::CaptPoly(dBgS_CaptPoly& capt) {
         if (m_hio.ChkCaptPolyTimer()) {
             OSStartStopwatch(&s_capt_poly_sw);
         }
-        #endif
+#endif
 
         cBgS_ChkElm* elm = m_chk_element;
         for (int i = 0; i < 0x100; i++) {
@@ -941,19 +963,21 @@ void dBgS::CaptPoly(dBgS_CaptPoly& capt) {
             elm++;
         }
 
-        #if DEBUG
+#if DEBUG
         if (m_hio.ChkCaptPolyTimer()) {
             OSStopStopwatch(&s_capt_poly_sw);
             OSDumpStopwatch(&s_capt_poly_sw);
         }
-        #endif
+#endif
     }
 }
 
 void dBgS::ChkDeleteActorRegist(fopAc_ac_c* actor) {
     for (int i = 0; i < 0x100; i++) {
         if (m_chk_element[i].ChkUsed() && actor == m_chk_element[i].m_actor_ptr) {
-            OS_REPORT_ERROR("dBgS::ChkDeleteActorRegist() [%d]削除されたアクターのポインターが、まだ登録されています。\n", i);
+            OS_REPORT_ERROR("dBgS::ChkDeleteActorRegist() "
+                            "[%d]削除されたアクターのポインターが、まだ登録されています。\n",
+                i);
         }
     }
 }
@@ -1034,7 +1058,7 @@ BOOL dBgS::GetHorseNoEntry(const cBgS_PolyInfo& polyinfo) {
     if (!m_chk_element[bg_index].ChkUsed()) {
         return false;
     }
-    
+
     return m_chk_element[bg_index].m_bgw_base_ptr->GetHorseNoEntry(polyinfo);
 }
 
@@ -1111,7 +1135,7 @@ int dBgS::GetPolyAtt1(const cBgS_PolyInfo& polyinfo) {
     if (!m_chk_element[bg_index].ChkUsed()) {
         return 0;
     }
-    
+
     return m_chk_element[bg_index].m_bgw_base_ptr->GetPolyAtt1(polyinfo);
 }
 
@@ -1122,7 +1146,7 @@ int dBgS::GetGroundCode(const cBgS_PolyInfo& polyinfo) {
     if (!m_chk_element[bg_index].ChkUsed()) {
         return 0;
     }
-    
+
     return m_chk_element[bg_index].m_bgw_base_ptr->GetGroundCode(polyinfo);
 }
 
@@ -1298,7 +1322,7 @@ void dBgS::ShdwDraw(cBgS_ShdwDraw* pshdwDraw) {
 #endif
 
 void dBgS::WallCorrect(dBgS_Acch* pacch) {
-    #if DEBUG
+#if DEBUG
     if (m_hio.ChkAcchWallOff()) {
         return;
     }
@@ -1310,8 +1334,8 @@ void dBgS::WallCorrect(dBgS_Acch* pacch) {
     if (m_hio.ChkAcchWallTimer()) {
         OSStartStopwatch(&s_wall_correct_sw);
     }
-    #endif
-    
+#endif
+
     pacch->CalcWallRR();
     pacch->CalcMovePosWork();
 
@@ -1333,16 +1357,16 @@ void dBgS::WallCorrect(dBgS_Acch* pacch) {
         }
     }
 
-    #if DEBUG
+#if DEBUG
     if (m_hio.ChkAcchWallTimer()) {
         OSStopStopwatch(&s_wall_correct_sw);
         OSDumpStopwatch(&s_wall_correct_sw);
     }
-    #endif
+#endif
 }
 
 void dBgS::WallCorrectSort(dBgS_Acch* pacch) {
-    #if DEBUG
+#if DEBUG
     if (m_hio.ChkAcchWallOff()) {
         return;
     }
@@ -1354,7 +1378,7 @@ void dBgS::WallCorrectSort(dBgS_Acch* pacch) {
     if (m_hio.ChkAcchWallTimer()) {
         OSStartStopwatch(&s_wall_correct_sw);
     }
-    #endif
+#endif
 
     pacch->CalcWallRR();
     pacch->CalcMovePosWork();
@@ -1377,16 +1401,16 @@ void dBgS::WallCorrectSort(dBgS_Acch* pacch) {
         }
     }
 
-    #if DEBUG
+#if DEBUG
     if (m_hio.ChkAcchWallTimer()) {
         OSStopStopwatch(&s_wall_correct_sw);
         OSDumpStopwatch(&s_wall_correct_sw);
     }
-    #endif
+#endif
 }
 
 f32 dBgS::RoofChk(dBgS_RoofChk* proof) {
-    #if DEBUG
+#if DEBUG
     if (m_hio.ChkRoofOff()) {
         return G_CM3D_F_INF;
     }
@@ -1398,7 +1422,7 @@ f32 dBgS::RoofChk(dBgS_RoofChk* proof) {
     if (m_hio.ChkRoofTimer()) {
         OSStartStopwatch(&s_roof_sw);
     }
-    #endif
+#endif
 
     proof->Init();
 
@@ -1416,18 +1440,18 @@ f32 dBgS::RoofChk(dBgS_RoofChk* proof) {
         elm++;
     }
 
-    #if DEBUG
+#if DEBUG
     if (m_hio.ChkAcchWallTimer()) {
         OSStopStopwatch(&s_roof_sw);
         OSDumpStopwatch(&s_roof_sw);
     }
-    #endif
+#endif
 
     return proof->GetNowY();
 }
 
 bool dBgS::SplGrpChk(dBgS_SplGrpChk* pspl) {
-    #if DEBUG
+#if DEBUG
     if (m_hio.ChkSplOff()) {
         return false;
     }
@@ -1439,7 +1463,7 @@ bool dBgS::SplGrpChk(dBgS_SplGrpChk* pspl) {
     if (m_hio.ChkSplTimer()) {
         OSStartStopwatch(&s_spl_sw);
     }
-    #endif
+#endif
 
     bool ret = false;
     pspl->Init();
@@ -1462,12 +1486,12 @@ bool dBgS::SplGrpChk(dBgS_SplGrpChk* pspl) {
         elm++;
     }
 
-    #if DEBUG
+#if DEBUG
     if (m_hio.ChkAcchWallTimer()) {
         OSStopStopwatch(&s_spl_sw);
         OSDumpStopwatch(&s_spl_sw);
     }
-    #endif
+#endif
 
     return ret;
 }
@@ -1477,7 +1501,7 @@ bool dBgS::SphChk(dBgS_SphChk* psphchk, void* param_1) {
         return false;
     }
 
-    #if DEBUG
+#if DEBUG
     if (m_hio.ChkSphChkOff()) {
         return false;
     }
@@ -1489,7 +1513,7 @@ bool dBgS::SphChk(dBgS_SphChk* psphchk, void* param_1) {
     if (m_hio.ChkSphChkTimer()) {
         OSStartStopwatch(&s_sph_chk_sw);
     }
-    #endif
+#endif
 
     bool ret = false;
     psphchk->Init();
@@ -1509,18 +1533,18 @@ bool dBgS::SphChk(dBgS_SphChk* psphchk, void* param_1) {
         elm++;
     }
 
-    #if DEBUG
+#if DEBUG
     if (m_hio.ChkAcchWallTimer()) {
         OSStopStopwatch(&s_sph_chk_sw);
         OSDumpStopwatch(&s_sph_chk_sw);
     }
-    #endif
+#endif
 
     return ret;
 }
 
 void dBgS::MoveBgCrrPos(const cBgS_PolyInfo& i_poly, bool param_1, cXyz* i_pos, csXyz* i_angle,
-                        csXyz* i_shapeAngle, bool param_5, bool param_6) {
+    csXyz* i_shapeAngle, bool param_5, bool param_6) {
     if (!param_1 || !i_poly.ChkBgIndex()) {
         return;
     }
@@ -1535,14 +1559,14 @@ void dBgS::MoveBgCrrPos(const cBgS_PolyInfo& i_poly, bool param_1, cXyz* i_pos, 
         if ((!param_5 || pbgw->chkStickWall()) && (!param_6 || pbgw->chkStickRoof()) &&
             pbgw->ChkMoveFlag() && ChkPolySafe(i_poly))
         {
-            pbgw->CrrPos(i_poly, m_chk_element[bg_index].m_actor_ptr, param_1, i_pos, i_angle,
-                          i_shapeAngle);
+            pbgw->CrrPos(
+                i_poly, m_chk_element[bg_index].m_actor_ptr, param_1, i_pos, i_angle, i_shapeAngle);
         }
     }
 }
 
-void dBgS::MoveBgTransPos(const cBgS_PolyInfo& i_poly, bool param_1, cXyz* i_pos, csXyz* i_angle,
-                          csXyz* i_shapeAngle) {
+void dBgS::MoveBgTransPos(
+    const cBgS_PolyInfo& i_poly, bool param_1, cXyz* i_pos, csXyz* i_angle, csXyz* i_shapeAngle) {
     if (!param_1 || !i_poly.ChkBgIndex()) {
         return;
     }
@@ -1555,14 +1579,14 @@ void dBgS::MoveBgTransPos(const cBgS_PolyInfo& i_poly, bool param_1, cXyz* i_pos
         pbgw = m_chk_element[bg_index].m_bgw_base_ptr;
 
         if (pbgw->ChkMoveFlag() && ChkPolySafe(i_poly)) {
-            pbgw->TransPos(i_poly, m_chk_element[bg_index].m_actor_ptr, param_1, i_pos, i_angle,
-                            i_shapeAngle);
+            pbgw->TransPos(
+                i_poly, m_chk_element[bg_index].m_actor_ptr, param_1, i_pos, i_angle, i_shapeAngle);
         }
     }
 }
 
-void dBgS::MoveBgMatrixCrrPos(const cBgS_PolyInfo& i_poly, bool param_1, cXyz* i_pos,
-                              csXyz* i_angle, csXyz* i_shapeAngle) {
+void dBgS::MoveBgMatrixCrrPos(
+    const cBgS_PolyInfo& i_poly, bool param_1, cXyz* i_pos, csXyz* i_angle, csXyz* i_shapeAngle) {
     if (!param_1 || !i_poly.ChkBgIndex()) {
         return;
     }
@@ -1575,14 +1599,14 @@ void dBgS::MoveBgMatrixCrrPos(const cBgS_PolyInfo& i_poly, bool param_1, cXyz* i
         pbgw = m_chk_element[bg_index].m_bgw_base_ptr;
 
         if (pbgw->ChkMoveFlag()) {
-            pbgw->MatrixCrrPos(i_poly, m_chk_element[bg_index].m_actor_ptr, param_1, i_pos,
-                                i_angle, i_shapeAngle);
+            pbgw->MatrixCrrPos(
+                i_poly, m_chk_element[bg_index].m_actor_ptr, param_1, i_pos, i_angle, i_shapeAngle);
         }
     }
 }
 
 void dBgS_MoveBGProc_Typical(dBgW* pbgw, void* i_actor_ptr, const cBgS_PolyInfo& i_poly,
-                             bool param_3, cXyz* i_pos, csXyz* i_angle, csXyz* i_shapeAngle) {
+    bool param_3, cXyz* i_pos, csXyz* i_angle, csXyz* i_shapeAngle) {
     UNUSED(i_actor_ptr);
     UNUSED(i_poly);
     UNUSED(param_3);
@@ -1597,14 +1621,14 @@ void dBgS_MoveBGProc_Typical(dBgW* pbgw, void* i_actor_ptr, const cBgS_PolyInfo&
     cXyz move_old;
     cXyz move_pos;
 
-    PSMTXMultVec(m, i_pos, &move_old);        
+    PSMTXMultVec(m, i_pos, &move_old);
     PSMTXMultVec(pbgw->GetBaseMtxP(), &move_old, &move_pos);
 
     *i_pos = move_pos;
 }
 
 static void dBgS_MoveBGProc_RotY(dBgW* pbgw, void* i_actor_ptr, const cBgS_PolyInfo& i_poly,
-                                 bool param_3, cXyz* i_pos, csXyz* i_angle, csXyz* i_shapeAngle) {
+    bool param_3, cXyz* i_pos, csXyz* i_angle, csXyz* i_shapeAngle) {
     UNUSED(i_actor_ptr);
     UNUSED(i_poly);
     UNUSED(param_3);
@@ -1624,13 +1648,13 @@ static void dBgS_MoveBGProc_RotY(dBgW* pbgw, void* i_actor_ptr, const cBgS_PolyI
 }
 
 void dBgS_MoveBGProc_TypicalRotY(dBgW* pbgw, void* i_actor_ptr, const cBgS_PolyInfo& i_poly,
-                                 bool param_3, cXyz* i_pos, csXyz* i_angle, csXyz* i_shapeAngle) {
+    bool param_3, cXyz* i_pos, csXyz* i_angle, csXyz* i_shapeAngle) {
     dBgS_MoveBGProc_Typical(pbgw, i_actor_ptr, i_poly, param_3, i_pos, i_angle, i_shapeAngle);
     dBgS_MoveBGProc_RotY(pbgw, i_actor_ptr, i_poly, param_3, i_pos, i_angle, i_shapeAngle);
 }
 
-void dBgS_MoveBGProc_Trans(dBgW* pbgw, void* i_actor_ptr, const cBgS_PolyInfo& i_poly,
-                           bool param_3, cXyz* i_pos, csXyz* i_angle, csXyz* i_shapeAngle) {
+void dBgS_MoveBGProc_Trans(dBgW* pbgw, void* i_actor_ptr, const cBgS_PolyInfo& i_poly, bool param_3,
+    cXyz* i_pos, csXyz* i_angle, csXyz* i_shapeAngle) {
     UNUSED(i_actor_ptr);
     UNUSED(i_poly);
     UNUSED(param_3);
@@ -1667,8 +1691,8 @@ void dBgS::ArrowStickCallBack(const cBgS_PolyInfo& polyinfo, fopAc_ac_c* param_1
     }
 }
 
-fopAc_ac_c* dBgS::PushPullCallBack(const cBgS_PolyInfo& param_0, fopAc_ac_c* i_pushActor, s16 i_angle,
-                            dBgW_Base::PushPullLabel i_label) {
+fopAc_ac_c* dBgS::PushPullCallBack(const cBgS_PolyInfo& param_0, fopAc_ac_c* i_pushActor,
+    s16 i_angle, dBgW_Base::PushPullLabel i_label) {
     int bg_index = param_0.GetBgIndex();
     JUT_ASSERT(2733, 0 <= bg_index && bg_index < 256);
 

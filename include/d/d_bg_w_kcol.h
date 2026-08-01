@@ -24,6 +24,7 @@ struct GameplayTraceCollisionReadAdapter;
 // DUSKLIGHT DEBUG-VIEW READ-ONLY APERTURE: declaration only; adapter body lives
 // outside native gameplay code and may inspect backing storage without mutation.
 namespace dusk {
+struct EponaBlockerViewReadAdapter;
 struct TriggerViewReadAdapter;
 }
 #endif
@@ -139,6 +140,7 @@ private:
 #endif
 #if TARGET_PC
     // DUSKLIGHT DEBUG-VIEW READ-ONLY APERTURE: const backing-store reads only.
+    friend struct dusk::EponaBlockerViewReadAdapter;
     friend struct dusk::TriggerViewReadAdapter;
 #endif
     /* 0x18 */ KC_Header* m_pkc_head;

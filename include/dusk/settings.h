@@ -7,8 +7,8 @@
 
 namespace dusk {
 
-using config::ConfigVar;
 using config::ActionBindConfigVar;
+using config::ConfigVar;
 
 enum class BloomMode : int {
     Off = 0,
@@ -339,9 +339,20 @@ struct TriggerViewSettings {
     float drawRange;
 };
 
+struct EponaBlockerViewSettings {
+    bool showCollisionPolygons;
+    bool showHorseWallPolygons;
+    bool showStopVolumes;
+    bool showInactiveStopVolumes;
+    bool wireframeOnly;
+    float opacity;
+    float drawRange;
+};
+
 struct TransientSettings {
     CollisionViewSettings collisionView;
     TriggerViewSettings triggerView;
+    EponaBlockerViewSettings eponaBlockerView;
     bool skipFrameRateLimit;
     bool moveLinkActive;
     bool stateShareLoadActive;
