@@ -355,6 +355,10 @@ impl CampaignTacticLearnerAuthority {
         self.published_snapshot_sha256s.len() as u64
     }
 
+    pub(super) fn completed_decisions(&self) -> &BTreeSet<(u32, u64)> {
+        &self.completed_decisions
+    }
+
     fn restore_missing_update(
         &mut self,
         maximum_stale_replay_revisions: u64,

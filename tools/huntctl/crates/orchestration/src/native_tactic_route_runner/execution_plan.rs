@@ -233,15 +233,6 @@ impl NativeTacticExecutionPlan {
     pub fn build(
         request: NativeTacticExecutionPlanRequest,
     ) -> Result<Self, NativeTacticRouteRunError> {
-        if matches!(
-            request.replay_sharing,
-            NativeTacticReplaySharingPlan::BoundedStaleness { .. }
-        ) && request.lanes_per_generation != 1
-        {
-            return Err(route_message(
-                "live tactic replay requires one lane per generation until cross-lane publication has a deterministic logical order",
-            ));
-        }
         if request.seeds.is_empty()
             || request.seeds.len() > MAX_ROUTE_SEEDS
             || request.seeds.windows(2).any(|pair| pair[0] >= pair[1])
@@ -578,12 +569,12 @@ mod tests {
         };
         assert!(NativeTacticExecutionPlan::build(freshest).is_ok());
 
-        let mut nondeterministic = request();
-        nondeterministic.replay_sharing = NativeTacticReplaySharingPlan::BoundedStaleness {
+        let mut concurrent = request();
+        concurrent.replay_sharing = NativeTacticReplaySharingPlan::BoundedStaleness {
             maximum_stale_replay_revisions: 4,
         };
-        let error = NativeTacticExecutionPlan::build(nondeterministic).unwrap_err();
-        assert!(error.to_string().contains("deterministic logical order"));
+        let concurrent = NativeTacticExecutionPlan::build(concurrent).unwrap();
+        assert_eq!(concurrent.generations[0].lane_indices, vec![0, 1, 2, 3]);
     }
 
     #[test]

@@ -22,6 +22,7 @@ pub(super) fn run_seed(
     shared_content_store: TacticQContentStore,
     inherited_learner_snapshot: Arc<TacticQImmutableLearnerSnapshot>,
     live_learner: Option<SharedTacticLearnerAuthority>,
+    round_coordinator: Option<SharedDecisionRoundCoordinator>,
     seed_index: usize,
     seed: u64,
 ) -> Result<CompletedNativeTacticSeed, NativeTacticRouteRunError> {
@@ -220,6 +221,7 @@ pub(super) fn run_seed(
         live_learner,
         lane,
         inherited_learner_snapshot.replay_revision,
+        round_coordinator,
     )?;
     if resuming_seed && let Some(session) = replay_session.as_ref() {
         session.repair_committed(&campaign, &trace)?;
@@ -319,7 +321,7 @@ pub(super) fn run_seed(
         let mut policy_update_probes = Vec::new();
         if let Some(session) = replay_session.as_mut() {
             let learner_refresh_started = Instant::now();
-            if let Some(snapshot) = session.pending_snapshot()? {
+            if let Some(snapshot) = session.pending_snapshot(campaign.decision_index)? {
                 let fixed_feedback = parameterized_feedback_for_state(
                     &campaign,
                     &campaign.current.snapshot,
@@ -546,7 +548,7 @@ pub(super) fn run_seed(
             )?;
             if let Some(session) = replay_session.as_mut() {
                 let learner_refresh_started = Instant::now();
-                if let Some(snapshot) = session.pending_snapshot()? {
+                if let Some(snapshot) = session.pending_snapshot(campaign.decision_index)? {
                     policy_update_probes.push(consume_policy_update_with_probe(
                         session,
                         &mut campaign,

@@ -92,7 +92,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V32: &str = "dusklight-native-tactic-route-report/v32";
@@ -599,6 +599,16 @@ fn run_native_tactic_route_with_optional_fleet(
                         NativeTacticReplaySharingPlan::BoundedStaleness { .. }
                     ))
                 .then(|| Arc::clone(&learner_authority));
+                let round_coordinator =
+                    if live_learner.is_some() && generation.lane_indices.len() > 1 {
+                        Some(DecisionRoundCoordinator::new(
+                            generation,
+                            config.execution_plan,
+                            &learner_authority,
+                        )?)
+                    } else {
+                        None
+                    };
                 let mut generation_results = std::thread::scope(|generation_scope| {
                     let coordinator_handles = generation
                         .lane_indices
@@ -617,11 +627,12 @@ fn run_native_tactic_route_with_optional_fleet(
                             let initial_facts = &initial_facts;
                             let route_prefix = &route_prefix;
                             let live_learner = live_learner.clone();
+                            let round_coordinator = round_coordinator.clone();
                             let content_store = campaign_content_store.clone();
                             let inherited_learner_snapshot =
                                 Arc::clone(&inherited_learner_snapshot);
                             generation_scope.spawn(move || {
-                                run_seed_coordinator(
+                                let result = run_seed_coordinator(
                                     config,
                                     &pool,
                                     registry,
@@ -636,10 +647,26 @@ fn run_native_tactic_route_with_optional_fleet(
                                     content_store,
                                     inherited_learner_snapshot,
                                     live_learner,
+                                    round_coordinator.clone(),
                                     seed_index,
                                     seed,
-                                )
-                                .map(|completion| (seed_index, completion))
+                                );
+                                if let Some(coordinator) = round_coordinator {
+                                    match &result {
+                                        Ok(completion) => {
+                                            if let Err(error) = coordinator.close_lane(
+                                                u32::try_from(lane.lane_index)
+                                                    .map_err(route_error)?,
+                                                completion.result.decisions,
+                                            ) {
+                                                coordinator.abort();
+                                                return Err(error);
+                                            }
+                                        }
+                                        Err(_) => coordinator.abort(),
+                                    }
+                                }
+                                result.map(|completion| (seed_index, completion))
                             })
                         })
                         .collect::<Vec<_>>();
@@ -1052,7 +1079,8 @@ use macro_import::{ImportedPromotedTactic, load_imported_promoted_tactics};
 
 mod replay_sharing;
 use replay_sharing::{
-    BoundedStalenessReplaySession, build_replay_session, deterministic_generation_barrier_revision,
+    BoundedStalenessReplaySession, DecisionRoundCoordinator, SharedDecisionRoundCoordinator,
+    build_replay_session, deterministic_generation_barrier_revision,
     lane_generated_training_corpus, publish_completed_seed_replay, publish_demonstration_replay,
 };
 mod replay_content;
