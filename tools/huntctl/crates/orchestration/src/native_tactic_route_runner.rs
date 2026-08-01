@@ -270,8 +270,9 @@ mod scratch_campaign_audit;
 pub use scratch_campaign_audit::{
     NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2, NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3,
     NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4, NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V5,
-    NativeTacticCampaignResourceAudit, NativeTacticScratchCampaignAudit,
-    NativeTacticScratchDecisionAudit, NativeTacticScratchSeedAudit, NativeTacticScratchStopReason,
+    NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V6, NativeTacticCampaignResourceAudit,
+    NativeTacticScratchCampaignAudit, NativeTacticScratchDecisionAudit,
+    NativeTacticScratchSeedAudit, NativeTacticScratchStopReason,
     NativeTacticScratchTerminalImprovementAudit,
 };
 mod scratch_comparison;

@@ -34,6 +34,16 @@ and sealed experiment artifacts.
 
 ### P0 - Trust what the system reports
 
+- [ ] **Establish strict causal-control evidence.** Run a build-matched
+  learned/frozen/random comparison whose V6 decision audits and semantically
+  bound completion artifacts all validate. Done when learned updates cause
+  valid same-state choice changes and both controls consume no update benefit.
+
+- [ ] **Establish a strict reproducible baseline.** Repeat one- and two-worker
+  versions of one predeclared workload under the same V6 audit/completion
+  contract. Done when outcome, wall time, useful transitions/s, utilization,
+  variance, and the largest reconciled loss are sealed and reproducible.
+
 - [ ] **Make the learning chain auditable.** Trace observations, legal actions,
   choices, transitions, replay admission, updates, snapshots, and terminals;
   account for retries, rejections, duplicates, and censored work. Done when a

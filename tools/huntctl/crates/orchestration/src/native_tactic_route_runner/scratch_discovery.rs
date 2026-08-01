@@ -269,7 +269,12 @@ fn condition(id: &str, passed: bool) -> NativeTacticScratchCondition {
 pub(super) fn route_report_sha256(
     route: &NativeTacticRouteReport,
 ) -> Result<Digest, NativeTacticRouteRunError> {
-    let canonical = canonical_json_value(serde_json::to_value(route).map_err(route_error)?);
+    // Hash the actual JSON wire representation. `serde_json::to_value` first
+    // widens f32 values to f64 and can produce a different Number than the
+    // specialized JSON serializer, making an in-memory report differ from the
+    // same report after a write/read round trip.
+    let wire = serde_json::to_vec(route).map_err(route_error)?;
+    let canonical = canonical_json_value(serde_json::from_slice(&wire).map_err(route_error)?);
     Ok(Digest(
         Sha256::digest(serde_json::to_vec(&canonical).map_err(route_error)?).into(),
     ))
@@ -395,6 +400,25 @@ fn scratch_totals(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    struct FloatWireShape {
+        value: f32,
+    }
+
+    #[test]
+    fn canonical_json_identity_is_stable_across_a_wire_round_trip() {
+        let original = FloatWireShape { value: 0.1 };
+        let wire = serde_json::to_vec(&original).unwrap();
+        let decoded: FloatWireShape = serde_json::from_slice(&wire).unwrap();
+        let original_wire: serde_json::Value = serde_json::from_slice(&wire).unwrap();
+        let decoded_wire: serde_json::Value =
+            serde_json::from_slice(&serde_json::to_vec(&decoded).unwrap()).unwrap();
+        assert_eq!(
+            canonical_json_value(original_wire),
+            canonical_json_value(decoded_wire)
+        );
+    }
 
     fn report() -> NativeTacticScratchDiscoveryReport {
         let mut report = NativeTacticScratchDiscoveryReport {

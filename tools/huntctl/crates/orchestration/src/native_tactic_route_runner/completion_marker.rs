@@ -88,6 +88,31 @@ impl NativeTacticCampaignCompletion {
         self.validate()?;
         let report = fs::read(report_path).map_err(route_error)?;
         let summary = fs::read(summary_path).map_err(route_error)?;
+        self.validate_artifact_hashes(&report, &summary)?;
+        let route: NativeTacticRouteReport =
+            serde_json::from_slice(&report).map_err(route_error)?;
+        let summary: NativeTacticCampaignSummary =
+            serde_json::from_slice(&summary).map_err(route_error)?;
+        summary.validate()?;
+        let plan = NativeTacticExecutionPlan::read(Path::new(&route.execution_plan_path))?;
+        let expected_summary = NativeTacticCampaignSummary::build(&route, &plan)?;
+        if self.execution_plan_sha256 != route.execution_plan_sha256
+            || self.execution_plan_sha256 != summary.identities.execution_plan_sha256
+            || plan.identity()? != self.execution_plan_sha256
+            || summary != expected_summary
+        {
+            return Err(route_message(
+                "native tactic completion report and summary are not one derived artifact chain",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate_artifact_hashes(
+        &self,
+        report: &[u8],
+        summary: &[u8],
+    ) -> Result<(), NativeTacticRouteRunError> {
         if digest_bytes(&report) != self.report_sha256
             || digest_bytes(&summary) != self.summary_sha256
         {
@@ -230,5 +255,33 @@ mod tests {
         let mut corrupt = encoded;
         *corrupt.last_mut().unwrap() ^= 1;
         assert!(decode_completion(&corrupt).is_err());
+    }
+
+    #[test]
+    fn completion_hashes_bind_both_artifacts_before_semantic_validation() {
+        let completion = NativeTacticCampaignCompletion::build(
+            Digest([1; 32]),
+            b"report",
+            b"summary",
+            100,
+            20,
+            30,
+            40,
+            190,
+        )
+        .unwrap();
+        completion
+            .validate_artifact_hashes(b"report", b"summary")
+            .unwrap();
+        assert!(
+            completion
+                .validate_artifact_hashes(b"changed", b"summary")
+                .is_err()
+        );
+        assert!(
+            completion
+                .validate_artifact_hashes(b"report", b"changed")
+                .is_err()
+        );
     }
 }

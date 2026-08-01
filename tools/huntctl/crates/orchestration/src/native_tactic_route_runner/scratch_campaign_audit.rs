@@ -14,6 +14,8 @@ pub const NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4: &str =
     "dusklight-native-tactic-scratch-campaign-audit/v4";
 pub const NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V5: &str =
     "dusklight-native-tactic-scratch-campaign-audit/v5";
+pub const NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V6: &str =
+    "dusklight-native-tactic-scratch-campaign-audit/v6";
 
 fn is_zero_u64(value: &u64) -> bool {
     *value == 0
@@ -230,7 +232,7 @@ impl NativeTacticScratchCampaignAudit {
         }
         let resources = resource_audit(route, &plan)?;
         let mut audit = Self {
-            schema: NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V5.into(),
+            schema: NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V6.into(),
             content_sha256: Digest::ZERO,
             route_report_sha256: route_report_sha256(route)?,
             execution_plan_sha256: route.execution_plan_sha256,
@@ -255,6 +257,7 @@ impl NativeTacticScratchCampaignAudit {
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3 => seed_is_valid_v3,
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4 => seed_is_valid_v3,
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V5 => seed_is_valid_v5,
+            NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V6 => seed_is_valid_v6,
             _ => {
                 return Err(route_message(
                     "scratch campaign audit schema is unsupported",
@@ -265,6 +268,7 @@ impl NativeTacticScratchCampaignAudit {
             self.schema.as_str(),
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4
                 | NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V5
+                | NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V6
         ) {
             self.useful_graph_expansion_set_sha256 != Digest::ZERO
                 && self.unique_useful_graph_expansions
@@ -539,8 +543,8 @@ fn seed_audit(
     let mut learner_snapshots = BTreeSet::new();
     let mut action_availability_counts = BTreeMap::<String, u64>::new();
     let mut unsupported_action_availability_counts = BTreeMap::<String, u64>::new();
-    let mut action_surface_timeline_complete = true;
-    let mut scheduler_timeline_complete = true;
+    let action_surface_timeline_complete = true;
+    let scheduler_timeline_complete = true;
     let mut terminal_improvements = Vec::new();
     let mut terminal_improvement_timing_complete = true;
     let mut best_observed_terminal_tick = None;
@@ -560,7 +564,7 @@ fn seed_audit(
             .iter()
             .map(|tactic| tactic.option_id.as_str())
             .collect::<BTreeSet<_>>();
-        action_surface_timeline_complete &= !trace.applicable_tactics.is_empty()
+        let action_surface_valid = !trace.applicable_tactics.is_empty()
             && unique_action_ids.len() == trace.applicable_tactics.len()
             && trace
                 .applicable_tactics
@@ -571,18 +575,41 @@ fn seed_audit(
             && trace.applicable_tactics.iter().any(|tactic| {
                 tactic.applicable && tactic.selected && tactic.option_id == trace.selected_option_id
             });
-        scheduler_timeline_complete &= trace.scheduler_decision.as_ref().is_some_and(|scheduler| {
-            scheduler.learner_model_sha256 == trace.learner_snapshot_sha256
-                && scheduler.validate().is_ok()
-                && scheduler.evaluated_expansion_sha256.len() == trace.proposal_batch.len()
-                && trace
-                    .proposal_batch
-                    .iter()
-                    .enumerate()
-                    .all(|(index, proposal)| {
-                        proposal_matches_graph_expansion(graph, scheduler, index, proposal)
-                    })
-        });
+        if !action_surface_valid {
+            return Err(route_message(format!(
+                "scratch decision {} has incomplete action-surface provenance",
+                trace.decision_index
+            )));
+        }
+        let Some(scheduler) = trace.scheduler_decision.as_ref() else {
+            return Err(route_message(format!(
+                "scratch decision {} has no scheduler provenance",
+                trace.decision_index
+            )));
+        };
+        if scheduler.learner_model_sha256 != trace.learner_snapshot_sha256 {
+            return Err(route_message(format!(
+                "scratch scheduler decision {} is detached from its learner snapshot",
+                trace.decision_index
+            )));
+        }
+        scheduler.validate().map_err(route_error)?;
+        if scheduler.evaluated_expansion_sha256.len() != trace.proposal_batch.len() {
+            return Err(route_message(format!(
+                "scratch scheduler decision {} has a detached proposal count",
+                trace.decision_index
+            )));
+        }
+        for (proposal_index, proposal) in trace.proposal_batch.iter().enumerate() {
+            if let Some(issue) =
+                proposal_graph_expansion_issue(graph, scheduler, proposal_index, proposal)
+            {
+                return Err(route_message(format!(
+                    "scratch scheduler decision {} proposal {} is detached: {issue}",
+                    trace.decision_index, proposal_index
+                )));
+            }
+        }
         for tactic in &trace.applicable_tactics {
             if !tactic.applicable {
                 continue;
@@ -818,6 +845,16 @@ fn seed_is_valid_v5(seed: &NativeTacticScratchSeedAudit) -> bool {
     if !seed_is_valid_v3(seed) || !seed.terminal_improvement_timing_complete {
         return false;
     }
+    graph_authoritative_terminal_timeline_is_valid(seed)
+}
+
+fn seed_is_valid_v6(seed: &NativeTacticScratchSeedAudit) -> bool {
+    seed.action_surface_timeline_complete
+        && seed.scheduler_timeline_complete
+        && seed_is_valid_v5(seed)
+}
+
+fn graph_authoritative_terminal_timeline_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
     let mut prior_best = None;
     for decision in &seed.decisions {
         match decision.best_authenticated_tick_after_decision {
@@ -1092,15 +1129,24 @@ fn proposal_matches_graph_expansion(
     proposal_index: usize,
     proposal: &NativeTacticProposalTrace,
 ) -> bool {
+    proposal_graph_expansion_issue(graph, scheduler, proposal_index, proposal).is_none()
+}
+
+fn proposal_graph_expansion_issue(
+    graph: &StateGraph,
+    scheduler: &crate::tactic_q_campaign::TacticSchedulerDecisionTrace,
+    proposal_index: usize,
+    proposal: &NativeTacticProposalTrace,
+) -> Option<&'static str> {
     let Some(expansion_sha256) = scheduler
         .evaluated_expansion_sha256
         .get(proposal_index)
         .copied()
     else {
-        return false;
+        return Some("scheduler expansion is absent");
     };
     let Some(expansion) = graph.expansion(expansion_sha256) else {
-        return false;
+        return Some("final graph expansion is absent");
     };
     let (
         ActionExpansionStatus::Completed {
@@ -1116,40 +1162,54 @@ fn proposal_matches_graph_expansion(
         expansion.execution.as_ref(),
     )
     else {
-        return false;
-    };
-    let Some(source_node) = graph.node(expansion.source) else {
-        return false;
+        return Some("final graph expansion lacks executable completion");
     };
     let Some(target_node) = graph.node(target) else {
-        return false;
+        return Some("final graph target is absent");
     };
-    expansion.action.option_id == proposal.option_id
-        && execution.option_id == expansion.action.option_id
-        && execution.option_type == expansion.action.option_type
-        && execution.parameters == expansion.action.parameters
-        && execution.duration.realized_ticks == proposal.realized_ticks
-        && execution.tape_sha256 == proposal.emitted_tape_sha256
-        && execution.realized_tape_range.start_frame == source_node.restoration.route.tape_frames
-        && execution.realized_tape_range.end_frame_exclusive
-            == target_node.restoration.route.tape_frames
-        && source_node
-            .restoration
-            .route
-            .tape_frames
-            .checked_add(u64::from(proposal.realized_ticks))
-            == Some(proposal.root_route_ticks)
-        && target_node.terminal == proposal.terminal
-        && target_node.id.state_sha256 == proposal.after_snapshot_sha256
-        && target_node.restoration.route.tape_frames == proposal.root_route_ticks
-        && evidence.values().any(|row| {
-            row.authority == ExpansionEvidenceAuthority::Executable
-                && row.transition.after_state_sha256 == proposal.after_snapshot_sha256
-                && row.transition.value_sample.action == expansion.action
-                && row.transition.value_sample.realized_tape_sha256 == proposal.emitted_tape_sha256
-                && row.transition.value_sample.reward.to_bits() == proposal.reward.to_bits()
-                && row.transition.value_sample.terminal == proposal.terminal
-        })
+    if expansion.action.option_id != proposal.option_id {
+        return Some("action identity differs");
+    }
+    if execution.option_id != expansion.action.option_id
+        || execution.option_type != expansion.action.option_type
+        || execution.parameters != expansion.action.parameters
+    {
+        return Some("execution differs from the scheduled action");
+    }
+    if execution.duration.realized_ticks != proposal.realized_ticks {
+        return Some("realized duration differs");
+    }
+    // A later exact-state route relaxation may shorten the source or target
+    // node's canonical restoration route. The expansion execution and its
+    // authenticated native transition are immutable historical evidence, so
+    // bind the proposal to those rather than to mutable restorations.
+    if execution
+        .realized_tape_range
+        .start_frame
+        .checked_add(u64::from(proposal.realized_ticks))
+        != Some(execution.realized_tape_range.end_frame_exclusive)
+        || execution.realized_tape_range.end_frame_exclusive != proposal.root_route_ticks
+    {
+        return Some("historical realized tape range differs");
+    }
+    if target_node.terminal != proposal.terminal
+        || target_node.id.state_sha256 != proposal.after_snapshot_sha256
+    {
+        return Some("final graph target differs");
+    }
+    if !evidence.values().any(|row| {
+        row.authority == ExpansionEvidenceAuthority::Executable
+            && row.transition.before_state_sha256 == expansion.source.state_sha256
+            && row.transition.after_state_sha256 == proposal.after_snapshot_sha256
+            && row.transition.execution == *execution
+            && row.transition.value_sample.action == expansion.action
+            && row.transition.value_sample.realized_tape_sha256 == proposal.emitted_tape_sha256
+            && row.transition.value_sample.reward.to_bits() == proposal.reward.to_bits()
+            && row.transition.value_sample.terminal == proposal.terminal
+    }) {
+        return Some("authenticated native evidence differs");
+    }
+    None
 }
 
 fn selection_reason_key(
@@ -1344,12 +1404,28 @@ mod tests {
     #[test]
     fn v5_requires_graph_authoritative_best_tick_after_each_terminal_decision() {
         let mut seed = valid_terminal_seed_audit();
-        assert!(!seed_is_valid_v5(&seed));
+        assert!(!graph_authoritative_terminal_timeline_is_valid(&seed));
         seed.decisions[0].best_authenticated_tick_after_decision = Some(9);
+        assert!(graph_authoritative_terminal_timeline_is_valid(&seed));
         assert!(seed_is_valid_v5(&seed));
+        assert!(!seed_is_valid_v6(&seed));
 
         seed.decisions[0].best_authenticated_tick_after_decision = Some(10);
-        assert!(!seed_is_valid_v5(&seed));
+        assert!(!graph_authoritative_terminal_timeline_is_valid(&seed));
+    }
+
+    #[test]
+    fn v6_fails_closed_without_complete_action_and_scheduler_provenance() {
+        let mut seed = valid_terminal_seed_audit();
+        seed.decisions[0].best_authenticated_tick_after_decision = Some(9);
+        assert!(seed_is_valid_v3(&seed));
+        assert!(!seed_is_valid_v6(&seed));
+
+        seed.action_surface_timeline_complete = true;
+        assert!(!seed_is_valid_v6(&seed));
+        seed.action_surface_timeline_complete = false;
+        seed.scheduler_timeline_complete = true;
+        assert!(!seed_is_valid_v6(&seed));
     }
 
     #[test]

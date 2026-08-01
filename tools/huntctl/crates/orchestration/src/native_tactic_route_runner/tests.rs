@@ -2063,7 +2063,7 @@ fn binary_marker_follows_shutdown_artifacts_and_resume_repairs_orphan_json() {
     .unwrap();
     publish_completion(&completion_path, &completion).unwrap();
     completion
-        .validate_files(&report_path, &summary_path)
+        .validate_artifact_hashes(report_bytes, summary_bytes)
         .unwrap();
     assert!(prepare_campaign_completion(&directory, true).is_err());
     assert_eq!(
