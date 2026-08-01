@@ -1,7 +1,7 @@
 use super::{
     Digest, NativeGenericExecutionStrategy, NativeTacticExecutionPlan,
     NativeTacticExecutionPlanRequest, NativeTacticPlanBudgets, NativeTacticResourceLimit,
-    OptimizationRequest, TacticProposalPolicy, flag, option, u64_option, usize_option,
+    OptimizationRequest, TacticProposalPolicy, option, u64_option, usize_option,
 };
 use dusklight_learning::tactic_value_treatment::TacticValueTreatment;
 use dusklight_orchestration::{
@@ -9,7 +9,7 @@ use dusklight_orchestration::{
 };
 use std::error::Error;
 
-const SEALED_PLAN_SHAPING_OPTIONS: [&str; 15] = [
+const SEALED_PLAN_SHAPING_OPTIONS: [&str; 14] = [
     "--seed",
     "--proposal-policy",
     "--value-treatment",
@@ -21,7 +21,6 @@ const SEALED_PLAN_SHAPING_OPTIONS: [&str; 15] = [
     "--refit-every",
     "--epsilon-per-million",
     "--demonstration-chunk-ticks",
-    "--generation-barrier",
     "--maximum-stale-replay-revisions",
     "--memory-bytes",
     "--wall-micros",
@@ -49,12 +48,18 @@ pub(super) fn native_tactic_execution_plan(
     // still execute one decision's batch in parallel. Generation-barrier plans
     // may opt into additional lanes explicitly.
     let default_lanes_per_generation = 1;
-    let replay_sharing = selected_replay_sharing(
-        learn_args,
-        proposal_policy,
-        proposal_width_per_decision,
-        refit_every_decisions,
-    )?;
+    let replay_sharing = option(learn_args, "--maximum-stale-replay-revisions")
+        .map(|value| {
+            Ok::<_, Box<dyn Error>>(NativeTacticReplaySharingPlan::BoundedStaleness {
+                maximum_stale_replay_revisions: value.parse()?,
+            })
+        })
+        .transpose()?
+        .unwrap_or(default_replay_sharing(
+            proposal_policy,
+            proposal_width_per_decision,
+            refit_every_decisions,
+        )?);
     NativeTacticExecutionPlan::build(NativeTacticExecutionPlanRequest {
         seeds: seeds.to_vec(),
         proposal_policy,
@@ -95,34 +100,6 @@ pub(super) fn native_tactic_execution_plan(
         },
     })
     .map_err(Into::into)
-}
-
-fn selected_replay_sharing(
-    learn_args: &[String],
-    proposal_policy: TacticProposalPolicy,
-    proposal_width_per_decision: usize,
-    refit_every_decisions: u64,
-) -> Result<NativeTacticReplaySharingPlan, Box<dyn Error>> {
-    let generation_barrier = flag(learn_args, "--generation-barrier");
-    let maximum_stale_replay_revisions = option(learn_args, "--maximum-stale-replay-revisions")
-        .map(|value| value.parse())
-        .transpose()?;
-    if generation_barrier && maximum_stale_replay_revisions.is_some() {
-        return Err("--generation-barrier conflicts with --maximum-stale-replay-revisions".into());
-    }
-    if generation_barrier {
-        return Ok(NativeTacticReplaySharingPlan::GenerationBarrier);
-    }
-    if let Some(maximum_stale_replay_revisions) = maximum_stale_replay_revisions {
-        return Ok(NativeTacticReplaySharingPlan::BoundedStaleness {
-            maximum_stale_replay_revisions,
-        });
-    }
-    default_replay_sharing(
-        proposal_policy,
-        proposal_width_per_decision,
-        refit_every_decisions,
-    )
 }
 
 fn value_treatment(
@@ -178,8 +155,7 @@ mod tests {
     use super::{
         CampaignClass, NativeTacticReplaySharingPlan, SEALED_PLAN_SHAPING_OPTIONS,
         TacticProposalPolicy, TacticValueTreatment, default_replay_sharing,
-        default_value_treatment, sealed_plan_shape_conflict, selected_replay_sharing,
-        value_treatment,
+        default_value_treatment, sealed_plan_shape_conflict, value_treatment,
     };
 
     #[test]
@@ -197,35 +173,6 @@ mod tests {
         assert_eq!(
             default_replay_sharing(TacticProposalPolicy::StructuredNonLearning, 4, 2).unwrap(),
             NativeTacticReplaySharingPlan::GenerationBarrier
-        );
-    }
-
-    #[test]
-    fn learned_routes_can_select_parallel_generation_barriers_explicitly() {
-        assert_eq!(
-            selected_replay_sharing(
-                &["--generation-barrier".into()],
-                TacticProposalPolicy::Learned,
-                4,
-                2,
-            )
-            .unwrap(),
-            NativeTacticReplaySharingPlan::GenerationBarrier
-        );
-        assert!(
-            selected_replay_sharing(
-                &[
-                    "--generation-barrier".into(),
-                    "--maximum-stale-replay-revisions".into(),
-                    "8".into(),
-                ],
-                TacticProposalPolicy::Learned,
-                4,
-                2,
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("conflicts")
         );
     }
 
