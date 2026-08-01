@@ -248,6 +248,23 @@ impl CampaignTacticLearnerAuthority {
             .map_err(route_error)
     }
 
+    pub(super) fn publish_batch(
+        &mut self,
+        publisher_lane: u32,
+        publisher_decision: u64,
+        learner_snapshot_sha256: Digest,
+        rows: &[TacticReplayPublishRow<'_>],
+    ) -> Result<Vec<TacticReplayAdmissionOutcome>, NativeTacticRouteRunError> {
+        self.replay
+            .publish_batch(
+                publisher_lane,
+                publisher_decision,
+                learner_snapshot_sha256,
+                rows,
+            )
+            .map_err(route_error)
+    }
+
     pub(super) fn finish_decision(
         &mut self,
         publisher_lane: u32,

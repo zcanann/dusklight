@@ -91,20 +91,27 @@ impl BoundedStalenessReplaySession {
             ));
         }
         let mut learner = lock_learner_authority(&self.learner)?;
+        let rows = evaluated
+            .iter()
+            .zip(episode_groups)
+            .map(|(proposal, episode_group)| TacticReplayPublishRow {
+                transition: &proposal.transition,
+                route: &proposal.outcome.route_tape,
+                episode_group: *episode_group,
+            })
+            .collect::<Vec<_>>();
         let mut admitted_rows = 0_u64;
         let mut duplicate_rows = 0_u64;
-        for (proposal, episode_group) in evaluated.iter().zip(episode_groups) {
-            match learner
-                .publish(
-                    u32::try_from(self.lane.lane_index).map_err(route_error)?,
-                    publisher_decision,
-                    learner_snapshot_sha256,
-                    &proposal.transition,
-                    &proposal.outcome.route_tape,
-                    *episode_group,
-                )
-                .map_err(route_error)?
-            {
+        for outcome in learner
+            .publish_batch(
+                u32::try_from(self.lane.lane_index).map_err(route_error)?,
+                publisher_decision,
+                learner_snapshot_sha256,
+                &rows,
+            )
+            .map_err(route_error)?
+        {
+            match outcome {
                 TacticReplayAdmissionOutcome::Admitted { .. } => {
                     admitted_rows = admitted_rows.saturating_add(1);
                 }

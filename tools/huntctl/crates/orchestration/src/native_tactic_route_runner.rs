@@ -35,7 +35,7 @@ use crate::tactic_q_campaign::{
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use crate::tactic_replay_control_plane::{
     TacticReplayAdmissionMetrics, TacticReplayAdmissionOutcome, TacticReplayControlPlane,
-    TacticReplayControlPlaneIdentity, TacticReplaySnapshot,
+    TacticReplayControlPlaneIdentity, TacticReplayPublishRow, TacticReplaySnapshot,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState};
