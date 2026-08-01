@@ -34,11 +34,6 @@ and sealed experiment artifacts.
 
 ### P0 - Trust what the system reports
 
-- [ ] **Close the causal control experiment.** Run a sealed, build-matched
-  learned/frozen/random comparison with identical plans and resource budgets.
-  Done when learned updates cause valid same-state choice changes and both
-  controls prove they cannot consume or benefit from those updates.
-
 - [ ] **Measure a reproducible baseline.** Repeat one- and two-worker versions of
   one predeclared workload. Done when outcome, wall time, useful transitions/s,
   utilization, variance, and the largest reconciled loss are known.
