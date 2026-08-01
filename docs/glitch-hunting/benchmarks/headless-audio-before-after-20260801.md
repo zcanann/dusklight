@@ -52,3 +52,26 @@ attributable to this change. The larger wall-time difference includes variation
 in draw, simulation, corpus encoding, persistence, and model timing, so it is a
 directional end-to-end result rather than a claim that audio alone caused the
 entire 14.7% reduction.
+
+## Worker scaling after suppression
+
+A matched two-worker treatment used the same binding, plan, seeds, decisions,
+and budgets as the one-worker treatment. Both produced the same 192 expansions,
+3,904 native ticks, 314-tick terminal, decisions, states, and winning tape. Both
+completion validation and v6 scratch audit passed.
+
+| Measurement | One worker | Two workers | Change |
+| --- | ---: | ---: | ---: |
+| Campaign wall time | 188.477574 s | 158.700811 s | -15.8% |
+| Useful expansions/s | 1.018688 | 1.209823 | +18.8% |
+| Native wait | 115.625795 s | 87.402178 s | -24.4% |
+| Worker busy share | 63.22% | 56.40% | -6.82 points |
+| Aggregate worker idle | 66.396977 s | 131.058529 s | +97.4% |
+| Proposal queue wait | 84.903567 s | 39.223623 s | -53.8% |
+
+Two workers remain materially underutilized. The second process improves useful
+throughput by only 18.8% because each seed generation and each decision's
+learning, evidence, and persistence work remain serialized around native
+proposal batches. Further worker-count increases are not justified until that
+controller work overlaps independent native execution while preserving a
+deterministic learner-publication order.
