@@ -928,7 +928,7 @@ mod graph_scheduling;
 pub use graph_scheduling::TacticRestorationContract;
 pub use graph_scheduling::{
     LeasedTacticQProposalBatch, TACTIC_SCHEDULER_DECISION_SCHEMA_V1, TacticExpansionLease,
-    TacticScheduledExpansionEvidence, TacticSchedulerDecisionTrace,
+    TacticGraphSchedulingTiming, TacticScheduledExpansionEvidence, TacticSchedulerDecisionTrace,
 };
 mod persistence;
 mod value_treatment;

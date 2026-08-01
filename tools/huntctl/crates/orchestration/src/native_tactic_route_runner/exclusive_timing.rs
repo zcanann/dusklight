@@ -257,5 +257,13 @@ mod tests {
         assert!(timing.seed_wall_attribution_is_exact());
         timing.orchestration_micros += 1;
         assert!(!timing.seed_wall_attribution_is_exact());
+        timing.orchestration_micros -= 1;
+        timing
+            .orchestration_breakdown
+            .as_mut()
+            .unwrap()
+            .graph_scheduling_breakdown
+            .registration_micros = 1;
+        assert!(!timing.seed_wall_attribution_is_exact());
     }
 }

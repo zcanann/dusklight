@@ -752,6 +752,12 @@ pub(super) fn run_seed(
                 consumed_learner_snapshot.sha256,
             )
             .map_err(route_error)?;
+        if let Some(breakdown) = timing.orchestration_breakdown.as_mut() {
+            breakdown.graph_scheduling_breakdown = breakdown
+                .graph_scheduling_breakdown
+                .checked_merge(leased_batch.timing)
+                .ok_or_else(|| route_message("graph scheduling timing overflowed"))?;
+        }
         let proposal_batch = leased_batch.batch;
         let proposal_leases = leased_batch.leases;
         let scheduler_decision = leased_batch.scheduler_decision;

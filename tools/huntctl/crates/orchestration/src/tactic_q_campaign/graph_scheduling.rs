@@ -7,8 +7,72 @@ use crate::scheduler::{
     LearnedExpansionPriority, SearchRegime, rank_schedulable_expansions_validated,
     rank_schedulable_nodes,
 };
+use std::time::Instant;
 
 pub const TACTIC_SCHEDULER_DECISION_SCHEMA_V1: &str = "dusklight-tactic-scheduler-decision/v1";
+
+/// Inclusive subphase timings for the graph-scheduling call. The surrounding
+/// route timing also includes horizon filtering, branch restoration, and lease
+/// journal publication, so this breakdown is required to be no larger than the
+/// parent scheduling-and-leasing phase rather than exactly equal to it.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticGraphSchedulingTiming {
+    pub registration_micros: u64,
+    pub graph_projection_micros: u64,
+    pub replay_fit_micros: u64,
+    pub exact_action_ranking_micros: u64,
+    pub priority_projection_micros: u64,
+    pub graph_content_hash_micros: u64,
+    pub expansion_ranking_micros: u64,
+    pub leasing_and_validation_micros: u64,
+}
+
+impl TacticGraphSchedulingTiming {
+    pub fn checked_total_micros(self) -> Option<u64> {
+        [
+            self.registration_micros,
+            self.graph_projection_micros,
+            self.replay_fit_micros,
+            self.exact_action_ranking_micros,
+            self.priority_projection_micros,
+            self.graph_content_hash_micros,
+            self.expansion_ranking_micros,
+            self.leasing_and_validation_micros,
+        ]
+        .into_iter()
+        .try_fold(0_u64, u64::checked_add)
+    }
+
+    pub(crate) fn checked_merge(self, other: Self) -> Option<Self> {
+        Some(Self {
+            registration_micros: self
+                .registration_micros
+                .checked_add(other.registration_micros)?,
+            graph_projection_micros: self
+                .graph_projection_micros
+                .checked_add(other.graph_projection_micros)?,
+            replay_fit_micros: self
+                .replay_fit_micros
+                .checked_add(other.replay_fit_micros)?,
+            exact_action_ranking_micros: self
+                .exact_action_ranking_micros
+                .checked_add(other.exact_action_ranking_micros)?,
+            priority_projection_micros: self
+                .priority_projection_micros
+                .checked_add(other.priority_projection_micros)?,
+            graph_content_hash_micros: self
+                .graph_content_hash_micros
+                .checked_add(other.graph_content_hash_micros)?,
+            expansion_ranking_micros: self
+                .expansion_ranking_micros
+                .checked_add(other.expansion_ranking_micros)?,
+            leasing_and_validation_micros: self
+                .leasing_and_validation_micros
+                .checked_add(other.leasing_and_validation_micros)?,
+        })
+    }
+}
 
 /// Complete integer evidence for one expansion in the state-local action
 /// queue. The queue is retained before leasing mutates the graph.
@@ -118,6 +182,7 @@ pub struct LeasedTacticQProposalBatch {
     pub batch: TacticQProposalBatch,
     pub leases: Vec<TacticExpansionLease>,
     pub scheduler_decision: TacticSchedulerDecisionTrace,
+    pub timing: TacticGraphSchedulingTiming,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -245,6 +310,8 @@ impl TacticQCampaign {
         maximum_proposals: usize,
         learner_model_sha256: Digest,
     ) -> Result<LeasedTacticQProposalBatch, TacticQCampaignError> {
+        let mut timing_boundary = Instant::now();
+        let mut timing = TacticGraphSchedulingTiming::default();
         if maximum_proposals == 0
             || eligible.is_empty()
             || learner_model_sha256 == Digest::ZERO
@@ -299,10 +366,12 @@ impl TacticQCampaign {
             let expansion_sha256 = graph.register_action_expansion(source, descriptor.clone())?;
             descriptors.insert(expansion_sha256, descriptor.clone());
         }
+        timing.registration_micros = scheduling_lap_micros(&mut timing_boundary);
         let validated_graph = graph.validated()?;
         let exact_learner = ExactGraphTableLearner;
         let learner_contract = GraphLearnerContract::default();
         let learning_batch = GraphLearningBatch::from_validated_graph(validated_graph)?;
+        timing.graph_projection_micros = scheduling_lap_micros(&mut timing_boundary);
         let exact_snapshot = if learning_batch.rows.is_empty() {
             exact_learner.fit(&learner_contract, &learning_batch)?
         } else {
@@ -322,6 +391,7 @@ impl TacticQCampaign {
             )?;
             exact_learner.fit_prepared(replay)?
         };
+        timing.replay_fit_micros = scheduling_lap_micros(&mut timing_boundary);
         let graph_visits = graph
             .node(source)
             .map(|node| {
@@ -354,6 +424,7 @@ impl TacticQCampaign {
             .zip(exact_estimates)
             .map(|(action, estimate)| (action.expansion_sha256, estimate))
             .collect::<BTreeMap<_, _>>();
+        timing.exact_action_ranking_micros = scheduling_lap_micros(&mut timing_boundary);
         let mut priorities = BTreeMap::new();
         for (expansion_sha256, descriptor) in &descriptors {
             let ranked = batch
@@ -395,6 +466,7 @@ impl TacticQCampaign {
                 },
             );
         }
+        timing.priority_projection_micros = scheduling_lap_micros(&mut timing_boundary);
 
         let regime = if graph.best_terminal_path().is_some() {
             SearchRegime::Optimization
@@ -402,6 +474,7 @@ impl TacticQCampaign {
             SearchRegime::Discovery
         };
         let graph_sha256 = validated_graph.content_sha256()?;
+        timing.graph_content_hash_micros = scheduling_lap_micros(&mut timing_boundary);
         let ranked = rank_schedulable_expansions_validated(
             validated_graph,
             regime,
@@ -437,6 +510,7 @@ impl TacticQCampaign {
             .into_iter()
             .take(maximum_proposals)
             .collect::<Vec<_>>();
+        timing.expansion_ranking_micros = scheduling_lap_micros(&mut timing_boundary);
         if selected.is_empty() {
             return Err(TacticQCampaignError::InvalidState(
                 "current graph boundary has no schedulable expansion",
@@ -510,6 +584,7 @@ impl TacticQCampaign {
         };
         scheduler_decision.validate()?;
         graph.validate()?;
+        timing.leasing_and_validation_micros = scheduling_lap_micros(&mut timing_boundary);
         self.state_graph = Some(graph);
         Ok(LeasedTacticQProposalBatch {
             batch: TacticQProposalBatch {
@@ -520,8 +595,15 @@ impl TacticQCampaign {
             },
             leases,
             scheduler_decision,
+            timing,
         })
     }
+}
+
+fn scheduling_lap_micros(boundary: &mut Instant) -> u64 {
+    let elapsed = boundary.elapsed();
+    *boundary = Instant::now();
+    u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX)
 }
 
 fn graph_node_acquisition(terminal_supported: bool, acquisition_rank: u64) -> (SearchRegime, u64) {

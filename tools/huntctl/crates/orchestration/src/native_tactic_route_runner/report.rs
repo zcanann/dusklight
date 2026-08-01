@@ -465,6 +465,8 @@ pub struct NativeTacticOrchestrationTiming {
     pub learner_refresh_micros: u64,
     pub action_catalog_construction_micros: u64,
     pub graph_scheduling_and_leasing_micros: u64,
+    #[serde(default)]
+    pub graph_scheduling_breakdown: TacticGraphSchedulingTiming,
     pub tactic_selection_micros: u64,
     pub result_validation_and_fact_extraction_micros: u64,
     /// Campaign admission excluding action-catalog construction, which is
@@ -513,6 +515,9 @@ impl NativeTacticOrchestrationTiming {
             graph_scheduling_and_leasing_micros: self
                 .graph_scheduling_and_leasing_micros
                 .checked_add(other.graph_scheduling_and_leasing_micros)?,
+            graph_scheduling_breakdown: self
+                .graph_scheduling_breakdown
+                .checked_merge(other.graph_scheduling_breakdown)?,
             tactic_selection_micros: self
                 .tactic_selection_micros
                 .checked_add(other.tactic_selection_micros)?,
@@ -620,6 +625,10 @@ impl NativeTacticRouteTiming {
     pub fn orchestration_attribution_is_valid(&self) -> bool {
         self.orchestration_breakdown.is_none_or(|breakdown| {
             breakdown.checked_total_micros() == Some(self.orchestration_micros)
+                && breakdown
+                    .graph_scheduling_breakdown
+                    .checked_total_micros()
+                    .is_some_and(|total| total <= breakdown.graph_scheduling_and_leasing_micros)
         })
     }
 
