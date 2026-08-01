@@ -50,6 +50,14 @@ path = "src/main.rs"
 lto = "thin"
 codegen-units = 1
 
+# Release-equivalent runtime semantics with a substantially shorter incremental
+# link for campaign iteration. Final acceptance evidence still uses `release`.
+[profile.campaign]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+
 [workspace]
 members = [
     ".",

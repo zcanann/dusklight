@@ -22,6 +22,17 @@ cargo clippy --manifest-path tools/huntctl/Cargo.toml --workspace --all-targets 
 python3 tests/huntctl_crate_boundary_test.py
 ```
 
+For iterative native-campaign diagnostics, build `huntctl` with the dedicated
+fast-link profile and use `target/campaign/huntctl`:
+
+```console
+cargo build --manifest-path tools/huntctl/Cargo.toml --profile campaign -p dusklight-huntctl -j 2
+```
+
+The campaign profile preserves optimized execution but disables LTO, raises
+codegen parallelism, and enables incremental compilation. Final matched
+acceptance evidence continues to use the one-codegen-unit `release` profile.
+
 ## Native worker
 
 The native worker is launched with `--automation-worker`. Repeat
