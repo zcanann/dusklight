@@ -3,7 +3,7 @@
 //! The scheduler ranks work but never owns it. Leasing mutates the state graph,
 //! which supplies virtual loss to every worker sharing that graph.
 
-use crate::state_graph::{ExactStateId, StateGraph, StateGraphError};
+use crate::state_graph::{ExactStateId, StateGraph, StateGraphError, ValidatedStateGraph};
 use dusklight_automation_contracts::artifact::Digest;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -371,7 +371,16 @@ pub fn rank_schedulable_expansions(
     current_generation: u64,
     learned: &BTreeMap<Digest, LearnedExpansionPriority>,
 ) -> Result<Vec<ScheduledExpansion>, SchedulerError> {
-    rank_schedulable_expansions_with_seed(graph, regime, current_generation, 0, learned)
+    rank_schedulable_expansions_validated(graph.validated()?, regime, current_generation, learned)
+}
+
+pub(crate) fn rank_schedulable_expansions_validated(
+    graph: ValidatedStateGraph<'_>,
+    regime: SearchRegime,
+    current_generation: u64,
+    learned: &BTreeMap<Digest, LearnedExpansionPriority>,
+) -> Result<Vec<ScheduledExpansion>, SchedulerError> {
+    rank_schedulable_expansions_with_seed_validated(graph, regime, current_generation, 0, learned)
 }
 
 fn rank_schedulable_expansions_with_seed(
@@ -381,7 +390,23 @@ fn rank_schedulable_expansions_with_seed(
     seed: u64,
     learned: &BTreeMap<Digest, LearnedExpansionPriority>,
 ) -> Result<Vec<ScheduledExpansion>, SchedulerError> {
-    graph.validate()?;
+    rank_schedulable_expansions_with_seed_validated(
+        graph.validated()?,
+        regime,
+        current_generation,
+        seed,
+        learned,
+    )
+}
+
+fn rank_schedulable_expansions_with_seed_validated(
+    validated: ValidatedStateGraph<'_>,
+    regime: SearchRegime,
+    current_generation: u64,
+    seed: u64,
+    learned: &BTreeMap<Digest, LearnedExpansionPriority>,
+) -> Result<Vec<ScheduledExpansion>, SchedulerError> {
+    let graph = validated.graph();
     if regime == SearchRegime::Optimization && graph.best_terminal_path().is_none() {
         return Err(SchedulerError::Invalid(
             "optimization scheduling requires a terminal path",
@@ -391,7 +416,7 @@ fn rank_schedulable_expansions_with_seed(
         score.validate()?;
     }
     let relaxed_root_ticks = graph.relaxed_root_ticks()?;
-    let exact_terminal_returns = graph.exact_terminal_returns()?;
+    let exact_terminal_returns = validated.exact_terminal_returns()?;
     let mut ranked = graph
         .expansions()
         .filter(|expansion| {

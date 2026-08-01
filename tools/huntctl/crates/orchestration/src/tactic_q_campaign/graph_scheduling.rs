@@ -4,7 +4,8 @@ use crate::learner::{
     GraphLearningBatch, GraphNodeInput, GraphReplayPlan,
 };
 use crate::scheduler::{
-    LearnedExpansionPriority, SearchRegime, rank_schedulable_expansions, rank_schedulable_nodes,
+    LearnedExpansionPriority, SearchRegime, rank_schedulable_expansions_validated,
+    rank_schedulable_nodes,
 };
 
 pub const TACTIC_SCHEDULER_DECISION_SCHEMA_V1: &str = "dusklight-tactic-scheduler-decision/v1";
@@ -298,9 +299,10 @@ impl TacticQCampaign {
             let expansion_sha256 = graph.register_action_expansion(source, descriptor.clone())?;
             descriptors.insert(expansion_sha256, descriptor.clone());
         }
+        let validated_graph = graph.validated()?;
         let exact_learner = ExactGraphTableLearner;
         let learner_contract = GraphLearnerContract::default();
-        let learning_batch = GraphLearningBatch::from_graph(&graph)?;
+        let learning_batch = GraphLearningBatch::from_validated_graph(validated_graph)?;
         let exact_snapshot = if learning_batch.rows.is_empty() {
             exact_learner.fit(&learner_contract, &learning_batch)?
         } else {
@@ -399,8 +401,13 @@ impl TacticQCampaign {
         } else {
             SearchRegime::Discovery
         };
-        let graph_sha256 = graph.content_sha256()?;
-        let ranked = rank_schedulable_expansions(&graph, regime, self.decision_index, &priorities)?;
+        let graph_sha256 = validated_graph.content_sha256()?;
+        let ranked = rank_schedulable_expansions_validated(
+            validated_graph,
+            regime,
+            self.decision_index,
+            &priorities,
+        )?;
         let source_queue = ranked
             .into_iter()
             .filter(|entry| {

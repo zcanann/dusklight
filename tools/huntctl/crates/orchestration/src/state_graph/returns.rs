@@ -1,4 +1,4 @@
-use super::{ExactStateId, StateGraph, StateGraphError};
+use super::{ExactStateId, StateGraph, StateGraphError, ValidatedStateGraph};
 use std::collections::BTreeMap;
 
 impl StateGraph {
@@ -7,20 +7,30 @@ impl StateGraph {
     /// semantically similar states on different tapes never acquire exact
     /// support merely because their fact digests match.
     pub fn exact_terminal_returns(&self) -> Result<BTreeMap<ExactStateId, u64>, StateGraphError> {
-        self.validate()?;
-        let terminal_routes = self
+        self.validated()?.exact_terminal_returns()
+    }
+}
+
+impl ValidatedStateGraph<'_> {
+    pub(crate) fn exact_terminal_returns(
+        self,
+    ) -> Result<BTreeMap<ExactStateId, u64>, StateGraphError> {
+        let graph = self.graph();
+        let terminal_routes = graph
             .nodes()
             .filter(|node| node.terminal && node.restoration.executable)
             .map(|node| {
-                self.route(node.id.route_checkpoint_sha256)
+                graph
+                    .route(node.id.route_checkpoint_sha256)
                     .map(|route| (node, route))
                     .ok_or(StateGraphError::Invariant("terminal node route is absent"))
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut returns = BTreeMap::<ExactStateId, u64>::new();
-        for node in self.nodes().filter(|node| node.restoration.executable) {
+        for node in graph.nodes().filter(|node| node.restoration.executable) {
             let route =
-                self.route(node.id.route_checkpoint_sha256)
+                graph
+                    .route(node.id.route_checkpoint_sha256)
                     .ok_or(StateGraphError::Invariant(
                         "executable node route is absent",
                     ))?;

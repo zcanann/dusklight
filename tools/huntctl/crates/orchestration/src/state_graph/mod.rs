@@ -57,7 +57,39 @@ pub struct StateGraph {
     persistence: persistence::StateGraphPersistence,
 }
 
+/// Read-only proof that a graph snapshot passed its complete invariant check.
+///
+/// Expensive projections frequently need the same graph validation. Carrying
+/// this borrow lets those projections share one check without allowing the
+/// graph to mutate underneath them. Any mutation requires dropping the proof
+/// and validating the new snapshot again.
+#[derive(Clone, Copy)]
+pub(crate) struct ValidatedStateGraph<'a> {
+    graph: &'a StateGraph,
+}
+
+impl<'a> ValidatedStateGraph<'a> {
+    pub(crate) fn graph(self) -> &'a StateGraph {
+        self.graph
+    }
+
+    pub(crate) fn encode(self) -> Result<Vec<u8>, StateGraphError> {
+        self.graph.encode_validated()
+    }
+
+    pub(crate) fn content_sha256(self) -> Result<Digest, StateGraphError> {
+        Ok(Digest(
+            Sha256::digest(self.graph.encode_validated()?).into(),
+        ))
+    }
+}
+
 impl StateGraph {
+    pub(crate) fn validated(&self) -> Result<ValidatedStateGraph<'_>, StateGraphError> {
+        self.validate()?;
+        Ok(ValidatedStateGraph { graph: self })
+    }
+
     pub fn new(
         identity: StateGraphIdentity,
         root_state: FactSnapshot,
@@ -225,7 +257,10 @@ impl StateGraph {
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, StateGraphError> {
-        self.validate()?;
+        self.validated()?.encode()
+    }
+
+    fn encode_validated(&self) -> Result<Vec<u8>, StateGraphError> {
         serde_cbor::to_vec(self).map_err(|error| StateGraphError::Serialization(error.to_string()))
     }
 
@@ -237,7 +272,7 @@ impl StateGraph {
     }
 
     pub fn content_sha256(&self) -> Result<Digest, StateGraphError> {
-        Ok(Digest(Sha256::digest(self.encode()?).into()))
+        self.validated()?.content_sha256()
     }
 
     /// The learner view is derived from completed graph expansions in stable
