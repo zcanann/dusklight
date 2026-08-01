@@ -1,7 +1,6 @@
 use super::{ExactStateId, FutureEquivalenceProof, StateGraph, StateGraphError};
 use dusklight_automation_contracts::artifact::Digest;
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
 impl StateGraph {
@@ -112,32 +111,16 @@ impl StateGraph {
     /// equivalence. Original route costs remain inspectable on every node.
     pub fn relaxed_root_ticks(&self) -> Result<BTreeMap<ExactStateId, u64>, StateGraphError> {
         let mut costs = BTreeMap::from([(self.root, 0_u64)]);
-        let mut frontier = BinaryHeap::from([Reverse((0_u64, self.root))]);
-        let mut equivalent = BTreeMap::<ExactStateId, Vec<ExactStateId>>::new();
-        for proof in self.future_equivalence_proofs.values() {
-            equivalent.entry(proof.left).or_default().push(proof.right);
-            equivalent.entry(proof.right).or_default().push(proof.left);
-        }
-
-        while let Some(Reverse((source_ticks, source))) = frontier.pop() {
-            if costs.get(&source).copied() != Some(source_ticks) {
-                continue;
+        for _ in 0..self.nodes.len() {
+            let mut changed = false;
+            for proof in self.future_equivalence_proofs.values() {
+                changed |= relax_zero_cost(&mut costs, proof.left, proof.right);
+                changed |= relax_zero_cost(&mut costs, proof.right, proof.left);
             }
-            if let Some(peers) = equivalent.get(&source) {
-                for peer in peers {
-                    relax_cost(&mut costs, &mut frontier, *peer, source_ticks);
-                }
-            }
-            let node = self.nodes.get(&source).ok_or(StateGraphError::Invariant(
-                "relaxed graph frontier names an absent node",
-            ))?;
-            for segment_sha256 in &node.outgoing_segments {
-                let segment =
-                    self.segments
-                        .get(segment_sha256)
-                        .ok_or(StateGraphError::Invariant(
-                            "relaxed graph node names an absent segment",
-                        ))?;
+            for segment in self.segments.values() {
+                let Some(source_ticks) = costs.get(&segment.source).copied() else {
+                    continue;
+                };
                 let segment_ticks = u64::from(
                     segment
                         .option_end_offset_ticks
@@ -149,7 +132,10 @@ impl StateGraph {
                 let candidate = source_ticks
                     .checked_add(segment_ticks)
                     .ok_or(StateGraphError::Invariant("relaxed graph cost overflows"))?;
-                relax_cost(&mut costs, &mut frontier, segment.target, candidate);
+                changed |= relax_cost(&mut costs, segment.target, candidate);
+            }
+            if !changed {
+                break;
             }
         }
         if costs.len() != self.nodes.len() {
@@ -185,17 +171,31 @@ impl StateGraph {
     }
 }
 
+fn relax_zero_cost(
+    costs: &mut BTreeMap<ExactStateId, u64>,
+    source: ExactStateId,
+    target: ExactStateId,
+) -> bool {
+    let Some(source_ticks) = costs.get(&source).copied() else {
+        return false;
+    };
+    relax_cost(costs, target, source_ticks)
+}
+
 fn relax_cost(
     costs: &mut BTreeMap<ExactStateId, u64>,
-    frontier: &mut BinaryHeap<Reverse<(u64, ExactStateId)>>,
     target: ExactStateId,
     candidate: u64,
-) {
-    let improves = costs
-        .get(&target)
-        .is_none_or(|current| candidate < *current);
-    if improves {
-        costs.insert(target, candidate);
-        frontier.push(Reverse((candidate, target)));
+) -> bool {
+    match costs.get_mut(&target) {
+        Some(current) if candidate < *current => {
+            *current = candidate;
+            true
+        }
+        None => {
+            costs.insert(target, candidate);
+            true
+        }
+        _ => false,
     }
 }
