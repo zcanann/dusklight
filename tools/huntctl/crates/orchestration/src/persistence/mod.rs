@@ -93,7 +93,10 @@ pub fn read_state_graph(
     }
     let bytes = fs::read(path).map_err(PersistenceError::Io)?;
     let graph = StateGraph::decode(&bytes)?;
-    if graph.content_sha256()? != expected_graph_sha256 {
+    let validated = graph.validated()?;
+    if validated.content_sha256()? != expected_graph_sha256
+        && validated.legacy_content_sha256()? != expected_graph_sha256
+    {
         return Err(PersistenceError::Invalid(
             "state graph file content identity does not match",
         ));

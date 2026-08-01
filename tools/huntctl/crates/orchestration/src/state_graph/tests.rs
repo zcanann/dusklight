@@ -1281,8 +1281,12 @@ fn binary_restart_preserves_graph_identity_and_pending_truth() {
 
     assert_eq!(restored, graph);
     assert_eq!(
-        graph.content_sha256().unwrap(),
+        graph.validated().unwrap().legacy_content_sha256().unwrap(),
         Digest(Sha256::digest(&encoded).into())
+    );
+    assert_ne!(
+        graph.content_sha256().unwrap(),
+        graph.validated().unwrap().legacy_content_sha256().unwrap()
     );
     assert_eq!(
         restored.content_sha256().unwrap(),
@@ -1290,6 +1294,28 @@ fn binary_restart_preserves_graph_identity_and_pending_truth() {
     );
     assert_eq!(restored.best_terminal_path(), graph.best_terminal_path());
     assert_eq!(restored.completed_transitions().count(), 1);
+}
+
+#[test]
+fn compact_content_identity_tracks_expansion_lifecycle() {
+    let (mut graph, transition, _) = graph_and_transition();
+    let initial = graph.content_sha256().unwrap();
+    let expansion = graph
+        .register_action_expansion(graph.root(), transition.value_sample.action)
+        .unwrap();
+    let registered = graph.content_sha256().unwrap();
+    graph
+        .lease_action_expansion(expansion, Digest([21; 32]), 3, 4)
+        .unwrap();
+    let leased = graph.content_sha256().unwrap();
+    graph
+        .mark_expansion_retryable(expansion, Digest([21; 32]), 1)
+        .unwrap();
+    let retryable = graph.content_sha256().unwrap();
+
+    assert_ne!(initial, registered);
+    assert_ne!(registered, leased);
+    assert_ne!(leased, retryable);
 }
 
 #[test]
@@ -1661,10 +1687,16 @@ fn durable_graph_and_exported_report_share_one_content_identity() {
     let stored = crate::persistence::persist_state_graph(&directory, &graph).unwrap();
     let duplicate = crate::persistence::persist_state_graph(&directory, &graph).unwrap();
     let restored = crate::persistence::read_state_graph(&stored.path, stored.graph_sha256).unwrap();
+    let legacy_sha256 = graph.validated().unwrap().legacy_content_sha256().unwrap();
+    let legacy_path = directory.join("legacy.dsg");
+    std::fs::write(&legacy_path, graph.encode().unwrap()).unwrap();
+    let legacy_restored =
+        crate::persistence::read_state_graph(&legacy_path, legacy_sha256).unwrap();
     let report = crate::reporting::GraphSearchReport::from_graph(&restored).unwrap();
 
     assert_eq!(stored, duplicate);
     assert_eq!(restored, graph);
+    assert_eq!(legacy_restored, graph);
     assert_eq!(report.graph_sha256, stored.graph_sha256);
     assert_eq!(report.graph_identity, graph.identity);
     assert_eq!(report.completed_expansions, 1);

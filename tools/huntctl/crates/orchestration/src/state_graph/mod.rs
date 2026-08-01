@@ -5,6 +5,7 @@
 //! projections or caches of this data, never parallel sources of truth.
 
 mod admission;
+mod content_identity;
 mod lifecycle;
 mod persistence;
 mod restoration;
@@ -34,7 +35,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
-use std::io::{self, Write};
 use std::sync::Arc;
 
 const ROUTE_CHECKPOINT_SCHEMA_V1: &[u8] = b"dusklight-route-checkpoint/v1";
@@ -87,10 +87,11 @@ impl<'a> ValidatedStateGraph<'a> {
     }
 
     pub(crate) fn content_sha256(self) -> Result<Digest, StateGraphError> {
-        let mut writer = Sha256Writer::default();
-        serde_cbor::to_writer(&mut writer, self.graph)
-            .map_err(|error| StateGraphError::Serialization(error.to_string()))?;
-        Ok(Digest(writer.0.finalize().into()))
+        content_identity::content_sha256(self.graph)
+    }
+
+    pub(crate) fn legacy_content_sha256(self) -> Result<Digest, StateGraphError> {
+        content_identity::legacy_content_sha256(self.graph)
     }
 
     pub(crate) fn hashed(self) -> Result<HashedStateGraph<'a>, StateGraphError> {
@@ -98,20 +99,6 @@ impl<'a> ValidatedStateGraph<'a> {
             validated: self,
             content_sha256: self.content_sha256()?,
         })
-    }
-}
-
-#[derive(Default)]
-struct Sha256Writer(Sha256);
-
-impl Write for Sha256Writer {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.update(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
     }
 }
 
