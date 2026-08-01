@@ -27,9 +27,19 @@ separate work.
 - Scratch learning has beaten both controls on four predeclared Ordon seeds.
 - Route quality is still poor: the best learned route is 286 ticks versus the
   125-tick human replay.
-- Exact V40 timing and durable campaign-completion accounting are implemented
-  and smoke-tested. The prior held-out evidence predates them, so the current
-  throughput bottleneck is not yet established with authoritative evidence.
+- The deterministic V40/V5 held-out comparison
+  (`build/benchmarks/ordon-native-matched-heldout-seeds130363-181081-d32-v40-deterministic-v1-comparison-v5.json`,
+  content `30d6cd06...9e4`) is exact and causally complete. Learned reached 1/2
+  terminals with a 251-tick best route; both controls reached 0/2. The earlier
+  2/2 result depended on cross-lane replay publication order, so new live-replay
+  plans are restricted to one lane until deterministic concurrent ordering is
+  implemented.
+- All three V5 critical paths have zero unattributed time and at most 0.0151%
+  timing-boundary residue. The learned cell took 375.337 seconds. Its largest
+  top-level phase was orchestration at 118.055 seconds; within that,
+  graph scheduling and leasing dominated at 93.889 seconds. Native tactic
+  execution was 111.572 seconds, model updates 79.841 seconds, and persistence
+  56.429 seconds.
 
 ## Next work
 
@@ -39,10 +49,6 @@ before increasing campaign size.
 
 ### 1. Establish a trustworthy baseline
 
-- [ ] Re-run the learned, frozen-policy, and random-valid held-out comparison
-  under V40 timing. Require exact reconciliation to each durable completion
-  marker and less than 1% timing-boundary residue. Use one deterministic live
-  learning lane until cross-lane replay ordering is proven deterministic.
 - [ ] Publish one canonical report containing success rate, time and useful
   transitions to first terminal, best route ticks over time, unique useful
   transitions/second, duplicate work, CPU, memory, queueing, and every exclusive
