@@ -1,122 +1,110 @@
-# Learning framework backlog
+# Learning framework tasks
 
-## Objective
+## Goal
 
-Build a route-independent native learning framework that can discover a terminal,
-learn from the experience it collects, and improve routes quickly enough to be
-useful.
+Build a route-independent native learner that can discover a reachable terminal,
+learn which behavior caused progress, and improve a route quickly enough to be
+useful. Ordon is the first acceptance test, not the architecture.
 
-Ordon is the first acceptance test, not the design target. The learner may consume
-native observations, legal actions, transition history, terminal outcomes, and
-optional demonstrations. It may not consume authored routes, waypoints,
-route-shaped rewards, blessed action sequences, proxy terminals, or
-benchmark-specific exceptions.
+Success means all of the following:
 
-## Framework gates
+- Scratch learning beats budget-matched frozen-policy and random-valid controls
+  on held-out seeds.
+- The learned route reaches the native load-zone predicate in 123 ticks or less
+  and cold-replays twice with identical inputs, states, proof, and tick count.
+- The standard two-worker learning/control experiment finishes within ten
+  minutes on the named Windows host.
+- Adding a second worker materially increases unique useful native experience
+  per wall-clock second.
+- The same framework works on a second route without route-specific code,
+  rewards, actions, or observations.
 
-Ordon is complete only when all of these are true:
+## Queue
 
-- Repeated, predeclared, budget-matched scratch runs beat frozen-policy and
-  random-valid controls on held-out seeds.
-- A learned route reaches the native load-zone predicate in 123 ticks or fewer
-  and cold-replays twice with identical inputs, state identity, terminal proof,
-  and tick count.
-- The standard learned/control comparison completes within ten minutes on the
-  named two-worker Windows host.
-- Two workers produce meaningfully more unique useful transitions per second
-  than one worker on the same workload.
+Work top to bottom. A task is complete only when its exit condition is supported
+by sealed, reproducible evidence. Remove completed tasks; history belongs in Git
+and experiment artifacts.
 
-## Work queue
+### 1. Establish one trustworthy baseline
 
-Work top to bottom unless a later task is required to unblock the current one.
-Remove a task when its exit condition is met; detailed history belongs in commits
-and sealed experiment artifacts.
+- Run one build-matched learned/frozen/random experiment with predeclared seeds,
+  native-experience budgets, and resource limits.
+- Trace every observation, legal action, choice, execution, transition, replay
+  decision, update, publication, retry, rejection, duplicate, and terminal.
+- Repeat the same workload three times with one worker and three times with two.
 
-### P0 - Trust what the system reports
+Exit: all V6 audits and semantically bound completion artifacts validate; learned
+updates cause authenticated same-state action changes; controls receive no update
+benefit; and outcome, variance, throughput, utilization, and lost work reconcile.
 
-- [ ] **Establish strict causal-control evidence.** Run a build-matched
-  learned/frozen/random comparison whose V6 decision audits and semantically
-  bound completion artifacts all validate. Done when learned updates cause
-  valid same-state choice changes and both controls consume no update benefit.
+### 2. Make useful exploration fast
 
-- [ ] **Establish a strict reproducible baseline.** Repeat one- and two-worker
-  versions of one predeclared workload under the same V6 audit/completion
-  contract. Done when outcome, wall time, useful transitions/s, utilization,
-  variance, and the largest reconciled loss are sealed and reproducible.
+- Attribute wall time and worker capacity to observation, native execution,
+  save-state capture/restore, replay, learning, IPC, queues, persistence, and
+  reporting.
+- Fix the largest measured loss, then repeat the matched baseline. Continue in
+  descending measured order instead of optimizing assumed bottlenecks.
+- Keep save states only where capture, validation, and restore beat replay from
+  an authority point.
+- Provide exact owned-process cancellation, cleanup, crash recovery, progress,
+  and resume without orphaning workers or double-counting experience.
 
-- [ ] **Make the learning chain auditable.** Trace observations, legal actions,
-  choices, transitions, replay admission, updates, snapshots, and terminals;
-  account for retries, rejections, duplicates, and censored work. Done when a
-  sealed run explains every accepted and lost sample and broken links fail closed.
+Exit: the standard experiment finishes within ten minutes, two workers provide a
+material useful-throughput gain over one, queues remain bounded, and retained
+save-state reuse has a measured positive return.
 
-- [ ] **Decompose the critical runtime.** Separate observation, action,
-  execution, replay, learning, publication, persistence, and reporting ownership.
-  Done when dependency/source-size gates prevent new monoliths and each boundary
-  has focused contract, replay, and fault tests.
+### 3. Discover a sparse terminal from scratch
 
-### P1 - Make experimentation fast and operable
+- Give primitive-control exploration enough horizon, coverage, and diversity to
+  reach a human-reachable load zone without a demonstration.
+- Expose versioned generic observations: motion history, velocity, orientation,
+  camera, analog input, prompted action availability, and transition outcomes.
+- Learn from native transitions and the terminal predicate; do not add authored
+  waypoints, routes, straight-line/wall/roll rewards, blessed sequences, proxy
+  terminals, or Ordon exceptions.
 
-- [ ] **Remove measured bottlenecks.** Optimize the largest reconciled cost and
-  retain matched before/after evidence; repeat until the ten-minute gate passes.
+Exit: repeated held-out scratch runs reach the native load-zone predicate and
+beat both controls under identical native-experience and resource budgets.
 
-- [ ] **Prove save states pay for themselves.** Measure capture, restore,
-  validation, fallback replay, branching yield, duplicates, memory, and useful
-  work/state. Done when reuse materially beats replay from an authority point;
-  replace or remove machinery that does not.
+### 4. Learn and optimize behavior
 
-- [ ] **Make worker scaling real.** Remove measured IPC, serialization, queue,
-  lock, checkpoint, and scheduling losses. Done when two workers repeatedly beat
-  one on useful throughput with bounded resources and queues.
+- Propagate sparse terminal value through collected experience while continuing
+  exploration after the first success.
+- Escape local optima and optimize authenticated native tick cost.
+- Learn, parameterize, compose, promote, and retire reusable multi-frame tactics
+  while keeping primitive controls available. This includes discovering useful
+  roll, camera-lock, and prompted-action behavior from outcomes rather than
+  encoding an Ordon solution.
+- Treat human replay only as optional off-policy experience and measure its
+  effect separately.
 
-- [ ] **Make campaigns operable.** Add exact owned-process lifecycle, progress,
-  ETA, cancellation, cleanup, crash recovery, and resume. Done when interruption
-  tests leave no orphans or duplicate accepted experience and preserve results.
+Exit: learned held-out performance beats both controls, reaches 123 ticks or
+less, cold-replays twice exactly, and an ablation shows demonstrations are neither
+required nor a ceiling on the learned policy.
 
-### P2 - Make the learner solve and optimize the route
+### 5. Harden the framework and prove it general
 
-- [ ] **Expose sufficient generic state and actions.** Version motion history,
-  velocity, orientation, camera, analog input, prompt/action availability, and
-  transition outcomes while retaining primitive controls. Done when ablations
-  measure their value without hand-authored straight/wall/roll rewards.
+- Split observation, action, execution, replay, learning, publication,
+  persistence, orchestration, and reporting into owned, testable components;
+  enforce dependency and source-size limits that prevent new monoliths.
+- Make concurrent ordering, checkpoint publication, interruption, and resume
+  logically reproducible.
+- Keep durable models, replay, checkpoints, and manifests compact, bounded,
+  binary, versioned, checksummed, atomic, and migration-tested.
+- Run the unchanged framework on a second native route.
 
-- [ ] **Discover sparse terminals from scratch.** Supply enough native horizon
-  and exploration diversity to reach a human-reachable load zone. Done when
-  repeated held-out runs beat both controls without demonstrations.
+Exit: focused contract/fault/replay tests cover every boundary; fresh and resumed
+runs reproduce evidence identities; invalid durable state fails closed; and the
+second route passes scratch discovery, controlled improvement, and cold replay.
 
-- [ ] **Learn reusable multi-frame tactics.** Induce, parameterize, compose,
-  promote, and retire tactics while primitives remain available. Done when they
-  improve held-out sample efficiency without an authored Ordon sequence.
+## Experiment rules
 
-- [ ] **Improve after first success.** Propagate sparse terminal value, escape
-  local optima, and optimize authenticated tick cost without stopping exploration
-  or updates. Done when held-out runs pass the 123-tick cold-replay gate.
-
-- [ ] **Validate optional demonstrations.** Treat human replay only as off-policy
-  experience. Done when an ablation measures its sample-efficiency effect, it
-  does not cap the learned policy, and scratch learning still succeeds without it.
-
-### P3 - Harden and generalize
-
-- [ ] **Make runs logically reproducible.** Define ordering and ownership for
-  concurrent sampling, updates, publication, snapshots, and persistence. Done
-  when fresh and resumed runs reproduce decision/evidence identities.
-
-- [ ] **Harden durable state.** Keep checkpoints, replay, models, and manifests
-  compact, bounded, binary, versioned, checksummed, and atomic. Done when
-  migration tests accept supported versions and all invalid state fails closed.
-
-- [ ] **Generalize without route changes.** Apply unchanged observation, action,
-  learning, orchestration, and evaluation contracts to a second native route.
-  Done when it passes scratch discovery, controlled improvement, and cold replay.
-
-## Non-negotiable experiment rules
-
-- The native load-zone predicate is the only route-success authority.
-- Compare treatments by native experience and fixed resource budgets, not by a
-  convenient number of decisions or favorable seeds.
-- Every experiment answers one falsifiable question and records build, inputs,
+- Only the native terminal predicate proves success.
+- Compare treatments by useful native experience and fixed resources, never by
+  convenient decision counts or favorable seeds.
+- Useful throughput counts unique accepted native transitions, not attempts,
+  duplicate branches, replayed frames, or queued work.
+- Every experiment states one falsifiable question and seals the build, inputs,
   seeds, budgets, treatment, failures, and complete accounting.
-- Throughput means unique useful native experience per wall-clock second. Raw
-  attempts, duplicate branches, replayed frames, and queued work do not count.
-- A faster benchmark is evidence only when the mechanism is route-independent
-  and controls, ablations, and cold replay rule out benchmark gaming.
+- Benchmark improvement counts only when controls, ablations, and exact replay
+  show that a route-independent mechanism caused it.
