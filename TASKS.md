@@ -46,6 +46,9 @@ sealed campaign artifacts.
   simplify or remove it wherever it does not.
 - Eliminate worker starvation, redundant native work, unnecessary serialization,
   and central bottlenecks. Keep queues and memory bounded.
+- Compare fresh sequential updates with parallel generation-barrier collection
+  at equal native budgets. Retain the schedule only if it improves useful
+  throughput without degrading terminal discovery or learned behavior.
 
 Exit: a standard two-worker campaign completes within ten minutes, two workers
 materially outperform one on unique useful native transitions per second, and
@@ -151,6 +154,8 @@ phase.
   answer many questions, including useful analyses not anticipated when it was
   launched. Rerun only for a changed treatment, genuine replication, or raw
   evidence that could not have been captured previously.
+- Search retained benchmark artifacts and commit history before implementing a
+  treatment; repeat a rejected intervention only when a named premise changed.
 - Record observations, legal actions, choices, executions, transitions, replay
   admissions, updates, tactic decisions, terminals, timings, retries, rejections,
   duplicates, and censored work with stable identities.
