@@ -49,6 +49,16 @@ proposal batches did not reproduce or improve the terminal. This is evidence
 that the exact graph fed the discovery back into search, but not that the
 learned treatment used it better than a non-learning search would have.
 
+The retained post-terminal V2 control audit makes the missing evidence
+explicit: 81 terminal-path interior nodes existed, 16 sourced a lease, none of
+the seeds covered every supported interior, and all 11 optimization decisions
+had zero comparable candidates. No evaluated mutation had an authenticated
+terminal continuation, so learned, least-visited, and random-valid ordering
+could not be scored. The audit SHA-256 is
+`7544b63ad1d34851299e8b1b11da2528f7d18a4908269d7460b9ba15174cfad4`.
+Post-terminal work therefore needs completion rollouts or suffix repair, not
+merely more short local mutations.
+
 The schedule is not promoted as the default: the utilization gain is real, but
 neither treatment supplies causal learning evidence. Future schedule decisions
 must report discovery separately from retained-continuation selection and

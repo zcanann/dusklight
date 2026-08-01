@@ -83,6 +83,11 @@ route-specific exception.
   controls. Online continuation need not imitate a retained winning route.
 - Support online collection, off-policy replay, prioritized reuse, temporal
   credit assignment, continued exploration, and escape from local optima.
+- After the first terminal, evaluate multi-scale trajectory mutations through
+  the authoritative terminal by replaying, repairing, or replanning the
+  remaining suffix. Short local transitions without completion outcomes cannot
+  train or compare terminal-cost optimization; use whichever trajectory
+  optimizer best converts a retained success into lower native tick cost.
 - Make useful behavior stable across ordinary seed ordering, campaign
   composition, and update cadence; a terminal found by one curriculum must not
   disappear merely because additional valid experience precedes it.
