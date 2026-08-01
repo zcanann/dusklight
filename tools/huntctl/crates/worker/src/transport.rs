@@ -87,6 +87,11 @@ impl ProcessTransport {
         self.child.id()
     }
 
+    /// Returns kernel plus user CPU consumed by this exact owned child.
+    pub fn process_cpu_micros(&self) -> std::io::Result<Option<u64>> {
+        process_control::process_cpu_micros(&self.child)
+    }
+
     /// Stops every thread in an authenticated persistent child while its
     /// protocol is at an idle command boundary.
     ///
@@ -157,10 +162,65 @@ mod process_control {
     use std::os::windows::io::AsRawHandle;
     use std::process::Child;
 
+    #[repr(C)]
+    struct FileTime {
+        low_date_time: u32,
+        high_date_time: u32,
+    }
+
     #[link(name = "ntdll")]
     unsafe extern "system" {
         fn NtSuspendProcess(process_handle: *mut c_void) -> i32;
         fn NtResumeProcess(process_handle: *mut c_void) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetProcessTimes(
+            process: *mut c_void,
+            creation_time: *mut FileTime,
+            exit_time: *mut FileTime,
+            kernel_time: *mut FileTime,
+            user_time: *mut FileTime,
+        ) -> i32;
+    }
+
+    pub(super) fn process_cpu_micros(child: &Child) -> std::io::Result<Option<u64>> {
+        let mut creation = FileTime {
+            low_date_time: 0,
+            high_date_time: 0,
+        };
+        let mut exit = FileTime {
+            low_date_time: 0,
+            high_date_time: 0,
+        };
+        let mut kernel = FileTime {
+            low_date_time: 0,
+            high_date_time: 0,
+        };
+        let mut user = FileTime {
+            low_date_time: 0,
+            high_date_time: 0,
+        };
+        let succeeded = unsafe {
+            GetProcessTimes(
+                child.as_raw_handle(),
+                &mut creation,
+                &mut exit,
+                &mut kernel,
+                &mut user,
+            )
+        };
+        if succeeded == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let kernel_100ns =
+            (u64::from(kernel.high_date_time) << 32) | u64::from(kernel.low_date_time);
+        let user_100ns = (u64::from(user.high_date_time) << 32) | u64::from(user.low_date_time);
+        kernel_100ns
+            .checked_add(user_100ns)
+            .map(|total| Some(total / 10))
+            .ok_or_else(|| std::io::Error::other("worker CPU time overflowed"))
     }
 
     pub(super) fn suspend(child: &Child) -> std::io::Result<()> {
@@ -225,6 +285,10 @@ mod process_control {
         signal(child, SIGCONT)
     }
 
+    pub(super) fn process_cpu_micros(_: &Child) -> std::io::Result<Option<u64>> {
+        Ok(None)
+    }
+
     fn signal(child: &Child, signal: i32) -> std::io::Result<()> {
         let pid = i32::try_from(child.id()).map_err(|_| {
             std::io::Error::new(
@@ -256,5 +320,9 @@ mod process_control {
             std::io::ErrorKind::Unsupported,
             "worker process resumption is unsupported on this platform",
         ))
+    }
+
+    pub(super) fn process_cpu_micros(_: &Child) -> std::io::Result<Option<u64>> {
+        Ok(None)
     }
 }

@@ -163,6 +163,7 @@ impl NativeTacticProposalPool {
                     execution_strategy: self.execution_strategy,
                     checkpoint_cache_capacity_bytes: self.checkpoint_cache_capacity_bytes,
                     paths_root: paths_root.to_path_buf(),
+                    queued_at: Instant::now(),
                     execution_started,
                     response,
                 })
@@ -704,7 +705,12 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
     worker_slot: usize,
     mut worker: NativeSuffixWorkerSession,
     receiver: mpsc::Receiver<NativeTacticProposalJob>,
-) -> Result<(), NativeTacticRouteRunError> {
+) -> Result<NativeTacticWorkerShutdownMetrics, NativeTacticRouteRunError> {
+    let worker_started = Instant::now();
+    let native_process_cpu_started = worker.process_cpu_micros().map_err(route_error)?;
+    let mut proposal_jobs = 0_u64;
+    let mut worker_busy_micros = 0_u64;
+    let mut proposal_queue_wait_micros = 0_u64;
     let mut timed_worker = TimedTacticWorker::new(&mut worker);
     loop {
         let job = receiver.recv();
@@ -713,6 +719,12 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
             break;
         };
         let batch_started = Instant::now();
+        proposal_jobs = proposal_jobs
+            .checked_add(1)
+            .ok_or_else(|| route_message("native tactic proposal job count overflowed"))?;
+        proposal_queue_wait_micros = proposal_queue_wait_micros
+            .checked_add(elapsed_micros(batch_started.duration_since(job.queued_at)))
+            .ok_or_else(|| route_message("native tactic proposal queue timing overflowed"))?;
         let native_before_batch = timed_worker.native_elapsed;
         let native_batch_before_batch = timed_worker.native_batch_elapsed;
         let ipc_before_batch = timed_worker.ipc_elapsed;
@@ -918,10 +930,36 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
             let _ = job.response.send(Err(route_message(error.to_string())));
             return Err(error);
         }
+        worker_busy_micros = worker_busy_micros
+            .checked_add(elapsed_micros(batch_started.elapsed()))
+            .ok_or_else(|| route_message("native tactic worker busy timing overflowed"))?;
         let _ = job.response.send(result);
     }
     drop(timed_worker);
-    worker.shutdown().map_err(route_error)
+    let native_process_cpu_finished = worker.process_cpu_micros().map_err(route_error)?;
+    let native_process_cpu_micros = match (native_process_cpu_started, native_process_cpu_finished)
+    {
+        (Some(started), Some(finished)) => Some(
+            finished
+                .checked_sub(started)
+                .ok_or_else(|| route_message("native tactic worker CPU time regressed"))?,
+        ),
+        _ => None,
+    };
+    worker.shutdown().map_err(route_error)?;
+    let worker_capacity_micros = elapsed_micros(worker_started.elapsed());
+    if worker_busy_micros > worker_capacity_micros {
+        return Err(route_message(
+            "native tactic worker busy time exceeds its owned lifetime",
+        ));
+    }
+    Ok(NativeTacticWorkerShutdownMetrics {
+        proposal_jobs,
+        native_process_cpu_micros,
+        worker_capacity_micros,
+        worker_busy_micros,
+        proposal_queue_wait_micros,
+    })
 }
 
 fn materialize_job_frontier<W: PersistentTacticBatchWorker>(

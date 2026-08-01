@@ -170,11 +170,13 @@ impl NativeTacticScratchComparisonReport {
         let first_plan = read_plan(&repository_root, first)?;
         let mut cells = Vec::with_capacity(routes.len());
         for route in &routes {
-            if route.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V40
-                || route
-                    .seeds
-                    .iter()
-                    .any(|seed| !seed.timing.seed_wall_attribution_is_exact())
+            if !matches!(
+                route.schema.as_str(),
+                NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V40 | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V41
+            ) || route
+                .seeds
+                .iter()
+                .any(|seed| !seed.timing.seed_wall_attribution_is_exact())
                 || !route.timing.orchestration_attribution_is_valid()
             {
                 return Err(route_message(

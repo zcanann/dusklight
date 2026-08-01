@@ -626,8 +626,18 @@ pub(super) struct NativeTacticProposalJob {
     execution_strategy: NativeGenericExecutionStrategy,
     checkpoint_cache_capacity_bytes: usize,
     paths_root: PathBuf,
+    queued_at: Instant,
     execution_started: mpsc::SyncSender<()>,
     response: mpsc::SyncSender<Result<Vec<NativeTacticProposalWork>, NativeTacticRouteRunError>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct NativeTacticWorkerShutdownMetrics {
+    pub(super) proposal_jobs: u64,
+    pub(super) native_process_cpu_micros: Option<u64>,
+    pub(super) worker_capacity_micros: u64,
+    pub(super) worker_busy_micros: u64,
+    pub(super) proposal_queue_wait_micros: u64,
 }
 
 pub(super) struct IndexedNativeTacticProposal {

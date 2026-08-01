@@ -58,6 +58,8 @@ pub struct NativeTacticRouteReport {
     pub value_treatment: TacticValueTreatment,
     pub execution_strategy: NativeGenericExecutionStrategy,
     pub workers: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_utilization: Option<NativeTacticWorkerUtilization>,
     pub checkpoint_cache_capacity_per_worker_bytes: u64,
     pub decisions_per_seed: u64,
     pub resource_budgets: NativeTacticPlanBudgets,
@@ -118,6 +120,82 @@ pub struct NativeTacticLearnerAuthorityReport {
     pub latest_training_replay_rows: u64,
     pub declared_model_snapshots_consumed: u64,
     pub lane_local_model_updates: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticWorkerUtilization {
+    pub logical_cpu_count: usize,
+    pub worker_processes: u64,
+    pub proposal_jobs: u64,
+    /// Kernel plus user CPU consumed by the exact owned native children while
+    /// their proposal-worker threads were active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_process_cpu_micros: Option<u64>,
+    /// Sum of each worker thread's lifetime from pool entry through shutdown.
+    pub worker_capacity_micros: u64,
+    /// Sum of time spent executing dispatched proposal jobs.
+    pub worker_busy_micros: u64,
+    /// Exact residual capacity while workers waited at an idle command boundary.
+    pub worker_idle_micros: u64,
+    /// Sum of dispatch-to-receive latency across proposal jobs.
+    pub proposal_queue_wait_micros: u64,
+    pub worker_busy_share_per_million: u64,
+    /// Native child CPU divided by aggregate worker capacity. This is an
+    /// average core-equivalent share and may exceed one million only if a
+    /// worker uses multiple CPU threads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_cpu_share_per_million: Option<u64>,
+}
+
+impl NativeTacticWorkerUtilization {
+    pub fn validate(&self) -> bool {
+        self.logical_cpu_count > 0
+            && self.worker_processes > 0
+            && self.worker_capacity_micros > 0
+            && self.worker_busy_micros <= self.worker_capacity_micros
+            && self.worker_busy_micros.checked_add(self.worker_idle_micros)
+                == Some(self.worker_capacity_micros)
+            && self.worker_busy_share_per_million
+                == ratio_per_million(self.worker_busy_micros, self.worker_capacity_micros)
+            && self.native_cpu_share_per_million
+                == self
+                    .native_process_cpu_micros
+                    .map(|cpu| ratio_per_million(cpu, self.worker_capacity_micros))
+    }
+}
+
+#[cfg(test)]
+mod worker_utilization_tests {
+    use super::NativeTacticWorkerUtilization;
+
+    fn utilization() -> NativeTacticWorkerUtilization {
+        NativeTacticWorkerUtilization {
+            logical_cpu_count: 8,
+            worker_processes: 2,
+            proposal_jobs: 4,
+            native_process_cpu_micros: Some(500),
+            worker_capacity_micros: 2_000,
+            worker_busy_micros: 1_500,
+            worker_idle_micros: 500,
+            proposal_queue_wait_micros: 20,
+            worker_busy_share_per_million: 750_000,
+            native_cpu_share_per_million: Some(250_000),
+        }
+    }
+
+    #[test]
+    fn worker_capacity_reconciles_and_cpu_absence_is_explicit() {
+        let mut measured = utilization();
+        assert!(measured.validate());
+        measured.worker_idle_micros += 1;
+        assert!(!measured.validate());
+
+        let mut unsupported = utilization();
+        unsupported.native_process_cpu_micros = None;
+        unsupported.native_cpu_share_per_million = None;
+        assert!(unsupported.validate());
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

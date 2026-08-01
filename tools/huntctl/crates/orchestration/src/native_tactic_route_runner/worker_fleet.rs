@@ -1,6 +1,6 @@
 use super::worker_pool::{
-    NativeTacticProposalJob, NativeTacticProposalPool, launch_tactic_route_worker,
-    run_tactic_proposal_worker,
+    NativeTacticProposalJob, NativeTacticProposalPool, NativeTacticWorkerShutdownMetrics,
+    launch_tactic_route_worker, run_tactic_proposal_worker,
 };
 use super::*;
 
@@ -8,7 +8,11 @@ const MAX_CONCURRENT_TACTIC_WORKER_LAUNCHES: usize = 2;
 
 pub(super) struct NativeTacticWorkerFleet {
     senders: Vec<mpsc::Sender<NativeTacticProposalJob>>,
-    worker_handles: Vec<std::thread::JoinHandle<Result<(), NativeTacticRouteRunError>>>,
+    worker_handles: Vec<
+        std::thread::JoinHandle<
+            Result<NativeTacticWorkerShutdownMetrics, NativeTacticRouteRunError>,
+        >,
+    >,
     optimization_request_sha256: Digest,
     execution_binding_sha256: Digest,
     execution_plan_sha256: Digest,
@@ -203,28 +207,96 @@ impl NativeTacticWorkerFleet {
         .with_lane_owner_partition(config.execution_plan))
     }
 
-    pub(super) fn shutdown(mut self) -> Result<(), NativeTacticRouteRunError> {
+    pub(super) fn shutdown(
+        mut self,
+    ) -> Result<NativeTacticWorkerUtilization, NativeTacticRouteRunError> {
         self.shutdown_inner()
     }
 
-    fn shutdown_inner(&mut self) -> Result<(), NativeTacticRouteRunError> {
+    fn shutdown_inner(
+        &mut self,
+    ) -> Result<NativeTacticWorkerUtilization, NativeTacticRouteRunError> {
         self.senders.clear();
         let handles = std::mem::take(&mut self.worker_handles);
-        handles
+        let workers = handles
             .into_iter()
             .map(|handle| {
                 handle
                     .join()
                     .map_err(|_| route_message("native tactic route worker thread panicked"))?
             })
-            .collect::<Result<Vec<_>, _>>()
-            .map(drop)
+            .collect::<Result<Vec<_>, _>>()?;
+        let native_process_cpu_micros =
+            workers.iter().try_fold(Some(0_u64), |total, worker| {
+                match (total, worker.native_process_cpu_micros) {
+                    (Some(total), Some(worker)) => total
+                        .checked_add(worker)
+                        .map(Some)
+                        .ok_or_else(|| route_message("native tactic worker CPU total overflowed")),
+                    _ => Ok(None),
+                }
+            })?;
+        let totals = workers.iter().try_fold(
+            NativeTacticWorkerShutdownMetrics::default(),
+            |mut total, worker| {
+                total.proposal_jobs = total
+                    .proposal_jobs
+                    .checked_add(worker.proposal_jobs)
+                    .ok_or_else(|| route_message("native tactic worker job total overflowed"))?;
+                total.worker_capacity_micros = total
+                    .worker_capacity_micros
+                    .checked_add(worker.worker_capacity_micros)
+                    .ok_or_else(|| {
+                        route_message("native tactic worker capacity total overflowed")
+                    })?;
+                total.worker_busy_micros = total
+                    .worker_busy_micros
+                    .checked_add(worker.worker_busy_micros)
+                    .ok_or_else(|| route_message("native tactic worker busy total overflowed"))?;
+                total.proposal_queue_wait_micros = total
+                    .proposal_queue_wait_micros
+                    .checked_add(worker.proposal_queue_wait_micros)
+                    .ok_or_else(|| route_message("native tactic queue wait total overflowed"))?;
+                Ok::<_, NativeTacticRouteRunError>(total)
+            },
+        )?;
+        let worker_processes = u64::try_from(workers.len()).map_err(route_error)?;
+        let worker_idle_micros = totals
+            .worker_capacity_micros
+            .checked_sub(totals.worker_busy_micros)
+            .ok_or_else(|| route_message("native tactic worker idle timing is detached"))?;
+        let utilization = NativeTacticWorkerUtilization {
+            logical_cpu_count: std::thread::available_parallelism()
+                .map(usize::from)
+                .unwrap_or(1),
+            worker_processes,
+            proposal_jobs: totals.proposal_jobs,
+            native_process_cpu_micros,
+            worker_capacity_micros: totals.worker_capacity_micros,
+            worker_busy_micros: totals.worker_busy_micros,
+            worker_idle_micros,
+            proposal_queue_wait_micros: totals.proposal_queue_wait_micros,
+            worker_busy_share_per_million: ratio_per_million(
+                totals.worker_busy_micros,
+                totals.worker_capacity_micros,
+            ),
+            native_cpu_share_per_million: native_process_cpu_micros
+                .map(|cpu| ratio_per_million(cpu, totals.worker_capacity_micros)),
+        };
+        if !utilization.validate() {
+            return Err(route_message(
+                "native tactic worker utilization is internally detached",
+            ));
+        }
+        Ok(utilization)
     }
 }
 
 impl Drop for NativeTacticWorkerFleet {
     fn drop(&mut self) {
-        let _ = self.shutdown_inner();
+        if !self.worker_handles.is_empty() {
+            let _ = self.shutdown_inner();
+        }
     }
 }
 

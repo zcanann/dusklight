@@ -411,6 +411,10 @@ impl NativeSuffixWorkerSession {
         self.client.resume_process().map_err(worker_error)
     }
 
+    pub(crate) fn process_cpu_micros(&self) -> Result<Option<u64>, NativeSuffixWorkerError> {
+        self.client.process_cpu_micros().map_err(worker_error)
+    }
+
     pub fn shutdown(mut self) -> Result<(), NativeSuffixWorkerError> {
         self.client.shutdown().map_err(worker_error)
     }

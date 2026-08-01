@@ -103,6 +103,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38: &str = "dusklight-native-tactic-route-report/v38";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39: &str = "dusklight-native-tactic-route-report/v39";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V40: &str = "dusklight-native-tactic-route-report/v40";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V41: &str = "dusklight-native-tactic-route-report/v41";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -163,7 +164,7 @@ pub use report::{
     NativeTacticReplaySharingTelemetry, NativeTacticRestoreAccounting, NativeTacticRestoreSource,
     NativeTacticRouteReport, NativeTacticRouteRunConfig, NativeTacticRouteTiming,
     NativeTacticSeedResult, NativeTacticSeedStopReason, NativeTacticStateTrace,
-    NativeTacticValueTrace,
+    NativeTacticValueTrace, NativeTacticWorkerUtilization,
 };
 mod completion_marker;
 use completion_marker::publish_completion;
@@ -864,7 +865,7 @@ fn run_native_tactic_route_with_optional_fleet(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let mut report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V40.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V41.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
@@ -890,6 +891,7 @@ fn run_native_tactic_route_with_optional_fleet(
         value_treatment: config.execution_plan.value_treatment,
         execution_strategy: config.execution_plan.execution_strategy,
         workers: worker_count,
+        worker_utilization: None,
         checkpoint_cache_capacity_per_worker_bytes,
         decisions_per_seed: config.execution_plan.budgets.decisions_per_lane,
         resource_budgets: config.execution_plan.budgets,
@@ -957,14 +959,18 @@ fn run_native_tactic_route_with_optional_fleet(
         timing,
         seeds: seed_results,
     };
-    serde_json::to_writer(std::io::sink(), &report).map_err(route_error)?;
-    report.timing.reporting_micros = elapsed_micros(reporting_started.elapsed());
-    let report_build_micros = report.timing.reporting_micros;
+    let report_build_before_shutdown_micros = elapsed_micros(reporting_started.elapsed());
     let fleet_shutdown_started = Instant::now();
-    if let Some(fleet) = owned_fleet {
-        fleet.shutdown()?;
-    }
+    report.worker_utilization = owned_fleet
+        .map(NativeTacticWorkerFleet::shutdown)
+        .transpose()?;
     let fleet_shutdown_micros = elapsed_micros(fleet_shutdown_started.elapsed());
+    let final_report_build_started = Instant::now();
+    serde_json::to_writer(std::io::sink(), &report).map_err(route_error)?;
+    report.timing.reporting_micros = report_build_before_shutdown_micros
+        .checked_add(elapsed_micros(final_report_build_started.elapsed()))
+        .ok_or_else(|| route_message("native tactic report build timing overflowed"))?;
+    let report_build_micros = report.timing.reporting_micros;
     let final_artifact_persistence_started = Instant::now();
     let summary = NativeTacticCampaignSummary::build(&report, config.execution_plan)?;
     let summary_bytes = summary.to_pretty_json()?;
@@ -1001,7 +1007,9 @@ fn median_sorted_wall_micros(sorted: &[u64]) -> Option<u64> {
 pub(super) fn supports_current_route_report_schema(schema: &str) -> bool {
     matches!(
         schema,
-        NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39 | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V40
+        NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39
+            | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V40
+            | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V41
     )
 }
 

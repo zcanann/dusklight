@@ -531,6 +531,10 @@ impl<T: Transport> WorkerClient<T> {
 }
 
 impl WorkerClient<ProcessTransport> {
+    pub fn process_cpu_micros(&self) -> Result<Option<u64>, ClientError> {
+        self.transport.process_cpu_micros().map_err(ClientError::Io)
+    }
+
     pub fn suspend_process(&mut self) -> Result<(), ClientError> {
         self.transport.suspend_process().map_err(ClientError::Io)
     }
