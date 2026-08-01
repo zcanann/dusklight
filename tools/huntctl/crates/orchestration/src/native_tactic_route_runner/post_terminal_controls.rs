@@ -759,7 +759,7 @@ mod tests {
             prediction_error_millionths: 0,
             completed_visits: visits,
             policy_rank: None,
-            global_exploration_priority_rank: u64::from(id),
+            source_exploration_priority_rank: u64::from(id),
             source_queue_rank: u64::from(id - 1),
         }
     }
@@ -767,7 +767,7 @@ mod tests {
     #[test]
     fn learned_total_ticks_can_recover_the_exhaustive_best_first() {
         let decision = TacticSchedulerDecisionTrace {
-            schema: crate::tactic_q_campaign::TACTIC_SCHEDULER_DECISION_SCHEMA_V1.into(),
+            schema: crate::tactic_q_campaign::TACTIC_SCHEDULER_DECISION_SCHEMA_V2.into(),
             graph_sha256: Digest([9; 32]),
             learner_model_sha256: Digest([8; 32]),
             generation: 4,
@@ -805,7 +805,7 @@ mod tests {
     #[test]
     fn incomplete_outcomes_never_claim_an_exhaustive_oracle() {
         let decision = TacticSchedulerDecisionTrace {
-            schema: crate::tactic_q_campaign::TACTIC_SCHEDULER_DECISION_SCHEMA_V1.into(),
+            schema: crate::tactic_q_campaign::TACTIC_SCHEDULER_DECISION_SCHEMA_V2.into(),
             graph_sha256: Digest([9; 32]),
             learner_model_sha256: Digest([8; 32]),
             generation: 4,

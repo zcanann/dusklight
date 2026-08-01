@@ -383,6 +383,80 @@ pub(crate) fn rank_schedulable_expansions_validated(
     rank_schedulable_expansions_with_seed_validated(graph, regime, current_generation, 0, learned)
 }
 
+/// Rank only the expansions that can actually be dispatched from `source`.
+///
+/// Frontier acquisition chooses the source node before tactic scheduling, so
+/// sorting every expansion in the graph cannot affect the relative order of
+/// this source's queue. Keeping this projection source-local avoids rebuilding
+/// global shortest-path and terminal-return maps during every native decision.
+pub(crate) fn rank_schedulable_source_expansions_validated(
+    validated: ValidatedStateGraph<'_>,
+    source: ExactStateId,
+    regime: SearchRegime,
+    current_generation: u64,
+    learned: &BTreeMap<Digest, LearnedExpansionPriority>,
+) -> Result<Vec<ScheduledExpansion>, SchedulerError> {
+    let graph = validated.graph();
+    if regime == SearchRegime::Optimization && graph.best_terminal_path().is_none() {
+        return Err(SchedulerError::Invalid(
+            "optimization scheduling requires a terminal path",
+        ));
+    }
+    for score in learned.values() {
+        score.validate()?;
+    }
+    let node = graph
+        .node(source)
+        .ok_or(SchedulerError::Invalid("expansion source is absent"))?;
+    let source_root_ticks = if graph.future_equivalence_proofs().next().is_none() {
+        node.root_ticks
+    } else {
+        graph.relaxed_root_ticks_to(source)?
+    };
+    let source_exact_terminal_ticks_to_go = if regime == SearchRegime::Optimization {
+        validated.exact_terminal_returns()?.get(&source).copied()
+    } else {
+        None
+    };
+    let mut ranked = node
+        .outgoing_expansions
+        .iter()
+        .filter_map(|identity| {
+            graph
+                .expansion_is_schedulable(*identity, current_generation)
+                .then(|| graph.expansion(*identity))
+                .flatten()
+        })
+        .map(|expansion| {
+            let learned = learned
+                .get(&expansion.identity_sha256)
+                .copied()
+                .unwrap_or_default();
+            ScheduledExpansion {
+                expansion_sha256: expansion.identity_sha256,
+                source,
+                source_root_ticks,
+                source_exact_terminal_ticks_to_go,
+                generalized_conditional_ticks_to_go: learned.conditional_ticks_to_go,
+                uncertainty_millionths: learned.uncertainty_millionths,
+                exploration_priority_rank: 0,
+                learned,
+            }
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        compare_scheduled(regime, left, right).then_with(|| {
+            expansion_tie_rank(0, current_generation, left.expansion_sha256).cmp(
+                &expansion_tie_rank(0, current_generation, right.expansion_sha256),
+            )
+        })
+    });
+    for (rank, expansion) in ranked.iter_mut().enumerate() {
+        expansion.exploration_priority_rank = rank as u64;
+    }
+    Ok(ranked)
+}
+
 fn rank_schedulable_expansions_with_seed(
     graph: &StateGraph,
     regime: SearchRegime,
@@ -965,7 +1039,16 @@ mod tests {
 
         let scheduled =
             rank_schedulable_expansions(&graph, SearchRegime::Optimization, 2, &learned).unwrap();
+        let source_local = rank_schedulable_source_expansions_validated(
+            graph.validated().unwrap(),
+            graph.expansion(pending).unwrap().source,
+            SearchRegime::Optimization,
+            2,
+            &learned,
+        )
+        .unwrap();
 
+        assert_eq!(source_local, scheduled);
         assert_eq!(scheduled.len(), 1);
         assert_eq!(scheduled[0].source_exact_terminal_ticks_to_go, Some(8));
         assert_eq!(scheduled[0].generalized_conditional_ticks_to_go, Some(7));
@@ -1093,6 +1176,14 @@ mod tests {
             &learned.estimates,
         )
         .unwrap();
+        let source_local = rank_schedulable_source_expansions_validated(
+            graph.validated().unwrap(),
+            graph.root(),
+            config.regime,
+            config.generation,
+            &learned.estimates,
+        )
+        .unwrap();
 
         assert_eq!(before, after);
         assert_eq!(before.selected_expansion_sha256, Some(second));
@@ -1102,6 +1193,7 @@ mod tests {
         assert_eq!(inspected[0].source_exact_terminal_ticks_to_go, None);
         assert_eq!(inspected[0].generalized_conditional_ticks_to_go, Some(9));
         assert_eq!(inspected[0].uncertainty_millionths, 42);
+        assert_eq!(source_local, inspected);
         before.validate().unwrap();
     }
 
