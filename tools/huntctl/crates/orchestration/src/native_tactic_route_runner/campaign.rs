@@ -1577,23 +1577,19 @@ pub(super) fn run_seed(
         )
         .map_err(route_error)?;
     let final_checkpoint_path = final_checkpoint_commit.path;
-    let final_campaign_checkpoint =
-        TacticQCampaign::read_checkpoint_payload(&final_checkpoint_path).map_err(route_error)?;
-    let unique_useful_graph_expansions = u64::try_from(
-        final_campaign_checkpoint
-            .state_graph
-            .completed_executable_expansion_count(),
-    )
-    .map_err(route_error)?;
-    let useful_graph_expansion_set_sha256 = final_campaign_checkpoint
-        .state_graph
-        .completed_executable_expansion_set_sha256();
-    let state_graph_sha256 = final_campaign_checkpoint
-        .state_graph
-        .content_sha256()
-        .map_err(route_error)?;
+    // The write above validates and commits the exact in-memory graph. Project
+    // report fields from that authority instead of reconstructing the whole
+    // graph from disk here. Completed-result admission independently reloads
+    // the checkpoint and verifies these fields before reuse.
+    let final_state_graph = campaign.state_graph().map_err(route_error)?;
+    let unique_useful_graph_expansions =
+        u64::try_from(final_state_graph.completed_executable_expansion_count())
+            .map_err(route_error)?;
+    let useful_graph_expansion_set_sha256 =
+        final_state_graph.completed_executable_expansion_set_sha256();
+    let state_graph_sha256 = final_state_graph.content_sha256().map_err(route_error)?;
     let graph_metrics = tactic_graph_metrics(
-        &final_campaign_checkpoint.state_graph,
+        final_state_graph,
         state_graph_sha256,
         &trace,
         lease_ledger.accounting()?,

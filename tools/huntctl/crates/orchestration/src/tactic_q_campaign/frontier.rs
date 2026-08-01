@@ -1,6 +1,14 @@
 use super::*;
 
 impl TacticQCampaign {
+    pub(crate) fn state_graph(&self) -> Result<&StateGraph, TacticQCampaignError> {
+        self.state_graph
+            .as_ref()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "campaign requires bound graph state",
+            ))
+    }
+
     pub fn visited_state_count(&self) -> usize {
         self.state_graph.as_ref().map_or(0, StateGraph::node_count)
     }
