@@ -64,7 +64,7 @@ impl NativeTacticScratchDiscoveryReport {
         route: &NativeTacticRouteReport,
     ) -> Result<Self, NativeTacticRouteRunError> {
         request.validate().map_err(route_error)?;
-        if route.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39
+        if !supports_current_route_report_schema(&route.schema)
             || route.optimization_request_sha256 != request.content_sha256
         {
             return Err(route_message(

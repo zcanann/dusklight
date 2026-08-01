@@ -568,7 +568,7 @@ fn validate_route_authority(
         .and_then(|value| value.checked_add(1))
         .ok_or_else(|| route_message("cold replay route length overflowed"))?;
     if optimization.execution.fidelity != HarnessFidelityMode::Headless
-        || route_report.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39
+        || !supports_current_route_report_schema(&route_report.schema)
         || route_report.optimization_request_sha256 != optimization.content_sha256
         || route_report.execution_binding_sha256 != execution.content_sha256
         || route_report.execution_plan_sha256 != execution_plan_sha256

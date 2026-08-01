@@ -320,16 +320,24 @@ pub struct NativeTacticPersistenceTiming {
 
 impl NativeTacticPersistenceTiming {
     pub fn total_micros(self) -> u64 {
-        self.source_tape_micros
-            .saturating_add(self.recovery_checkpoint_micros)
-            .saturating_add(self.decision_journal_micros)
-            .saturating_add(self.replay_content_micros)
-            .saturating_add(self.replay_publication_micros)
-            .saturating_add(self.lease_resolution_micros)
-            .saturating_add(self.recovery_prune_micros)
-            .saturating_add(self.retained_terminal_micros)
-            .saturating_add(self.finalization_micros)
-            .saturating_add(self.unattributed_micros)
+        self.checked_total_micros().unwrap_or(u64::MAX)
+    }
+
+    pub fn checked_total_micros(self) -> Option<u64> {
+        [
+            self.source_tape_micros,
+            self.recovery_checkpoint_micros,
+            self.decision_journal_micros,
+            self.replay_content_micros,
+            self.replay_publication_micros,
+            self.lease_resolution_micros,
+            self.recovery_prune_micros,
+            self.retained_terminal_micros,
+            self.finalization_micros,
+            self.unattributed_micros,
+        ]
+        .into_iter()
+        .try_fold(0_u64, u64::checked_add)
     }
 
     pub(super) fn merge(&mut self, other: Self) {
@@ -363,6 +371,97 @@ impl NativeTacticPersistenceTiming {
         self.unattributed_micros = self
             .unattributed_micros
             .saturating_add(other.unattributed_micros);
+    }
+}
+
+/// Exclusive coordinator work. Unlike the legacy diagnostic rollups, these
+/// fields are mutually exclusive and must sum exactly to
+/// `NativeTacticRouteTiming::orchestration_micros` when present.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticOrchestrationTiming {
+    pub learner_refresh_micros: u64,
+    pub action_catalog_construction_micros: u64,
+    pub graph_scheduling_and_leasing_micros: u64,
+    pub tactic_selection_micros: u64,
+    pub result_validation_and_fact_extraction_micros: u64,
+    /// Campaign admission excluding action-catalog construction, which is
+    /// charged above.
+    pub campaign_admission_micros: u64,
+    pub decision_bookkeeping_micros: u64,
+    /// Time between adjacent instrumentation boundaries. This is explicit so
+    /// clock-sampling overhead cannot be mistaken for useful orchestration.
+    pub timing_boundary_micros: u64,
+    pub seed_setup_micros: u64,
+    pub seed_finalization_micros: u64,
+    pub campaign_setup_micros: u64,
+    pub generation_replay_and_coordination_micros: u64,
+    pub campaign_finalization_micros: u64,
+}
+
+impl NativeTacticOrchestrationTiming {
+    pub fn checked_total_micros(self) -> Option<u64> {
+        [
+            self.learner_refresh_micros,
+            self.action_catalog_construction_micros,
+            self.graph_scheduling_and_leasing_micros,
+            self.tactic_selection_micros,
+            self.result_validation_and_fact_extraction_micros,
+            self.campaign_admission_micros,
+            self.decision_bookkeeping_micros,
+            self.timing_boundary_micros,
+            self.seed_setup_micros,
+            self.seed_finalization_micros,
+            self.campaign_setup_micros,
+            self.generation_replay_and_coordination_micros,
+            self.campaign_finalization_micros,
+        ]
+        .into_iter()
+        .try_fold(0_u64, u64::checked_add)
+    }
+
+    pub(super) fn checked_merge(self, other: Self) -> Option<Self> {
+        Some(Self {
+            learner_refresh_micros: self
+                .learner_refresh_micros
+                .checked_add(other.learner_refresh_micros)?,
+            action_catalog_construction_micros: self
+                .action_catalog_construction_micros
+                .checked_add(other.action_catalog_construction_micros)?,
+            graph_scheduling_and_leasing_micros: self
+                .graph_scheduling_and_leasing_micros
+                .checked_add(other.graph_scheduling_and_leasing_micros)?,
+            tactic_selection_micros: self
+                .tactic_selection_micros
+                .checked_add(other.tactic_selection_micros)?,
+            result_validation_and_fact_extraction_micros: self
+                .result_validation_and_fact_extraction_micros
+                .checked_add(other.result_validation_and_fact_extraction_micros)?,
+            campaign_admission_micros: self
+                .campaign_admission_micros
+                .checked_add(other.campaign_admission_micros)?,
+            decision_bookkeeping_micros: self
+                .decision_bookkeeping_micros
+                .checked_add(other.decision_bookkeeping_micros)?,
+            timing_boundary_micros: self
+                .timing_boundary_micros
+                .checked_add(other.timing_boundary_micros)?,
+            seed_setup_micros: self
+                .seed_setup_micros
+                .checked_add(other.seed_setup_micros)?,
+            seed_finalization_micros: self
+                .seed_finalization_micros
+                .checked_add(other.seed_finalization_micros)?,
+            campaign_setup_micros: self
+                .campaign_setup_micros
+                .checked_add(other.campaign_setup_micros)?,
+            generation_replay_and_coordination_micros: self
+                .generation_replay_and_coordination_micros
+                .checked_add(other.generation_replay_and_coordination_micros)?,
+            campaign_finalization_micros: self
+                .campaign_finalization_micros
+                .checked_add(other.campaign_finalization_micros)?,
+        })
     }
 }
 
@@ -405,6 +504,8 @@ pub struct NativeTacticRouteTiming {
     /// persistence, and time blocked on native workers.
     #[serde(default)]
     pub orchestration_micros: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orchestration_breakdown: Option<NativeTacticOrchestrationTiming>,
     #[serde(default)]
     pub result_validation_and_fact_extraction_micros: u64,
     #[serde(default)]
@@ -429,8 +530,31 @@ pub struct NativeTacticRouteTiming {
 
 impl NativeTacticRouteTiming {
     pub fn persistence_attribution_is_valid(&self) -> bool {
-        self.persistence_breakdown
-            .is_none_or(|breakdown| breakdown.total_micros() == self.persistence_micros)
+        self.persistence_breakdown.is_none_or(|breakdown| {
+            breakdown.checked_total_micros() == Some(self.persistence_micros)
+        })
+    }
+
+    pub fn orchestration_attribution_is_valid(&self) -> bool {
+        self.orchestration_breakdown.is_none_or(|breakdown| {
+            breakdown.checked_total_micros() == Some(self.orchestration_micros)
+        })
+    }
+
+    pub fn seed_wall_attribution_is_exact(&self) -> bool {
+        self.orchestration_breakdown.is_some()
+            && self.persistence_attribution_is_valid()
+            && self.orchestration_attribution_is_valid()
+            && [
+                self.tactic_execution_micros,
+                self.model_update_micros,
+                self.evidence_projection_micros,
+                self.persistence_micros,
+                self.orchestration_micros,
+            ]
+            .into_iter()
+            .try_fold(0_u64, u64::checked_add)
+                == Some(self.wall_micros)
     }
 }
 
@@ -711,6 +835,9 @@ pub struct NativeTacticGraphMetrics {
 pub(super) struct CompletedNativeTacticSeed {
     pub(super) result: NativeTacticSeedResult,
     pub(super) generated_training: TacticQTrainingCorpus,
+    /// Work performed by this coordinator invocation only; unlike the durable
+    /// seed wall in `result`, this is zero when a completed seed is reused.
+    pub(super) invocation_wall_micros: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

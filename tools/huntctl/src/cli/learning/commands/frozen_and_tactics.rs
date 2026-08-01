@@ -2,9 +2,10 @@
 
 use super::{
     Digest, FactorizedPolicyOutputSet, GoalConditionedTacticFeatureEncoder, InputTape,
-    MAX_LEARN_INPUT_CORPORA, NativeEpisodeShard, NativeFactorizedPolicyBatchConfig,
-    NativeFactorizedPolicySuffixBatch, NativeFrozenPolicyReinferenceReport,
-    NativeFrozenPolicySuffixBatch, NativeGenericExecutionStrategy, NativeResidualExecutionBinding,
+    MAX_LEARN_INPUT_CORPORA, NATIVE_TACTIC_CAMPAIGN_COMPLETION_FILE, NativeEpisodeShard,
+    NativeFactorizedPolicyBatchConfig, NativeFactorizedPolicySuffixBatch,
+    NativeFrozenPolicyReinferenceReport, NativeFrozenPolicySuffixBatch,
+    NativeGenericExecutionStrategy, NativeResidualExecutionBinding, NativeTacticCampaignCompletion,
     NativeTacticCampaignSummary, NativeTacticColdReplayConfig,
     NativeTacticColdReplayEvidenceBundle, NativeTacticDemonstrationReport,
     NativeTacticExecutionPlan, NativeTacticFaultInjector, NativeTacticFaultRecoveryEvidenceBundle,
@@ -1469,6 +1470,25 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             let report = NativeTacticScratchComparisonReport::build(&repository_root, routes)?;
             fs::write(&output, report.to_pretty_json()?)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("validate-tactic-campaign-completion") => {
+            let learn_args = &args[1..];
+            let report_path = fs::canonicalize(required_path(learn_args, "--report")?)?;
+            let output_root = report_path
+                .parent()
+                .ok_or("tactic route report has no campaign directory")?;
+            let summary_path = output_root.join("campaign-summary.json");
+            let completion_path = output_root.join(NATIVE_TACTIC_CAMPAIGN_COMPLETION_FILE);
+            let report: NativeTacticRouteReport = serde_json::from_slice(&fs::read(&report_path)?)?;
+            let completion = NativeTacticCampaignCompletion::read(&completion_path)?;
+            completion.validate_files(&report_path, &summary_path)?;
+            if completion.execution_plan_sha256 != report.execution_plan_sha256
+                || completion.route_cutoff_wall_micros != report.timing.wall_micros
+            {
+                return Err("campaign completion marker differs from its route report".into());
+            }
+            println!("{}", serde_json::to_string_pretty(&completion)?);
             Ok(())
         }
         Some("diagnose-tactic-terminal-routes") => {

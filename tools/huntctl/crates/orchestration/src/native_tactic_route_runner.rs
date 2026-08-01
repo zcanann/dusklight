@@ -102,6 +102,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37: &str = "dusklight-native-tactic-route-report/v37";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V38: &str = "dusklight-native-tactic-route-report/v38";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39: &str = "dusklight-native-tactic-route-report/v39";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V40: &str = "dusklight-native-tactic-route-report/v40";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -158,16 +159,23 @@ pub use report::{
     NativeTacticDemonstrationReport, NativeTacticFrontierAvailability, NativeTacticGraphMetrics,
     NativeTacticImportedMacroReport, NativeTacticLearnerAuthorityReport,
     NativeTacticMacroDiscoveryReport, NativeTacticMacroReuseReport, NativeTacticMeasurementTrace,
-    NativeTacticPersistenceTiming, NativeTacticProposalTrace, NativeTacticReplaySharingTelemetry,
-    NativeTacticRestoreAccounting, NativeTacticRestoreSource, NativeTacticRouteReport,
-    NativeTacticRouteRunConfig, NativeTacticRouteTiming, NativeTacticSeedResult,
-    NativeTacticSeedStopReason, NativeTacticStateTrace, NativeTacticValueTrace,
+    NativeTacticOrchestrationTiming, NativeTacticPersistenceTiming, NativeTacticProposalTrace,
+    NativeTacticReplaySharingTelemetry, NativeTacticRestoreAccounting, NativeTacticRestoreSource,
+    NativeTacticRouteReport, NativeTacticRouteRunConfig, NativeTacticRouteTiming,
+    NativeTacticSeedResult, NativeTacticSeedStopReason, NativeTacticStateTrace,
+    NativeTacticValueTrace,
 };
 mod completion_marker;
 use completion_marker::publish_completion;
+mod exclusive_timing;
 pub use completion_marker::{
     NATIVE_TACTIC_CAMPAIGN_COMPLETION_FILE, NATIVE_TACTIC_CAMPAIGN_COMPLETION_SCHEMA_V1,
     NativeTacticCampaignCompletion,
+};
+use exclusive_timing::{
+    CampaignExclusiveTimingInput, CampaignPhaseWallTiming, ExclusiveTopTimingSnapshot,
+    SeedOrchestrationPhase as OrchestrationPhase, attribute_campaign_timing,
+    orchestration_detail_total, record_orchestration_detail, record_orchestration_total,
 };
 mod campaign_summary;
 pub use campaign_summary::{
@@ -260,9 +268,10 @@ pub use scratch_campaign_audit::{
 mod scratch_comparison;
 pub use scratch_comparison::{
     NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V2, NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V3,
-    NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V4, NativeTacticScratchComparisonCell,
-    NativeTacticScratchComparisonReport, NativeTacticScratchCriticalPathTiming,
-    NativeTacticScratchEfficiencyMetrics, NativeTacticScratchTreatment,
+    NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V4, NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V5,
+    NativeTacticScratchComparisonCell, NativeTacticScratchComparisonReport,
+    NativeTacticScratchCriticalPathTiming, NativeTacticScratchEfficiencyMetrics,
+    NativeTacticScratchTreatment,
 };
 mod route_diagnosis;
 pub use route_diagnosis::{
@@ -529,6 +538,7 @@ fn run_native_tactic_route_with_optional_fleet(
     let pool = fleet.pool(config, execution_plan_sha256, root_source_frame)?;
     let checkpoint_cache_capacity_per_worker_bytes =
         u64::try_from(pool.checkpoint_cache_capacity_bytes).map_err(route_error)?;
+    let mut campaign_phase_wall = CampaignPhaseWallTiming::default();
     let (mut indexed_results, tactic_macro_discovery, shared_training_replay_rows, demonstration) =
         (|| {
             let mut results = Vec::with_capacity(config.execution_plan.lanes.len());
@@ -547,7 +557,9 @@ fn run_native_tactic_route_with_optional_fleet(
                 let mut learner = lock_learner_authority(&learner_authority)?;
                 publish_demonstration_replay(&mut learner, demonstration)?;
             }
+            campaign_phase_wall.campaign_setup_micros = elapsed_micros(campaign_started.elapsed());
             for generation in &config.execution_plan.generations {
+                let generation_started = Instant::now();
                 let inherited_learner_snapshot = if let Some(snapshot) = &frozen_policy_snapshot {
                     Arc::clone(snapshot)
                 } else {
@@ -637,12 +649,34 @@ fn run_native_tactic_route_with_optional_fleet(
                     publish_completed_seed_replay(&mut learner, completion)?;
                 }
                 learner.force_update()?;
+                let generation_wall_micros = elapsed_micros(generation_started.elapsed());
+                let critical_lane_wall_micros = generation_results
+                    .iter()
+                    .map(|(_, completion)| completion.invocation_wall_micros)
+                    .max()
+                    .unwrap_or(0);
+                campaign_phase_wall.generation_coordination_micros = campaign_phase_wall
+                    .generation_coordination_micros
+                    .checked_add(
+                        generation_wall_micros
+                            .checked_sub(critical_lane_wall_micros)
+                            .ok_or_else(|| {
+                                route_message(
+                                    "native tactic generation lane wall exceeds generation wall",
+                                )
+                            })?,
+                    )
+                    .ok_or_else(|| {
+                        route_message("native tactic generation coordination timing overflowed")
+                    })?;
                 results.extend(
                     generation_results
                         .into_iter()
                         .map(|(seed_index, completion)| (seed_index, completion.result)),
                 );
             }
+            campaign_phase_wall.campaign_finalization_started_micros =
+                elapsed_micros(campaign_started.elapsed());
             let completion = (|| {
                 let mined = mine_and_store_tactic_macros(
                     config.output_root,
@@ -703,7 +737,7 @@ fn run_native_tactic_route_with_optional_fleet(
     let median_time_to_first_terminal_micros =
         median_sorted_wall_micros(&time_to_first_terminal_micros);
     let worst_time_to_first_terminal_micros = time_to_first_terminal_micros.last().copied();
-    let mut timing = aggregate_route_timing(&seed_results, unique_useful_graph_expansions);
+    let mut timing = aggregate_route_timing(&seed_results, unique_useful_graph_expansions)?;
     timing.process_launch_micros = process_launch_micros;
     if let Some(demonstration) = &demonstration {
         timing.tactic_execution_micros = timing
@@ -752,7 +786,11 @@ fn run_native_tactic_route_with_optional_fleet(
     // Seed timing is durable across resume. Keep report wall time at least the
     // accumulated generation critical path so a short final invocation cannot
     // make cumulative work appear artificially fast.
-    timing.wall_micros = elapsed_micros(campaign_started.elapsed()).max(
+    let observed_route_cutoff_wall_micros = elapsed_micros(campaign_started.elapsed());
+    let campaign_finalization_wall_micros = observed_route_cutoff_wall_micros
+        .checked_sub(campaign_phase_wall.campaign_finalization_started_micros)
+        .ok_or_else(|| route_message("native tactic campaign finalization clock regressed"))?;
+    timing.wall_micros = observed_route_cutoff_wall_micros.max(
         accumulated_coordinator_wall_micros(config.execution_plan, &seed_results),
     );
     refresh_route_throughput(&mut timing, &seed_results, unique_useful_graph_expansions);
@@ -781,10 +819,23 @@ fn run_native_tactic_route_with_optional_fleet(
     let replay_admission = learner_authority.replay().invocation_metrics();
     let learner_metrics = learner_authority.invocation_metrics();
     let learner_updates = learner_authority.total_updates();
-    timing.model_update_micros = timing
-        .model_update_micros
-        .max(learner_metrics.update_micros)
-        .saturating_add(learner_metrics.reconstruction_micros);
+    let demonstration_execution_micros =
+        demonstration.as_ref().map_or(0, |value| value.wall_micros);
+    attribute_campaign_timing(
+        &mut timing,
+        config.execution_plan,
+        &seed_results,
+        CampaignExclusiveTimingInput {
+            process_launch_micros,
+            demonstration_execution_micros,
+            macro_validation_execution_micros: tactic_macro_discovery.validation_wall_micros,
+            learner_update_micros: learner_metrics.update_micros,
+            learner_reconstruction_micros: learner_metrics.reconstruction_micros,
+            campaign_setup_wall_micros: campaign_phase_wall.campaign_setup_micros,
+            generation_coordination_wall_micros: campaign_phase_wall.generation_coordination_micros,
+            campaign_finalization_wall_micros,
+        },
+    )?;
     let latest_learner_snapshot = learner_authority.snapshot();
     let declared_model_snapshots_consumed = seed_results
         .iter()
@@ -813,7 +864,7 @@ fn run_native_tactic_route_with_optional_fleet(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let mut report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V40.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         execution_plan_sha256,
@@ -945,6 +996,13 @@ fn median_sorted_wall_micros(sorted: &[u64]) -> Option<u64> {
         let lower = sorted.get(midpoint.checked_sub(1)?).copied()?;
         Some(lower / 2 + upper / 2 + (lower % 2 + upper % 2) / 2)
     }
+}
+
+pub(super) fn supports_current_route_report_schema(schema: &str) -> bool {
+    matches!(
+        schema,
+        NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39 | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V40
+    )
 }
 
 mod macro_discovery;

@@ -149,6 +149,13 @@ pub(super) fn run_seed(
         }
     };
     let mut timing = performance.timing;
+    if timing.wall_micros == 0
+        && timing.orchestration_micros == 0
+        && timing.orchestration_breakdown.is_none()
+    {
+        timing.orchestration_breakdown = Some(NativeTacticOrchestrationTiming::default());
+    }
+    let setup_top_baseline = ExclusiveTopTimingSnapshot::capture(&timing);
     if timing.persistence_micros > 0 && timing.persistence_breakdown.is_none() {
         timing.persistence_breakdown = Some(NativeTacticPersistenceTiming {
             unattributed_micros: timing.persistence_micros,
@@ -268,7 +275,7 @@ pub(super) fn run_seed(
                 recovery_checkpoint_micros: initial_recovery_micros,
                 ..NativeTacticPersistenceTiming::default()
             },
-        );
+        )?;
     }
     let mut decision_journal = TacticDecisionJournalAppender::open(&seed_root)?;
     if decision_journal.next_decision_index() != campaign.decision_index {
@@ -276,6 +283,18 @@ pub(super) fn run_seed(
             "tactic decision journal cursor is detached from campaign recovery",
         ));
     }
+
+    let seed_setup_wall_micros = elapsed_micros(invocation_started.elapsed());
+    let seed_setup_known_top_micros = setup_top_baseline.checked_delta_total(&timing)?;
+    let seed_setup_orchestration_micros = seed_setup_wall_micros
+        .checked_sub(seed_setup_known_top_micros)
+        .ok_or_else(|| route_message("native tactic seed setup timing is detached"))?;
+    record_orchestration_detail(
+        &mut timing,
+        OrchestrationPhase::SeedSetup,
+        seed_setup_orchestration_micros,
+    )?;
+    record_orchestration_total(&mut timing, seed_setup_orchestration_micros)?;
 
     while campaign.decision_index < config.execution_plan.budgets.decisions_per_lane
         && native_ticks < config.optimization.budgets.simulated_tick_budget
@@ -290,13 +309,22 @@ pub(super) fn run_seed(
             .wall_micros
             .reached(prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed())))
     {
+        let iteration_started = Instant::now();
+        let iteration_top_baseline = ExclusiveTopTimingSnapshot::capture(&timing);
+        let iteration_orchestration_detail_baseline = orchestration_detail_total(&timing)?;
         if cancellation_requested(config) {
             return Err(route_cancelled("native tactic route paused"));
         }
         if let Some(session) = replay_session.as_mut() {
+            let learner_refresh_started = Instant::now();
             if let Some(snapshot) = session.refresh_if_required(&mut campaign)? {
                 consumed_learner_snapshot = snapshot;
             }
+            record_orchestration_detail(
+                &mut timing,
+                OrchestrationPhase::LearnerRefresh,
+                elapsed_micros(learner_refresh_started.elapsed()),
+            )?;
         }
         let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
         let planned_acquisition_rank = lane.acquisition.rank(campaign.decision_index);
@@ -321,6 +349,7 @@ pub(super) fn run_seed(
                 source_frame.saturating_add(horizon.saturating_sub(maximum_tactic_ticks)),
             )
             .map_err(route_error)?;
+            let graph_scheduling_started = Instant::now();
             let [root, frontier] = if demonstration_coverage_pending
                 && !terminal_restart
                 && !terminal_support_acquisition
@@ -361,6 +390,11 @@ pub(super) fn run_seed(
                 )
             }
             .map_err(route_error)?;
+            record_orchestration_detail(
+                &mut timing,
+                OrchestrationPhase::GraphSchedulingAndLeasing,
+                elapsed_micros(graph_scheduling_started.elapsed()),
+            )?;
             let prefer_root = prefer_root_for_periodic_branch(
                 terminal_restart || terminal_support_acquisition,
                 lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
@@ -380,6 +414,7 @@ pub(super) fn run_seed(
                 selected_branch.acquisition.as_ref(),
             );
             branch_acquisition = selected_branch.acquisition.clone();
+            let action_catalog_started = Instant::now();
             let branch_proposals = parameterized_catalog_for_state_with_promoted(
                 seed,
                 campaign.decision_index,
@@ -390,6 +425,12 @@ pub(super) fn run_seed(
                 action_schema_sha256,
                 promoted_tactics,
             )?;
+            record_orchestration_detail(
+                &mut timing,
+                OrchestrationPhase::ActionCatalogConstruction,
+                elapsed_micros(action_catalog_started.elapsed()),
+            )?;
+            let branch_restore_started = Instant::now();
             campaign
                 .restore_branch(
                     selected_branch,
@@ -400,11 +441,15 @@ pub(super) fn run_seed(
                     |_| true,
                 )
                 .map_err(route_error)?;
+            record_orchestration_detail(
+                &mut timing,
+                OrchestrationPhase::GraphSchedulingAndLeasing,
+                elapsed_micros(branch_restore_started.elapsed()),
+            )?;
             let branch_micros = elapsed_micros(branch_started.elapsed());
             timing.checkpoint_branching_micros = timing
                 .checkpoint_branching_micros
                 .saturating_add(branch_micros);
-            timing.orchestration_micros = timing.orchestration_micros.saturating_add(branch_micros);
         }
 
         // Reserve horizon for the tactic Q actually selected at this state,
@@ -421,6 +466,7 @@ pub(super) fn run_seed(
                 .frames
                 .len()
                 .saturating_sub(source_frame as usize) as u64;
+            let action_catalog_started = Instant::now();
             let proposal_feedback =
                 parameterized_feedback_for_state(&campaign, &campaign.current.snapshot, encoder)?;
             let proposals = parameterized_catalog_for_state_with_promoted(
@@ -432,6 +478,11 @@ pub(super) fn run_seed(
                 proposal_feedback,
                 action_schema_sha256,
                 promoted_tactics,
+            )?;
+            record_orchestration_detail(
+                &mut timing,
+                OrchestrationPhase::ActionCatalogConstruction,
+                elapsed_micros(action_catalog_started.elapsed()),
             )?;
             let proposal_catalog = Arc::new(proposals.catalog);
             let proposal_blueprints = Arc::new(proposals.blueprints);
@@ -453,13 +504,27 @@ pub(super) fn run_seed(
             timing.tactic_selection_micros = timing
                 .tactic_selection_micros
                 .saturating_add(selection_micros);
-            timing.orchestration_micros =
-                timing.orchestration_micros.saturating_add(selection_micros);
+            record_orchestration_detail(
+                &mut timing,
+                OrchestrationPhase::TacticSelection,
+                selection_micros,
+            )?;
             if let Some(session) = replay_session.as_mut() {
+                let learner_refresh_started = Instant::now();
                 if let Some(snapshot) = session.refresh_if_required(&mut campaign)? {
                     consumed_learner_snapshot = snapshot;
+                    record_orchestration_detail(
+                        &mut timing,
+                        OrchestrationPhase::LearnerRefresh,
+                        elapsed_micros(learner_refresh_started.elapsed()),
+                    )?;
                     continue;
                 }
+                record_orchestration_detail(
+                    &mut timing,
+                    OrchestrationPhase::LearnerRefresh,
+                    elapsed_micros(learner_refresh_started.elapsed()),
+                )?;
             }
             let primary = preview
                 .proposals
@@ -504,6 +569,7 @@ pub(super) fn run_seed(
                     .saturating_add(horizon.saturating_sub(u64::from(selected_maximum_ticks))),
             )
             .map_err(route_error)?;
+            let graph_scheduling_started = Instant::now();
             let [root, frontier] = if demonstration_coverage_pending
                 && !terminal_restart
                 && !terminal_support_acquisition
@@ -544,6 +610,11 @@ pub(super) fn run_seed(
                 )
             }
             .map_err(route_error)?;
+            record_orchestration_detail(
+                &mut timing,
+                OrchestrationPhase::GraphSchedulingAndLeasing,
+                elapsed_micros(graph_scheduling_started.elapsed()),
+            )?;
             let prefer_root = prefer_root_for_periodic_branch(
                 terminal_restart || terminal_support_acquisition,
                 lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
@@ -563,6 +634,7 @@ pub(super) fn run_seed(
                 selected_branch.acquisition.as_ref(),
             );
             branch_acquisition = selected_branch.acquisition.clone();
+            let action_catalog_started = Instant::now();
             let branch_proposals = parameterized_catalog_for_state_with_promoted(
                 seed,
                 campaign.decision_index,
@@ -573,6 +645,12 @@ pub(super) fn run_seed(
                 action_schema_sha256,
                 promoted_tactics,
             )?;
+            record_orchestration_detail(
+                &mut timing,
+                OrchestrationPhase::ActionCatalogConstruction,
+                elapsed_micros(action_catalog_started.elapsed()),
+            )?;
+            let branch_restore_started = Instant::now();
             campaign
                 .restore_branch(
                     selected_branch,
@@ -583,13 +661,18 @@ pub(super) fn run_seed(
                     |_| true,
                 )
                 .map_err(route_error)?;
+            record_orchestration_detail(
+                &mut timing,
+                OrchestrationPhase::GraphSchedulingAndLeasing,
+                elapsed_micros(branch_restore_started.elapsed()),
+            )?;
             let branch_micros = elapsed_micros(branch_started.elapsed());
             timing.checkpoint_branching_micros = timing
                 .checkpoint_branching_micros
                 .saturating_add(branch_micros);
-            timing.orchestration_micros = timing.orchestration_micros.saturating_add(branch_micros);
         };
         demonstration_intervention_pending = false;
+        let graph_leasing_started = Instant::now();
         let suffix_ticks = campaign
             .route_tape
             .frames
@@ -624,6 +707,11 @@ pub(super) fn run_seed(
             execution_plan_sha256,
             campaign.decision_index,
             &proposal_leases,
+        )?;
+        record_orchestration_detail(
+            &mut timing,
+            OrchestrationPhase::GraphSchedulingAndLeasing,
+            elapsed_micros(graph_leasing_started.elapsed()),
         )?;
 
         let decision_index = campaign.decision_index;
@@ -660,7 +748,7 @@ pub(super) fn run_seed(
                 source_tape_micros: source_tape_persistence_micros,
                 ..NativeTacticPersistenceTiming::default()
             },
-        );
+        )?;
         let source_snapshot_sha256 = source_snapshot.content_sha256().map_err(route_error)?;
         let matching_cached_frontier = cached_frontier.as_ref().filter(|frontier| {
             frontier.state_sha256 == source_snapshot_sha256
@@ -819,9 +907,11 @@ pub(super) fn run_seed(
         timing.result_validation_and_fact_extraction_micros = timing
             .result_validation_and_fact_extraction_micros
             .saturating_add(result_validation_micros);
-        timing.orchestration_micros = timing
-            .orchestration_micros
-            .saturating_add(result_validation_micros);
+        record_orchestration_detail(
+            &mut timing,
+            OrchestrationPhase::ResultValidationAndFactExtraction,
+            result_validation_micros,
+        )?;
         let admission_orchestration_started = Instant::now();
         let terminal_projection_started = Instant::now();
         let terminal_candidates = evaluated
@@ -881,6 +971,11 @@ pub(super) fn run_seed(
             promoted_tactics,
         )?;
         let next_action_catalog_micros = elapsed_micros(next_action_catalog_started.elapsed());
+        record_orchestration_detail(
+            &mut timing,
+            OrchestrationPhase::ActionCatalogConstruction,
+            next_action_catalog_micros,
+        )?;
         let graph_admission_started = Instant::now();
         let step = if config.execution_plan.proposal_policy == TacticProposalPolicy::FrozenPolicy {
             campaign
@@ -988,9 +1083,15 @@ pub(super) fn run_seed(
         timing.campaign_admission_micros = timing
             .campaign_admission_micros
             .saturating_add(campaign_admission_micros);
-        timing.orchestration_micros = timing
-            .orchestration_micros
-            .saturating_add(campaign_admission_micros);
+        record_orchestration_detail(
+            &mut timing,
+            OrchestrationPhase::CampaignAdmission,
+            campaign_admission_micros
+                .checked_sub(next_action_catalog_micros)
+                .ok_or_else(|| {
+                    route_message("native tactic campaign admission timing is detached")
+                })?,
+        )?;
         let evidence_started = Instant::now();
         let selected = &step.step.decision.selected;
         *selection_counts
@@ -1300,12 +1401,42 @@ pub(super) fn run_seed(
             retained_terminal_micros,
             ..NativeTacticPersistenceTiming::default()
         };
+        let named_persistence_micros = persistence_breakdown
+            .checked_total_micros()
+            .ok_or_else(|| route_message("native tactic persistence timing overflowed"))?;
         persistence_breakdown.unattributed_micros = persistence_elapsed
-            .saturating_sub(model_update_micros)
-            .saturating_sub(persistence_breakdown.total_micros());
-        record_persistence_timing(&mut timing, persistence_breakdown);
+            .checked_sub(model_update_micros)
+            .and_then(|without_model| without_model.checked_sub(named_persistence_micros))
+            .ok_or_else(|| route_message("native tactic persistence phases exceed wall"))?;
+        record_persistence_timing(&mut timing, persistence_breakdown)?;
+        let iteration_wall_micros = elapsed_micros(iteration_started.elapsed());
+        let iteration_known_top_micros = iteration_top_baseline.checked_delta_total(&timing)?;
+        let iteration_orchestration_micros = iteration_wall_micros
+            .checked_sub(iteration_known_top_micros)
+            .ok_or_else(|| route_message("native tactic decision timing is detached"))?;
+        if let Some(detail_before) = iteration_orchestration_detail_baseline {
+            let detail_after = orchestration_detail_total(&timing)?.ok_or_else(|| {
+                route_message("native tactic orchestration detail disappeared during a decision")
+            })?;
+            let named_detail_micros = detail_after.checked_sub(detail_before).ok_or_else(|| {
+                route_message("native tactic orchestration detail regressed during a decision")
+            })?;
+            let decision_bookkeeping_micros = iteration_orchestration_micros
+                .checked_sub(named_detail_micros)
+                .ok_or_else(|| {
+                    route_message("native tactic named decision phases exceed decision wall")
+                })?;
+            record_orchestration_detail(
+                &mut timing,
+                OrchestrationPhase::DecisionBookkeeping,
+                decision_bookkeeping_micros,
+            )?;
+        }
+        record_orchestration_total(&mut timing, iteration_orchestration_micros)?;
     }
 
+    let finalization_started_micros = elapsed_micros(invocation_started.elapsed());
+    let finalization_top_baseline = ExclusiveTopTimingSnapshot::capture(&timing);
     let wall_budget_reached =
         config.execution_plan.budgets.wall_micros.reached(
             prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed())),
@@ -1432,15 +1563,7 @@ pub(super) fn run_seed(
             finalization_micros: final_persistence_micros,
             ..NativeTacticPersistenceTiming::default()
         },
-    );
-    timing.wall_micros =
-        prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
-    timing.useful_decisions_per_second_millionths =
-        per_second_millionths(useful_decisions, timing.wall_micros);
-    timing.native_ticks_per_second_millionths =
-        per_second_millionths(native_ticks, timing.wall_micros);
-    timing.episodes_per_second_millionths =
-        per_second_millionths(episode.saturating_add(1), timing.wall_micros);
+    )?;
     if trace.len() as u64 != campaign.decision_index {
         return Err(route_message(
             "in-memory tactic trace is detached from the completed campaign",
@@ -1461,6 +1584,56 @@ pub(super) fn run_seed(
             .iter()
             .any(|proposal| proposal.terminal)
     });
+    let completed_invocation_micros = elapsed_micros(invocation_started.elapsed());
+    let finalization_wall_micros = completed_invocation_micros
+        .checked_sub(finalization_started_micros)
+        .ok_or_else(|| route_message("native tactic finalization clock regressed"))?;
+    let finalization_known_top_micros = finalization_top_baseline.checked_delta_total(&timing)?;
+    let seed_finalization_micros = finalization_wall_micros
+        .checked_sub(finalization_known_top_micros)
+        .ok_or_else(|| route_message("native tactic seed finalization timing is detached"))?;
+    record_orchestration_detail(
+        &mut timing,
+        OrchestrationPhase::SeedFinalization,
+        seed_finalization_micros,
+    )?;
+    record_orchestration_total(&mut timing, seed_finalization_micros)?;
+    timing.wall_micros = prior_wall_micros
+        .checked_add(completed_invocation_micros)
+        .ok_or_else(|| route_message("native tactic seed wall timing overflowed"))?;
+    if timing.orchestration_breakdown.is_some() {
+        let accounted_micros = [
+            timing.tactic_execution_micros,
+            timing.model_update_micros,
+            timing.evidence_projection_micros,
+            timing.persistence_micros,
+            timing.orchestration_micros,
+        ]
+        .into_iter()
+        .try_fold(0_u64, u64::checked_add)
+        .ok_or_else(|| route_message("native tactic seed phase timing overflowed"))?;
+        let timing_boundary_micros = timing
+            .wall_micros
+            .checked_sub(accounted_micros)
+            .ok_or_else(|| route_message("native tactic seed phases exceed seed wall"))?;
+        record_orchestration_detail(
+            &mut timing,
+            OrchestrationPhase::TimingBoundary,
+            timing_boundary_micros,
+        )?;
+        record_orchestration_total(&mut timing, timing_boundary_micros)?;
+    }
+    if timing.orchestration_breakdown.is_some() && !timing.seed_wall_attribution_is_exact() {
+        return Err(route_message(
+            "native tactic seed phases do not reconcile to seed wall",
+        ));
+    }
+    timing.useful_decisions_per_second_millionths =
+        per_second_millionths(useful_decisions, timing.wall_micros);
+    timing.native_ticks_per_second_millionths =
+        per_second_millionths(native_ticks, timing.wall_micros);
+    timing.episodes_per_second_millionths =
+        per_second_millionths(episode.saturating_add(1), timing.wall_micros);
     Ok(CompletedNativeTacticSeed {
         result: NativeTacticSeedResult {
             execution_plan_sha256,
@@ -1507,5 +1680,6 @@ pub(super) fn run_seed(
             trace,
         },
         generated_training,
+        invocation_wall_micros: completed_invocation_micros,
     })
 }

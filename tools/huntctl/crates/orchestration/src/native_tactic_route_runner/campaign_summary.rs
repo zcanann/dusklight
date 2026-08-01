@@ -564,7 +564,7 @@ fn goal_reachability_summary(
     }
 
     NativeTacticCampaignGoalReachabilitySummary {
-        calibration_authority_enforced: route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39,
+        calibration_authority_enforced: supports_current_route_report_schema(&route.schema),
         calibration_decisions,
         deployment_ready_decisions,
         deployment_blocked_decisions,

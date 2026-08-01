@@ -87,8 +87,9 @@ pub(super) fn useful_training_transitions(
 pub(super) fn aggregate_route_timing(
     seeds: &[NativeTacticSeedResult],
     unique_useful_graph_expansions: u64,
-) -> NativeTacticRouteTiming {
+) -> Result<NativeTacticRouteTiming, NativeTacticRouteRunError> {
     let mut timing = NativeTacticRouteTiming::default();
+    let mut exact_orchestration = Some(NativeTacticOrchestrationTiming::default());
     for seed in seeds {
         timing.wall_micros = timing.wall_micros.saturating_add(seed.timing.wall_micros);
         timing.process_launch_micros = timing
@@ -147,6 +148,13 @@ pub(super) fn aggregate_route_timing(
         timing.orchestration_micros = timing
             .orchestration_micros
             .saturating_add(seed.timing.orchestration_micros);
+        exact_orchestration =
+            match (exact_orchestration, seed.timing.orchestration_breakdown) {
+                (Some(total), Some(seed)) => Some(total.checked_merge(seed).ok_or_else(|| {
+                    route_message("native tactic orchestration timing overflowed")
+                })?),
+                _ => None,
+            };
         timing.result_validation_and_fact_extraction_micros = timing
             .result_validation_and_fact_extraction_micros
             .saturating_add(seed.timing.result_validation_and_fact_extraction_micros);
@@ -169,23 +177,31 @@ pub(super) fn aggregate_route_timing(
             .reporting_micros
             .saturating_add(seed.timing.reporting_micros);
     }
+    timing.orchestration_breakdown = exact_orchestration;
     refresh_route_throughput(&mut timing, seeds, unique_useful_graph_expansions);
-    timing
+    Ok(timing)
 }
 
 pub(super) fn record_persistence_timing(
     timing: &mut NativeTacticRouteTiming,
     breakdown: NativeTacticPersistenceTiming,
-) {
-    let persistence_micros = breakdown.total_micros();
-    timing.persistence_micros = timing.persistence_micros.saturating_add(persistence_micros);
+) -> Result<(), NativeTacticRouteRunError> {
+    let persistence_micros = breakdown
+        .checked_total_micros()
+        .ok_or_else(|| route_message("native tactic persistence timing overflowed"))?;
+    timing.persistence_micros = timing
+        .persistence_micros
+        .checked_add(persistence_micros)
+        .ok_or_else(|| route_message("native tactic persistence total overflowed"))?;
     timing.evidence_projection_and_persistence_micros = timing
         .evidence_projection_and_persistence_micros
-        .saturating_add(persistence_micros);
+        .checked_add(persistence_micros)
+        .ok_or_else(|| route_message("native tactic evidence timing overflowed"))?;
     timing
         .persistence_breakdown
         .get_or_insert_default()
         .merge(breakdown);
+    Ok(())
 }
 
 pub(super) fn accumulated_coordinator_wall_micros(

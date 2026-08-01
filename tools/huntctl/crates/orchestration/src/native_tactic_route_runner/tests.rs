@@ -969,7 +969,7 @@ fn throughput_rates_use_campaign_unique_graph_work_and_sum_seed_phases() {
     };
     // The campaign authority may be smaller than the sum of per-seed graph
     // snapshots when those snapshots overlap.
-    let timing = aggregate_route_timing(&[seed], 4);
+    let timing = aggregate_route_timing(&[seed], 4).unwrap();
 
     assert_eq!(timing.useful_decisions_per_second_millionths, 1_000_000);
     assert_eq!(

@@ -95,6 +95,7 @@ use huntctl::search_evaluator::native_tactic_policy_runner::{
     NativeTacticPolicyRunConfig, run_native_tactic_policy,
 };
 use huntctl::search_evaluator::native_tactic_route_runner::{
+    NATIVE_TACTIC_CAMPAIGN_COMPLETION_FILE, NativeTacticCampaignCompletion,
     NativeTacticCampaignSummary, NativeTacticColdReplayConfig,
     NativeTacticColdReplayEvidenceBundle, NativeTacticDemonstrationReport,
     NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest, NativeTacticFaultInjector,
@@ -423,6 +424,7 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "execute-tactic-policy"
             | "prove-generalized-tactics"
             | "tactic-route"
+            | "validate-tactic-campaign-completion"
             | "project-tactic-route-accounting"
             | "project-tactic-campaign-summary"
             | "validate-tactic-campaign-summary"
@@ -508,6 +510,7 @@ mod tests {
             "seal-tactic-fault-recovery",
             "validate-tactic-fault-recovery-bundle",
             "validate-tactic-campaign-summary",
+            "validate-tactic-campaign-completion",
             "project-tactic-campaign-summary",
             "project-tactic-route-accounting",
             "audit-post-terminal-tactic-controls",

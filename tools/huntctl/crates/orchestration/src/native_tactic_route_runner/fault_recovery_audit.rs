@@ -105,8 +105,8 @@ pub(super) fn build_native_tactic_fault_recovery_audit(
         serde_json::from_slice(control_bytes).map_err(route_error)?;
     let recovered: NativeTacticRouteReport =
         serde_json::from_slice(recovered_bytes).map_err(route_error)?;
-    if control.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39
-        || recovered.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39
+    if !supports_current_route_report_schema(&control.schema)
+        || !supports_current_route_report_schema(&recovered.schema)
         || control.seeds.len() != 1
         || recovered.seeds.len() != 1
     {
