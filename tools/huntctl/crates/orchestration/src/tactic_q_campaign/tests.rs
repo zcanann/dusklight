@@ -681,6 +681,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         .unwrap();
     assert_eq!(leased.batch.proposals, vec![decision.selected.clone()]);
     assert_eq!(leased.leases.len(), 1);
+    scheduled.state_graph.as_ref().unwrap().validate().unwrap();
     leased.scheduler_decision.validate().unwrap();
     assert_eq!(
         leased.scheduler_decision.learner_model_sha256,

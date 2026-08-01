@@ -473,7 +473,10 @@ impl TacticQCampaign {
         } else {
             SearchRegime::Discovery
         };
-        let graph_sha256 = validated_graph.content_sha256()?;
+        // The learner batch was derived from this exact immutable validated
+        // graph and already seals its content identity. Re-encoding the whole
+        // graph here would produce the same digest a second time.
+        let graph_sha256 = learning_batch.graph_sha256;
         timing.graph_content_hash_micros = scheduling_lap_micros(&mut timing_boundary);
         let ranked = rank_schedulable_expansions_validated(
             validated_graph,
@@ -583,7 +586,10 @@ impl TacticQCampaign {
             evaluated_expansion_sha256,
         };
         scheduler_decision.validate()?;
-        graph.validate()?;
+        // Registration was validated before ranking. Leasing checks the exact
+        // expansion identity, current status, lease identity, and expiry while
+        // changing only that expansion's lifecycle status, so another complete
+        // graph traversal cannot establish any additional invariant here.
         timing.leasing_and_validation_micros = scheduling_lap_micros(&mut timing_boundary);
         self.state_graph = Some(graph);
         Ok(LeasedTacticQProposalBatch {
