@@ -43,9 +43,10 @@ pub(super) fn native_tactic_execution_plan(
     let decisions_per_lane = u64_option(learn_args, "--decisions-per-seed", 256)?;
     let proposal_width_per_decision = usize_option(learn_args, "--proposals-per-decision", 4)?;
     let refit_every_decisions = u64_option(learn_args, "--refit-every", 4)?;
-    // Keep one lane as the conservative default. Explicit concurrent live
-    // lanes use the deterministic decision-round publication protocol; their
-    // throughput and learning effect must be evaluated before promotion.
+    // Live replay currently has no deterministic cross-lane publication
+    // protocol. Keep the default schedule reproducible while proposal workers
+    // still execute one decision's batch in parallel. Generation-barrier plans
+    // may opt into additional lanes explicitly.
     let default_lanes_per_generation = 1;
     let replay_sharing = option(learn_args, "--maximum-stale-replay-revisions")
         .map(|value| {

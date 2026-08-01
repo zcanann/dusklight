@@ -75,7 +75,6 @@ pub(super) fn run_seed_coordinator(
     content_store: TacticQContentStore,
     inherited_learner_snapshot: Arc<TacticQImmutableLearnerSnapshot>,
     live_learner: Option<SharedTacticLearnerAuthority>,
-    round_coordinator: Option<SharedDecisionRoundCoordinator>,
     seed_index: usize,
     seed: u64,
 ) -> Result<CompletedNativeTacticSeed, NativeTacticRouteRunError> {
@@ -127,7 +126,6 @@ pub(super) fn run_seed_coordinator(
             content_store,
             inherited_learner_snapshot,
             live_learner,
-            round_coordinator,
             seed_index,
             seed,
         )?;
