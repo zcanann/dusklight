@@ -38,3 +38,35 @@ cross-seed experience until a generation boundary removed a known terminal,
 so it cannot replace fresh sequential learning. Future parallel schedules must
 preserve rapid propagation of valuable experience or demonstrate equal/better
 terminal discovery under matched native budgets.
+
+## Multi-generation follow-up
+
+A four-seed comparison used two generations, 14 decisions per seed, four
+proposals per decision, two workers, branch cadence 7, and refit cadence 2.
+The second barrier generation consumed the merged first-generation replay.
+Both cells passed completion validation and the V6 scratch audit.
+
+| Measurement | Sequential live replay | Two-lane generation barrier | Change |
+| --- | ---: | ---: | ---: |
+| Campaign wall time | 208.666 s | 138.042 s | -33.8% |
+| Unique useful expansions | 224 | 223 | -1 |
+| Useful expansions/s | 1.073 | 1.615 | +50.5% |
+| Native ticks | 4,998 | 4,726 | -272 |
+| Native ticks/s | 23.952 | 34.236 | +42.9% |
+| Worker busy share | 51.57% | 77.35% | +25.78 points |
+| Aggregate worker idle | 194.174 s | 58.793 s | -69.7% |
+| Terminal seeds | 0 | 0 | no proof |
+
+The sequential cell also lost the previously observed terminal after adding two
+earlier seeds and changing update cadence. This prevents a terminal-quality
+claim for either schedule and exposes a more fundamental problem: learned
+behavior is brittle to ordinary curriculum composition. Improving raw capacity
+alone will not make the framework useful until successful behavior survives
+additional valid replay and reasonable cadence changes.
+
+The sequential report/audit SHA-256 values are
+`a66abfaa769a6c28058edb58c34bd94247d66bcd6dec40bf379ddd08a7229744`
+and `452ae4365d84ce817378590c206f068557fb954760c66b0231a8bae1895b4758`.
+The barrier report/audit values are
+`69f203a0526331c0388ca4c6a323712de45a4556dd42b120e5becc70ab04bcf1`
+and `2afe6322bdeb1d669b8e8dd5ba18925213a589a1ba08a75070b268d346b5da74`.

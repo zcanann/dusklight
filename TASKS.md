@@ -78,6 +78,9 @@ route-specific exception.
   value and authenticated native tick cost.
 - Support online collection, off-policy replay, prioritized reuse, temporal
   credit assignment, continued exploration, and escape from local optima.
+- Make useful behavior stable across ordinary seed ordering, campaign
+  composition, and update cadence; a terminal found by one curriculum must not
+  disappear merely because additional valid experience precedes it.
 - Surface the complete legal action set at each decision, including prompted
   actions such as roll, jump, mount, lift, or future game-specific affordances.
 - Demonstrate causality using learned, frozen-policy, and random-valid treatments
