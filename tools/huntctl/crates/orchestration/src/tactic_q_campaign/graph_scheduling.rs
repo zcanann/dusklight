@@ -19,6 +19,8 @@ pub const TACTIC_SCHEDULER_DECISION_SCHEMA_V1: &str = "dusklight-tactic-schedule
 #[serde(deny_unknown_fields)]
 pub struct TacticGraphSchedulingTiming {
     pub registration_micros: u64,
+    #[serde(default)]
+    pub graph_validation_micros: u64,
     pub graph_projection_micros: u64,
     pub replay_fit_micros: u64,
     pub exact_action_ranking_micros: u64,
@@ -32,6 +34,7 @@ impl TacticGraphSchedulingTiming {
     pub fn checked_total_micros(self) -> Option<u64> {
         [
             self.registration_micros,
+            self.graph_validation_micros,
             self.graph_projection_micros,
             self.replay_fit_micros,
             self.exact_action_ranking_micros,
@@ -49,6 +52,9 @@ impl TacticGraphSchedulingTiming {
             registration_micros: self
                 .registration_micros
                 .checked_add(other.registration_micros)?,
+            graph_validation_micros: self
+                .graph_validation_micros
+                .checked_add(other.graph_validation_micros)?,
             graph_projection_micros: self
                 .graph_projection_micros
                 .checked_add(other.graph_projection_micros)?,
@@ -368,9 +374,12 @@ impl TacticQCampaign {
         }
         timing.registration_micros = scheduling_lap_micros(&mut timing_boundary);
         let validated_graph = graph.validated()?;
+        timing.graph_validation_micros = scheduling_lap_micros(&mut timing_boundary);
+        let hashed_graph = validated_graph.hashed()?;
+        timing.graph_content_hash_micros = scheduling_lap_micros(&mut timing_boundary);
         let exact_learner = ExactGraphTableLearner;
         let learner_contract = GraphLearnerContract::default();
-        let learning_batch = GraphLearningBatch::from_validated_graph(validated_graph)?;
+        let learning_batch = GraphLearningBatch::from_hashed_graph(hashed_graph)?;
         timing.graph_projection_micros = scheduling_lap_micros(&mut timing_boundary);
         let exact_snapshot = if learning_batch.rows.is_empty() {
             exact_learner.fit(&learner_contract, &learning_batch)?
@@ -477,7 +486,6 @@ impl TacticQCampaign {
         // graph and already seals its content identity. Re-encoding the whole
         // graph here would produce the same digest a second time.
         let graph_sha256 = learning_batch.graph_sha256;
-        timing.graph_content_hash_micros = scheduling_lap_micros(&mut timing_boundary);
         let ranked = rank_schedulable_expansions_validated(
             validated_graph,
             regime,

@@ -1,6 +1,6 @@
 use crate::state_graph::{
-    ActionExpansionStatus, ExactStateId, ExpansionEvidenceAuthority, StateGraph, StateGraphError,
-    ValidatedStateGraph,
+    ActionExpansionStatus, ExactStateId, ExpansionEvidenceAuthority, HashedStateGraph, StateGraph,
+    StateGraphError, ValidatedStateGraph,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_control::option_execution::OptionEndReason;
@@ -191,7 +191,14 @@ impl GraphLearningBatch {
     pub(crate) fn from_validated_graph(
         validated: ValidatedStateGraph<'_>,
     ) -> Result<Self, GraphLearnerError> {
-        let graph = validated.graph();
+        Self::from_hashed_graph(validated.hashed()?)
+    }
+
+    pub(crate) fn from_hashed_graph(
+        hashed: HashedStateGraph<'_>,
+    ) -> Result<Self, GraphLearnerError> {
+        let validated = hashed.validated();
+        let graph = hashed.graph();
         let exact_returns = validated.exact_terminal_returns()?;
         let mut rows = Vec::new();
         for expansion in graph.expansions() {
@@ -275,7 +282,7 @@ impl GraphLearningBatch {
         }
         let batch = Self {
             schema: GRAPH_LEARNING_BATCH_SCHEMA_V2.into(),
-            graph_sha256: validated.content_sha256()?,
+            graph_sha256: hashed.content_sha256(),
             rows,
         };
         batch.validate()?;

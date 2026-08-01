@@ -68,6 +68,14 @@ pub(crate) struct ValidatedStateGraph<'a> {
     graph: &'a StateGraph,
 }
 
+/// Read-only proof that a validated graph's complete content identity was
+/// computed from this exact immutable snapshot.
+#[derive(Clone, Copy)]
+pub(crate) struct HashedStateGraph<'a> {
+    validated: ValidatedStateGraph<'a>,
+    content_sha256: Digest,
+}
+
 impl<'a> ValidatedStateGraph<'a> {
     pub(crate) fn graph(self) -> &'a StateGraph {
         self.graph
@@ -81,6 +89,27 @@ impl<'a> ValidatedStateGraph<'a> {
         Ok(Digest(
             Sha256::digest(self.graph.encode_validated()?).into(),
         ))
+    }
+
+    pub(crate) fn hashed(self) -> Result<HashedStateGraph<'a>, StateGraphError> {
+        Ok(HashedStateGraph {
+            validated: self,
+            content_sha256: self.content_sha256()?,
+        })
+    }
+}
+
+impl<'a> HashedStateGraph<'a> {
+    pub(crate) fn validated(self) -> ValidatedStateGraph<'a> {
+        self.validated
+    }
+
+    pub(crate) fn graph(self) -> &'a StateGraph {
+        self.validated.graph()
+    }
+
+    pub(crate) fn content_sha256(self) -> Digest {
+        self.content_sha256
     }
 }
 
