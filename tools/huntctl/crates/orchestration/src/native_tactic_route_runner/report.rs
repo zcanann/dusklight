@@ -995,6 +995,10 @@ pub struct NativeTacticDecisionTrace {
     /// this complete proposal batch.
     #[serde(default)]
     pub completed_executable_graph_expansions: u64,
+    /// Graph-authoritative best source-relative terminal tick immediately
+    /// after this decision, including exact-state route relaxation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub best_authenticated_tick_after_decision: Option<u64>,
     pub before: NativeTacticStateTrace,
     pub after: NativeTacticStateTrace,
     pub measurements: Vec<NativeTacticMeasurementTrace>,
@@ -1178,6 +1182,8 @@ pub(super) struct NativeTacticDecisionRecord {
     pub(super) visited_states: usize,
     #[serde(default)]
     pub(super) completed_executable_graph_expansions: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) best_authenticated_tick_after_decision: Option<u64>,
     /// The exact state-local action surface and value estimates used by the
     /// decision. Older journals omitted this evidence and decode as empty.
     #[serde(default)]

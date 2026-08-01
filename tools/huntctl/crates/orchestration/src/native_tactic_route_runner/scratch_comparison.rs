@@ -201,7 +201,7 @@ impl NativeTacticScratchComparisonReport {
         let first_plan = read_plan(&repository_root, first)?;
         let mut cells = Vec::with_capacity(routes.len());
         for route in &routes {
-            if !matches!(route.schema.as_str(), NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V42)
+            if !matches!(route.schema.as_str(), NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V43)
                 || route
                     .seeds
                     .iter()
@@ -219,7 +219,7 @@ impl NativeTacticScratchComparisonReport {
                 || route.timing.persistence_breakdown.is_none()
             {
                 return Err(route_message(
-                    "scratch comparison v6 requires complete v42 campaign evidence",
+                    "scratch comparison v6 requires complete v43 campaign evidence",
                 ));
             }
             let plan = read_plan(&repository_root, route)?;

@@ -131,6 +131,11 @@ pub(super) fn read_completed_seed_result(
         .trace
         .iter()
         .any(|decision| decision.completed_executable_graph_expansions != 0);
+    let first_authenticated_tick = result
+        .trace
+        .iter()
+        .find(|decision| decision.best_authenticated_tick_after_decision.is_some());
+    let has_authenticated_tick_timeline = first_authenticated_tick.is_some();
     if result.execution_plan_sha256 != execution_plan_sha256
         || result.seed != seed
         || result.decisions > decisions_per_seed
@@ -161,6 +166,24 @@ pub(super) fn read_completed_seed_result(
                     .last()
                     .map(|decision| decision.completed_executable_graph_expansions)
                     != Some(result.unique_useful_graph_expansions)))
+        || (has_authenticated_tick_timeline
+            && (first_authenticated_tick.map(|decision| decision.decision_index)
+                != result.first_terminal_decision_index
+                || result.trace.windows(2).any(|pair| {
+                    match (
+                        pair[0].best_authenticated_tick_after_decision,
+                        pair[1].best_authenticated_tick_after_decision,
+                    ) {
+                        (Some(_), None) => true,
+                        (Some(previous), Some(next)) => next > previous,
+                        _ => false,
+                    }
+                })
+                || result
+                    .trace
+                    .last()
+                    .and_then(|decision| decision.best_authenticated_tick_after_decision)
+                    != result.best_authenticated_tick))
         || (has_durable_wall_timing
             && (result.first_terminal_decision_index
                 != first_terminal.map(|decision| decision.decision_index)

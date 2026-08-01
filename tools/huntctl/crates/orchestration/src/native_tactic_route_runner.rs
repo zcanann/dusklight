@@ -105,6 +105,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V40: &str = "dusklight-native-tactic-route-report/v40";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V41: &str = "dusklight-native-tactic-route-report/v41";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V42: &str = "dusklight-native-tactic-route-report/v42";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V43: &str = "dusklight-native-tactic-route-report/v43";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -262,9 +263,9 @@ pub use scratch_evidence_bundle::{
 mod scratch_campaign_audit;
 pub use scratch_campaign_audit::{
     NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2, NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3,
-    NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4, NativeTacticCampaignResourceAudit,
-    NativeTacticScratchCampaignAudit, NativeTacticScratchDecisionAudit,
-    NativeTacticScratchSeedAudit, NativeTacticScratchStopReason,
+    NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4, NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V5,
+    NativeTacticCampaignResourceAudit, NativeTacticScratchCampaignAudit,
+    NativeTacticScratchDecisionAudit, NativeTacticScratchSeedAudit, NativeTacticScratchStopReason,
     NativeTacticScratchTerminalImprovementAudit,
 };
 mod scratch_comparison;
@@ -868,7 +869,7 @@ fn run_native_tactic_route_with_optional_fleet(
         useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
     let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
     let mut report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V42.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V43.into(),
         orchestrator_executable_sha256: Some(orchestrator_executable_sha256),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
@@ -1015,6 +1016,7 @@ pub(super) fn supports_current_route_report_schema(schema: &str) -> bool {
             | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V40
             | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V41
             | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V42
+            | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V43
     )
 }
 

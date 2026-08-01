@@ -1204,6 +1204,10 @@ pub(super) fn run_seed(
             .count() as u64;
         decision_restore_accounting.refresh_rates();
         native_restore_accounting.merge(&decision_restore_accounting);
+        let best_authenticated_tick_after_decision = campaign
+            .best_graph_terminal_path()
+            .map_err(route_error)?
+            .and_then(|path| path.root_to_terminal_ticks.checked_sub(1));
         let decision_trace = NativeTacticDecisionTrace {
             execution_plan_sha256,
             decision_index,
@@ -1251,6 +1255,7 @@ pub(super) fn run_seed(
                 campaign.completed_executable_graph_expansion_count(),
             )
             .map_err(route_error)?,
+            best_authenticated_tick_after_decision,
             before: tactic_state_trace(&step.step.transition.before)?,
             after: tactic_state_trace(&step.step.transition.after)?,
             measurements: Vec::new(),

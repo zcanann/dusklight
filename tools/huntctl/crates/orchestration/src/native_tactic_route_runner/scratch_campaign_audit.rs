@@ -12,6 +12,8 @@ pub const NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3: &str =
     "dusklight-native-tactic-scratch-campaign-audit/v3";
 pub const NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4: &str =
     "dusklight-native-tactic-scratch-campaign-audit/v4";
+pub const NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V5: &str =
+    "dusklight-native-tactic-scratch-campaign-audit/v5";
 
 fn is_zero_u64(value: &u64) -> bool {
     *value == 0
@@ -82,6 +84,8 @@ pub struct NativeTacticScratchDecisionAudit {
     pub terminal_proposal_count: u64,
     pub retained_proposal_count: u64,
     pub completed_executable_graph_expansions: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub best_authenticated_tick_after_decision: Option<u64>,
     pub terminal: bool,
 }
 
@@ -226,7 +230,7 @@ impl NativeTacticScratchCampaignAudit {
         }
         let resources = resource_audit(route, &plan)?;
         let mut audit = Self {
-            schema: NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4.into(),
+            schema: NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V5.into(),
             content_sha256: Digest::ZERO,
             route_report_sha256: route_report_sha256(route)?,
             execution_plan_sha256: route.execution_plan_sha256,
@@ -250,25 +254,29 @@ impl NativeTacticScratchCampaignAudit {
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2 => seed_is_valid_v2,
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3 => seed_is_valid_v3,
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4 => seed_is_valid_v3,
+            NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V5 => seed_is_valid_v5,
             _ => {
                 return Err(route_message(
                     "scratch campaign audit schema is unsupported",
                 ));
             }
         };
-        let campaign_accounting_valid =
-            if self.schema == NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4 {
-                self.useful_graph_expansion_set_sha256 != Digest::ZERO
-                    && self.unique_useful_graph_expansions
-                        <= self
-                            .seeds
-                            .iter()
-                            .map(|seed| seed.unique_useful_graph_expansions)
-                            .sum()
-            } else {
-                self.unique_useful_graph_expansions == 0
-                    && self.useful_graph_expansion_set_sha256 == Digest::ZERO
-            };
+        let campaign_accounting_valid = if matches!(
+            self.schema.as_str(),
+            NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4
+                | NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V5
+        ) {
+            self.useful_graph_expansion_set_sha256 != Digest::ZERO
+                && self.unique_useful_graph_expansions
+                    <= self
+                        .seeds
+                        .iter()
+                        .map(|seed| seed.unique_useful_graph_expansions)
+                        .sum()
+        } else {
+            self.unique_useful_graph_expansions == 0
+                && self.useful_graph_expansion_set_sha256 == Digest::ZERO
+        };
         if self.content_sha256 == Digest::ZERO
             || self.route_report_sha256 == Digest::ZERO
             || self.execution_plan_sha256 == Digest::ZERO
@@ -614,7 +622,7 @@ fn seed_audit(
             *selected = selected
                 .checked_add(1)
                 .ok_or_else(|| route_message("scratch proposal selection count overflows"))?;
-            if proposal.terminal {
+            if proposal.terminal && trace.best_authenticated_tick_after_decision.is_none() {
                 let graph_authenticated =
                     trace.scheduler_decision.as_ref().is_some_and(|scheduler| {
                         proposal_matches_graph_expansion(graph, scheduler, proposal_index, proposal)
@@ -648,6 +656,22 @@ fn seed_audit(
                 }
             }
         }
+        if let Some(authenticated_tick) = trace.best_authenticated_tick_after_decision {
+            if trace.completed_executable_graph_expansions == 0 {
+                terminal_improvement_timing_complete = false;
+            } else if best_observed_terminal_tick
+                .is_none_or(|incumbent| authenticated_tick < incumbent)
+            {
+                best_observed_terminal_tick = Some(authenticated_tick);
+                terminal_improvements.push(NativeTacticScratchTerminalImprovementAudit {
+                    decision_index: trace.decision_index,
+                    cumulative_wall_micros: trace.cumulative_wall_micros,
+                    cumulative_proposal_expansions: proposal_expansions,
+                    cumulative_useful_graph_expansions: trace.completed_executable_graph_expansions,
+                    authenticated_tick,
+                });
+            }
+        }
         decisions.push(NativeTacticScratchDecisionAudit {
             decision_index: trace.decision_index,
             cumulative_wall_micros: trace.cumulative_wall_micros,
@@ -677,6 +701,7 @@ fn seed_audit(
                 .filter(|proposal| proposal.retained)
                 .count() as u64,
             completed_executable_graph_expansions: trace.completed_executable_graph_expansions,
+            best_authenticated_tick_after_decision: trace.best_authenticated_tick_after_decision,
             terminal: trace.terminal,
         });
     }
@@ -787,6 +812,32 @@ fn stop_reasons(
         reasons.push(NativeTacticScratchStopReason::LegacyUnreportedBudget);
     }
     reasons
+}
+
+fn seed_is_valid_v5(seed: &NativeTacticScratchSeedAudit) -> bool {
+    if !seed_is_valid_v3(seed) || !seed.terminal_improvement_timing_complete {
+        return false;
+    }
+    let mut prior_best = None;
+    for decision in &seed.decisions {
+        match decision.best_authenticated_tick_after_decision {
+            None if prior_best.is_some() => return false,
+            None => {}
+            Some(best) => {
+                if prior_best.is_none()
+                    && (Some(decision.decision_index) != seed.first_terminal_decision_index
+                        || decision.terminal_proposal_count == 0)
+                {
+                    return false;
+                }
+                if prior_best.is_some_and(|prior| best > prior) {
+                    return false;
+                }
+                prior_best = Some(best);
+            }
+        }
+    }
+    prior_best == seed.best_authenticated_tick
 }
 
 fn seed_is_valid_v3(seed: &NativeTacticScratchSeedAudit) -> bool {
@@ -1028,7 +1079,10 @@ fn terminal_improvement_timeline_is_valid(seed: &NativeTacticScratchSeedAudit) -
                 == decision.completed_executable_graph_expansions
             && improvement.cumulative_proposal_expansions > 0
             && improvement.cumulative_useful_graph_expansions > 0
-            && decision.terminal_proposal_count > 0
+            && (decision.best_authenticated_tick_after_decision
+                == Some(improvement.authenticated_tick)
+                || (decision.best_authenticated_tick_after_decision.is_none()
+                    && decision.terminal_proposal_count > 0))
     })
 }
 
@@ -1156,6 +1210,7 @@ mod tests {
             terminal_proposal_count: 1,
             retained_proposal_count: 1,
             completed_executable_graph_expansions,
+            best_authenticated_tick_after_decision: None,
             terminal: true,
         }
     }
@@ -1284,6 +1339,17 @@ mod tests {
         let mut detached_useful_work = seed;
         detached_useful_work.useful_graph_expansions_to_first_terminal = Some(2);
         assert!(!first_terminal_evidence_is_valid(&detached_useful_work));
+    }
+
+    #[test]
+    fn v5_requires_graph_authoritative_best_tick_after_each_terminal_decision() {
+        let mut seed = valid_terminal_seed_audit();
+        assert!(!seed_is_valid_v5(&seed));
+        seed.decisions[0].best_authenticated_tick_after_decision = Some(9);
+        assert!(seed_is_valid_v5(&seed));
+
+        seed.decisions[0].best_authenticated_tick_after_decision = Some(10);
+        assert!(!seed_is_valid_v5(&seed));
     }
 
     #[test]
