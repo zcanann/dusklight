@@ -42,10 +42,18 @@ terminal, but it does not prove that live replay learned, selected, or
 reproduced the route. The barrier treatment lost a stochastic coverage hit,
 not an established learned behavior.
 
+The control did consume the terminal structurally. At decision 13 the graph
+scheduler changed to `optimization`, reported `terminal_value_supported`, and
+ranked a source with an exact 315-tick total path. Its remaining eleven
+proposal batches did not reproduce or improve the terminal. This is evidence
+that the exact graph fed the discovery back into search, but not that the
+learned treatment used it better than a non-learning search would have.
+
 The schedule is not promoted as the default: the utilization gain is real, but
 neither treatment supplies causal learning evidence. Future schedule decisions
-must report discovery separately from policy adoption and compare learned,
-frozen, and random-valid treatments under matched native budgets.
+must report discovery separately from retained-continuation selection and
+compare adaptive, frozen, and random-valid treatments under matched native
+budgets.
 
 ## Multi-generation follow-up
 

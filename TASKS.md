@@ -78,8 +78,9 @@ route-specific exception.
   value and authenticated native tick cost.
 - Separate exploration discovery from policy adoption and optimization. A
   terminal reached by an unselected coverage proposal proves only that search
-  found it; learning counts only when retained experience makes future policy
-  choices reproduce or improve terminal-producing behavior.
+  found it; learning counts only when retained experience causally improves
+  subsequent search or policy behavior relative to matched non-learning
+  controls. Online continuation need not imitate a retained winning route.
 - Support online collection, off-policy replay, prioritized reuse, temporal
   credit assignment, continued exploration, and escape from local optima.
 - Make useful behavior stable across ordinary seed ordering, campaign

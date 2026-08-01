@@ -72,8 +72,8 @@ pub struct NativeTacticCampaignOutcomeSummary {
     /// Authenticated terminal proposals evaluated across the campaign.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub terminal_proposals: u64,
-    /// Decisions whose retained proposal terminated. This is policy adoption,
-    /// not by itself causal proof that learning produced the choice.
+    /// Decisions whose retained continuation proposal terminated. This is not
+    /// by itself causal proof that learning produced the choice.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub selected_terminal_decisions: u64,
     /// Seeds containing at least one selected terminal decision.
@@ -1025,7 +1025,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_outcomes_separate_discovery_from_policy_adoption() {
+    fn terminal_outcomes_separate_discovery_from_retained_continuation() {
         let (_, mut route, _) = retained_report_and_plan();
         route.seeds[0].trace[0]
             .proposal_batch
