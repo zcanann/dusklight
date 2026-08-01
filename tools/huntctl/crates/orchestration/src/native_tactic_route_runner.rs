@@ -163,6 +163,12 @@ pub use report::{
     NativeTacticRouteRunConfig, NativeTacticRouteTiming, NativeTacticSeedResult,
     NativeTacticSeedStopReason, NativeTacticStateTrace, NativeTacticValueTrace,
 };
+mod completion_marker;
+use completion_marker::publish_completion;
+pub use completion_marker::{
+    NATIVE_TACTIC_CAMPAIGN_COMPLETION_FILE, NATIVE_TACTIC_CAMPAIGN_COMPLETION_SCHEMA_V1,
+    NativeTacticCampaignCompletion,
+};
 mod campaign_summary;
 pub use campaign_summary::{
     NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE, NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V1,
@@ -388,7 +394,7 @@ fn run_native_tactic_route_with_optional_fleet(
             config.output_root.display()
         )));
     }
-    let (report_path, summary_path) =
+    let (report_path, summary_path, completion_path) =
         prepare_campaign_completion(config.output_root, config.resume)?;
     fs::create_dir_all(config.output_root).map_err(route_error)?;
     let execution_plan_path = config.output_root.join(NATIVE_TACTIC_EXECUTION_PLAN_FILE);
@@ -902,17 +908,31 @@ fn run_native_tactic_route_with_optional_fleet(
     };
     serde_json::to_writer(std::io::sink(), &report).map_err(route_error)?;
     report.timing.reporting_micros = elapsed_micros(reporting_started.elapsed());
-    let summary = NativeTacticCampaignSummary::build(&report, config.execution_plan)?;
-    publish_new_atomic(&summary_path, &summary.to_pretty_json()?)?;
-    // report.json is deliberately the last durable publication. Its presence
-    // therefore proves that every required completion artifact was published.
-    publish_new_atomic(
-        &report_path,
-        &serde_json::to_vec_pretty(&report).map_err(route_error)?,
-    )?;
+    let report_build_micros = report.timing.reporting_micros;
+    let fleet_shutdown_started = Instant::now();
     if let Some(fleet) = owned_fleet {
         fleet.shutdown()?;
     }
+    let fleet_shutdown_micros = elapsed_micros(fleet_shutdown_started.elapsed());
+    let final_artifact_persistence_started = Instant::now();
+    let summary = NativeTacticCampaignSummary::build(&report, config.execution_plan)?;
+    let summary_bytes = summary.to_pretty_json()?;
+    let report_bytes = serde_json::to_vec_pretty(&report).map_err(route_error)?;
+    publish_new_atomic(&summary_path, &summary_bytes)?;
+    publish_new_atomic(&report_path, &report_bytes)?;
+    let final_artifact_persistence_micros =
+        elapsed_micros(final_artifact_persistence_started.elapsed());
+    let completion = NativeTacticCampaignCompletion::build(
+        execution_plan_sha256,
+        &report_bytes,
+        &summary_bytes,
+        report.timing.wall_micros,
+        report_build_micros,
+        fleet_shutdown_micros,
+        final_artifact_persistence_micros,
+        elapsed_micros(campaign_started.elapsed()),
+    )?;
+    publish_completion(&completion_path, &completion)?;
     Ok(report)
 }
 
@@ -1408,20 +1428,26 @@ fn publish_new_atomic(path: &Path, bytes: &[u8]) -> Result<(), NativeTacticRoute
 fn prepare_campaign_completion(
     output_root: &Path,
     resume: bool,
-) -> Result<(PathBuf, PathBuf), NativeTacticRouteRunError> {
+) -> Result<(PathBuf, PathBuf, PathBuf), NativeTacticRouteRunError> {
     let report_path = output_root.join("report.json");
     let summary_path = output_root.join(NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE);
-    if report_path.exists() {
+    let completion_path = output_root.join(NATIVE_TACTIC_CAMPAIGN_COMPLETION_FILE);
+    if completion_path.exists() {
+        let completion = NativeTacticCampaignCompletion::read(&completion_path)?;
+        completion.validate_files(&report_path, &summary_path)?;
         return Err(route_message("completed tactic route cannot be resumed"));
     }
-    // The report is the completion marker and is always published last. A
-    // summary without it can only be an interrupted finalization; discard that
-    // exact derived artifact so resume can rebuild it from durable campaign
-    // authority instead of treating a partial completion as final.
-    if resume && summary_path.exists() {
-        fs::remove_file(&summary_path).map_err(route_error)?;
+    // The binary marker is published only after fleet shutdown and both final
+    // artifacts. Without it, either JSON file is an interrupted derived tail
+    // and resume rebuilds it from durable campaign authority.
+    if resume {
+        for derived in [&summary_path, &report_path] {
+            if derived.exists() {
+                fs::remove_file(derived).map_err(route_error)?;
+            }
+        }
     }
-    Ok((report_path, summary_path))
+    Ok((report_path, summary_path, completion_path))
 }
 
 #[cfg(not(windows))]
