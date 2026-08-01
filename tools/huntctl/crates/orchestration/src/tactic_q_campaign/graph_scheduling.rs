@@ -4,11 +4,11 @@ use crate::learner::{
     GraphLearningBatch, GraphNodeInput, GraphReplayPlan,
 };
 use crate::scheduler::{
-    LearnedExpansionPriority, SearchRegime, rank_schedulable_nodes,
-    rank_schedulable_source_expansions_validated,
+    LearnedExpansionPriority, SearchRegime, rank_schedulable_expansions_validated,
+    rank_schedulable_nodes,
 };
 
-pub const TACTIC_SCHEDULER_DECISION_SCHEMA_V2: &str = "dusklight-tactic-scheduler-decision/v2";
+pub const TACTIC_SCHEDULER_DECISION_SCHEMA_V1: &str = "dusklight-tactic-scheduler-decision/v1";
 
 /// Complete integer evidence for one expansion in the state-local action
 /// queue. The queue is retained before leasing mutates the graph.
@@ -24,8 +24,7 @@ pub struct TacticScheduledExpansionEvidence {
     pub prediction_error_millionths: u64,
     pub completed_visits: u64,
     pub policy_rank: Option<u64>,
-    #[serde(alias = "global_exploration_priority_rank")]
-    pub source_exploration_priority_rank: u64,
+    pub global_exploration_priority_rank: u64,
     pub source_queue_rank: u64,
 }
 
@@ -49,7 +48,7 @@ pub struct TacticSchedulerDecisionTrace {
 
 impl TacticSchedulerDecisionTrace {
     pub fn validate(&self) -> Result<(), TacticQCampaignError> {
-        if self.schema != TACTIC_SCHEDULER_DECISION_SCHEMA_V2
+        if self.schema != TACTIC_SCHEDULER_DECISION_SCHEMA_V1
             || self.graph_sha256 == Digest::ZERO
             || self.learner_model_sha256 == Digest::ZERO
             || self.ranked_source_queue.is_empty()
@@ -403,9 +402,8 @@ impl TacticQCampaign {
             SearchRegime::Discovery
         };
         let graph_sha256 = validated_graph.content_sha256()?;
-        let ranked = rank_schedulable_source_expansions_validated(
+        let ranked = rank_schedulable_expansions_validated(
             validated_graph,
-            source,
             regime,
             self.decision_index,
             &priorities,
@@ -431,7 +429,7 @@ impl TacticQCampaign {
                 prediction_error_millionths: entry.learned.prediction_error_millionths,
                 completed_visits: entry.learned.completed_visits,
                 policy_rank: entry.learned.policy_rank,
-                source_exploration_priority_rank: entry.exploration_priority_rank,
+                global_exploration_priority_rank: entry.exploration_priority_rank,
                 source_queue_rank: source_rank as u64,
             })
             .collect::<Vec<_>>();
@@ -495,7 +493,7 @@ impl TacticQCampaign {
             &ranked_source_queue,
         );
         let scheduler_decision = TacticSchedulerDecisionTrace {
-            schema: TACTIC_SCHEDULER_DECISION_SCHEMA_V2.into(),
+            schema: TACTIC_SCHEDULER_DECISION_SCHEMA_V1.into(),
             graph_sha256,
             learner_model_sha256,
             generation: self.decision_index,
@@ -544,7 +542,7 @@ fn tactic_scheduler_queue_sha256(
     queue: &[TacticScheduledExpansionEvidence],
 ) -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(TACTIC_SCHEDULER_DECISION_SCHEMA_V2.as_bytes());
+    hasher.update(TACTIC_SCHEDULER_DECISION_SCHEMA_V1.as_bytes());
     hasher.update(graph_sha256.0);
     hasher.update(learner_model_sha256.0);
     hasher.update(generation.to_le_bytes());
@@ -569,7 +567,7 @@ fn tactic_scheduler_queue_sha256(
         hasher.update(candidate.prediction_error_millionths.to_le_bytes());
         hasher.update(candidate.completed_visits.to_le_bytes());
         hash_optional_u64(&mut hasher, candidate.policy_rank);
-        hasher.update(candidate.source_exploration_priority_rank.to_le_bytes());
+        hasher.update(candidate.global_exploration_priority_rank.to_le_bytes());
         hasher.update(candidate.source_queue_rank.to_le_bytes());
     }
     Digest(hasher.finalize().into())
@@ -606,7 +604,7 @@ fn tactic_scheduler_decision_sha256(
     final_selected_expansion_sha256: Digest,
 ) -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(TACTIC_SCHEDULER_DECISION_SCHEMA_V2.as_bytes());
+    hasher.update(TACTIC_SCHEDULER_DECISION_SCHEMA_V1.as_bytes());
     hasher.update(queue_sha256.0);
     hasher.update((evaluated_expansion_sha256.len() as u64).to_le_bytes());
     for identity in evaluated_expansion_sha256 {
