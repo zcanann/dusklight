@@ -1,3 +1,4 @@
+use super::graph_replay::PreparedGraphReplay;
 use super::objective_knn::{ActionObjectiveModel, ActionObjectiveSample};
 use super::{
     ActionConditionedGraphLearner, GraphActionInput, GraphLearnerContract, GraphLearnerError,
@@ -147,51 +148,11 @@ impl ExactGraphTableSnapshot {
 }
 
 impl ExactGraphTableLearner {
-    pub fn fit_prioritized(
+    pub(crate) fn fit_validated(
         &self,
         contract: &GraphLearnerContract,
         batch: &GraphLearningBatch,
-        replay: &GraphReplayPlan,
     ) -> Result<ExactGraphTableSnapshot, GraphLearnerError> {
-        replay.validate(contract, batch)?;
-        let mut snapshot = self.fit(contract, batch)?;
-        let mut accumulators = BTreeMap::<Digest, ActionAuxiliaryAccumulator>::new();
-        let mut objective_samples = BTreeMap::<Digest, Vec<ActionObjectiveSample>>::new();
-        for row in &batch.rows {
-            let replay_weight = replay.draw_weight(row.expansion_sha256);
-            if replay_weight == 0 {
-                continue;
-            }
-            let action_sha256 = row
-                .action
-                .content_sha256()
-                .map_err(|error| GraphLearnerError::Action(error.to_string()))?;
-            if let Some(ticks) = row.exact_conditional_ticks_to_terminal {
-                objective_samples.entry(action_sha256).or_default().push(
-                    ActionObjectiveSample::new(&row.source_features, ticks, replay_weight),
-                );
-            }
-            accumulate_auxiliary(&mut accumulators, action_sha256, row, replay_weight)?;
-        }
-        snapshot.action_auxiliary = finalize_auxiliary_models(batch, accumulators)?;
-        snapshot.action_objectives = objective_samples
-            .into_iter()
-            .map(|(action, samples)| Ok((action, ActionObjectiveModel::fit(samples)?)))
-            .collect::<Result<_, GraphLearnerError>>()?;
-        Ok(snapshot)
-    }
-}
-
-impl ActionConditionedGraphLearner for ExactGraphTableLearner {
-    type Snapshot = ExactGraphTableSnapshot;
-
-    fn fit(
-        &self,
-        contract: &GraphLearnerContract,
-        batch: &GraphLearningBatch,
-    ) -> Result<Self::Snapshot, GraphLearnerError> {
-        contract.validate()?;
-        batch.validate()?;
         let mut estimates = BTreeMap::new();
         let mut exact_auxiliary = BTreeMap::new();
         let mut accumulators = BTreeMap::<Digest, ActionAuxiliaryAccumulator>::new();
@@ -273,6 +234,70 @@ impl ActionConditionedGraphLearner for ExactGraphTableLearner {
             action_objectives,
             node_features,
         })
+    }
+
+    pub fn fit_prioritized(
+        &self,
+        contract: &GraphLearnerContract,
+        batch: &GraphLearningBatch,
+        replay: &GraphReplayPlan,
+    ) -> Result<ExactGraphTableSnapshot, GraphLearnerError> {
+        let snapshot = replay.validate_and_snapshot(contract, batch)?;
+        self.fit_prioritized_from_snapshot(batch, replay, snapshot)
+    }
+
+    pub(crate) fn fit_prepared(
+        &self,
+        prepared: PreparedGraphReplay<'_>,
+    ) -> Result<ExactGraphTableSnapshot, GraphLearnerError> {
+        let (batch, replay, snapshot) = prepared.into_parts();
+        self.fit_prioritized_from_snapshot(batch, &replay, snapshot)
+    }
+
+    fn fit_prioritized_from_snapshot(
+        &self,
+        batch: &GraphLearningBatch,
+        replay: &GraphReplayPlan,
+        mut snapshot: ExactGraphTableSnapshot,
+    ) -> Result<ExactGraphTableSnapshot, GraphLearnerError> {
+        let mut accumulators = BTreeMap::<Digest, ActionAuxiliaryAccumulator>::new();
+        let mut objective_samples = BTreeMap::<Digest, Vec<ActionObjectiveSample>>::new();
+        for row in &batch.rows {
+            let replay_weight = replay.draw_weight(row.expansion_sha256);
+            if replay_weight == 0 {
+                continue;
+            }
+            let action_sha256 = row
+                .action
+                .content_sha256()
+                .map_err(|error| GraphLearnerError::Action(error.to_string()))?;
+            if let Some(ticks) = row.exact_conditional_ticks_to_terminal {
+                objective_samples.entry(action_sha256).or_default().push(
+                    ActionObjectiveSample::new(&row.source_features, ticks, replay_weight),
+                );
+            }
+            accumulate_auxiliary(&mut accumulators, action_sha256, row, replay_weight)?;
+        }
+        snapshot.action_auxiliary = finalize_auxiliary_models(batch, accumulators)?;
+        snapshot.action_objectives = objective_samples
+            .into_iter()
+            .map(|(action, samples)| Ok((action, ActionObjectiveModel::fit(samples)?)))
+            .collect::<Result<_, GraphLearnerError>>()?;
+        Ok(snapshot)
+    }
+}
+
+impl ActionConditionedGraphLearner for ExactGraphTableLearner {
+    type Snapshot = ExactGraphTableSnapshot;
+
+    fn fit(
+        &self,
+        contract: &GraphLearnerContract,
+        batch: &GraphLearningBatch,
+    ) -> Result<Self::Snapshot, GraphLearnerError> {
+        contract.validate()?;
+        batch.validate()?;
+        self.fit_validated(contract, batch)
     }
 
     fn rank(

@@ -314,13 +314,13 @@ impl TacticQCampaign {
                         .map_err(TacticQCampaignError::Values)
                 })
                 .collect::<Result<BTreeSet<_>, _>>()?;
-            let replay = GraphReplayPlan::build(
+            let replay = GraphReplayPlan::prepare(
                 &learner_contract,
                 &learning_batch,
                 &policy_relevant_actions,
                 self.decision_index,
             )?;
-            exact_learner.fit_prioritized(&learner_contract, &learning_batch, &replay)?
+            exact_learner.fit_prepared(replay)?
         };
         let graph_visits = graph
             .node(source)

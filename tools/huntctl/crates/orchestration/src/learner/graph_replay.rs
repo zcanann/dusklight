@@ -1,7 +1,7 @@
 use super::{
-    ActionConditionedGraphLearner, ExactGraphTableLearner, ExactGraphTableSnapshot,
-    GraphAuxiliaryPrediction, GraphExpansionLearningTarget, GraphLearnerContract,
-    GraphLearnerError, GraphLearningBatch, GraphTargetSupport,
+    ExactGraphTableLearner, ExactGraphTableSnapshot, GraphAuxiliaryPrediction,
+    GraphExpansionLearningTarget, GraphLearnerContract, GraphLearnerError, GraphLearningBatch,
+    GraphTargetSupport,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use serde::{Deserialize, Serialize};
@@ -45,6 +45,27 @@ pub struct GraphReplayPlan {
     pub plan_sha256: Digest,
 }
 
+/// A replay plan paired with the exact snapshot used to derive and validate
+/// its priorities. This type is constructed only from validated in-process
+/// inputs; persisted plans continue through `GraphReplayPlan::validate`.
+pub(crate) struct PreparedGraphReplay<'a> {
+    batch: &'a GraphLearningBatch,
+    plan: GraphReplayPlan,
+    base_snapshot: ExactGraphTableSnapshot,
+}
+
+impl<'a> PreparedGraphReplay<'a> {
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        &'a GraphLearningBatch,
+        GraphReplayPlan,
+        ExactGraphTableSnapshot,
+    ) {
+        (self.batch, self.plan, self.base_snapshot)
+    }
+}
+
 impl GraphReplayPlan {
     pub fn build(
         contract: &GraphLearnerContract,
@@ -52,6 +73,15 @@ impl GraphReplayPlan {
         policy_relevant_actions: &BTreeSet<Digest>,
         round: u64,
     ) -> Result<Self, GraphLearnerError> {
+        Ok(Self::prepare(contract, batch, policy_relevant_actions, round)?.plan)
+    }
+
+    pub(crate) fn prepare<'a>(
+        contract: &GraphLearnerContract,
+        batch: &'a GraphLearningBatch,
+        policy_relevant_actions: &BTreeSet<Digest>,
+        round: u64,
+    ) -> Result<PreparedGraphReplay<'a>, GraphLearnerError> {
         contract.validate()?;
         batch.validate()?;
         if batch.rows.is_empty() {
@@ -60,7 +90,23 @@ impl GraphReplayPlan {
             ));
         }
         let learner = ExactGraphTableLearner;
-        let snapshot = learner.fit(contract, batch)?;
+        let snapshot = learner.fit_validated(contract, batch)?;
+        let plan =
+            Self::build_from_snapshot(contract, batch, policy_relevant_actions, round, &snapshot)?;
+        Ok(PreparedGraphReplay {
+            batch,
+            plan,
+            base_snapshot: snapshot,
+        })
+    }
+
+    fn build_from_snapshot(
+        contract: &GraphLearnerContract,
+        batch: &GraphLearningBatch,
+        policy_relevant_actions: &BTreeSet<Digest>,
+        round: u64,
+        snapshot: &ExactGraphTableSnapshot,
+    ) -> Result<Self, GraphLearnerError> {
         let action_counts = action_counts(batch)?;
         let mut rows = batch
             .rows
@@ -111,7 +157,7 @@ impl GraphReplayPlan {
             plan_sha256: Digest::ZERO,
         };
         plan.plan_sha256 = plan.digest()?;
-        plan.validate(contract, batch)?;
+        plan.validate_with_snapshot(contract, batch, snapshot)?;
         Ok(plan)
     }
 
@@ -127,8 +173,27 @@ impl GraphReplayPlan {
         contract: &GraphLearnerContract,
         batch: &GraphLearningBatch,
     ) -> Result<(), GraphLearnerError> {
+        self.validate_and_snapshot(contract, batch).map(|_| ())
+    }
+
+    pub(crate) fn validate_and_snapshot(
+        &self,
+        contract: &GraphLearnerContract,
+        batch: &GraphLearningBatch,
+    ) -> Result<ExactGraphTableSnapshot, GraphLearnerError> {
         contract.validate()?;
         batch.validate()?;
+        let snapshot = ExactGraphTableLearner.fit_validated(contract, batch)?;
+        self.validate_with_snapshot(contract, batch, &snapshot)?;
+        Ok(snapshot)
+    }
+
+    fn validate_with_snapshot(
+        &self,
+        contract: &GraphLearnerContract,
+        batch: &GraphLearningBatch,
+        snapshot: &ExactGraphTableSnapshot,
+    ) -> Result<(), GraphLearnerError> {
         let batch_expansions = batch
             .rows
             .iter()
@@ -150,7 +215,6 @@ impl GraphReplayPlan {
             .copied()
             .collect::<BTreeSet<_>>();
         let action_counts = action_counts(batch)?;
-        let snapshot = ExactGraphTableLearner.fit(contract, batch)?;
         let expected_priorities = batch
             .rows
             .iter()
@@ -190,9 +254,12 @@ impl GraphReplayPlan {
                 expected_draws[index].ordinary_draws.saturating_add(1);
         }
         allocate_prioritized_draws(&mut expected_draws, self.prioritized_draws);
+        let contract_sha256 = contract.content_sha256()?;
         if self.schema != GRAPH_REPLAY_PLAN_SCHEMA_V1
             || self.graph_sha256 != batch.graph_sha256
-            || self.contract_sha256 != contract.content_sha256()?
+            || self.contract_sha256 != contract_sha256
+            || snapshot.graph_sha256 != batch.graph_sha256
+            || snapshot.contract_sha256 != contract_sha256
             || self.source_rows != batch.rows.len() as u64
             || self.rows.len() != plan_expansions.len()
             || self.policy_relevant_actions.len() != policy_relevant_actions.len()

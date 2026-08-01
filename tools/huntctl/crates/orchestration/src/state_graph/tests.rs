@@ -1153,6 +1153,12 @@ fn held_out_objective_gate_requires_state_conditioned_ranking_gain() {
     let prioritized_snapshot = crate::learner::ExactGraphTableLearner
         .fit_prioritized(&contract, &batch, &replay)
         .unwrap();
+    let prepared_replay =
+        crate::learner::GraphReplayPlan::prepare(&contract, &batch, &policy_actions, 0).unwrap();
+    let prepared_snapshot = crate::learner::ExactGraphTableLearner
+        .fit_prepared(prepared_replay)
+        .unwrap();
+    assert_eq!(prepared_snapshot, prioritized_snapshot);
     assert!(
         prioritized_snapshot
             .generalized_objective_prediction(&[50.0], policy_action)
