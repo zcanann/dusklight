@@ -945,7 +945,7 @@ mod tests {
             value_treatment: TacticValueTreatment::GoalRelabeledFittedQKnnV2,
             execution_strategy: NativeGenericExecutionStrategy::NativeController,
             promoted_tactic_registry_sha256: None,
-            lanes_per_generation: 4,
+            lanes_per_generation: 1,
             proposal_width_per_decision: 4,
             branch_every_decisions: 8,
             refit_every_decisions: 4,

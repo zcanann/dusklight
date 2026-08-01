@@ -41,7 +41,8 @@ before increasing campaign size.
 
 - [ ] Re-run the learned, frozen-policy, and random-valid held-out comparison
   under V40 timing. Require exact reconciliation to each durable completion
-  marker and less than 1% timing-boundary residue.
+  marker and less than 1% timing-boundary residue. Use one deterministic live
+  learning lane until cross-lane replay ordering is proven deterministic.
 - [ ] Publish one canonical report containing success rate, time and useful
   transitions to first terminal, best route ticks over time, unique useful
   transitions/second, duplicate work, CPU, memory, queueing, and every exclusive
@@ -94,6 +95,9 @@ before increasing campaign size.
 - [ ] Give every campaign exact ownership of its workers, limits, cancellation,
   artifacts, and cleanup. Test interruption, timeout, worker failure, and resume;
   never discover or terminate unrelated processes.
+- [ ] Define a logical publication and snapshot-consumption order for concurrent
+  learning lanes. Prove identical decisions and learner identities across fresh
+  reruns before allowing live replay with more than one lane per generation.
 - [ ] Make fresh, replayed, and resumed runs deterministic for the same state,
   seed, configuration, and checkpoint, including decisions, identities,
   accounting, and terminal evidence.
