@@ -34,10 +34,6 @@ and sealed experiment artifacts.
 
 ### P0 - Trust what the system reports
 
-- [ ] **Measure a reproducible baseline.** Repeat one- and two-worker versions of
-  one predeclared workload. Done when outcome, wall time, useful transitions/s,
-  utilization, variance, and the largest reconciled loss are known.
-
 - [ ] **Make the learning chain auditable.** Trace observations, legal actions,
   choices, transitions, replay admission, updates, snapshots, and terminals;
   account for retries, rejections, duplicates, and censored work. Done when a
