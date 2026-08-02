@@ -959,9 +959,16 @@ fn reduction_proposals(
         }
         let candidate =
             ResidualCandidate::seal(parent_bytes, analog, buttons).map_err(minimization_error)?;
-        let compiled =
-            compile_residual_candidate_to_horizon(parent, parent_bytes, &candidate, horizon)
-                .map_err(minimization_error)?;
+        let compiled = match compile_residual_candidate_to_horizon(
+            parent,
+            parent_bytes,
+            &candidate,
+            horizon,
+        ) {
+            Ok(compiled) => compiled,
+            Err(error) if error.is_incumbent_equivalent() => continue,
+            Err(error) => return Err(minimization_error(error)),
+        };
         let complexity = tape_input_complexity(&compiled.tape);
         if complexity >= current_complexity || !seen.insert(compiled.report.realized_tape_sha256) {
             continue;

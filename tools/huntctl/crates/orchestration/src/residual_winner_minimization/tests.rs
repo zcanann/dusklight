@@ -74,6 +74,42 @@ fn component_reductions_are_strict_deterministic_and_never_empty() {
 }
 
 #[test]
+fn component_reductions_skip_inert_and_incumbent_equivalent_subsets() {
+    let (parent, bytes) = parent();
+    let candidate = ResidualCandidate::seal(
+        &bytes,
+        vec![AnalogResidual {
+            port: 0,
+            channel: AnalogChannel::MainX,
+            basis: TemporalBasis::ExactFrame {
+                frame: 1,
+                delta: 10,
+            },
+        }],
+        vec![dusklight_search::residual_action::ButtonResidual {
+            port: 0,
+            buttons: 1,
+            start_frame: 2,
+            duration_frames: 1,
+            mode: dusklight_search::residual_action::ButtonResidualMode::Release,
+        }],
+    )
+    .unwrap();
+    let compiled = compile_residual_candidate_to_horizon(&parent, &bytes, &candidate, 8).unwrap();
+    let proposals = reduction_proposals(
+        &parent,
+        &bytes,
+        8,
+        &candidate,
+        tape_input_complexity(&compiled.tape),
+        2,
+        &mut BTreeSet::new(),
+    )
+    .unwrap();
+    assert!(proposals.is_empty());
+}
+
+#[test]
 fn sealed_minimized_candidate_rejects_detachment() {
     let (parent, bytes) = parent();
     let candidate = ResidualCandidate::seal(

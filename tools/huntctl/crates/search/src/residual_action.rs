@@ -430,7 +430,7 @@ pub fn compile_residual_candidate_to_horizon(
         }
     }
     let span = exact_intervention_span(parent, &realized)
-        .ok_or_else(|| action_error("residual candidate compiles to the incumbent tape"))?;
+        .ok_or_else(|| action_error(ResidualActionError::INCUMBENT_EQUIVALENT))?;
     extend_tape_with_released_input(&mut realized, exploration_horizon_ticks)?;
     let bytes = realized
         .encode()
@@ -630,6 +630,14 @@ fn sha256(bytes: &[u8]) -> Digest {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResidualActionError(String);
+
+impl ResidualActionError {
+    const INCUMBENT_EQUIVALENT: &'static str = "residual candidate compiles to the incumbent tape";
+
+    pub fn is_incumbent_equivalent(&self) -> bool {
+        self.0 == Self::INCUMBENT_EQUIVALENT
+    }
+}
 
 fn action_error(message: impl Into<String>) -> ResidualActionError {
     ResidualActionError(message.into())
