@@ -18,7 +18,13 @@ pub(crate) struct GraphTrainingProjectionRow {
 pub(crate) fn graph_training_projection(
     graph: &StateGraph,
 ) -> Result<GraphTrainingProjection, TacticQCampaignError> {
-    graph.validate()?;
+    graph_training_projection_validated(graph.validated()?)
+}
+
+pub(crate) fn graph_training_projection_validated(
+    validated: ValidatedStateGraph<'_>,
+) -> Result<GraphTrainingProjection, TacticQCampaignError> {
+    let graph = validated.graph();
     let mut transitions = Vec::with_capacity(graph.expansion_count());
     let mut routes = Vec::with_capacity(graph.expansion_count());
     let mut episode_groups = Vec::with_capacity(graph.expansion_count());

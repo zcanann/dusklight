@@ -1,6 +1,7 @@
 use super::{
     ActionExpansion, ExactStateId, FutureEquivalenceProof, ObservedSegment, RestorationLocator,
-    StateGraph, StateGraphError, StateGraphIdentity, StateGraphNode, TerminalPath,
+    StateGraph, StateGraphError, StateGraphIdentity, StateGraphNode, StateGraphValidationToken,
+    TerminalPath,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
@@ -191,9 +192,9 @@ impl StateGraph {
         Ok(decode_record(bytes)?.parent_sha256())
     }
 
-    pub(crate) fn from_persistence_records(
+    pub(crate) fn from_persistence_records_validated(
         records: &[(StateGraphPersistenceHead, Vec<u8>)],
-    ) -> Result<Self, StateGraphError> {
+    ) -> Result<(Self, StateGraphValidationToken), StateGraphError> {
         let (base_head, base_bytes) = records
             .first()
             .ok_or(StateGraphError::Invalid("graph persistence chain is empty"))?;
@@ -301,9 +302,9 @@ impl StateGraph {
             .last()
             .map(|(head, _)| *head)
             .ok_or(StateGraphError::Invalid("graph persistence chain is empty"))?;
-        graph.validate()?;
+        let validation = graph.validation_token()?;
         graph.install_persistence_head(head);
-        Ok(graph)
+        Ok((graph, validation))
     }
 
     pub(crate) fn install_persistence_head(&mut self, head: StateGraphPersistenceHead) {

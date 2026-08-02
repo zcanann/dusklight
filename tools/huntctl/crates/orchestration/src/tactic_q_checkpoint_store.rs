@@ -2,7 +2,7 @@
 
 use crate::state_graph::{
     ExactStateId, StateGraph, StateGraphPersistenceHead, StateGraphPersistencePlan,
-    route_checkpoint_sha256,
+    StateGraphValidationToken, route_checkpoint_sha256,
 };
 use crate::tactic_q_campaign::{
     TACTIC_Q_CHECKPOINT_EXTENSION, TACTIC_Q_CHECKPOINT_PERSISTENCE_SCHEMA_V1,
@@ -10,7 +10,8 @@ use crate::tactic_q_campaign::{
     TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1, TacticQCampaignCheckpoint,
     TacticQCampaignError, TacticQCheckpointIdentityV6, TacticQCheckpointPersistence,
     TacticQCheckpointSerializationBenchmark, TacticQFinalResult, TacticQLearnerSnapshot,
-    TacticQTrainingCorpus, checkpoint_digest, validate_checkpoint, validate_final_result,
+    TacticQTrainingCorpus, checkpoint_digest, graph_training_projection_validated,
+    validate_checkpoint, validate_checkpoint_for_resume_with_graph_token, validate_final_result,
     validate_training_corpus,
 };
 use dusklight_automation_contracts::artifact::Digest;
@@ -249,10 +250,10 @@ impl TacticQContentStore {
         }
     }
 
-    pub(crate) fn load_state_graph_journal(
+    pub(crate) fn load_state_graph_journal_validated(
         &self,
         head: StateGraphPersistenceHead,
-    ) -> Result<StateGraph, TacticQContentStoreError> {
+    ) -> Result<(StateGraph, StateGraphValidationToken), TacticQContentStoreError> {
         let capacity = usize::try_from(head.depth.checked_add(1).ok_or(
             TacticQContentStoreError::Invalid("state graph persistence depth overflows"),
         )?)
@@ -288,7 +289,8 @@ impl TacticQContentStore {
             }
         }
         records.reverse();
-        StateGraph::from_persistence_records(&records).map_err(TacticQContentStoreError::domain)
+        StateGraph::from_persistence_records_validated(&records)
+            .map_err(TacticQContentStoreError::domain)
     }
 
     pub fn store_fact(

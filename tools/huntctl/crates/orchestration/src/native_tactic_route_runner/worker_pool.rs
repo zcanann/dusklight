@@ -91,7 +91,7 @@ pub(super) fn run_seed_coordinator(
             .lanes
             .get(seed_index)
             .ok_or_else(|| route_message("tactic seed lane is absent from execution plan"))?;
-        let result = read_completed_seed_result(
+        let completed = read_completed_seed(
             &seed_result_path,
             seed,
             config.execution_plan.budgets.decisions_per_lane,
@@ -99,9 +99,10 @@ pub(super) fn run_seed_coordinator(
             lane,
             config.execution_plan.demonstration_chunk_ticks.is_some(),
         )?;
-        let generated_training = load_generated_training_corpus(&result, lane)?;
+        let generated_training =
+            load_generated_training_corpus(&completed.result, lane, &completed.checkpoint)?;
         Ok(CompletedNativeTacticSeed {
-            result,
+            result: completed.result,
             generated_training,
             invocation_wall_micros: 0,
             invocation_model_update_micros: 0,
@@ -144,10 +145,17 @@ pub(super) fn run_seed_coordinator(
 pub(super) fn load_generated_training_corpus(
     result: &NativeTacticSeedResult,
     lane: &NativeTacticLanePlan,
+    checkpoint: &TacticQCampaignCheckpoint,
 ) -> Result<TacticQTrainingCorpus, NativeTacticRouteRunError> {
-    let corpus = TacticQCampaign::read_checkpoint(Path::new(&result.final_checkpoint))
-        .map_err(route_error)?
-        .training_corpus();
+    let corpus = TacticQTrainingCorpus {
+        execution_authority_sha256: checkpoint.execution_authority_sha256,
+        feature_schema_sha256: checkpoint.feature_schema_sha256,
+        objective_sha256: checkpoint.objective_sha256,
+        root_checkpoint_sha256: checkpoint.root_checkpoint_sha256,
+        transitions: checkpoint.training_replay.clone(),
+        routes: checkpoint.training_replay_routes.clone(),
+        episode_groups: checkpoint.training_episode_groups.clone(),
+    };
     if corpus.execution_authority_sha256 != result.execution_plan_sha256 {
         return Err(route_message(
             "generated tactic training corpus belongs to another execution plan",

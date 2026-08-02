@@ -199,11 +199,12 @@ fn state_graph_journal_stores_one_base_then_only_dirty_upserts() {
     );
     assert_eq!(
         store
-            .load_state_graph_journal(match final_head {
+            .load_state_graph_journal_validated(match final_head {
                 StateGraphPersistencePlan::Reuse(head) => head,
                 StateGraphPersistencePlan::Store { .. } => unreachable!(),
             })
-            .unwrap(),
+            .unwrap()
+            .0,
         graph
     );
     fs::remove_dir_all(root).unwrap();

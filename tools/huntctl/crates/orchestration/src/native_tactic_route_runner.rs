@@ -26,8 +26,8 @@ use crate::tactic_q_campaign::{
     TACTIC_Q_DEMONSTRATION_EPISODE_GROUP, TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3,
     TacticCampaignDiagnostics, TacticCampaignGraphProjection, TacticCampaignGraphProjectionEdge,
     TacticCampaignGraphProjectionNode, TacticExpansionLease, TacticFrontierAcquisition,
-    TacticGraphSchedulingTiming, TacticQCampaign, TacticQCampaignError, TacticQDecision,
-    TacticQFinalResult, TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot,
+    TacticGraphSchedulingTiming, TacticQCampaign, TacticQCampaignCheckpoint, TacticQCampaignError,
+    TacticQDecision, TacticQFinalResult, TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot,
     TacticQLearnerSnapshotKind, TacticQProposalBatch, TacticQTrainingCorpus,
     TacticRestorationContract, TacticSchedulerDecisionTrace, has_no_progress_loop,
     route_checkpoint, validate_training_corpus,
@@ -1139,7 +1139,8 @@ use candidate_retention::{
 };
 mod campaign_persistence;
 use campaign_persistence::{
-    cancellation_requested, load_seed_performance, read_completed_seed_result, resume_seed,
+    cancellation_requested, load_seed_performance, read_completed_seed, read_completed_seed_result,
+    resume_seed,
 };
 mod journal;
 use journal::{

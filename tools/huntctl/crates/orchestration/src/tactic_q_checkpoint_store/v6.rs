@@ -215,12 +215,14 @@ pub(super) fn load_checkpoint(
         sha256: manifest.state_graph_head.sha256,
         depth: manifest.state_graph_depth,
     };
-    let state_graph = store
-        .load_state_graph_journal(graph_head)
+    let (state_graph, state_graph_validation) = store
+        .load_state_graph_journal_validated(graph_head)
         .map_err(checkpoint_store_error)?;
     let (replay, replay_routes, episode_groups) =
         load_checkpoint_index(store, manifest.replay_index, manifest.replay_rows)?;
-    let training = crate::tactic_q_campaign::graph_training_projection(&state_graph)?;
+    let training = graph_training_projection_validated(
+        state_graph.validated_with_token(&state_graph_validation)?,
+    )?;
     let persistence = TacticQCheckpointPersistence {
         schema: TACTIC_Q_CHECKPOINT_PERSISTENCE_SCHEMA_V1.into(),
         state_graph_head_sha256: graph_head.sha256,
@@ -252,7 +254,7 @@ pub(super) fn load_checkpoint(
         persistence: Some(persistence),
         persistence_validated: true,
     };
-    validate_checkpoint(&checkpoint)?;
+    validate_checkpoint_for_resume_with_graph_token(&checkpoint, &state_graph_validation)?;
     Ok(checkpoint)
 }
 

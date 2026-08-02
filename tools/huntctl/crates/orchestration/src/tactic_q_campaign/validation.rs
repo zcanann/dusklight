@@ -14,7 +14,23 @@ pub(crate) fn validate_checkpoint(
 pub(crate) fn validate_checkpoint_for_resume(
     checkpoint: &TacticQCampaignCheckpoint,
 ) -> Result<TacticQCheckpointRuntimeValidation, TacticQCampaignError> {
-    let validation = validate_checkpoint_snapshot_for_runtime(checkpoint)?;
+    let validated_graph = checkpoint.state_graph.validated()?;
+    validate_checkpoint_for_resume_with_validated_graph(checkpoint, validated_graph)
+}
+
+pub(crate) fn validate_checkpoint_for_resume_with_graph_token(
+    checkpoint: &TacticQCampaignCheckpoint,
+    token: &StateGraphValidationToken,
+) -> Result<TacticQCheckpointRuntimeValidation, TacticQCampaignError> {
+    let validated_graph = checkpoint.state_graph.validated_with_token(token)?;
+    validate_checkpoint_for_resume_with_validated_graph(checkpoint, validated_graph)
+}
+
+fn validate_checkpoint_for_resume_with_validated_graph(
+    checkpoint: &TacticQCampaignCheckpoint,
+    validated_graph: ValidatedStateGraph<'_>,
+) -> Result<TacticQCheckpointRuntimeValidation, TacticQCampaignError> {
+    let validation = validate_checkpoint_snapshot_for_runtime(checkpoint, validated_graph)?;
     if checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V6 && !checkpoint.persistence_validated {
         return Err(TacticQCampaignError::InvalidState(
             "campaign checkpoint persistence was not authenticated",
@@ -32,11 +48,13 @@ pub(crate) fn validate_checkpoint_for_resume(
 pub(crate) fn validate_checkpoint_snapshot(
     checkpoint: &TacticQCampaignCheckpoint,
 ) -> Result<(), TacticQCampaignError> {
-    validate_checkpoint_snapshot_for_runtime(checkpoint).map(drop)
+    let validated_graph = checkpoint.state_graph.validated()?;
+    validate_checkpoint_snapshot_for_runtime(checkpoint, validated_graph).map(drop)
 }
 
 fn validate_checkpoint_snapshot_for_runtime(
     checkpoint: &TacticQCampaignCheckpoint,
+    validated_graph: ValidatedStateGraph<'_>,
 ) -> Result<TacticQCheckpointRuntimeValidation, TacticQCampaignError> {
     if checkpoint.content_sha256 == Digest::ZERO {
         return Err(TacticQCampaignError::InvalidState(
@@ -50,17 +68,19 @@ fn validate_checkpoint_snapshot_for_runtime(
             reconstructed,
         });
     }
-    validate_checkpoint_payload_for_runtime(checkpoint)
+    validate_checkpoint_payload_for_runtime(checkpoint, validated_graph)
 }
 
 pub(crate) fn validate_checkpoint_payload(
     checkpoint: &TacticQCampaignCheckpoint,
 ) -> Result<(), TacticQCampaignError> {
-    validate_checkpoint_payload_for_runtime(checkpoint).map(drop)
+    let validated_graph = checkpoint.state_graph.validated()?;
+    validate_checkpoint_payload_for_runtime(checkpoint, validated_graph).map(drop)
 }
 
 fn validate_checkpoint_payload_for_runtime(
     checkpoint: &TacticQCampaignCheckpoint,
+    validated_graph: ValidatedStateGraph<'_>,
 ) -> Result<TacticQCheckpointRuntimeValidation, TacticQCampaignError> {
     checkpoint.current.validate()?;
     checkpoint
@@ -69,7 +89,6 @@ fn validate_checkpoint_payload_for_runtime(
         .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
     let legacy = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V5;
     let current = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V6;
-    let validated_graph = checkpoint.state_graph.validated()?;
     let graph_identity = &checkpoint.state_graph.identity;
     let persistence_valid = match (&checkpoint.persistence, legacy, current) {
         (None, true, false) => true,

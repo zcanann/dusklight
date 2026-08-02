@@ -165,10 +165,13 @@ do not golf isolated subphases without campaign evidence.
 - [ ] Make completed-seed resume and finalization read-only and cheap: do not
   launch a native fleet or repeat full replay fitting, graph projection, and
   macro evaluation merely to validate and summarize already sealed evidence.
-  A read-only q231 checkpoint measurement still spent 57.6 seconds reading and
-  authenticating 1,401 graph nodes, then 11.7 seconds rebuilding derived
-  in-memory state without fitting a lane-local model; startup remains a primary
-  bottleneck.
+  V6 reopen now carries its one fail-closed graph reconstruction proof through
+  training projection and checkpoint validation. On the same q231 checkpoint,
+  read/authentication fell from 57.6 to 44.8 seconds (22%); completed-seed
+  recovery also derives its corpus from that authenticated payload instead of
+  reopening it and fitting an unused lane-local model. The remaining 44.8
+  seconds, preflight fleet launch, learner reconstruction, and repeated macro
+  finalization keep this task open.
 - [ ] Cache or share already-validated artifact and graph identities within one
   process; independent reopen validation must remain fail-closed.
 - [ ] Measure whether retained save-state branching beats replay from its

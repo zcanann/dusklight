@@ -115,6 +115,30 @@ pub(super) fn read_completed_seed_result(
     lane: &NativeTacticLanePlan,
     imported_demonstration: bool,
 ) -> Result<NativeTacticSeedResult, NativeTacticRouteRunError> {
+    read_completed_seed(
+        path,
+        seed,
+        decisions_per_seed,
+        execution_plan_sha256,
+        lane,
+        imported_demonstration,
+    )
+    .map(|completed| completed.result)
+}
+
+pub(super) struct ValidatedCompletedNativeTacticSeed {
+    pub(super) result: NativeTacticSeedResult,
+    pub(super) checkpoint: TacticQCampaignCheckpoint,
+}
+
+pub(super) fn read_completed_seed(
+    path: &Path,
+    seed: u64,
+    decisions_per_seed: u64,
+    execution_plan_sha256: Digest,
+    lane: &NativeTacticLanePlan,
+    imported_demonstration: bool,
+) -> Result<ValidatedCompletedNativeTacticSeed, NativeTacticRouteRunError> {
     let result: NativeTacticSeedResult = read_bounded_json(path)?;
     let first_terminal = result.trace.iter().find(|decision| {
         decision
@@ -334,7 +358,7 @@ pub(super) fn read_completed_seed_result(
             ));
         }
     }
-    Ok(result)
+    Ok(ValidatedCompletedNativeTacticSeed { result, checkpoint })
 }
 
 fn authenticated_terminal_origin_matches(

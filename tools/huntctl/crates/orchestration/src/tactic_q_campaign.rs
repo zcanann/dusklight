@@ -5,8 +5,8 @@ use self::graph_projection::{
     graph_frontier_entries_validated, graph_root_branch, validate_training_projection_and_keys,
 };
 pub(crate) use self::graph_projection::{
-    graph_training_projection, graph_training_projection_rows, merge_graph_training_projection,
-    validate_graph_training_projection_merge,
+    graph_training_projection, graph_training_projection_rows, graph_training_projection_validated,
+    merge_graph_training_projection, validate_graph_training_projection_merge,
 };
 use crate::native_tactic_worker::{
     NativeTacticWorkerError, NativeTacticWorkerOutcome, NativeTacticWorkerPaths,
