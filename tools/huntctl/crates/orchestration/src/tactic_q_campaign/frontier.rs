@@ -73,17 +73,33 @@ impl TacticQCampaign {
     }
 
     pub fn demonstration_frontier_count(&self) -> usize {
-        self.training_replay
+        self.demonstration_frontier_state_sha256s().len()
+    }
+
+    pub(crate) fn demonstration_frontier_state_sha256s(&self) -> BTreeSet<Digest> {
+        let demonstration_endpoints = self
+            .training_replay
             .iter()
             .zip(&self.training_episode_groups)
             .filter(|(transition, episode_group)| {
                 **episode_group == TACTIC_Q_DEMONSTRATION_EPISODE_GROUP
                     && !transition.value_sample.terminal
             })
-            .map(|(transition, _)| tactic_state_descriptor(&transition.after, false))
-            .collect::<BTreeSet<_>>()
-            .len()
-            .min(MAX_BEHAVIOR_ARCHIVE_ENTRIES)
+            .map(|(transition, _)| {
+                (
+                    transition.next_checkpoint_sha256,
+                    transition.after_state_sha256,
+                )
+            })
+            .collect::<BTreeSet<_>>();
+        self.frontier_archive
+            .tactic_frontier_entries()
+            .filter(|entry| {
+                demonstration_endpoints
+                    .contains(&(entry.route_checkpoint_sha256, entry.frontier_state_sha256))
+            })
+            .map(|entry| entry.frontier_state_sha256)
+            .collect()
     }
 
     pub fn graph(&self) -> Result<TacticCampaignGraph, TacticQCampaignError> {

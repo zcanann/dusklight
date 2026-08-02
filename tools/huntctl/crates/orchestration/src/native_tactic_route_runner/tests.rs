@@ -52,42 +52,55 @@ fn unassisted_learning_requires_declared_generous_discovery_capacity() {
     );
 }
 
-fn acquisition_with_expansion_count(expansion_count: u64) -> TacticFrontierAcquisition {
-    TacticFrontierAcquisition {
-        expansion_count,
-        terminal: false,
-        terminal_value_supported: false,
-        achieved_goal_value_supported: false,
-        goal_reachability_supported: false,
-        goal_reachability_evidence_available: false,
-        reward: 0.0,
-        best_mean_q: None,
-        best_goal_progress_per_tick: None,
-        predicted_terminal_ticks_to_go: None,
-        predicted_total_terminal_ticks: None,
-        exact_terminal_ticks_to_go: None,
-        exact_total_terminal_ticks: None,
-        maximum_ensemble_variance: None,
-        generalized_nearest_distance: None,
-        discovery_spatial_novelty: None,
-        novelty_rank: 0,
-        replayed_prefix_ticks: 0,
-    }
-}
-
 #[test]
 fn graph_branch_schedule_prioritizes_terminal_support_and_retains_discovery_cadence() {
-    assert!(!campaign::should_schedule_branch(0, 8, false, false));
-    assert!(!campaign::should_schedule_branch(7, 8, false, false));
-    assert!(campaign::should_schedule_branch(8, 8, false, false));
-    assert!(campaign::should_schedule_branch(256, 8, false, false));
-    assert!(campaign::should_schedule_branch(3, 8, true, false));
-    assert!(campaign::should_schedule_branch(3, 8, false, true));
-    assert!((0..32).all(|decision| campaign::should_schedule_branch(decision, 8, false, true)));
+    assert!(!campaign::should_schedule_branch(0, 8, false, false, false));
+    assert!(!campaign::should_schedule_branch(7, 8, false, false, false));
+    assert!(campaign::should_schedule_branch(8, 8, false, false, false));
+    assert!(campaign::should_schedule_branch(
+        256, 8, false, false, false
+    ));
+    assert!(campaign::should_schedule_branch(3, 8, true, false, false));
+    assert!(campaign::should_schedule_branch(3, 8, false, true, false));
+    assert!(
+        (0..32).all(|decision| campaign::should_schedule_branch(decision, 8, false, true, false))
+    );
+    assert!(
+        (0..32).all(|decision| campaign::should_schedule_branch(decision, 8, false, false, true))
+    );
     assert!(!campaign::prefer_root_for_periodic_branch(true, false));
     assert!(!campaign::prefer_root_for_periodic_branch(true, true));
     assert!(!campaign::prefer_root_for_periodic_branch(false, false));
     assert!(campaign::prefer_root_for_periodic_branch(false, true));
+}
+
+#[test]
+fn branch_acquisition_rank_does_not_alias_the_decision_cadence() {
+    let acquisition = NativeTacticAcquisitionPlan::CyclicSupportAndRanks {
+        cycle_width: 4,
+        ranked_lanes_per_cycle: 3,
+    };
+    assert_eq!(acquisition.rank(4), 0);
+    assert_eq!(
+        campaign::next_branch_acquisition_rank(acquisition, 0),
+        Some(1)
+    );
+    assert_eq!(
+        campaign::next_branch_acquisition_rank(acquisition, 1),
+        Some(2)
+    );
+    assert_eq!(
+        campaign::next_branch_acquisition_rank(acquisition, 2),
+        Some(3)
+    );
+    assert_eq!(
+        campaign::next_branch_acquisition_rank(acquisition, 3),
+        Some(0)
+    );
+    assert_eq!(
+        campaign::next_branch_acquisition_rank(acquisition, u64::MAX),
+        None
+    );
 }
 
 #[test]
@@ -97,32 +110,18 @@ fn terminal_restart_defers_policy_probe_until_after_branch_restore() {
 }
 
 #[test]
-fn demonstration_frontier_intervention_only_forces_the_first_expansion() {
-    let unexpanded = acquisition_with_expansion_count(0);
-    let revisited = acquisition_with_expansion_count(1);
-
+fn demonstration_frontier_intervention_only_forces_each_uncovered_state_once() {
     assert!(super::campaign::first_demonstration_intervention(
-        true,
-        false,
-        Some(&unexpanded)
+        true, false, true,
     ));
     assert!(!super::campaign::first_demonstration_intervention(
-        true,
-        false,
-        Some(&revisited)
+        true, false, false,
     ));
     assert!(!super::campaign::first_demonstration_intervention(
-        true,
-        true,
-        Some(&unexpanded)
+        true, true, true,
     ));
     assert!(!super::campaign::first_demonstration_intervention(
-        false,
-        false,
-        Some(&unexpanded)
-    ));
-    assert!(!super::campaign::first_demonstration_intervention(
-        true, false, None
+        false, false, true,
     ));
 }
 

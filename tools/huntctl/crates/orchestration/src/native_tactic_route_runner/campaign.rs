@@ -1,6 +1,6 @@
 pub(super) use super::campaign_schedule::{
-    first_demonstration_intervention, prefer_root_for_periodic_branch,
-    should_probe_policy_before_branch, should_schedule_branch,
+    first_demonstration_intervention, next_branch_acquisition_rank,
+    prefer_root_for_periodic_branch, should_probe_policy_before_branch, should_schedule_branch,
 };
 use super::*;
 
@@ -122,16 +122,17 @@ pub(super) fn run_seed(
             .training_corpus()
             .episode_groups
             .contains(&TACTIC_Q_DEMONSTRATION_EPISODE_GROUP);
-    let demonstration_frontier_count = if demonstration_curriculum {
-        campaign.demonstration_frontier_count()
+    let demonstration_frontier_states = if demonstration_curriculum {
+        campaign.demonstration_frontier_state_sha256s()
     } else {
-        0
+        BTreeSet::new()
     };
-    let mut first_demonstration_expansions = trace
+    let mut covered_demonstration_frontiers = trace
         .iter()
-        .filter_map(|decision| decision.branch_acquisition.as_ref())
-        .filter(|acquisition| acquisition.expansion_count == 0)
-        .count();
+        .filter(|decision| decision.branch_acquisition.is_some())
+        .map(|decision| decision.before.snapshot_sha256)
+        .filter(|state| demonstration_frontier_states.contains(state))
+        .collect::<BTreeSet<_>>();
     let checkpoint_content_root = tactic_content_store_path(&seed_root);
     let decision_content_store = if shared_content_store.root() == checkpoint_content_root {
         shared_content_store
@@ -306,17 +307,20 @@ pub(super) fn run_seed(
                 elapsed_micros(learner_refresh_started.elapsed()),
             )?;
         }
+        let next_branch_acquisition_rank = next_branch_acquisition_rank(lane.acquisition, episode)
+            .ok_or_else(|| route_message("episode counter overflowed"))?;
         let terminal_support_acquisition = campaign
             .graph_terminal_path_available()
             .map_err(route_error)?
-            && planned_acquisition_rank == 0;
+            && next_branch_acquisition_rank == 0;
         let demonstration_coverage_pending = demonstration_curriculum
-            && first_demonstration_expansions < demonstration_frontier_count;
+            && covered_demonstration_frontiers.len() < demonstration_frontier_states.len();
         let scheduled_branch = should_schedule_branch(
             campaign.decision_index,
             config.execution_plan.branch_every_decisions,
             terminal_restart,
             terminal_support_acquisition,
+            demonstration_coverage_pending,
         );
         if !campaign.replay().is_empty() && scheduled_branch {
             let branch_started = Instant::now();
@@ -328,10 +332,8 @@ pub(super) fn run_seed(
             )
             .map_err(route_error)?;
             let graph_scheduling_started = Instant::now();
-            let [root, frontier] = if demonstration_coverage_pending
-                && !terminal_restart
-                && !terminal_support_acquisition
-            {
+            let demonstration_branch = demonstration_coverage_pending && !terminal_restart;
+            let [root, frontier] = if demonstration_branch {
                 campaign.sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
@@ -373,22 +375,19 @@ pub(super) fn run_seed(
                 elapsed_micros(graph_scheduling_started.elapsed()),
             )?;
             let prefer_root = prefer_root_for_periodic_branch(
-                terminal_restart || terminal_support_acquisition,
+                terminal_restart || (terminal_support_acquisition && !demonstration_branch),
                 lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
             );
             let selected_branch = if prefer_root { &root } else { &frontier };
-            if demonstration_coverage_pending
-                && selected_branch
-                    .acquisition
-                    .as_ref()
-                    .is_some_and(|acquisition| acquisition.expansion_count == 0)
-            {
-                first_demonstration_expansions = first_demonstration_expansions.saturating_add(1);
-            }
+            let selected_uncovered_demonstration_frontier = demonstration_branch
+                && demonstration_frontier_states
+                    .contains(&selected_branch.logical_frontier.state_sha256)
+                && !covered_demonstration_frontiers
+                    .contains(&selected_branch.logical_frontier.state_sha256);
             demonstration_intervention_pending = first_demonstration_intervention(
                 demonstration_coverage_pending,
                 prefer_root,
-                selected_branch.acquisition.as_ref(),
+                selected_uncovered_demonstration_frontier,
             );
             branch_acquisition = selected_branch.acquisition.clone();
             let action_catalog_started = Instant::now();
@@ -568,11 +567,8 @@ pub(super) fn run_seed(
             )
             .map_err(route_error)?;
             let graph_scheduling_started = Instant::now();
-            let [root, frontier] = if demonstration_coverage_pending
-                && !terminal_restart
-                && !terminal_support_acquisition
-                && config.execution_plan.proposal_policy == TacticProposalPolicy::Learned
-            {
+            let demonstration_branch = demonstration_coverage_pending && !terminal_restart;
+            let [root, frontier] = if demonstration_branch {
                 campaign.sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
@@ -614,22 +610,19 @@ pub(super) fn run_seed(
                 elapsed_micros(graph_scheduling_started.elapsed()),
             )?;
             let prefer_root = prefer_root_for_periodic_branch(
-                terminal_restart || terminal_support_acquisition,
+                terminal_restart || (terminal_support_acquisition && !demonstration_branch),
                 lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
             );
             let selected_branch = if prefer_root { &root } else { &frontier };
-            if demonstration_coverage_pending
-                && selected_branch
-                    .acquisition
-                    .as_ref()
-                    .is_some_and(|acquisition| acquisition.expansion_count == 0)
-            {
-                first_demonstration_expansions = first_demonstration_expansions.saturating_add(1);
-            }
+            let selected_uncovered_demonstration_frontier = demonstration_branch
+                && demonstration_frontier_states
+                    .contains(&selected_branch.logical_frontier.state_sha256)
+                && !covered_demonstration_frontiers
+                    .contains(&selected_branch.logical_frontier.state_sha256);
             demonstration_intervention_pending = first_demonstration_intervention(
                 demonstration_coverage_pending,
                 prefer_root,
-                selected_branch.acquisition.as_ref(),
+                selected_uncovered_demonstration_frontier,
             );
             branch_acquisition = selected_branch.acquisition.clone();
             let action_catalog_started = Instant::now();
@@ -1375,6 +1368,11 @@ pub(super) fn run_seed(
         lease_ledger.resolve(lease_batch_sha256, NativeTacticLeaseOutcome::Completed)?;
         let lease_resolution_micros = elapsed_micros(lease_resolution_started.elapsed());
         trace.push(decision_trace);
+        if demonstration_curriculum
+            && demonstration_frontier_states.contains(&source_snapshot_sha256)
+        {
+            covered_demonstration_frontiers.insert(source_snapshot_sha256);
+        }
         let recovery_prune_started = Instant::now();
         prune_tactic_recovery_points(&seed_root, campaign.decision_index)?;
         let recovery_prune_micros = elapsed_micros(recovery_prune_started.elapsed());

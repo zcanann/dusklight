@@ -1359,6 +1359,10 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert_eq!(demonstration.frontier_archive().unwrap().tactic_len(), 1);
     assert_eq!(demonstration.frontier_cell_count(), 1);
     assert_eq!(demonstration.demonstration_frontier_count(), 1);
+    assert_eq!(
+        demonstration.demonstration_frontier_state_sha256s(),
+        BTreeSet::from([demonstration.training_replay[0].after_state_sha256])
+    );
     let mut terminal_leaf = TacticQCampaign::resume(restored.checkpoint().unwrap()).unwrap();
     terminal_leaf
         .training_episode_groups

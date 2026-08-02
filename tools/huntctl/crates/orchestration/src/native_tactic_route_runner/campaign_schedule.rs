@@ -1,13 +1,20 @@
-use super::*;
+use super::NativeTacticAcquisitionPlan;
+
+pub(super) fn next_branch_acquisition_rank(
+    acquisition: NativeTacticAcquisitionPlan,
+    current_episode: u64,
+) -> Option<u64> {
+    current_episode
+        .checked_add(1)
+        .map(|next_episode| acquisition.rank(next_episode))
+}
 
 pub(super) fn first_demonstration_intervention(
     coverage_pending: bool,
     prefer_root: bool,
-    acquisition: Option<&TacticFrontierAcquisition>,
+    selected_uncovered_demonstration_frontier: bool,
 ) -> bool {
-    coverage_pending
-        && !prefer_root
-        && acquisition.is_some_and(|acquisition| acquisition.expansion_count == 0)
+    coverage_pending && !prefer_root && selected_uncovered_demonstration_frontier
 }
 
 pub(super) fn should_schedule_branch(
@@ -15,8 +22,10 @@ pub(super) fn should_schedule_branch(
     branch_every_decisions: u64,
     terminal_restart: bool,
     terminal_support_acquisition: bool,
+    demonstration_coverage_pending: bool,
 ) -> bool {
-    terminal_restart
+    demonstration_coverage_pending
+        || terminal_restart
         || terminal_support_acquisition
         || (decision_index > 0 && decision_index % branch_every_decisions == 0)
 }

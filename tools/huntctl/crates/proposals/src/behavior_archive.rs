@@ -232,6 +232,12 @@ impl BehaviorArchive {
         self.tactic_entries.values().cloned().collect()
     }
 
+    /// Borrow the retained tactic frontiers without cloning their states and
+    /// complete route tapes. Use this for read-only scheduling projections.
+    pub fn tactic_frontier_entries(&self) -> impl Iterator<Item = &TacticFrontierEntry> {
+        self.tactic_entries.values()
+    }
+
     pub fn contains_tactic_frontier(
         &self,
         route_checkpoint_sha256: Digest,
