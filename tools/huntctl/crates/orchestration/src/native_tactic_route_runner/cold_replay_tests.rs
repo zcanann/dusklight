@@ -146,3 +146,40 @@ fn tape_length_and_tick_ceiling_are_exact() {
     reseal(&mut too_slow);
     assert!(too_slow.validate_shape().is_err());
 }
+
+#[test]
+fn tape_mode_passes_only_native_supported_execution_authority_flags() {
+    let execution = NativeResidualExecutionBinding {
+        schema: "dusklight-native-residual-execution/v1".into(),
+        content_sha256: digest(1),
+        optimization_request_sha256: digest(2),
+        executable: execution_artifact("dusklight.exe", 3),
+        runtime_dependencies: Vec::new(),
+        game_data: execution_artifact("game.iso", 4),
+        process_boot_tape: execution_artifact("boot.tape", 5),
+        milestone_program: execution_artifact("terminal.dmsp", 6),
+        world_context: execution_artifact("world.json", 7),
+        card_fixture_manifest: execution_artifact("fixture.json", 8),
+        checkpoint_validation_ticks: 8,
+        verify_state_hashes: false,
+    };
+    let mut command = std::process::Command::new("dusklight");
+    append_cold_replay_execution_authority(&mut command, &execution);
+    let arguments = command
+        .get_args()
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        arguments,
+        vec![
+            "--automation-game-data-sha256",
+            &execution.game_data.sha256.to_string(),
+        ]
+    );
+    assert!(
+        !arguments
+            .iter()
+            .any(|argument| argument.contains("world-context"))
+    );
+}

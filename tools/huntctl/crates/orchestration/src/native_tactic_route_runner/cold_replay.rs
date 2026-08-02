@@ -384,10 +384,6 @@ fn run_cold_replay_attempt(
         .arg(&renderer_cache)
         .arg("--automation-card-fixture")
         .arg(card_fixture)
-        .arg("--automation-game-data-sha256")
-        .arg(config.execution.game_data.sha256.to_string())
-        .arg("--automation-world-context-sha256")
-        .arg(config.execution.world_context.sha256.to_string())
         .arg("--milestone-program")
         .arg(milestone_program)
         .arg("--milestones")
@@ -402,6 +398,7 @@ fn run_cold_replay_attempt(
         .arg("--exit-after-tape")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
+    append_cold_replay_execution_authority(&mut command, config.execution);
     for cvar in FIXED_AUTOMATION_CVARS {
         command.arg("--cvar").arg(cvar);
     }
@@ -446,6 +443,18 @@ fn run_cold_replay_attempt(
         artifact_reference(&format!("{trial_relative}/stderr.txt"), &stderr_bytes),
         &milestone_bytes,
     )
+}
+
+/// Tape-mode cold replay authenticates the game image directly. World-context
+/// identity remains bound by the sealed execution/proof, but the native CLI
+/// accepts its runtime flag only for suffix-batch observation extraction.
+fn append_cold_replay_execution_authority(
+    command: &mut Command,
+    execution: &NativeResidualExecutionBinding,
+) {
+    command
+        .arg("--automation-game-data-sha256")
+        .arg(execution.game_data.sha256.to_string());
 }
 
 pub fn read_and_validate_native_tactic_cold_replay(
