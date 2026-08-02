@@ -1,6 +1,7 @@
 pub(super) use super::campaign_schedule::{
     first_demonstration_intervention, next_branch_acquisition_rank,
-    prefer_root_for_periodic_branch, should_probe_policy_before_branch, should_schedule_branch,
+    prefer_root_for_periodic_branch, should_probe_policy_before_branch,
+    should_rank_frontier_with_live_model, should_schedule_branch,
 };
 use super::*;
 
@@ -333,13 +334,21 @@ pub(super) fn run_seed(
             .map_err(route_error)?;
             let graph_scheduling_started = Instant::now();
             let demonstration_branch = demonstration_coverage_pending && !terminal_restart;
-            let [root, frontier] = if demonstration_branch {
+            let ranked_frontier_branch = should_rank_frontier_with_live_model(
+                demonstration_branch,
+                terminal_support_acquisition,
+                config
+                    .execution_plan
+                    .value_treatment
+                    .uses_terminal_frontier_action_value(),
+            );
+            let [root, frontier] = if ranked_frontier_branch {
                 campaign.sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
                     &[],
                     maximum_frontier_frames,
-                    demonstration_coverage_pending,
+                    demonstration_branch,
                     encoder.goal_distance_feature(),
                     &encode,
                     &|state| {
@@ -568,13 +577,21 @@ pub(super) fn run_seed(
             .map_err(route_error)?;
             let graph_scheduling_started = Instant::now();
             let demonstration_branch = demonstration_coverage_pending && !terminal_restart;
-            let [root, frontier] = if demonstration_branch {
+            let ranked_frontier_branch = should_rank_frontier_with_live_model(
+                demonstration_branch,
+                terminal_support_acquisition,
+                config
+                    .execution_plan
+                    .value_treatment
+                    .uses_terminal_frontier_action_value(),
+            );
+            let [root, frontier] = if ranked_frontier_branch {
                 campaign.sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
                     &[],
                     maximum_frontier_frames,
-                    demonstration_coverage_pending,
+                    demonstration_branch,
                     encoder.goal_distance_feature(),
                     &encode,
                     &|state| {

@@ -164,9 +164,18 @@ authenticated terminal in 124 ticks or less.
   Double-Q action head while retaining the full controller descriptor in its
   continuous regression features. Model and campaign tests prove that V3
   remains unsupported across an unseen label while V4 transfers the same
-  terminal evidence; V2 and V3 remain unchanged controls. A matched native
-  V2/V3/V4/control treatment is still required before claiming improved
-  terminal outcomes.
+  terminal evidence; V2 and V3 remain unchanged controls. The matched V4 arm
+  retained 190 ticks with 50 useful decisions, 11,056 native ticks, 133.4
+  seconds of model work, 422.6 seconds wall time, and first terminal at 48.46
+  seconds. It assigned action values on 23 decisions and changed three
+  post-update choices, but all 51 recorded frontier acquisitions still lacked
+  action value and uncertainty. The native runner was bypassing the learned
+  frontier sampler after demonstration coverage and using the graph scheduler
+  for every ordinary branch, so V3/V4 frontier ranking had no production
+  authority. Rank-zero terminal optimization now uses the live learned
+  frontier scorer for V3/V4 while nonzero ranks retain broad graph discovery.
+  Re-run the matched V4 arm before judging this treatment; do not interpret the
+  bypassed 190-tick result as evidence for or against its frontier policy.
 - [ ] Learn from successful and unsuccessful trajectories using sparse terminal
   value, authenticated tick cost, and generic state deltas.
 - [ ] Support online collection, off-policy replay, prioritized reuse, temporal

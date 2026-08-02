@@ -47,3 +47,15 @@ pub(super) fn prefer_root_for_periodic_branch(
     // branches and must not consume supported-interior optimization slots.
     !force_scheduled_frontier && root_refresh_due
 }
+
+/// Route rank-zero terminal optimization through the live learned frontier
+/// scorer when the sealed treatment enables it. Demonstration coverage uses
+/// the same enumerator in coverage mode; all other ranks stay on the graph
+/// scheduler's broad-discovery rotation.
+pub(super) fn should_rank_frontier_with_live_model(
+    demonstration_branch: bool,
+    terminal_support_acquisition: bool,
+    terminal_frontier_action_value_enabled: bool,
+) -> bool {
+    demonstration_branch || (terminal_support_acquisition && terminal_frontier_action_value_enabled)
+}

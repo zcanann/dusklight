@@ -104,6 +104,22 @@ fn branch_acquisition_rank_does_not_alias_the_decision_cadence() {
 }
 
 #[test]
+fn only_rank_zero_optimization_uses_the_live_frontier_model() {
+    assert!(campaign::should_rank_frontier_with_live_model(
+        true, false, false,
+    ));
+    assert!(campaign::should_rank_frontier_with_live_model(
+        false, true, true,
+    ));
+    assert!(!campaign::should_rank_frontier_with_live_model(
+        false, true, false,
+    ));
+    assert!(!campaign::should_rank_frontier_with_live_model(
+        false, false, true,
+    ));
+}
+
+#[test]
 fn terminal_restart_defers_policy_probe_until_after_branch_restore() {
     assert!(campaign::should_probe_policy_before_branch(false));
     assert!(!campaign::should_probe_policy_before_branch(true));
