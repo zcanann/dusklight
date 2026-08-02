@@ -142,10 +142,11 @@ pub struct NativeTacticCampaignGoalReachabilitySummary {
     pub frontier_policy_authorized_decisions: u64,
     pub frontier_policy_blocked_decisions: u64,
     pub unproven_frontier_policy_deployments: u64,
-    /// Branch acquisitions backed by authenticated terminal return evidence.
+    /// Decisions executed from frontier context backed by authenticated
+    /// terminal return evidence.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
-    pub terminal_frontier_acquisitions: u64,
-    /// Terminal-backed acquisitions for which the frontier scorer published a
+    pub terminal_frontier_context_decisions: u64,
+    /// Terminal-backed frontier contexts for which the scorer published a
     /// learned value and an uncertainty estimate, respectively.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub terminal_frontier_value_decisions: u64,
@@ -281,12 +282,14 @@ impl NativeTacticCampaignSummary {
             .flat_map(|seed| &seed.trace)
             .map(|decision| decision.proposal_batch.len() as u64)
             .sum();
-        let (terminal_proposals, selected_terminal_decisions, selected_terminal_seeds) =
-            if route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44 {
-                terminal_outcome_counts(route)
-            } else {
-                (0, 0, 0)
-            };
+        let (terminal_proposals, selected_terminal_decisions, selected_terminal_seeds) = if matches!(
+            route.schema.as_str(),
+            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44 | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45
+        ) {
+            terminal_outcome_counts(route)
+        } else {
+            (0, 0, 0)
+        };
         let mut stop_reasons = BTreeMap::new();
         for reason in route
             .seeds
@@ -323,11 +326,7 @@ impl NativeTacticCampaignSummary {
         let peak_worker_resident_bytes = route.native_restore_accounting.peak_resident_bytes;
 
         let mut summary = Self {
-            schema: if route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44 {
-                NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7.into()
-            } else {
-                NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4.into()
-            },
+            schema: summary_schema_for_route(&route.schema).into(),
             content_sha256: Digest::ZERO,
             route_report_sha256: route_report_sha256(route)?,
             identities: NativeTacticCampaignIdentities {
@@ -515,7 +514,7 @@ impl NativeTacticCampaignSummary {
                     .saturating_add(self.goal_reachability.frontier_policy_blocked_decisions)
             || (self.schema == NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7
                 && (self.goal_reachability.terminal_frontier_value_decisions
-                    > self.goal_reachability.terminal_frontier_acquisitions
+                    > self.goal_reachability.terminal_frontier_context_decisions
                     || self
                         .goal_reachability
                         .terminal_frontier_uncertainty_decisions
@@ -571,6 +570,14 @@ impl NativeTacticCampaignSummary {
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
+    }
+}
+
+fn summary_schema_for_route(route_schema: &str) -> &'static str {
+    match route_schema {
+        NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45 => NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7,
+        NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44 => NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6,
+        _ => NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4,
     }
 }
 
@@ -635,7 +642,7 @@ fn goal_reachability_summary(
     let mut frontier_policy_authorized_decisions = 0_u64;
     let mut frontier_policy_blocked_decisions = 0_u64;
     let mut unproven_frontier_policy_deployments = 0_u64;
-    let mut terminal_frontier_acquisitions = 0_u64;
+    let mut terminal_frontier_context_decisions = 0_u64;
     let mut terminal_frontier_value_decisions = 0_u64;
     let mut terminal_frontier_uncertainty_decisions = 0_u64;
     let mut selected_acquisition_rank_counts = BTreeMap::<u64, u64>::new();
@@ -644,7 +651,7 @@ fn goal_reachability_summary(
     let mut most_mature: Option<&GoalReachabilityCalibration> = None;
 
     for decision in traces {
-        if route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44 {
+        if route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45 {
             let count = selected_acquisition_rank_counts
                 .entry(decision.acquisition_rank)
                 .or_default();
@@ -700,10 +707,11 @@ fn goal_reachability_summary(
                 unproven_action_policy_deployments.saturating_add(1);
         }
         if let Some(acquisition) = &decision.branch_acquisition {
-            if route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44
+            if route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45
                 && acquisition.terminal_value_supported
             {
-                terminal_frontier_acquisitions = terminal_frontier_acquisitions.saturating_add(1);
+                terminal_frontier_context_decisions =
+                    terminal_frontier_context_decisions.saturating_add(1);
                 if acquisition.best_mean_q.is_some() {
                     terminal_frontier_value_decisions =
                         terminal_frontier_value_decisions.saturating_add(1);
@@ -756,7 +764,7 @@ fn goal_reachability_summary(
         frontier_policy_authorized_decisions,
         frontier_policy_blocked_decisions,
         unproven_frontier_policy_deployments,
-        terminal_frontier_acquisitions,
+        terminal_frontier_context_decisions,
         terminal_frontier_value_decisions,
         terminal_frontier_uncertainty_decisions,
         selected_acquisition_rank_counts,
@@ -894,7 +902,10 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
     {
         Some(NativeTacticCausalLink::PolicyDeployment)
     } else if learning_expected
-        && route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44
+        && matches!(
+            route.schema.as_str(),
+            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44 | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45
+        )
         && (policy_update_probes.is_empty()
             || valid_policy_update_probes != policy_update_probes.len() as u64
             || selected_action_changes_from_policy_update == 0)
@@ -1059,9 +1070,9 @@ mod tests {
     }
 
     #[test]
-    fn v44_summary_requires_a_same_state_policy_effect() {
+    fn v45_summary_requires_a_same_state_policy_effect() {
         let (_, mut route, _) = retained_report_and_plan();
-        route.schema = NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44.into();
+        route.schema = NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45.into();
         route.seeds[0].trace[0].branch_acquisition = Some(TacticFrontierAcquisition {
             expansion_count: 1,
             terminal: false,
@@ -1117,7 +1128,7 @@ mod tests {
         assert_eq!(summary.valid_policy_update_probes, 1);
         assert_eq!(summary.selected_action_changes_from_policy_update, 1);
         let frontier = goal_reachability_summary(&route);
-        assert_eq!(frontier.terminal_frontier_acquisitions, 1);
+        assert_eq!(frontier.terminal_frontier_context_decisions, 1);
         assert_eq!(frontier.terminal_frontier_value_decisions, 1);
         assert_eq!(frontier.terminal_frontier_uncertainty_decisions, 1);
         assert_eq!(
@@ -1127,6 +1138,15 @@ mod tests {
                 .copied()
                 .sum::<u64>(),
             route.total_decisions
+        );
+
+        assert_eq!(
+            summary_schema_for_route(NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44),
+            NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6
+        );
+        assert_eq!(
+            summary_schema_for_route(NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45),
+            NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7
         );
 
         route

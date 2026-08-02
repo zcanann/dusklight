@@ -77,8 +77,10 @@ fn validate_report_binding(
 ) -> Result<(), NativeTacticRouteRunError> {
     let execution_plan_sha256 = config.execution_plan.identity()?;
     let expected_import = imported_promoted_tactics.map(|imported| &imported.report);
-    if report.schema != NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44
-        || report.optimization_request_sha256 != config.optimization.content_sha256
+    if !matches!(
+        report.schema.as_str(),
+        NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44 | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45
+    ) || report.optimization_request_sha256 != config.optimization.content_sha256
         || report.execution_binding_sha256 != config.execution.content_sha256
         || report.execution_plan_sha256 != execution_plan_sha256
         || report.objective_sha256 != config.optimization.terminal_predicate.definition_sha256

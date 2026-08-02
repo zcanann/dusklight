@@ -65,9 +65,10 @@ use attempt_artifacts::{
     replay_completed, select_result_path,
 };
 use incumbent_demonstration::{
-    ensure_incumbent_demonstration, incumbent_demonstration_batch, load_incumbent_demonstration,
-    validate_checkpoint_replay, write_uncommitted_native_request,
+    ensure_incumbent_demonstration, load_incumbent_demonstration, validate_checkpoint_replay,
 };
+#[cfg(test)]
+use incumbent_demonstration::{incumbent_demonstration_batch, write_uncommitted_native_request};
 use worker_pool::*;
 
 #[derive(Clone, Debug)]

@@ -110,6 +110,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V41: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V42: &str = "dusklight-native-tactic-route-report/v42";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V43: &str = "dusklight-native-tactic-route-report/v43";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44: &str = "dusklight-native-tactic-route-report/v44";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45: &str = "dusklight-native-tactic-route-report/v45";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -1049,7 +1050,7 @@ fn run_native_tactic_route_with_optional_fleet(
     let useful_training_transitions = learner_finalization.useful_training_transitions;
     let censored_training_transitions = learner_finalization.censored_training_transitions;
     let mut report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45.into(),
         orchestrator_executable_sha256: Some(orchestrator_executable_sha256),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
@@ -1198,6 +1199,7 @@ pub(super) fn supports_current_route_report_schema(schema: &str) -> bool {
             | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V42
             | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V43
             | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44
+            | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45
     )
 }
 

@@ -202,10 +202,12 @@ impl NativeTacticScratchComparisonReport {
             .ok_or_else(|| route_message("scratch comparison has no routes"))?;
         let comparison_schema = match first.schema.as_str() {
             NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V43 => NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V6,
-            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44 => NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V7,
+            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44 | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45 => {
+                NATIVE_TACTIC_SCRATCH_COMPARISON_SCHEMA_V7
+            }
             _ => {
                 return Err(route_message(
-                    "scratch comparison requires complete v43 or v44 campaign evidence",
+                    "scratch comparison requires complete v43, v44, or v45 campaign evidence",
                 ));
             }
         };

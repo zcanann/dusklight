@@ -338,9 +338,7 @@ pub(super) fn run_seed(
             if branch_acquisition_context.terminal_support != terminal_support_acquisition
                 || lane.acquisition.rank(episode) != next_branch_acquisition_rank
             {
-                return Err(route_message(
-                    "native tactic branch acquisition changed while scheduling",
-                ));
+                return Err(route_message("branch acquisition changed while scheduling"));
             }
             active_acquisition_rank = branch_acquisition_context.rank;
             let maximum_frontier_frames = usize::try_from(
