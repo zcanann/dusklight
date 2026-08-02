@@ -117,8 +117,13 @@ authenticated terminal in 124 ticks or less.
   3 of 10 held-out action rankings (30.0% versus a 12.1% chance rate; 10.8%
   Wilson lower bound), so the gate correctly blocked all 12 deployments and no
   same-state action changed. The wiring and throughput are now adequate for a
-  bounded larger-sample discriminator, but the treatment has not yet proved
-  policy effect.
+  bounded larger-sample discriminator. That 64-decision treatment completed
+  512 proposals in 352.2 seconds. At the 512-row prefix it won 22 of 58
+  held-out action rankings (37.9% versus 12.1% chance; 26.6% Wilson lower
+  bound), authorized reachability on 29 decisions, made it primary on 17, and
+  changed one of 31 controlled same-state choices after a learner update. The
+  treatment now proves policy effect, but retained 191 ticks; matched controls
+  and terminal-outcome improvement remain open.
 - [ ] Learn from successful and unsuccessful trajectories using sparse terminal
   value, authenticated tick cost, and generic state deltas.
 - [ ] Support online collection, off-policy replay, prioritized reuse, temporal
@@ -196,6 +201,11 @@ do not golf isolated subphases without campaign evidence.
   seconds (32.4 seconds/decision versus 27.6 previously), with 8.35% native
   utilization. Its more expensive learner dominated the run, so the removed
   traversal did not improve end-to-end throughput under that treatment.
+  After the critic-routing correction, the 64-decision causal treatment
+  completed in 352.2 seconds (5.50 seconds/decision) with 9.92% native
+  utilization and 124.8 seconds of model work. The end-to-end learning loop is
+  now inside the ten-minute gate at a sample count sufficient to adopt a
+  policy; matched worker-scaling evidence is still required.
 - [ ] Make completed-seed resume and finalization read-only and cheap: do not
   launch a native fleet or repeat full replay fitting, graph projection, and
   macro evaluation merely to validate and summarize already sealed evidence.
