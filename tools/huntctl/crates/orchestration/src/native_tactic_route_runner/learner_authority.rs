@@ -27,9 +27,9 @@ pub(super) struct CampaignLearnerFinalizationSnapshot {
     pub(super) latest_manifest: TacticQLearnerSnapshot,
 }
 
-/// Read-only durable learner authority used only after every lane and macro
-/// finalization artifact is already committed. It authenticates the replay and
-/// learner head but never fits or publishes a model.
+/// Read-only durable learner authority used after every lane is committed.
+/// Macro finalization does not mutate learner state, so interrupted macro work
+/// can consume this view without fitting or publishing another model.
 pub(super) struct CompletedCampaignLearnerView {
     replay: TacticReplayControlPlane,
     learner_heads: CampaignLearnerHeadJournal,

@@ -220,15 +220,18 @@ do not golf isolated subphases without campaign evidence.
   resume now returns its validated report idempotently, and a crash after
   publishing both final JSON artifacts but before the binary completion marker
   reattaches them to every seed checkpoint, the replay and learner heads, the
-  macro registry, and the sealed plan without launching a fleet. All-seed-complete recovery before
-  those final artifacts exist still needs the same read-only treatment. Macro
-  mining, held-out native comparisons, promotion accounting, and reuse evidence
-  now publish one checksummed binary authority immediately after validation;
-  resume reuses it instead of repeating macro evaluation, and any later report
-  must match it exactly. Once every zero-shot lane and that macro authority are
-  present, resume authenticates the root directly from the completed seed
-  graphs before fleet launch, skips the native pool, and reads the durable
-  replay and learner head without fitting or publishing a model. The same
+  macro registry, and the sealed plan without launching a fleet. All-seed-complete
+  recovery now authenticates the seed graphs, replay, and learner head before
+  considering the macro authority; if macro finalization was interrupted it
+  skips every seed coordinator and model fit and confines any native fleet to
+  the unfinished held-out macro work. Macro mining, held-out native comparisons,
+  promotion accounting, and reuse evidence publish one checksummed binary
+  authority immediately after validation; resume reuses it instead of repeating
+  macro evaluation, and any later report must match it exactly. Once every
+  zero-shot lane and that macro authority are present, resume authenticates the
+  root directly from the completed seed graphs before fleet launch, skips the
+  native pool, and reads the durable replay and learner head without fitting or
+  publishing a model. The same
   preflight now authenticates an existing demonstration report and binary
   corpus without launching a fleet, preserves the separate treatment in the
   final report, and falls back to live capture only when that configured

@@ -5,7 +5,7 @@ pub(super) struct CompletedSeedPreflight {
     pub(super) indexed_results: Vec<(usize, NativeTacticSeedResult)>,
     pub(super) initial_facts: FactSnapshot,
     pub(super) root_checkpoint_sha256: Digest,
-    pub(super) tactic_macro_discovery: NativeTacticMacroDiscoveryReport,
+    pub(super) tactic_macro_discovery: Option<NativeTacticMacroDiscoveryReport>,
     pub(super) demonstration: Option<NativeTacticDemonstrationReport>,
 }
 
@@ -14,13 +14,7 @@ pub(super) fn load_completed_seed_preflight(
     execution_plan_sha256: Digest,
     process_tape: &InputTape,
 ) -> Result<Option<CompletedSeedPreflight>, NativeTacticRouteRunError> {
-    if !config.resume
-        || !config
-            .output_root
-            .join(NATIVE_TACTIC_MACRO_DISCOVERY_FILE)
-            .is_file()
-        || config.execution_plan.lanes.is_empty()
-    {
+    if !config.resume || config.execution_plan.lanes.is_empty() {
         return Ok(None);
     }
     let result_paths = config
@@ -111,13 +105,20 @@ pub(super) fn load_completed_seed_preflight(
     ) {
         return Ok(None);
     }
-    let tactic_macro_discovery = read_macro_discovery_report(
-        config.output_root,
-        execution_plan_sha256,
-        objective_sha256,
-        feature_schema_sha256,
-        root_checkpoint_sha256,
-    )?;
+    let tactic_macro_discovery = config
+        .output_root
+        .join(NATIVE_TACTIC_MACRO_DISCOVERY_FILE)
+        .is_file()
+        .then(|| {
+            read_macro_discovery_report(
+                config.output_root,
+                execution_plan_sha256,
+                objective_sha256,
+                feature_schema_sha256,
+                root_checkpoint_sha256,
+            )
+        })
+        .transpose()?;
     Ok(Some(CompletedSeedPreflight {
         indexed_results,
         initial_facts,
@@ -125,6 +126,24 @@ pub(super) fn load_completed_seed_preflight(
         tactic_macro_discovery,
         demonstration: demonstration.map(|demonstration| demonstration.report),
     }))
+}
+
+pub(super) fn completed_seed_preflight_requires_native_fleet(
+    preflight: Option<&CompletedSeedPreflight>,
+) -> bool {
+    recovery_requires_native_fleet(
+        preflight.is_some(),
+        preflight
+            .and_then(|preflight| preflight.tactic_macro_discovery.as_ref())
+            .is_some(),
+    )
+}
+
+fn recovery_requires_native_fleet(
+    completed_seed_evidence: bool,
+    macro_discovery_evidence: bool,
+) -> bool {
+    !completed_seed_evidence || !macro_discovery_evidence
 }
 
 fn demonstration_evidence_matches_treatment(
@@ -136,7 +155,7 @@ fn demonstration_evidence_matches_treatment(
 
 #[cfg(test)]
 mod tests {
-    use super::demonstration_evidence_matches_treatment;
+    use super::{demonstration_evidence_matches_treatment, recovery_requires_native_fleet};
 
     #[test]
     fn completed_seed_preflight_requires_exact_demonstration_treatment_evidence() {
@@ -144,5 +163,13 @@ mod tests {
         assert!(demonstration_evidence_matches_treatment(true, Some(4)));
         assert!(!demonstration_evidence_matches_treatment(true, None));
         assert!(!demonstration_evidence_matches_treatment(false, Some(4)));
+    }
+
+    #[test]
+    fn completed_seeds_skip_native_work_except_for_unfinished_macro_validation() {
+        assert!(recovery_requires_native_fleet(false, false));
+        assert!(recovery_requires_native_fleet(false, true));
+        assert!(recovery_requires_native_fleet(true, false));
+        assert!(!recovery_requires_native_fleet(true, true));
     }
 }

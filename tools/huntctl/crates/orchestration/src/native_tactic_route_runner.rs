@@ -488,11 +488,13 @@ fn run_native_tactic_route_with_optional_fleet(
     let worker_count = config.workers;
     let mut completed_preflight =
         load_completed_seed_preflight(config, execution_plan_sha256, &process_tape)?;
-    let owned_fleet = (external_fleet.is_none() && completed_preflight.is_none())
+    let native_fleet_required =
+        completed_seed_preflight_requires_native_fleet(completed_preflight.as_ref());
+    let owned_fleet = (external_fleet.is_none() && native_fleet_required)
         .then(|| launch_native_tactic_worker_fleet(config, config.output_root, worker_count))
         .transpose()?;
     let fleet = external_fleet.or(owned_fleet.as_ref());
-    if completed_preflight.is_none() {
+    if native_fleet_required {
         fleet
             .ok_or_else(|| route_message("native tactic worker fleet is absent"))?
             .validate_for(config)?;
@@ -587,28 +589,29 @@ fn run_native_tactic_route_with_optional_fleet(
             None,
         )
     };
-    let frozen_policy_snapshot =
-        if config.execution_plan.proposal_policy == TacticProposalPolicy::FrozenPolicy {
-            Some(
-                lock_learner_authority(
-                    learner_authority
-                        .as_ref()
-                        .ok_or_else(|| route_message("live learner authority is absent"))?,
-                )?
-                .snapshot(),
-            )
-        } else {
-            None
-        };
-
-    let pool = if completed_preflight.is_some() {
-        None
+    let frozen_policy_snapshot = if learner_authority.is_some()
+        && config.execution_plan.proposal_policy == TacticProposalPolicy::FrozenPolicy
+    {
+        Some(
+            lock_learner_authority(
+                learner_authority
+                    .as_ref()
+                    .ok_or_else(|| route_message("live learner authority is absent"))?,
+            )?
+            .snapshot(),
+        )
     } else {
+        None
+    };
+
+    let pool = if native_fleet_required {
         Some(
             fleet
                 .ok_or_else(|| route_message("native tactic worker fleet is absent"))?
                 .pool(config, execution_plan_sha256, root_source_frame)?,
         )
+    } else {
+        None
     };
     let checkpoint_cache_capacity_per_worker_bytes = u64::try_from(pool.as_ref().map_or_else(
         || {
@@ -628,13 +631,25 @@ fn run_native_tactic_route_with_optional_fleet(
                     elapsed_micros(campaign_started.elapsed());
                 campaign_phase_wall.campaign_finalization_started_micros =
                     campaign_phase_wall.campaign_setup_micros;
+                let tactic_macro_discovery = match preflight.tactic_macro_discovery {
+                    Some(report) => report,
+                    None => finalize_tactic_macro_discovery(
+                        config,
+                        pool.as_ref().ok_or_else(|| {
+                            route_message("native tactic macro finalization pool is absent")
+                        })?,
+                        &encoder,
+                        execution_plan_sha256,
+                        root_checkpoint_sha256,
+                    )?,
+                };
                 let shared_training_replay_rows = completed_learner_view
                     .as_ref()
                     .ok_or_else(|| route_message("completed learner authority is absent"))?
                     .replay_len() as u64;
                 return Ok((
                     preflight.indexed_results,
-                    preflight.tactic_macro_discovery,
+                    tactic_macro_discovery,
                     shared_training_replay_rows,
                     preflight.demonstration,
                 ));
@@ -812,41 +827,13 @@ fn run_native_tactic_route_with_optional_fleet(
             }
             campaign_phase_wall.campaign_finalization_started_micros =
                 elapsed_micros(campaign_started.elapsed());
-            let completion = (|| {
-                if config
-                    .output_root
-                    .join(NATIVE_TACTIC_MACRO_DISCOVERY_FILE)
-                    .is_file()
-                {
-                    return read_macro_discovery_report(
-                        config.output_root,
-                        execution_plan_sha256,
-                        config.optimization.terminal_predicate.definition_sha256,
-                        encoder.schema_sha256,
-                        root_checkpoint_sha256,
-                    );
-                }
-                let mined = mine_and_store_tactic_macros(
-                    config.output_root,
-                    &config.execution_plan.seeds,
-                    &encoder,
-                )?;
-                let report = validate_and_store_tactic_macros(
-                    config,
-                    &pool,
-                    &encoder,
-                    root_checkpoint_sha256,
-                    mined,
-                )?;
-                write_macro_discovery_report(
-                    config.output_root,
-                    execution_plan_sha256,
-                    config.optimization.terminal_predicate.definition_sha256,
-                    encoder.schema_sha256,
-                    root_checkpoint_sha256,
-                    report,
-                )
-            })()?;
+            let completion = finalize_tactic_macro_discovery(
+                config,
+                &pool,
+                &encoder,
+                execution_plan_sha256,
+                root_checkpoint_sha256,
+            )?;
             let shared_training_replay_rows =
                 lock_learner_authority(&learner_authority)?.replay().len() as u64;
             Ok::<_, NativeTacticRouteRunError>((
@@ -1209,7 +1196,7 @@ fn current_executable_sha256() -> Result<Digest, NativeTacticRouteRunError> {
 }
 
 mod macro_discovery;
-use macro_discovery::{mine_and_store_tactic_macros, validate_and_store_tactic_macros};
+use macro_discovery::finalize_tactic_macro_discovery;
 mod macro_discovery_report_store;
 use macro_discovery_report_store::{
     NATIVE_TACTIC_MACRO_DISCOVERY_FILE, read_macro_discovery_report, write_macro_discovery_report,
@@ -1272,7 +1259,9 @@ use campaign_persistence::{
 mod campaign_completion_recovery;
 use campaign_completion_recovery::recover_completed_campaign;
 mod completed_seed_preflight;
-use completed_seed_preflight::load_completed_seed_preflight;
+use completed_seed_preflight::{
+    completed_seed_preflight_requires_native_fleet, load_completed_seed_preflight,
+};
 mod journal;
 use journal::{
     TacticDecisionJournalAppender, compact_tactic_decision_journal, decision_record,

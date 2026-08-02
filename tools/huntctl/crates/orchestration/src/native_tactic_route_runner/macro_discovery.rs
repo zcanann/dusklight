@@ -5,6 +5,37 @@ pub(super) struct MinedTacticMacros {
     report: NativeTacticMacroDiscoveryReport,
 }
 
+pub(super) fn finalize_tactic_macro_discovery(
+    config: &NativeTacticRouteRunConfig<'_>,
+    pool: &NativeTacticProposalPool,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+    execution_plan_sha256: Digest,
+    root_checkpoint_sha256: Digest,
+) -> Result<NativeTacticMacroDiscoveryReport, NativeTacticRouteRunError> {
+    let durable_path = config.output_root.join(NATIVE_TACTIC_MACRO_DISCOVERY_FILE);
+    if durable_path.is_file() {
+        return read_macro_discovery_report(
+            config.output_root,
+            execution_plan_sha256,
+            config.optimization.terminal_predicate.definition_sha256,
+            encoder.schema_sha256,
+            root_checkpoint_sha256,
+        );
+    }
+    let mined =
+        mine_and_store_tactic_macros(config.output_root, &config.execution_plan.seeds, encoder)?;
+    let report =
+        validate_and_store_tactic_macros(config, pool, encoder, root_checkpoint_sha256, mined)?;
+    write_macro_discovery_report(
+        config.output_root,
+        execution_plan_sha256,
+        config.optimization.terminal_predicate.definition_sha256,
+        encoder.schema_sha256,
+        root_checkpoint_sha256,
+        report,
+    )
+}
+
 pub(super) fn mine_and_store_tactic_macros(
     output_root: &Path,
     exploration_seeds: &[u64],
