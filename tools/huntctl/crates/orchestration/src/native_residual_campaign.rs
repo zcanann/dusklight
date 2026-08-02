@@ -79,6 +79,37 @@ impl NativeResidualExecutionBinding {
         verify_state_hashes: bool,
     ) -> Result<Self, NativeResidualCampaignError> {
         let root = repository_root.canonicalize().map_err(native_error)?;
+        optimization.validate_files(&root).map_err(native_error)?;
+        Self::seal_after_request_validation(
+            &root,
+            optimization,
+            executable,
+            game_data,
+            process_boot_tape,
+            milestone_program,
+            world_context,
+            card_fixture_manifest,
+            checkpoint_validation_ticks,
+            verify_state_hashes,
+        )
+        .map(|(binding, _)| binding)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn seal_after_request_validation(
+        repository_root: &Path,
+        optimization: &OptimizationRequest,
+        executable: &Path,
+        game_data: &Path,
+        process_boot_tape: &Path,
+        milestone_program: &Path,
+        world_context: &Path,
+        card_fixture_manifest: &Path,
+        checkpoint_validation_ticks: u64,
+        verify_state_hashes: bool,
+    ) -> Result<(Self, NativeResidualExecutionValidationReport), NativeResidualCampaignError> {
+        let root = repository_root.canonicalize().map_err(native_error)?;
+        optimization.validate().map_err(native_error)?;
         let runtime_dependencies = runtime_dependency_references(&root, executable)?;
         let mut binding = Self {
             schema: NATIVE_RESIDUAL_EXECUTION_SCHEMA_V1.into(),
@@ -95,8 +126,8 @@ impl NativeResidualExecutionBinding {
             verify_state_hashes,
         };
         binding.content_sha256 = binding.identity()?;
-        binding.validate_files(&root, optimization)?;
-        Ok(binding)
+        let report = binding.validate_files_after_request_validation(&root, optimization)?;
+        Ok((binding, report))
     }
 
     pub fn validate_files(
@@ -106,6 +137,16 @@ impl NativeResidualExecutionBinding {
     ) -> Result<NativeResidualExecutionValidationReport, NativeResidualCampaignError> {
         let root = repository_root.canonicalize().map_err(native_error)?;
         optimization.validate_files(&root).map_err(native_error)?;
+        self.validate_files_after_request_validation(&root, optimization)
+    }
+
+    fn validate_files_after_request_validation(
+        &self,
+        repository_root: &Path,
+        optimization: &OptimizationRequest,
+    ) -> Result<NativeResidualExecutionValidationReport, NativeResidualCampaignError> {
+        let root = repository_root.canonicalize().map_err(native_error)?;
+        optimization.validate().map_err(native_error)?;
         self.validate_seal(optimization)?;
         let executable = validate_artifact(&root, "executable", &self.executable, false)?;
         if self.runtime_dependencies.len() > 256
@@ -429,6 +470,15 @@ pub fn materialize_native_residual_process_tape(
 ) -> Result<InputTape, NativeResidualCampaignError> {
     let root = repository_root.canonicalize().map_err(native_error)?;
     optimization.validate_files(&root).map_err(native_error)?;
+    materialize_native_residual_process_tape_after_request_validation(&root, optimization)
+}
+
+fn materialize_native_residual_process_tape_after_request_validation(
+    repository_root: &Path,
+    optimization: &OptimizationRequest,
+) -> Result<InputTape, NativeResidualCampaignError> {
+    let root = repository_root.canonicalize().map_err(native_error)?;
+    optimization.validate().map_err(native_error)?;
     let mut materialized = materialized_route_authority(&root, optimization)?.tape;
     let required_frames = optimization
         .route

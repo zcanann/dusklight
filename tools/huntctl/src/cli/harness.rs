@@ -1001,7 +1001,6 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
         let repository_root = repository_root(command_args)?.canonicalize()?;
         let optimization: OptimizationRequest =
             serde_json::from_slice(&fs::read(required_path(command_args, "--request")?)?)?;
-        optimization.validate_files(&repository_root)?;
         let output_arg = required_path(command_args, "--output")?;
         if output_arg.is_absolute()
             || output_arg
@@ -1068,7 +1067,7 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
         let compiled =
             huntctl::milestone_dsl::compile_source(&fs::read_to_string(predicate_source)?)?;
         write_new_file(&program_path, compiled.bytes)?;
-        let binding = huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding::seal(
+        let (binding, report) = huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding::seal_after_request_validation(
             &repository_root,
             &optimization,
             &pinned_executable,
@@ -1081,7 +1080,6 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
             flag(command_args, "--verify-state-hashes"),
         )?;
         write_new_file(&binding_path, binding.to_pretty_json()?)?;
-        let report = binding.validate_files(&repository_root, &optimization)?;
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
