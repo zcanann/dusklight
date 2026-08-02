@@ -58,8 +58,9 @@ detailed history in commits and sealed campaign artifacts.
   path.
 - [ ] Preserve every authenticated terminal proposal as a complete root-to-goal
   trajectory even when the online policy did not select it.
-- [ ] Reconstruct, minimize, and cold-replay that trajectory from the named root
-  before treating it as optimization authority.
+- [ ] Exercise the cold-replay-backed optimization handoff on each selected
+  zero-shot terminal, minimize the resulting incumbent, and verify the derived
+  request and execution from the named root.
 - [ ] Retain useful branch checkpoints and exact suffix provenance along the
   terminal trajectory without assuming that every checkpoint is worth keeping.
 - [ ] Generate local, segment-scale, and whole-trajectory mutations around the
