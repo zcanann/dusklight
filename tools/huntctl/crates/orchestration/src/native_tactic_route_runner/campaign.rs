@@ -252,6 +252,7 @@ pub(super) fn run_seed(
         ));
     }
     if resuming_seed {
+        prune_tactic_partial_finalization(&seed_root)?;
         prune_tactic_native_attempts(&seed_root, campaign.decision_index)?;
         prune_tactic_recovery_points(&seed_root, campaign.decision_index)?;
     } else {

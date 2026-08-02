@@ -204,7 +204,7 @@ pub use lease_journal::{NativeTacticLeaseAccounting, NativeTacticLeaseOutcome};
 mod recovery;
 use recovery::{
     has_tactic_recovery_point, load_tactic_recovery_point, persist_tactic_recovery_point,
-    prune_tactic_native_attempts, prune_tactic_recovery_points,
+    prune_tactic_native_attempts, prune_tactic_partial_finalization, prune_tactic_recovery_points,
 };
 mod fault_injection;
 use fault_injection::inject_tactic_fault;

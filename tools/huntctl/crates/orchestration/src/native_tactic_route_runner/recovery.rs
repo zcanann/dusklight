@@ -216,6 +216,46 @@ pub(super) fn prune_tactic_native_attempts(
     sync_directory(&native_root)
 }
 
+/// Final seed artifacts are projections of the latest recovery point until
+/// `seed-result.json` commits them. A crash during that projection must not
+/// make the durable campaign unresumable or require any native work to be
+/// repeated.
+pub(super) fn prune_tactic_partial_finalization(
+    seed_root: &Path,
+) -> Result<(), NativeTacticRouteRunError> {
+    for name in ["best-terminal.tape", "best-terminal-result.dtqz"] {
+        let path = seed_root.join(name);
+        match fs::symlink_metadata(&path) {
+            Ok(metadata)
+                if metadata.file_type().is_file() && !metadata.file_type().is_symlink() =>
+            {
+                fs::remove_file(path).map_err(route_error)?;
+            }
+            Ok(_) => {
+                return Err(route_message(format!(
+                    "partial tactic finalization artifact is not a physical file: {name}"
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(route_error(error)),
+        }
+    }
+    let checkpoint = seed_root.join("final-checkpoint");
+    match fs::symlink_metadata(&checkpoint) {
+        Ok(metadata) if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() => {
+            fs::remove_dir_all(checkpoint).map_err(route_error)?;
+        }
+        Ok(_) => {
+            return Err(route_message(
+                "partial tactic final checkpoint is not a physical directory",
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(route_error(error)),
+    }
+    sync_directory(seed_root)
+}
+
 fn remove_recovery_directory(
     recovery_root: &Path,
     directory: &Path,
@@ -568,6 +608,31 @@ mod tests {
 
         assert!(committed.join("result").is_file());
         assert!(!partial.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resume_prunes_only_regenerable_partial_finalization_artifacts() {
+        let root = std::env::temp_dir().join(format!(
+            "dusklight-native-tactic-partial-finalization-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("final-checkpoint")).unwrap();
+        fs::write(root.join("final-checkpoint/checkpoint.dtqz"), b"checkpoint").unwrap();
+        fs::write(root.join("best-terminal.tape"), b"tape").unwrap();
+        fs::write(root.join("best-terminal-result.dtqz"), b"result").unwrap();
+        fs::write(root.join("retained-authority.dtqz"), b"authority").unwrap();
+
+        prune_tactic_partial_finalization(&root).unwrap();
+
+        assert!(!root.join("final-checkpoint").exists());
+        assert!(!root.join("best-terminal.tape").exists());
+        assert!(!root.join("best-terminal-result.dtqz").exists());
+        assert_eq!(
+            fs::read(root.join("retained-authority.dtqz")).unwrap(),
+            b"authority"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
