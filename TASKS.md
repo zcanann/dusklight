@@ -1,356 +1,134 @@
-# Route-learning framework
+# Route learning
 
-## Mission
+## Goal
 
-Build an algorithm-agnostic learning and search framework that can discover and
-optimize native routes substantially beyond human play. Q-learning is one
-candidate, not a requirement; use the method that learns best from the samples
-and native throughput we can actually sustain.
+Build the smallest generic learner that starts when Link gains control, chooses
+actions until the native Ordon Springs load-zone predicate fires, and minimizes
+native elapsed ticks.
 
-The framework receives a native starting state, generic observations, the legal
-action surface, and an authoritative terminal predicate. It must explore, learn
-which behavior produced useful outcomes, turn discoveries into retained
-policies or trajectories, minimize native completion cost, and emit an exactly
-replayable input graph.
+The scored campaign may use generic observations and a fixed route-agnostic
+action library. It may not use a human demonstration, inherited route, authored
+waypoints, route-specific reward, proxy terminal, or an Ordon-derived tactic.
 
-The action hierarchy must include all three sources:
+The known human route is 125 ticks. The targets are 124, then 123, then 120 or
+less. A result counts only when its selected controller tape reaches the real
+terminal and cold-replays twice from the named root with identical terminal
+identity and tick count.
 
-- primitive controller inputs;
-- reusable parameterized tactics supplied by us;
-- tactics discovered, evaluated, promoted, composed, and retired by the system.
+The retained 190-tick route proves execution and replay, not learning quality.
+It is not an input to the scored campaign.
 
-## ToOrdonSprings benchmark contract
+## Rules
 
-Ordon is the first proving ground. The native load-zone predicate is the only
-success authority, and native elapsed ticks are the score.
-
-The headline result is **zero-shot**: the scored campaign starts from the named
-root state without a human demonstration, authored route, waypoint sequence,
-route-specific reward, proxy terminal, or tactic extracted from the human route.
-It may use generic observations and a route-agnostic action/tactic library fixed
-before the scored run. Human play may be evaluated later as optional off-policy
-experience, but that is a separate treatment and cannot satisfy the zero-shot
-claim.
-
-The known human ToOrdonSprings route takes 125 ticks. Use this explicit ladder:
-
-- **124 ticks:** first meaningful zero-shot human beat;
-- **123 ticks:** stronger evidence that the framework can optimize beyond the
-  baseline;
-- **120 ticks or less:** clearly superior, TAS-grade headline result.
-
-A score counts only when the framework's retained output reaches the native
-load zone and cold-replays at least twice from the named root with identical
-inputs, state identities, terminal proof, and tick count. A terminal reached by
-an unselected coverage proposal is discovery evidence, not a scored route or
-learning result.
+- Add no mechanism until a measured failure of the simpler system requires it.
+- The objective is terminal success with minimum ticks. Motion, velocity,
+  camera, rolling, collision, and history are observations, not authored reward
+  terms.
+- Run bounded experiments and reject failed approaches. Do not accumulate
+  treatment versions.
+- Use at most two native or build workers on this machine and own every child
+  process directly.
+- Keep the workspace clean and commit/push completed milestones.
 
 ## Work queue
 
-These are the current missing capabilities, in execution order. Keep a thin
-end-to-end campaign runnable, remove completed work from this file, and retain
-detailed history in commits and sealed campaign artifacts.
+### 1. Run one plain scratch learner
 
-### 1. Optimize selected zero-shot terminals
+- [ ] Add a thin scratch mode that reuses the existing native worker, terminal
+  predicate, observation capture, action execution, and exact replay, while
+  bypassing demonstrations, inherited routes/policies, graph scheduling,
+  frontier critics, calibration, save-state branching, and tactic mining.
+- [ ] Give it one small generic option set alongside raw controller input:
+  move along a chosen heading, roll along a chosen heading, camera-align plus
+  movement, and camera-align plus roll. Options are bounded and interruptible;
+  heading and duration are parameters.
+- [ ] Represent state with coarse generic motion cells: position, velocity,
+  facing, camera orientation, prompted-action availability, and a short recent
+  input/motion history.
+- [ ] Implement one semi-Markov Q-style loop:
+  epsilon-greedy option selection, native tick cost on every transition, the
+  authenticated terminal as success, a single small value table/approximator,
+  and one backward return pass through completed episodes. Do not add another
+  model, policy partition, or shaped reward.
+- [ ] Start every episode from the authenticated root and allow at least 900
+  ticks. Retain all unique transitions and the fastest successful tape. Avoid
+  exact duplicate episodes; add no novelty objective yet.
+- [ ] Make each learner update affect the next eligible action choice. Report
+  completed episodes, unique transitions, terminal episodes, fastest selected
+  ticks, updates, changed choices, native time, wall time, and time to first
+  terminal.
+- [ ] Automatically cold-replay every strict winner twice.
 
-- [ ] Improve the retained 190-tick zero-shot route to 124 ticks or less using
-  generic optimization. The automatic selector first converted the 231-tick
-  archive winner into a minimized, twice-cold-replayed refinement incumbent.
-  A bounded two-worker campaign against that promoted parent admitted 448
-  candidates before its simulated-tick budget, improved 231 -> 226 -> 213, and
-  automatically minimized, spliced, and reproduced the 213-tick winner from
-  two fresh process boots with identical terminal boundary evidence. A second
-  promoted campaign admitted 576 candidates, improved its 213-tick parent to a
-  206-tick archive winner, and the automatic reducer removed one more tick;
-  fresh process boots then reproduced the selected 205-tick route twice with
-  identical boundary evidence. A third promoted campaign admitted 576
-  candidates, improved 205 -> 201, and the reducer removed two additional
-  ticks; fresh process boots reproduced the selected 199-tick route twice with
-  identical tape and terminal boundary fingerprint. This proves selected-winner
-  composition keeps improving its latest parent instead of repeatedly editing
-  an obsolete tape. A fourth promoted campaign found 193 ticks after 128
-  admitted candidates. A legal proposal later triggered a deterministic native
-  message-font crash, but the sealed checkpoint finalizer selected, minimized,
-  and reproduced the retained 193-tick route from two fresh process boots with
-  identical tape and terminal boundary fingerprint. The winner therefore does
-  not depend on completing or replaying the crashed generation. A fifth
-  promoted campaign admitted 576 candidates before its simulated-tick budget,
-  found four valid 191-tick committed-load candidates, and automatically
-  minimized and reproduced the selected 191-tick route from two fresh process
-  boots with identical tape and terminal boundary fingerprint. An apparent
-  185-tick replay entry reached only the separate exit-approach predicate; the
-  primary committed-load attempt missed, and selection correctly excluded it.
-  The 213-tick intermediate changed only 32 stick-X frames and retained the
-  same three roll presses, so these gains remain local residual progress rather
-  than learned efficient movement. A later graph-scheduler correction exposed
-  terminal alternatives across the machine-incumbent route and promoted a
-  190-tick selected result. Two fresh process boots reproduced its identical
-  controller tape, terminal boundary fingerprint, and 190-tick first hit. The
-  route is still far from competitive.
+Intermediate gate: reach the real load zone from scratch in minutes, not hours.
+If five fixed ten-minute seeds produce fewer than three terminals, stop and
+diagnose section 2 instead of extending the run.
 
-Exit: each strict zero-shot improvement is automatically converted into a
-selected, independently replayable route, and the retained route reaches the
-authenticated terminal in 124 ticks or less.
+Exit: the same minimal learner selects and reproduces a zero-shot route of 124
+ticks or less.
 
-### 2. Prove that accumulated experience improves future behavior
+### 2. Diagnose the first failed gate
 
-- [ ] Evaluate candidate learning/search algorithms against the real horizon,
-  branching factor, transition volume, and update latency; do not preserve
-  Q-learning by default. A ten-minute self-experience treatment from the
-  authenticated 231 route evaluated 288 native alternatives over only 36
-  decisions, consumed 58 imported route transitions, performed 19 learner
-  updates, and retained no improvement. Its controlled policy-update probes
-  never changed the selected action, so this treatment currently fails at
-  policy effect. A ten-minute goal-relabeled fitted-Q follow-up from the
-  retained 191 route evaluated 192 alternatives over 24 decisions, consumed 48
-  machine-incumbent transitions, performed 13 learner updates, and again left
-  all 11 valid same-state selected actions unchanged. It retained 191 ticks and
-  spent 459.2 seconds fitting models, 3.4x the prior local-Q treatment's 135.9
-  seconds. At this sample scale it is slower and still has no causal policy
-  effect, so increasing its mining budget is not the next experiment. That
-  campaign exposed a concrete policy-path defect: once any terminal evidence
-  existed, the selector used only terminal-connected replay and stopped
-  consulting the achieved-goal critic even though every open branch was still
-  fitted into it. The terminal objective critic now owns only its dedicated
-  exploitation partition; other partitions continue using the all-experience
-  reachability critic, whose held-out calibration persists after terminal
-  discovery. This policy-semantic change has a versioned learner snapshot and
-  migrates older heads explicitly. A 16-decision, 128-proposal causal follow-up
-  then completed in 91.6 seconds and exposed reachability evidence on 12
-  post-terminal decisions. At its 128-row calibration prefix the model won only
-  3 of 10 held-out action rankings (30.0% versus a 12.1% chance rate; 10.8%
-  Wilson lower bound), so the gate correctly blocked all 12 deployments and no
-  same-state action changed. The wiring and throughput are now adequate for a
-  bounded larger-sample discriminator. That 64-decision treatment completed
-  512 proposals in 352.2 seconds. At the 512-row prefix it won 22 of 58
-  held-out action rankings (37.9% versus 12.1% chance; 26.6% Wilson lower
-  bound), authorized reachability on 29 decisions, made it primary on 17, and
-  changed one of 31 controlled same-state choices after a learner update. The
-  treatment now proves policy effect, but retained 191 ticks. The first random
-  control exposed an invalid comparison: non-learning policies received the
-  48-transition demonstration in the replay corpus but not in their executable
-  frontier graph. Assisted controls now import that common graph prior while
-  still ignoring learned scores; unassisted random remains scratch. The
-  corrected learned, frozen, and random-valid arms each ran 64 decisions, 512
-  proposals, and exactly 560 authenticated graph expansions from the same
-  demonstration. Learned produced 54 useful decisions versus 50 frozen and 40
-  random, but every arm retained only the inherited 191-tick terminal. This is
-  evidence that updates affect acquisition, not that they improve terminal
-  outcomes. Their traces then exposed a scheduler defect common to every arm:
-  `branch_every=4` and the four-way acquisition cycle were both indexed by the
-  decision number, so every periodic graph branch landed on rank zero and all
-  ranked exploration was starved. Graph acquisition now advances by branch
-  episode, and assisted frontier coverage is scheduled directly rather than
-  being throttled by the ordinary branch cadence. In the corrected matched
-  arms, learned, frozen, and random all promoted 190 ticks. Random reached it
-  at decision 14, frozen at 34, and learned at 57; learned consumed 11,808
-  native ticks and 457.3 seconds versus 10,618/250.9 frozen and 11,209/267.6
-  random. The scheduler repair improves search, but online learning still
-  fails the terminal-outcome comparison. Do not extend this exact treatment
-  without changing the learning or selection method. Inspection then found
-  that V2's action-conditioned terminal Double-Q model selected actions but
-  never informed frontier scheduling: equal-cost checkpoints on a successful
-  route were ordered only by coverage. The explicit
-  `goal_relabeled_frontier_double_q_v3` treatment now supplies learned
-  state-action opportunity and uncertainty to those equal-cost choices while
-  preserving V2 as a control. Synthetic campaign tests prove that only V3
-  publishes the action-conditioned uncertainty needed to distinguish this
-  estimate from V2's state-only value and that it causally precedes coverage.
-  Inspection then found a second representation defect: demonstration chunks
-  and live parameterized tactics can encode comparable controller programs
-  under different broad option-type labels, while V3 refuses to score any
-  action class absent from terminal replay. The explicit
-  `goal_relabeled_universal_frontier_double_q` V4 treatment uses one shared
-  Double-Q action head while retaining the full controller descriptor in its
-  continuous regression features. Model and campaign tests prove that V3
-  remains unsupported across an unseen label while V4 transfers the same
-  terminal evidence; V2 and V3 remain unchanged controls. The matched V4 arm
-  retained 190 ticks with 50 useful decisions, 11,056 native ticks, 133.4
-  seconds of model work, 422.6 seconds wall time, and first terminal at 48.46
-  seconds. It assigned action values on 23 decisions and changed three
-  post-update choices, but all 51 recorded frontier acquisitions still lacked
-  action value and uncertainty. The native runner was bypassing the learned
-  frontier sampler after demonstration coverage and using the graph scheduler
-  for every ordinary branch, so V3/V4 frontier ranking had no production
-  authority. Rank-zero terminal optimization now uses the live learned
-  frontier scorer for V3/V4 while nonzero ranks retain broad graph discovery.
-  The first authority-enabled rerun retained 190 ticks with 50 useful
-  decisions, 10,792 native ticks, 129.2 seconds of model work, and 396.6
-  seconds wall time. It proved live frontier authority on decisions 16 and 20,
-  but later reported action-partition-zero decisions did not use that scorer.
-  Replacing transient graph restorability with authenticated terminal replay
-  did not change the behavior: the definitive rerun again retained 190 ticks,
-  used exactly 10,792 native ticks, and exposed learned frontier value and
-  uncertainty only on decisions 16 and 20 (46.08 seconds to first terminal,
-  129.9 seconds of model work, 399.4 seconds wall time). The trace exposed two
-  authority defects. Demonstration coverage remained pending for the full run
-  and took precedence over terminal optimization, so its root-refresh rule
-  consumed every later rank-zero slot. Separately, frontier scheduling advanced
-  its acquisition partition from branch `episode` while action selection and
-  reporting independently re-derived it from `decision_index`. Terminal-backed
-  rank zero now preempts demonstration coverage, and the actual branch rank is
-  carried through frontier selection, action selection, and the decision trace
-  without reintroducing the old cadence alias. The compact summary now reports
-  selected-rank counts plus terminal-frontier value and uncertainty counts, so
-  this authority is auditable without parsing the 19 MB raw report. The full
-  423-test orchestration suite passes. Rerun V4 once under this corrected
-  authority before accepting or rejecting the treatment; none of the prior
-  190-tick V4 runs is a valid quality verdict.
-- [ ] Learn from successful and unsuccessful trajectories using sparse terminal
-  value, authenticated tick cost, and generic state deltas.
-- [ ] Support online collection, off-policy replay, prioritized reuse, temporal
-  credit assignment, continued exploration, and escape from local optima.
-- [ ] Surface motion history, velocity, orientation, camera, analog input,
-  prompted-action availability, action duration, and resulting state deltas.
-  Straight travel, velocity loss, collision slowdown, rolling, camera alignment,
-  and detours must be learnable rather than encoded as Ordon-specific rewards.
-- [ ] Run learned/adaptive, frozen-policy, and random-valid treatments over the
-  same candidate stream, native budget, and campaign design.
-- [ ] Require the adaptive treatment to reproduce terminals more often, consume
-  fewer native samples, or achieve lower terminal ticks on held-out seeds.
-- [ ] Verify that useful behavior survives ordinary seed ordering, campaign
-  composition, and update-cadence changes.
+Do not implement every branch. Collect enough evidence to select exactly one.
 
-Exit: retained experience causally changes future choices and improves terminal
-outcomes relative to both controls. Merely finding another coverage terminal
-does not pass.
+- [ ] Determine whether failure is caused by action expressivity, insufficient
+  exploration, incorrect value/return propagation, or insufficient native
+  samples. Prove the classification with the retained episode stream and a
+  focused deterministic test.
+- [ ] Record the diagnosis and the smallest proposed intervention in this file
+  before implementing it.
 
-### 3. Beat and then substantially exceed the human route zero-shot
+Conditional interventions:
 
-- [ ] Produce and independently verify a zero-shot 124-tick route.
-- [ ] Continue the same generic learning/search process to 123 ticks or less.
-- [ ] Reach 120 ticks or less without adding an Ordon-specific route, reward,
-  waypoint, exception, or hand-authored input sequence.
-- [ ] Minimize the winning input graph without changing its terminal identity or
-  native tick count.
-- [ ] Retain a fixed-budget result distribution, not only the best lucky seed,
-  so sample cost and reliability remain visible.
-- [ ] After the zero-shot result exists, run a separate human-demonstration
-  ablation to determine whether ordinary human play improves sample efficiency
-  without becoming required or imposing a policy ceiling.
+- **Action expressivity:** add only the missing generic option or parameter and
+  prove it can improve held-out trajectories.
+- **Exploration:** add one coarse state/trajectory novelty rule until the first
+  terminal, then disable it for tick optimization.
+- **Credit assignment:** correct the Q/return implementation or replace the
+  single estimator; do not add parallel critics.
+- **Throughput:** measure one versus two workers and root replay versus retained
+  save states, then keep only the change that improves unique authenticated
+  transitions per second end to end.
+- **Local optimum after success:** add one simple successful-trajectory mutation
+  loop (delete, shorten, change heading, or change roll timing) while keeping
+  terminal success as a hard constraint.
 
-Checkpoint: 124 ticks is the first human beat; 123 ticks is stronger progress.
+Exit: the selected intervention makes the failed gate pass under the same fixed
+budget. Remove it if it does not.
 
-Exit: a zero-shot route reaches the native load zone in 120 ticks or less and
-cold-replays twice with identical evidence.
+### 3. Establish the benchmark result
 
-### 4. Learn and compose tactics
+- [ ] Re-run five fixed zero-shot seeds with the final minimal mechanism set and
+  retain the full result distribution, not only the luckiest seed.
+- [ ] Reproduce 124 ticks or less, then continue the unchanged generic process
+  to 123 ticks and 120 ticks or less.
+- [ ] Verify that ordinary seed ordering and update cadence do not erase the
+  useful behavior.
 
-- [ ] Represent primitives and tactics through one interruptible, parameterized
-  option interface so either can be chosen at every valid boundary.
-- [ ] Supply route-agnostic tactics such as moving toward a chosen heading,
-  one-frame direction plus camera lock, camera lock plus action, rolling, and
-  state-conditioned analog steering.
-- [ ] Keep every currently legal primitive and prompted action available,
-  including roll, jump, mount, lift, and future game-specific affordances.
-- [ ] Mine useful sub-trajectories and repeated control structure; propose
-  tactics with learned initiation conditions, parameters, termination
-  conditions, and expected outcomes.
-- [ ] Promote tactics only when held-out results improve over primitives and
-  existing tactics; retire regressions and permit tactic composition.
-- [ ] Keep primitive actions available so a bad abstraction cannot cap the
-  policy.
+Exit: a zero-shot route reaches 120 ticks or less and cold-replays twice with
+identical evidence.
 
-Exit: supplied tactics improve search without encoding an Ordon route, at least
-one automatically discovered tactic improves held-out performance, and tactic
-composition exceeds the trajectories from which it was learned.
+### 4. Prove learning value only after the route works
 
-### 5. Scale throughput only when the learning experiment demands it
+- [ ] Compare adaptive, frozen, and random-valid selection over the same seeds,
+  action opportunities, and native budget.
+- [ ] Require adaptive updates to improve terminals per sample, time to first
+  terminal, or selected terminal ticks on held-out seeds.
+- [ ] Run a separate human-demonstration ablation only after the zero-shot result
+  exists. Human input may improve sample efficiency but cannot be required or
+  cap the policy.
 
-Optimize only costs demonstrated by the end-to-end learning and selection path;
-do not golf isolated subphases without campaign evidence.
+Exit: accumulated experience causally improves future terminal outcomes over
+both controls.
 
-- [ ] Remove the measured learning-loop control-plane bottlenecks. In the
-  36-decision self-experience treatment, native simulation occupied only 15.2
-  seconds while graph scheduling and leasing took 179.8 seconds, generation
-  replay and coordination 150.6 seconds, model updates 135.9 seconds, and
-  persistence 148.8 seconds. Two-worker native utilization was only 8.4%.
-  Live graph scheduling now earns one complete validation capability at
-  checkpoint admission and reuses it after checked transactional mutations;
-  graph-derived learning batches and rankings no longer repeat the same full
-  traversal at every decision. External and reopened artifacts still validate
-  fail-closed. The goal-relabeled follow-up measured only 24 decisions in 777.0
-  seconds (32.4 seconds/decision versus 27.6 previously), with 8.35% native
-  utilization. Its more expensive learner dominated the run, so the removed
-  traversal did not improve end-to-end throughput under that treatment.
-  After the critic-routing correction, the 64-decision causal treatment
-  completed in 352.2 seconds (5.50 seconds/decision) with 9.92% native
-  utilization and 124.8 seconds of model work. Its matched frozen and random
-  controls completed in 214.0 and 215.2 seconds with only 19.7 and 17.6 seconds
-  of model work. The end-to-end learning loop is inside the ten-minute gate at
-  a sample count sufficient to adopt a policy, but online fitting adds roughly
-  137 seconds without improving the terminal. Matched worker-scaling evidence
-  is still required, and model cost should be reduced only alongside a changed
-  treatment capable of improving outcomes. After repairing graph-acquisition
-  starvation, the denser corrected schedule took 457.3 seconds learned versus
-  250.9 frozen and 267.6 random. All three produced the same 190-tick best, so
-  the learner's additional 152.9 seconds of model work remains pure overhead
-  at this quality level.
-- [ ] Cache or share already-validated artifact and graph identities within one
-  process; independent reopen validation must remain fail-closed. Completed-seed
-  preflight now carries the campaign-wide useful-expansion set directly from
-  the authenticated graphs into final reporting instead of reopening every
-  final checkpoint and decoding the same graph journals a second time. Newly
-  sealed seeds additionally carry that projection across processes without
-  retaining a live graph or weakening legacy checkpoint validation.
-- [ ] Measure whether retained save-state branching beats replay from its
-  authority point; simplify or remove it where it does not.
-- [ ] Revisit deterministic generation-barrier or other concurrent learning
-  schedules only after policy adoption and terminal optimization have causal
-  tests.
-- [ ] Eliminate measured worker starvation, redundant native work, unnecessary
-  serialization, and central bottlenecks while keeping queues and memory
-  bounded.
+### 5. Generalize only after Ordon passes
 
-Exit: the next learning experiment, not an isolated microbenchmark, completes
-within ten minutes; two workers materially improve unique accepted native
-experience per second; retained save states have measured positive return.
+- [ ] Apply the unchanged contracts to a second native route.
+- [ ] Add tactic mining and composition only if retained experience shows a
+  repeated useful control structure; promote a tactic only on held-out gain.
+- [ ] Split remaining mixed-responsibility code along execution, evidence,
+  learning, persistence, and reporting boundaries; enforce source-size gates.
+- [ ] Keep persistent artifacts binary, bounded, checksummed, atomic, and
+  migration-tested.
 
-### 6. Prove the framework is durable and general
-
-- [ ] Apply the unchanged observation, action, learning, tactic, orchestration,
-  and evaluation contracts to a second native route.
-- [ ] Make fresh and resumed concurrent campaigns logically reproducible, with
-  exact ownership for sampling, updates, model publication, checkpoints, and
-  accepted experience.
-- [ ] Make unrecoverable singleton native crashes explicit, bounded censored
-  evidence. Residual batches now replace only their owned sessions and bisect
-  failed work down to an exact candidate, and the legal proposal that exposed
-  the headless message-font defect now completes under the repaired runtime.
-  A singleton that still crashes must be durably charged and reported without
-  fabricating a gameplay result or preventing selection of sealed evidence.
-- [ ] Keep models, replay, checkpoints, and manifests compact, bounded, binary,
-  versioned, checksummed, atomic, and migration-tested.
-- [ ] Refactor oversized and mixed-responsibility code along observation,
-  execution, state, replay, learning, tactics, workers, persistence, and
-  reporting boundaries; enforce source-size and dependency gates.
-
-Exit: the second route passes zero-shot discovery, learned improvement over
-controls, tactic use, and exact cold replay without route-specific framework
-changes; interruption and resume reproduce accepted-experience identities.
-
-## Engineering rules
-
-These apply while completing every queue item; they are not a later cleanup
-phase.
-
-- Campaigns collect one comprehensive reusable evidence stream. A run should
-  answer many questions, including useful analyses not anticipated when it was
-  launched. Rerun only for a changed treatment, genuine replication, or raw
-  evidence that could not have been captured previously.
-- Search retained benchmark artifacts and commit history before implementing a
-  treatment; repeat a rejected intervention only when a named premise changed.
-- Record observations, legal actions, choices, executions, transitions, replay
-  admissions, updates, tactic decisions, terminals, timings, retries,
-  rejections, duplicates, and censored work with stable identities.
-- Throughput means unique accepted native experience per wall-clock second, not
-  attempts, queued work, duplicate branches, or replayed frames.
-- Score retained outputs, not the luckiest proposal observed anywhere in a
-  batch. Report discovery, policy adoption, optimization, and final replay as
-  separate outcomes.
-- Own child processes directly. Cancellation, timeout, crash recovery, cleanup,
-  progress, and resume must not scan for or affect unrelated processes.
-- Use focused tests during iteration and broad suites at meaningful integration
-  checkpoints. Do not substitute repeated testing for implementation progress.
-- Benchmark gains count only when generic mechanisms, held-out evaluation,
-  exact replay, and appropriate controls rule out route-specific gaming.
+Exit: the second route passes scratch discovery, learned improvement, and exact
+cold replay without route-specific framework changes.
