@@ -1,6 +1,8 @@
 //! Sealed request boundary for resumable route optimization campaigns.
 
+use crate::native_residual_campaign::NativeResidualExecutionBinding;
 use crate::native_tactic_route_runner::NativeTacticColdReplayEvidenceBundle;
+use crate::residual_winner_cold_replay::read_and_validate_residual_winner_cold_replay;
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_harness_contracts::objective_suite::{
@@ -107,11 +109,23 @@ pub enum OptimizationIncumbentAuthority {
     TacticColdReplay {
         bundle_manifest: ArtifactReference,
     },
+    ResidualWinnerColdReplay {
+        proof: ArtifactReference,
+        source_request: ArtifactReference,
+        source_execution: ArtifactReference,
+    },
 }
 
 impl OptimizationIncumbentAuthority {
     fn is_timeline_proof(&self) -> bool {
         matches!(self, Self::TimelineProof)
+    }
+
+    pub(crate) fn is_cold_replay(&self) -> bool {
+        matches!(
+            self,
+            Self::TacticColdReplay { .. } | Self::ResidualWinnerColdReplay { .. }
+        )
     }
 }
 
@@ -298,10 +312,20 @@ impl OptimizationRequest {
         validate_artifact_shape("terminal predicate", &self.terminal_predicate.source)?;
         if let Some(incumbent) = &self.incumbent {
             validate_artifact_shape("incumbent tape", &incumbent.tape)?;
-            if let OptimizationIncumbentAuthority::TacticColdReplay { bundle_manifest } =
-                &incumbent.authority
-            {
-                validate_artifact_shape("incumbent cold-replay bundle", bundle_manifest)?;
+            match &incumbent.authority {
+                OptimizationIncumbentAuthority::TimelineProof => {}
+                OptimizationIncumbentAuthority::TacticColdReplay { bundle_manifest } => {
+                    validate_artifact_shape("incumbent cold-replay bundle", bundle_manifest)?;
+                }
+                OptimizationIncumbentAuthority::ResidualWinnerColdReplay {
+                    proof,
+                    source_request,
+                    source_execution,
+                } => {
+                    validate_artifact_shape("incumbent residual cold-replay proof", proof)?;
+                    validate_artifact_shape("incumbent source request", source_request)?;
+                    validate_artifact_shape("incumbent source execution", source_execution)?;
+                }
             }
             if incumbent.first_hit_tick == 0 {
                 return Err(request_error("incumbent first-hit tick must be positive"));
@@ -818,6 +842,80 @@ impl OptimizationRequest {
                     if incumbent_tape != expected_incumbent {
                         return Err(request_error(
                             "incumbent tape is not the exact source-boundary suffix of the cold-replayed route",
+                        ));
+                    }
+                }
+                OptimizationIncumbentAuthority::ResidualWinnerColdReplay {
+                    proof,
+                    source_request,
+                    source_execution,
+                } => {
+                    let source_request_path =
+                        validate_artifact_file(&root, "incumbent source request", source_request)?;
+                    let source_execution_path = validate_artifact_file(
+                        &root,
+                        "incumbent source execution",
+                        source_execution,
+                    )?;
+                    let proof_path = validate_artifact_file(
+                        &root,
+                        "incumbent residual cold-replay proof",
+                        proof,
+                    )?;
+                    if proof_path.file_name().and_then(|name| name.to_str()) != Some("proof.json") {
+                        return Err(request_error(
+                            "residual cold-replay authority must reference its proof.json",
+                        ));
+                    }
+                    let source_request: OptimizationRequest = serde_json::from_slice(
+                        &fs::read(source_request_path).map_err(|source| {
+                            request_error(format!("cannot read incumbent source request: {source}"))
+                        })?,
+                    )
+                    .map_err(|source| {
+                        request_error(format!("invalid incumbent source request: {source}"))
+                    })?;
+                    let source_execution: NativeResidualExecutionBinding = serde_json::from_slice(
+                        &fs::read(source_execution_path).map_err(|source| {
+                            request_error(format!(
+                                "cannot read incumbent source execution: {source}"
+                            ))
+                        })?,
+                    )
+                    .map_err(|source| {
+                        request_error(format!("invalid incumbent source execution: {source}"))
+                    })?;
+                    if source_request.content_sha256 == self.content_sha256 {
+                        return Err(request_error(
+                            "residual cold-replay authority cannot cite its own request",
+                        ));
+                    }
+                    let proof_root = proof_path.parent().ok_or_else(|| {
+                        request_error("residual cold-replay proof has no artifact root")
+                    })?;
+                    let replay = read_and_validate_residual_winner_cold_replay(
+                        &root,
+                        &source_request,
+                        &source_execution,
+                        proof_root,
+                    )
+                    .map_err(|source| request_error(source.to_string()))?;
+                    if replay.optimization_request_sha256 != source_request.content_sha256
+                        || replay.execution_binding_sha256 != source_execution.content_sha256
+                        || replay.source_boundary_index != self.route.source_boundary_index
+                        || replay.source_boundary_fingerprint
+                            != self.route.source_boundary_fingerprint
+                        || replay.native_source_boundary_fingerprint
+                            != self.route.native_source_boundary_fingerprint
+                        || replay.goal != self.terminal_predicate.goal
+                        || replay.terminal_program_sha256 != self.terminal_predicate.program_sha256
+                        || replay.terminal_definition_sha256
+                            != self.terminal_predicate.definition_sha256
+                        || replay.first_hit_tick != incumbent.first_hit_tick
+                        || replay.minimized_suffix_tape_sha256 != incumbent.tape.sha256
+                    {
+                        return Err(request_error(
+                            "residual cold-replay incumbent differs from its source, route, terminal, or minimized suffix",
                         ));
                     }
                 }

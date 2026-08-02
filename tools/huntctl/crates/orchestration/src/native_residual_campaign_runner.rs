@@ -1565,6 +1565,7 @@ fn summary(
         resume_state: config.optimization.resume.state_path.clone(),
         replay_corpus,
         audit,
+        selected_winner: None,
     }
 }
 

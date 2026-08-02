@@ -76,6 +76,8 @@ pub struct ResidualCampaignRunSummary {
     pub replay_corpus: Option<ResidualReplayCheckpoint>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audit: Option<ResidualCampaignAudit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_winner: Option<ArtifactReference>,
 }
 
 pub fn materialize_residual_harness_template(
@@ -1265,6 +1267,7 @@ fn summary(
         resume_state: config.optimization.resume.state_path.clone(),
         replay_corpus,
         audit,
+        selected_winner: None,
     }
 }
 

@@ -1,7 +1,7 @@
 //! Sealed execution and evidence artifacts for persistent native residual campaigns.
 
 use crate::native_suffix_result::NativeTerminalBinding;
-use crate::optimization_request::{OptimizationIncumbentAuthority, OptimizationRequest};
+use crate::optimization_request::OptimizationRequest;
 use crate::residual_campaign::ResidualReplayCheckpoint;
 use crate::residual_campaign::{ResidualCampaignCandidate, ResidualCampaignError};
 use dusklight_automation_contracts::artifact::Digest;
@@ -485,7 +485,7 @@ fn materialized_route_authority(
         .as_ref()
         .map(|value| &value.authority)
     {
-        Some(OptimizationIncumbentAuthority::TacticColdReplay { .. }) => {
+        Some(authority) if authority.is_cold_replay() => {
             let incumbent = optimization
                 .incumbent
                 .as_ref()
@@ -1131,6 +1131,7 @@ impl From<ResidualCampaignError> for NativeResidualCampaignError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::optimization_request::OptimizationIncumbentAuthority;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
