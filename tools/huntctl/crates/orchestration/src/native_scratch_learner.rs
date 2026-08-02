@@ -249,6 +249,10 @@ pub fn run_native_scratch_learner(
                 .fastest_selected_ticks
                 .is_none_or(|fastest| ticks < fastest)
         });
+        if checkpoint.report.first_terminal_wall_micros.is_none() && outcome.terminal {
+            checkpoint.report.first_terminal_wall_micros =
+                Some(prior_wall_micros.saturating_add(elapsed_micros(started.elapsed())));
+        }
         let mut cold_replay_attempts = Vec::new();
         if strict_winner {
             let winner_index = checkpoint.report.strict_winners_cold_replayed;
@@ -291,10 +295,6 @@ pub fn run_native_scratch_learner(
             checkpoint.report.fastest_tape = Some(path_text(&winner_root.join("selected.tape")));
             checkpoint.report.fastest_tape_sha256 = Some(tape_sha256);
             checkpoint.report.strict_winners_cold_replayed += 1;
-        }
-        if checkpoint.report.first_terminal_wall_micros.is_none() && outcome.terminal {
-            checkpoint.report.first_terminal_wall_micros =
-                Some(prior_wall_micros.saturating_add(elapsed_micros(started.elapsed())));
         }
         checkpoint.report.completed_episodes += 1;
         checkpoint.report.distinct_episode_tapes += u64::from(!duplicate);
