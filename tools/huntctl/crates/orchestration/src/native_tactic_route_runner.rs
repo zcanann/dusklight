@@ -624,225 +624,220 @@ fn run_native_tactic_route_with_optional_fleet(
     )?)
     .map_err(route_error)?;
     let mut campaign_phase_wall = CampaignPhaseWallTiming::default();
-    let (mut indexed_results, tactic_macro_discovery, shared_training_replay_rows, demonstration) =
-        (|| {
-            if let Some(preflight) = completed_preflight.take() {
-                campaign_phase_wall.campaign_setup_micros =
-                    elapsed_micros(campaign_started.elapsed());
-                campaign_phase_wall.campaign_finalization_started_micros =
-                    campaign_phase_wall.campaign_setup_micros;
-                let tactic_macro_discovery = match preflight.tactic_macro_discovery {
-                    Some(report) => report,
-                    None => finalize_tactic_macro_discovery(
-                        config,
-                        pool.as_ref().ok_or_else(|| {
-                            route_message("native tactic macro finalization pool is absent")
-                        })?,
-                        &encoder,
-                        execution_plan_sha256,
-                        root_checkpoint_sha256,
-                    )?,
-                };
-                let shared_training_replay_rows = completed_learner_view
-                    .as_ref()
-                    .ok_or_else(|| route_message("completed learner authority is absent"))?
-                    .replay_len() as u64;
-                return Ok((
-                    preflight.indexed_results,
-                    tactic_macro_discovery,
-                    shared_training_replay_rows,
-                    preflight.demonstration,
-                ));
-            }
-            let pool = pool
-                .clone()
-                .ok_or_else(|| route_message("native tactic worker pool is absent"))?;
-            let learner_authority = learner_authority
-                .as_ref()
-                .cloned()
-                .ok_or_else(|| route_message("live learner authority is absent"))?;
-            let mut results = Vec::with_capacity(config.execution_plan.lanes.len());
-            let demonstration = load_or_capture_demonstration(
-                config,
-                &pool,
-                &encoder,
-                &reward_spec,
-                &process_tape,
-                &initial_facts,
-                &route_prefix,
-                root_checkpoint_sha256,
-            )?;
-            let demonstration_report = demonstration.as_ref().map(|value| value.report.clone());
-            if let Some(demonstration) = &demonstration {
-                let mut learner = lock_learner_authority(&learner_authority)?;
-                publish_demonstration_replay(&mut learner, demonstration)?;
-            }
-            campaign_phase_wall.campaign_setup_model_update_micros =
-                lock_learner_authority(&learner_authority)?
-                    .invocation_metrics()
-                    .update_micros;
+    let (
+        mut indexed_results,
+        tactic_macro_discovery,
+        shared_training_replay_rows,
+        demonstration,
+        prevalidated_useful_graph_expansions,
+    ) = (|| {
+        if let Some(preflight) = completed_preflight.take() {
             campaign_phase_wall.campaign_setup_micros = elapsed_micros(campaign_started.elapsed());
-            for generation in &config.execution_plan.generations {
-                let generation_started = Instant::now();
-                let inherited_learner_snapshot = if let Some(snapshot) = &frozen_policy_snapshot {
-                    Arc::clone(snapshot)
-                } else {
-                    let mut learner = lock_learner_authority(&learner_authority)?;
-                    match config.execution_plan.replay_sharing {
-                        NativeTacticReplaySharingPlan::GenerationBarrier => {
-                            let barrier_revision = deterministic_generation_barrier_revision(
-                                learner.replay(),
-                                generation,
-                            )?;
-                            learner.snapshot_through(barrier_revision)?
-                        }
-                        NativeTacticReplaySharingPlan::BoundedStaleness { .. } => {
-                            learner.snapshot()
-                        }
-                    }
-                };
-                let live_learner = (config
-                    .execution_plan
-                    .proposal_policy
-                    .deploys_policy_updates()
-                    && matches!(
-                        config.execution_plan.replay_sharing,
-                        NativeTacticReplaySharingPlan::BoundedStaleness { .. }
-                    ))
-                .then(|| Arc::clone(&learner_authority));
-                let mut generation_results = std::thread::scope(|generation_scope| {
-                    let coordinator_handles = generation
-                        .lane_indices
-                        .iter()
-                        .map(|lane_index| {
-                            let lane = &config.execution_plan.lanes[*lane_index];
-                            let seed_index = lane.lane_index;
-                            let seed = lane.seed;
-                            let pool = pool.clone();
-                            let registry = &registry;
-                            let encoder = &encoder;
-                            let reward_spec = &reward_spec;
-                            let promoted_tactics = imported_promoted_tactics
-                                .as_ref()
-                                .map_or(&[][..], |imported| imported.entries.as_slice());
-                            let initial_facts = &initial_facts;
-                            let route_prefix = &route_prefix;
-                            let live_learner = live_learner.clone();
-                            let content_store = campaign_content_store.clone();
-                            let inherited_learner_snapshot =
-                                Arc::clone(&inherited_learner_snapshot);
-                            generation_scope.spawn(move || {
-                                run_seed_coordinator(
-                                    config,
-                                    &pool,
-                                    registry,
-                                    encoder,
-                                    reward_spec,
-                                    initial_facts,
-                                    route_prefix,
-                                    action_schema_sha256,
-                                    promoted_tactics,
-                                    root_checkpoint_sha256,
-                                    root_tape_ref,
-                                    content_store,
-                                    inherited_learner_snapshot,
-                                    live_learner,
-                                    seed_index,
-                                    seed,
-                                )
-                                .map(|completion| (seed_index, completion))
-                            })
-                        })
-                        .collect::<Vec<_>>();
-                    coordinator_handles
-                        .into_iter()
-                        .map(|handle| {
-                            handle.join().map_err(|_| {
-                                route_message("native tactic route coordinator panicked")
-                            })?
-                        })
-                        .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()
-                })?;
-                generation_results.sort_by_key(|(seed_index, _)| *seed_index);
-                // Live lanes already publish on each decision. Replaying
-                // the completed corpus here is an idempotent resume repair:
-                // if an older or interrupted campaign lost its shared
-                // journal, completed lane artifacts reconstruct authority.
-                let mut learner = lock_learner_authority(&learner_authority)?;
-                for (_, completion) in &generation_results {
-                    publish_completed_seed_replay(&mut learner, completion)?;
-                }
-                let generation_update = learner.force_update()?;
-                campaign_phase_wall.generation_model_update_micros = campaign_phase_wall
-                    .generation_model_update_micros
-                    .checked_add(generation_update.update_micros)
-                    .ok_or_else(|| {
-                        route_message("native tactic generation model timing overflowed")
-                    })?;
-                let generation_wall_micros = elapsed_micros(generation_started.elapsed());
-                let critical_lane_wall_micros = generation_results
-                    .iter()
-                    .map(|(_, completion)| completion.invocation_wall_micros)
-                    .max()
-                    .unwrap_or(0);
-                campaign_phase_wall.seed_invocation_critical_lane_wall_micros = campaign_phase_wall
-                    .seed_invocation_critical_lane_wall_micros
-                    .checked_add(critical_lane_wall_micros)
-                    .ok_or_else(|| {
-                        route_message("native tactic invocation lane timing overflowed")
-                    })?;
-                let seed_invocation_model_update_micros = generation_results
-                    .iter()
-                    .try_fold(0_u64, |total, (_, completion)| {
-                        total.checked_add(completion.invocation_model_update_micros)
-                    })
-                    .ok_or_else(|| {
-                        route_message("native tactic invocation model timing overflowed")
-                    })?;
-                campaign_phase_wall.seed_invocation_model_update_micros = campaign_phase_wall
-                    .seed_invocation_model_update_micros
-                    .checked_add(seed_invocation_model_update_micros)
-                    .ok_or_else(|| {
-                        route_message("native tactic invocation model timing overflowed")
-                    })?;
-                campaign_phase_wall.generation_coordination_micros = campaign_phase_wall
-                    .generation_coordination_micros
-                    .checked_add(
-                        generation_wall_micros
-                            .checked_sub(critical_lane_wall_micros)
-                            .ok_or_else(|| {
-                                route_message(
-                                    "native tactic generation lane wall exceeds generation wall",
-                                )
-                            })?,
-                    )
-                    .ok_or_else(|| {
-                        route_message("native tactic generation coordination timing overflowed")
-                    })?;
-                results.extend(
-                    generation_results
-                        .into_iter()
-                        .map(|(seed_index, completion)| (seed_index, completion.result)),
-                );
-            }
             campaign_phase_wall.campaign_finalization_started_micros =
-                elapsed_micros(campaign_started.elapsed());
-            let completion = finalize_tactic_macro_discovery(
-                config,
-                &pool,
-                &encoder,
-                execution_plan_sha256,
-                root_checkpoint_sha256,
-            )?;
-            let shared_training_replay_rows =
-                lock_learner_authority(&learner_authority)?.replay().len() as u64;
-            Ok::<_, NativeTacticRouteRunError>((
-                results,
-                completion,
+                campaign_phase_wall.campaign_setup_micros;
+            let tactic_macro_discovery = match preflight.tactic_macro_discovery {
+                Some(report) => report,
+                None => finalize_tactic_macro_discovery(
+                    config,
+                    pool.as_ref().ok_or_else(|| {
+                        route_message("native tactic macro finalization pool is absent")
+                    })?,
+                    &encoder,
+                    execution_plan_sha256,
+                    root_checkpoint_sha256,
+                )?,
+            };
+            let shared_training_replay_rows = completed_learner_view
+                .as_ref()
+                .ok_or_else(|| route_message("completed learner authority is absent"))?
+                .replay_len() as u64;
+            return Ok((
+                preflight.indexed_results,
+                tactic_macro_discovery,
                 shared_training_replay_rows,
-                demonstration_report,
-            ))
-        })()?;
+                preflight.demonstration,
+                Some(preflight.useful_graph_expansions),
+            ));
+        }
+        let pool = pool
+            .clone()
+            .ok_or_else(|| route_message("native tactic worker pool is absent"))?;
+        let learner_authority = learner_authority
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| route_message("live learner authority is absent"))?;
+        let mut results = Vec::with_capacity(config.execution_plan.lanes.len());
+        let demonstration = load_or_capture_demonstration(
+            config,
+            &pool,
+            &encoder,
+            &reward_spec,
+            &process_tape,
+            &initial_facts,
+            &route_prefix,
+            root_checkpoint_sha256,
+        )?;
+        let demonstration_report = demonstration.as_ref().map(|value| value.report.clone());
+        if let Some(demonstration) = &demonstration {
+            let mut learner = lock_learner_authority(&learner_authority)?;
+            publish_demonstration_replay(&mut learner, demonstration)?;
+        }
+        campaign_phase_wall.campaign_setup_model_update_micros =
+            lock_learner_authority(&learner_authority)?
+                .invocation_metrics()
+                .update_micros;
+        campaign_phase_wall.campaign_setup_micros = elapsed_micros(campaign_started.elapsed());
+        for generation in &config.execution_plan.generations {
+            let generation_started = Instant::now();
+            let inherited_learner_snapshot = if let Some(snapshot) = &frozen_policy_snapshot {
+                Arc::clone(snapshot)
+            } else {
+                let mut learner = lock_learner_authority(&learner_authority)?;
+                match config.execution_plan.replay_sharing {
+                    NativeTacticReplaySharingPlan::GenerationBarrier => {
+                        let barrier_revision = deterministic_generation_barrier_revision(
+                            learner.replay(),
+                            generation,
+                        )?;
+                        learner.snapshot_through(barrier_revision)?
+                    }
+                    NativeTacticReplaySharingPlan::BoundedStaleness { .. } => learner.snapshot(),
+                }
+            };
+            let live_learner = (config
+                .execution_plan
+                .proposal_policy
+                .deploys_policy_updates()
+                && matches!(
+                    config.execution_plan.replay_sharing,
+                    NativeTacticReplaySharingPlan::BoundedStaleness { .. }
+                ))
+            .then(|| Arc::clone(&learner_authority));
+            let mut generation_results = std::thread::scope(|generation_scope| {
+                let coordinator_handles = generation
+                    .lane_indices
+                    .iter()
+                    .map(|lane_index| {
+                        let lane = &config.execution_plan.lanes[*lane_index];
+                        let seed_index = lane.lane_index;
+                        let seed = lane.seed;
+                        let pool = pool.clone();
+                        let registry = &registry;
+                        let encoder = &encoder;
+                        let reward_spec = &reward_spec;
+                        let promoted_tactics = imported_promoted_tactics
+                            .as_ref()
+                            .map_or(&[][..], |imported| imported.entries.as_slice());
+                        let initial_facts = &initial_facts;
+                        let route_prefix = &route_prefix;
+                        let live_learner = live_learner.clone();
+                        let content_store = campaign_content_store.clone();
+                        let inherited_learner_snapshot = Arc::clone(&inherited_learner_snapshot);
+                        generation_scope.spawn(move || {
+                            run_seed_coordinator(
+                                config,
+                                &pool,
+                                registry,
+                                encoder,
+                                reward_spec,
+                                initial_facts,
+                                route_prefix,
+                                action_schema_sha256,
+                                promoted_tactics,
+                                root_checkpoint_sha256,
+                                root_tape_ref,
+                                content_store,
+                                inherited_learner_snapshot,
+                                live_learner,
+                                seed_index,
+                                seed,
+                            )
+                            .map(|completion| (seed_index, completion))
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                coordinator_handles
+                    .into_iter()
+                    .map(|handle| {
+                        handle.join().map_err(|_| {
+                            route_message("native tactic route coordinator panicked")
+                        })?
+                    })
+                    .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()
+            })?;
+            generation_results.sort_by_key(|(seed_index, _)| *seed_index);
+            // Live lanes already publish on each decision. Replaying
+            // the completed corpus here is an idempotent resume repair:
+            // if an older or interrupted campaign lost its shared
+            // journal, completed lane artifacts reconstruct authority.
+            let mut learner = lock_learner_authority(&learner_authority)?;
+            for (_, completion) in &generation_results {
+                publish_completed_seed_replay(&mut learner, completion)?;
+            }
+            let generation_update = learner.force_update()?;
+            campaign_phase_wall.generation_model_update_micros = campaign_phase_wall
+                .generation_model_update_micros
+                .checked_add(generation_update.update_micros)
+                .ok_or_else(|| route_message("native tactic generation model timing overflowed"))?;
+            let generation_wall_micros = elapsed_micros(generation_started.elapsed());
+            let critical_lane_wall_micros = generation_results
+                .iter()
+                .map(|(_, completion)| completion.invocation_wall_micros)
+                .max()
+                .unwrap_or(0);
+            campaign_phase_wall.seed_invocation_critical_lane_wall_micros = campaign_phase_wall
+                .seed_invocation_critical_lane_wall_micros
+                .checked_add(critical_lane_wall_micros)
+                .ok_or_else(|| route_message("native tactic invocation lane timing overflowed"))?;
+            let seed_invocation_model_update_micros = generation_results
+                .iter()
+                .try_fold(0_u64, |total, (_, completion)| {
+                    total.checked_add(completion.invocation_model_update_micros)
+                })
+                .ok_or_else(|| route_message("native tactic invocation model timing overflowed"))?;
+            campaign_phase_wall.seed_invocation_model_update_micros = campaign_phase_wall
+                .seed_invocation_model_update_micros
+                .checked_add(seed_invocation_model_update_micros)
+                .ok_or_else(|| route_message("native tactic invocation model timing overflowed"))?;
+            campaign_phase_wall.generation_coordination_micros = campaign_phase_wall
+                .generation_coordination_micros
+                .checked_add(
+                    generation_wall_micros
+                        .checked_sub(critical_lane_wall_micros)
+                        .ok_or_else(|| {
+                            route_message(
+                                "native tactic generation lane wall exceeds generation wall",
+                            )
+                        })?,
+                )
+                .ok_or_else(|| {
+                    route_message("native tactic generation coordination timing overflowed")
+                })?;
+            results.extend(
+                generation_results
+                    .into_iter()
+                    .map(|(seed_index, completion)| (seed_index, completion.result)),
+            );
+        }
+        campaign_phase_wall.campaign_finalization_started_micros =
+            elapsed_micros(campaign_started.elapsed());
+        let completion = finalize_tactic_macro_discovery(
+            config,
+            &pool,
+            &encoder,
+            execution_plan_sha256,
+            root_checkpoint_sha256,
+        )?;
+        let shared_training_replay_rows =
+            lock_learner_authority(&learner_authority)?.replay().len() as u64;
+        Ok::<_, NativeTacticRouteRunError>((
+            results,
+            completion,
+            shared_training_replay_rows,
+            demonstration_report,
+            None,
+        ))
+    })()?;
     drop(pool);
     indexed_results.sort_by_key(|(seed_index, _)| *seed_index);
     if indexed_results.len() != config.execution_plan.seeds.len()
@@ -860,8 +855,10 @@ fn run_native_tactic_route_with_optional_fleet(
         .map(|(_, result)| result)
         .collect::<Vec<_>>();
     let useful_decisions = seed_results.iter().map(|seed| seed.useful_decisions).sum();
-    let campaign_useful_graph_expansions =
-        campaign_useful_graph_expansion_set(config.repository_root, &seed_results)?;
+    let campaign_useful_graph_expansions = match prevalidated_useful_graph_expansions {
+        Some(expansions) => expansions,
+        None => campaign_useful_graph_expansion_set(config.repository_root, &seed_results)?,
+    };
     let unique_useful_graph_expansions = campaign_useful_graph_expansions.count()?;
     let mut native_restore_accounting = NativeTacticRestoreAccounting::default();
     for seed in &seed_results {

@@ -252,7 +252,10 @@ do not golf isolated subphases without campaign evidence.
   sum to match learner authority; read-only resume then finalized all 24 sealed
   decisions in 106.9 seconds without launching a native child.
 - [ ] Cache or share already-validated artifact and graph identities within one
-  process; independent reopen validation must remain fail-closed.
+  process; independent reopen validation must remain fail-closed. Completed-seed
+  preflight now carries the campaign-wide useful-expansion set directly from
+  the authenticated graphs into final reporting instead of reopening every
+  final checkpoint and decoding the same graph journals a second time.
 - [ ] Measure whether retained save-state branching beats replay from its
   authority point; simplify or remove it where it does not.
 - [ ] Revisit deterministic generation-barrier or other concurrent learning

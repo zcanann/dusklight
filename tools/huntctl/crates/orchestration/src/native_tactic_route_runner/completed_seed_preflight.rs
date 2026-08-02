@@ -7,6 +7,7 @@ pub(super) struct CompletedSeedPreflight {
     pub(super) root_checkpoint_sha256: Digest,
     pub(super) tactic_macro_discovery: Option<NativeTacticMacroDiscoveryReport>,
     pub(super) demonstration: Option<NativeTacticDemonstrationReport>,
+    pub(super) useful_graph_expansions: CampaignUsefulGraphExpansionSet,
 }
 
 pub(super) fn load_completed_seed_preflight(
@@ -38,6 +39,7 @@ pub(super) fn load_completed_seed_preflight(
     let mut root_checkpoint_sha256 = None;
     let mut feature_schema_sha256 = None;
     let mut objective_sha256 = None;
+    let mut useful_graph_expansions = CampaignUsefulGraphExpansionSet::default();
     for (seed_index, (lane, result_path)) in config
         .execution_plan
         .lanes
@@ -79,6 +81,7 @@ pub(super) fn load_completed_seed_preflight(
         root_checkpoint_sha256.get_or_insert(completed.checkpoint.root_checkpoint_sha256);
         feature_schema_sha256.get_or_insert(completed.checkpoint.feature_schema_sha256);
         objective_sha256.get_or_insert(completed.checkpoint.objective_sha256);
+        useful_graph_expansions.include_graph(&completed.checkpoint.state_graph);
         indexed_results.push((seed_index, completed.result));
     }
     let initial_facts = initial_facts
@@ -125,6 +128,7 @@ pub(super) fn load_completed_seed_preflight(
         root_checkpoint_sha256,
         tactic_macro_discovery,
         demonstration: demonstration.map(|demonstration| demonstration.report),
+        useful_graph_expansions,
     }))
 }
 
