@@ -77,7 +77,8 @@ impl TacticQCampaign {
                     }
                 }
                 TacticValueTreatment::GoalRelabeledFittedQKnnV2
-                | TacticValueTreatment::GoalRelabeledFrontierDoubleQV3 => {
+                | TacticValueTreatment::GoalRelabeledFrontierDoubleQV3
+                | TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4 => {
                     GeneralizedTacticValueModel::fit_achieved_goal_returns(
                         &self.training_replay,
                         goal_distance_feature,
@@ -213,12 +214,22 @@ impl TacticQCampaign {
                     || cached.model_revision != self.model_revision
             });
         if stale {
-            let model = match ContinuousTacticDoubleQModel::fit(
-                &self.training_replay,
-                goal_distance_feature,
-                self.model_config.fitted_q.iterations,
-                self.model_config.fitted_q.discount,
-            ) {
+            let fitted = if self.value_treatment.uses_universal_terminal_action_head() {
+                ContinuousTacticDoubleQModel::fit_universal_action_head(
+                    &self.training_replay,
+                    goal_distance_feature,
+                    self.model_config.fitted_q.iterations,
+                    self.model_config.fitted_q.discount,
+                )
+            } else {
+                ContinuousTacticDoubleQModel::fit(
+                    &self.training_replay,
+                    goal_distance_feature,
+                    self.model_config.fitted_q.iterations,
+                    self.model_config.fitted_q.discount,
+                )
+            };
+            let model = match fitted {
                 Ok(model) => Arc::new(model),
                 Err(GeneralizedTacticValueError::SampleCount) => return Ok(None),
                 Err(error) => return Err(error.into()),

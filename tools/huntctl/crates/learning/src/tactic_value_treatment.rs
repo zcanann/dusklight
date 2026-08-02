@@ -31,18 +31,31 @@ pub enum TacticValueTreatment {
     /// Goal-relabeled V2 models plus action-conditioned Double-Q frontier
     /// opportunity ranking after native terminal support exists.
     GoalRelabeledFrontierDoubleQV3,
+    /// V3 frontier ranking with one shared action head. Full controller
+    /// descriptors remain regression features, allowing terminal evidence to
+    /// transfer across broad option-type labels.
+    GoalRelabeledUniversalFrontierDoubleQV4,
 }
 
 impl TacticValueTreatment {
     pub const fn uses_goal_relabeling(self) -> bool {
         matches!(
             self,
-            Self::GoalRelabeledFittedQKnnV2 | Self::GoalRelabeledFrontierDoubleQV3
+            Self::GoalRelabeledFittedQKnnV2
+                | Self::GoalRelabeledFrontierDoubleQV3
+                | Self::GoalRelabeledUniversalFrontierDoubleQV4
         )
     }
 
     pub const fn uses_terminal_frontier_action_value(self) -> bool {
-        matches!(self, Self::GoalRelabeledFrontierDoubleQV3)
+        matches!(
+            self,
+            Self::GoalRelabeledFrontierDoubleQV3 | Self::GoalRelabeledUniversalFrontierDoubleQV4
+        )
+    }
+
+    pub const fn uses_universal_terminal_action_head(self) -> bool {
+        matches!(self, Self::GoalRelabeledUniversalFrontierDoubleQV4)
     }
 }
 
@@ -72,6 +85,7 @@ pub struct ContinuousTacticValueModel {
 pub struct ContinuousTacticDoubleQModel {
     model: DoubleQ,
     supported_action_classes: BTreeSet<u32>,
+    universal_action_head: bool,
 }
 
 impl ContinuousTacticDoubleQModel {
@@ -80,6 +94,44 @@ impl ContinuousTacticDoubleQModel {
         goal_distance_feature: usize,
         fitted_q_iterations: usize,
         per_tick_discount: f32,
+    ) -> Result<Self, GeneralizedTacticValueError> {
+        Self::fit_with_action_head(
+            transitions,
+            goal_distance_feature,
+            fitted_q_iterations,
+            per_tick_discount,
+            false,
+        )
+    }
+
+    /// Fits one shared action head over the continuous descriptor factors.
+    ///
+    /// Demonstration chunking and live parameterized tactics may use different
+    /// broad `OptionType` labels for semantically comparable controller
+    /// programs. The descriptor is already embedded in the regression state;
+    /// a universal head lets that evidence transfer without pretending an
+    /// unseen categorical head was trained.
+    pub fn fit_universal_action_head(
+        transitions: &[OptionTransitionSample],
+        goal_distance_feature: usize,
+        fitted_q_iterations: usize,
+        per_tick_discount: f32,
+    ) -> Result<Self, GeneralizedTacticValueError> {
+        Self::fit_with_action_head(
+            transitions,
+            goal_distance_feature,
+            fitted_q_iterations,
+            per_tick_discount,
+            true,
+        )
+    }
+
+    fn fit_with_action_head(
+        transitions: &[OptionTransitionSample],
+        goal_distance_feature: usize,
+        fitted_q_iterations: usize,
+        per_tick_discount: f32,
+        universal_action_head: bool,
     ) -> Result<Self, GeneralizedTacticValueError> {
         if transitions.len() < 2 {
             return Err(GeneralizedTacticValueError::SampleCount);
@@ -105,7 +157,11 @@ impl ContinuousTacticDoubleQModel {
                     )?;
                     Ok(FqiTransition {
                         state: state.clone(),
-                        action: action_class(&transition.value_sample.action.option_type),
+                        action: if universal_action_head {
+                            CONTINUOUS_FOREST_ACTION
+                        } else {
+                            action_class(&transition.value_sample.action.option_type)
+                        },
                         duration: transition.value_sample.duration_ticks,
                         reward: target,
                         next_state: state,
@@ -129,6 +185,7 @@ impl ContinuousTacticDoubleQModel {
         Ok(Self {
             model,
             supported_action_classes,
+            universal_action_head,
         })
     }
 
@@ -142,13 +199,14 @@ impl ContinuousTacticDoubleQModel {
             .iter()
             .filter(|descriptor| {
                 self.supported_action_classes
-                    .contains(&action_class(&descriptor.option_type))
+                    .contains(&self.action_head(descriptor))
             })
             .map(|descriptor| {
                 let features = regression_features(state_features, context, descriptor)?;
+                let action_head = self.action_head(descriptor);
                 let estimate = self
                     .model
-                    .estimate(&features, action_class(&descriptor.option_type))
+                    .estimate(&features, action_head)
                     .map_err(|error| {
                         GeneralizedTacticValueError::InvalidTransition(error.to_string())
                     })?;
@@ -167,6 +225,14 @@ impl ContinuousTacticDoubleQModel {
                 .then_with(|| left.descriptor.option_id.cmp(&right.descriptor.option_id))
         });
         Ok(estimates)
+    }
+
+    fn action_head(&self, descriptor: &OptionActionDescriptor) -> u32 {
+        if self.universal_action_head {
+            CONTINUOUS_FOREST_ACTION
+        } else {
+            action_class(&descriptor.option_type)
+        }
     }
 
     fn config(per_tick_discount: f32) -> DoubleQConfig {
@@ -312,6 +378,21 @@ mod tests {
         assert!(TacticValueTreatment::GoalRelabeledFittedQKnnV2.uses_goal_relabeling());
         assert!(
             !TacticValueTreatment::GoalRelabeledFittedQKnnV2.uses_terminal_frontier_action_value()
+        );
+        assert!(
+            !TacticValueTreatment::GoalRelabeledFrontierDoubleQV3
+                .uses_universal_terminal_action_head()
+        );
+        assert!(
+            TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4.uses_goal_relabeling()
+        );
+        assert!(
+            TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4
+                .uses_terminal_frontier_action_value()
+        );
+        assert!(
+            TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4
+                .uses_universal_terminal_action_head()
         );
     }
 }

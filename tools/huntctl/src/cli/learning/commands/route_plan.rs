@@ -118,11 +118,14 @@ fn value_treatment(
         Some("goal_relabeled_frontier_double_q") => {
             Ok(TacticValueTreatment::GoalRelabeledFrontierDoubleQV3)
         }
+        Some("goal_relabeled_universal_frontier_double_q") => {
+            Ok(TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4)
+        }
         Some("continuous_fitted_q_forest") => {
             Ok(TacticValueTreatment::ContinuousFittedQForestV1)
         }
         Some(value) => Err(format!(
-            "unsupported --value-treatment {value:?}; expected continuous_fitted_q_forest, goal_relabeled_fitted_q_knn, goal_relabeled_frontier_double_q, or local_generalized_fitted_q_knn"
+            "unsupported --value-treatment {value:?}; expected continuous_fitted_q_forest, goal_relabeled_fitted_q_knn, goal_relabeled_frontier_double_q, goal_relabeled_universal_frontier_double_q, or local_generalized_fitted_q_knn"
         )
         .into()),
     }
@@ -191,6 +194,17 @@ mod tests {
             )
             .unwrap(),
             TacticValueTreatment::GoalRelabeledFrontierDoubleQV3,
+        );
+        assert_eq!(
+            value_treatment(
+                &[
+                    "--value-treatment".into(),
+                    "goal_relabeled_universal_frontier_double_q".into(),
+                ],
+                TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
+            )
+            .unwrap(),
+            TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4,
         );
     }
 

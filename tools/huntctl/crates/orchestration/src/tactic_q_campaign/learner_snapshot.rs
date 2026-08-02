@@ -196,7 +196,8 @@ impl TacticQImmutableLearnerSnapshot {
                     }
                 }
                 TacticValueTreatment::GoalRelabeledFittedQKnnV2
-                | TacticValueTreatment::GoalRelabeledFrontierDoubleQV3 => Some(Arc::new(
+                | TacticValueTreatment::GoalRelabeledFrontierDoubleQV3
+                | TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4 => Some(Arc::new(
                     GeneralizedTacticValueModel::fit_achieved_goal_returns(
                         &corpus.transitions,
                         goal_distance_feature,
@@ -226,12 +227,22 @@ impl TacticQImmutableLearnerSnapshot {
             None
         };
         let native_terminal_action_model = if native_terminal_model.is_some() {
-            Some(Arc::new(ContinuousTacticDoubleQModel::fit(
-                &corpus.transitions,
-                goal_distance_feature,
-                model_config.fitted_q.iterations,
-                model_config.fitted_q.discount,
-            )?))
+            let model = if value_treatment.uses_universal_terminal_action_head() {
+                ContinuousTacticDoubleQModel::fit_universal_action_head(
+                    &corpus.transitions,
+                    goal_distance_feature,
+                    model_config.fitted_q.iterations,
+                    model_config.fitted_q.discount,
+                )
+            } else {
+                ContinuousTacticDoubleQModel::fit(
+                    &corpus.transitions,
+                    goal_distance_feature,
+                    model_config.fitted_q.iterations,
+                    model_config.fitted_q.discount,
+                )
+            }?;
+            Some(Arc::new(model))
         } else {
             None
         };
@@ -347,7 +358,14 @@ mod tests {
     }
 
     #[test]
-    fn reachability_calibration_applies_to_both_goal_relabel_treatments() {
+    fn reachability_calibration_applies_to_all_goal_relabel_treatments() {
+        assert_eq!(
+            goal_reachability_calibration_prefix_rows(
+                TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4,
+                65,
+            ),
+            Some(64),
+        );
         assert_eq!(
             goal_reachability_calibration_prefix_rows(
                 TacticValueTreatment::GoalRelabeledFrontierDoubleQV3,

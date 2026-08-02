@@ -291,7 +291,8 @@ impl TacticQCampaign {
                                 .collect::<Vec<_>>()
                         }),
                     TacticValueTreatment::GoalRelabeledFittedQKnnV2
-                    | TacticValueTreatment::GoalRelabeledFrontierDoubleQV3 => {
+                    | TacticValueTreatment::GoalRelabeledFrontierDoubleQV3
+                    | TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4 => {
                         if native_terminal_supported && terminal_support_acquisition {
                             self.native_terminal_action_model(goal_distance_feature)?
                                 .map(|model| {

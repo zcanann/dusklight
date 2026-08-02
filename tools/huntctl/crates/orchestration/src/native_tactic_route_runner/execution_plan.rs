@@ -513,13 +513,25 @@ mod tests {
         v2.value_treatment = TacticValueTreatment::GoalRelabeledFittedQKnnV2;
         let mut v3 = v2.clone();
         v3.value_treatment = TacticValueTreatment::GoalRelabeledFrontierDoubleQV3;
+        let mut v4 = v3.clone();
+        v4.value_treatment = TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4;
 
         assert_ne!(
             NativeTacticExecutionPlan::build(v2)
                 .unwrap()
                 .identity()
                 .unwrap(),
+            NativeTacticExecutionPlan::build(v3.clone())
+                .unwrap()
+                .identity()
+                .unwrap()
+        );
+        assert_ne!(
             NativeTacticExecutionPlan::build(v3)
+                .unwrap()
+                .identity()
+                .unwrap(),
+            NativeTacticExecutionPlan::build(v4)
                 .unwrap()
                 .identity()
                 .unwrap()

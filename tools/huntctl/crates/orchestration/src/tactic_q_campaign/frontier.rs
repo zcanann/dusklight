@@ -458,7 +458,8 @@ impl TacticQCampaign {
                     self.generalized_model(goal_distance_feature)?
                 }
                 TacticValueTreatment::GoalRelabeledFittedQKnnV2
-                | TacticValueTreatment::GoalRelabeledFrontierDoubleQV3 => {
+                | TacticValueTreatment::GoalRelabeledFrontierDoubleQV3
+                | TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4 => {
                     self.active_goal_relabel_model(goal_distance_feature, terminal_value_supported)?
                 }
                 TacticValueTreatment::ContinuousFittedQForestV1 => None,

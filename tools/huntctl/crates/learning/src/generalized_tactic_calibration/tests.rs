@@ -141,6 +141,33 @@ fn continuous_double_q_ranks_supported_parameterized_actions() {
 }
 
 #[test]
+fn universal_double_q_transfers_across_option_type_labels() {
+    let corpus = corpus();
+    let source = &corpus[0];
+    let context = GeneralizedTacticContext::from_facts(&source.before).unwrap();
+    let mut relabeled = source.value_sample.action.clone();
+    relabeled.option_type = dusklight_control::option_execution::OptionType::Target;
+
+    let classed = ContinuousTacticDoubleQModel::fit(&corpus, 0, 16, 1.0).unwrap();
+    assert!(
+        classed
+            .rank(&source.value_sample.state, &context, &[relabeled.clone()])
+            .unwrap()
+            .is_empty(),
+        "the legacy classed control must not invent support for an unseen option type",
+    );
+
+    let universal =
+        ContinuousTacticDoubleQModel::fit_universal_action_head(&corpus, 0, 16, 1.0).unwrap();
+    let ranked = universal
+        .rank(&source.value_sample.state, &context, &[relabeled])
+        .unwrap();
+    assert_eq!(ranked.len(), 1);
+    assert!(ranked[0].mean_q.is_finite());
+    assert!(ranked[0].ensemble_variance.is_finite());
+}
+
+#[test]
 fn withholds_whole_state_regions_and_action_realizations() {
     let report = calibrate_generalized_tactic_value(
         &corpus(),
