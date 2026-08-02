@@ -185,8 +185,8 @@ pub use completion_marker::{
 use exclusive_timing::{
     CampaignExclusiveTimingInput, CampaignPhaseWallTiming, ExclusiveTopTimingSnapshot,
     SeedOrchestrationPhase as OrchestrationPhase, attribute_campaign_timing,
-    orchestration_detail_total, reconcile_recovered_seed_timing, record_orchestration_detail,
-    record_orchestration_total,
+    cumulative_route_wall_micros, orchestration_detail_total, reconcile_recovered_seed_timing,
+    record_orchestration_detail, record_orchestration_total,
 };
 mod campaign_summary;
 pub use campaign_summary::{
@@ -682,6 +682,12 @@ fn run_native_tactic_route_with_optional_fleet(
                     .map(|(_, completion)| completion.invocation_wall_micros)
                     .max()
                     .unwrap_or(0);
+                campaign_phase_wall.seed_invocation_critical_lane_wall_micros = campaign_phase_wall
+                    .seed_invocation_critical_lane_wall_micros
+                    .checked_add(critical_lane_wall_micros)
+                    .ok_or_else(|| {
+                        route_message("native tactic invocation lane timing overflowed")
+                    })?;
                 let seed_invocation_model_update_micros = generation_results
                     .iter()
                     .try_fold(0_u64, |total, (_, completion)| {
@@ -824,16 +830,19 @@ fn run_native_tactic_route_with_optional_fleet(
     timing.tactic_preparation_and_fact_extraction_micros = timing
         .tactic_preparation_and_fact_extraction_micros
         .saturating_add(tactic_macro_discovery.validation_preparation_micros);
-    // Seed timing is durable across resume. Keep report wall time at least the
-    // accumulated generation critical path so a short final invocation cannot
-    // make cumulative work appear artificially fast.
+    // Seed timing is durable across resume, while the observed campaign wall
+    // covers only this invocation. Replace this invocation's seed critical
+    // lane with the complete durable lane so neither portion is lost or
+    // counted twice.
     let observed_route_cutoff_wall_micros = elapsed_micros(campaign_started.elapsed());
     let campaign_finalization_wall_micros = observed_route_cutoff_wall_micros
         .checked_sub(campaign_phase_wall.campaign_finalization_started_micros)
         .ok_or_else(|| route_message("native tactic campaign finalization clock regressed"))?;
-    timing.wall_micros = observed_route_cutoff_wall_micros.max(
+    timing.wall_micros = cumulative_route_wall_micros(
+        observed_route_cutoff_wall_micros,
         accumulated_coordinator_wall_micros(config.execution_plan, &seed_results),
-    );
+        campaign_phase_wall.seed_invocation_critical_lane_wall_micros,
+    )?;
     refresh_route_throughput(&mut timing, &seed_results, unique_useful_graph_expansions);
     let reporting_started = Instant::now();
     let frontier_availability = seed_results

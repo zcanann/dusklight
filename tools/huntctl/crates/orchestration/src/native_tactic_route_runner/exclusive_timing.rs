@@ -202,7 +202,19 @@ pub(super) struct CampaignPhaseWallTiming {
     pub campaign_setup_micros: u64,
     pub generation_coordination_micros: u64,
     pub campaign_finalization_started_micros: u64,
+    pub seed_invocation_critical_lane_wall_micros: u64,
     pub seed_invocation_model_update_micros: u64,
+}
+
+pub(super) fn cumulative_route_wall_micros(
+    observed_invocation_wall_micros: u64,
+    durable_seed_critical_lane_wall_micros: u64,
+    seed_invocation_critical_lane_wall_micros: u64,
+) -> Result<u64, NativeTacticRouteRunError> {
+    observed_invocation_wall_micros
+        .checked_sub(seed_invocation_critical_lane_wall_micros)
+        .and_then(|campaign_only| durable_seed_critical_lane_wall_micros.checked_add(campaign_only))
+        .ok_or_else(|| route_message("native tactic cumulative route wall timing is detached"))
 }
 
 fn attribute_campaign_model_timing(
@@ -491,5 +503,12 @@ mod tests {
         assert_eq!(campaign_model, 18);
         assert_eq!(generation_model, 15);
         assert_eq!(timing.model_update_micros, 58);
+    }
+
+    #[test]
+    fn cumulative_route_wall_replaces_only_current_seed_lane_with_durable_lane() {
+        assert_eq!(cumulative_route_wall_micros(100, 80, 80).unwrap(), 100);
+        assert_eq!(cumulative_route_wall_micros(25, 180, 5).unwrap(), 200);
+        assert!(cumulative_route_wall_micros(4, 180, 5).is_err());
     }
 }
