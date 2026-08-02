@@ -81,6 +81,8 @@ pub mod prioritized_replay;
 pub mod rainbow;
 pub mod reward_shaping;
 pub mod rl_readiness;
+pub mod scratch_action_catalog;
+pub mod scratch_q;
 pub mod semantic_goal_input;
 #[cfg(test)]
 mod tactic_adapter_conformance;

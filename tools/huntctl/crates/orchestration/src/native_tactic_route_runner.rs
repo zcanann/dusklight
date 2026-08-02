@@ -1299,7 +1299,9 @@ pub use journal::{
 
 mod route_setup;
 use route_setup::*;
-pub(crate) use route_setup::{initial_facts, tactic_root_probe_batch};
+pub(crate) use route_setup::{
+    initial_facts, tactic_root_probe_batch, tactic_root_probe_batch_with_ticks,
+};
 
 mod goal_target;
 pub use goal_target::NativeTacticGoalTargetReport;

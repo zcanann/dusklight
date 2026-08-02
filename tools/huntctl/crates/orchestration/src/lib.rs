@@ -21,6 +21,7 @@ pub mod native_residual_campaign;
 pub mod native_residual_campaign_runner;
 pub mod native_residual_winner_promotion;
 pub mod native_residual_winner_selection;
+pub mod native_scratch_learner;
 pub mod native_subsystem_parity;
 pub mod native_suffix_result;
 pub mod native_suffix_worker;

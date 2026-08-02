@@ -29,6 +29,9 @@ use super::{
     sealed_plan_shape_conflict, tactic_macro_registry_identity, u64_option, usage_error,
     usize_option, verify_native_frozen_policy_cold_replay, verify_native_frozen_policy_reinference,
 };
+use huntctl::search_evaluator::native_scratch_learner::{
+    NativeScratchRunConfig, run_native_scratch_learner,
+};
 use serde_json::json;
 use sha2::Digest as _;
 use std::error::Error;
@@ -135,6 +138,61 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "native_ticks": report.native_ticks,
                     "realized_tape": report.realized_tape,
                     "realized_tape_sha256": report.realized_tape_sha256,
+                }))?
+            );
+            Ok(())
+        }
+        Some("scratch-route") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let request: OptimizationRequest =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--request")?)?)?;
+            let execution: NativeResidualExecutionBinding =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--execution")?)?)?;
+            let output_argument = required_path(learn_args, "--output")?;
+            let output = if output_argument.is_absolute() {
+                output_argument
+            } else {
+                repository_root.join(output_argument)
+            };
+            let maximum_episode_ticks =
+                u32::try_from(u64_option(learn_args, "--maximum-episode-ticks", 900)?)?;
+            let epsilon_per_million =
+                u32::try_from(u64_option(learn_args, "--epsilon-per-million", 200_000)?)?;
+            let report = run_native_scratch_learner(&NativeScratchRunConfig {
+                repository_root: &repository_root,
+                optimization: &request,
+                execution: &execution,
+                output_root: &output,
+                seed: u64_option(learn_args, "--seed", 0)?,
+                episodes: u64_option(learn_args, "--episodes", 100)?,
+                maximum_episode_ticks,
+                epsilon_per_million,
+                cold_replay_timeout: Duration::from_secs(u64_option(
+                    learn_args,
+                    "--cold-replay-timeout-seconds",
+                    120,
+                )?),
+            })?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": report.schema,
+                    "report": output.join("report.json"),
+                    "completed_episodes": report.completed_episodes,
+                    "unique_transitions": report.unique_transitions,
+                    "terminal_episodes": report.terminal_episodes,
+                    "fastest_selected_ticks": report.fastest_selected_ticks,
+                    "learner_updates": report.learner_updates,
+                    "changed_choices": report.changed_choices,
+                    "native_ticks": report.native_ticks,
+                    "native_wall_micros": report.native_wall_micros,
+                    "wall_micros": report.wall_micros,
+                    "first_terminal_wall_micros": report.first_terminal_wall_micros,
                 }))?
             );
             Ok(())

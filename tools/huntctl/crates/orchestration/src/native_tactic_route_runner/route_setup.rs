@@ -166,7 +166,7 @@ pub(crate) fn tactic_root_probe_batch(
     tactic_root_probe_batch_with_ticks(optimization, execution, maximum_ticks)
 }
 
-pub(super) fn tactic_root_probe_batch_with_ticks(
+pub(crate) fn tactic_root_probe_batch_with_ticks(
     optimization: &OptimizationRequest,
     execution: &NativeResidualExecutionBinding,
     maximum_ticks: usize,
