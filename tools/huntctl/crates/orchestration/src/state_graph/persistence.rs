@@ -73,6 +73,14 @@ enum StateGraphPersistenceRecord {
     },
 }
 
+pub(crate) struct DecodedStateGraphPersistenceRecord(StateGraphPersistenceRecord);
+
+impl DecodedStateGraphPersistenceRecord {
+    pub(crate) fn parent_sha256(&self) -> Option<Digest> {
+        self.0.parent_sha256()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct PersistedStateGraphNode {
@@ -186,25 +194,28 @@ impl StateGraph {
         })
     }
 
-    pub(crate) fn persistence_record_parent(
+    pub(crate) fn decode_persistence_record(
         bytes: &[u8],
-    ) -> Result<Option<Digest>, StateGraphError> {
-        Ok(decode_record(bytes)?.parent_sha256())
+    ) -> Result<DecodedStateGraphPersistenceRecord, StateGraphError> {
+        Ok(DecodedStateGraphPersistenceRecord(decode_record(bytes)?))
     }
 
     pub(crate) fn from_persistence_records_validated(
-        records: &[(StateGraphPersistenceHead, Vec<u8>)],
+        records: Vec<(
+            StateGraphPersistenceHead,
+            DecodedStateGraphPersistenceRecord,
+        )>,
     ) -> Result<(Self, StateGraphValidationToken), StateGraphError> {
-        let (base_head, base_bytes) = records
-            .first()
+        let mut records = records.into_iter();
+        let (base_head, base_record) = records
+            .next()
             .ok_or(StateGraphError::Invalid("graph persistence chain is empty"))?;
         if base_head.depth != 0 {
             return Err(StateGraphError::Invalid(
                 "graph persistence base depth is invalid",
             ));
         }
-        let StateGraphPersistenceRecord::Base { schema, mut graph } = decode_record(base_bytes)?
-        else {
+        let StateGraphPersistenceRecord::Base { schema, mut graph } = base_record.0 else {
             return Err(StateGraphError::Invalid(
                 "graph persistence chain has no base",
             ));
@@ -214,7 +225,9 @@ impl StateGraph {
                 "graph persistence base schema is invalid",
             ));
         }
-        for (expected_depth, (head, bytes)) in records.iter().enumerate().skip(1) {
+        let mut final_head = base_head;
+        for (offset, (head, record)) in records.enumerate() {
+            let expected_depth = offset.saturating_add(1);
             if head.depth != expected_depth as u64 {
                 return Err(StateGraphError::Invalid(
                     "graph persistence delta depth is invalid",
@@ -233,7 +246,7 @@ impl StateGraph {
                 added_outgoing_segments,
                 added_outgoing_expansions,
                 best_terminal,
-            } = decode_record(bytes)?
+            } = record.0
             else {
                 return Err(StateGraphError::Invalid(
                     "graph persistence chain contains a late base",
@@ -241,7 +254,7 @@ impl StateGraph {
             };
             if schema != STATE_GRAPH_PERSISTENCE_DELTA_SCHEMA_V1
                 || identity != graph.identity
-                || parent_sha256 != records[expected_depth - 1].0.sha256
+                || parent_sha256 != final_head.sha256
             {
                 return Err(StateGraphError::Invalid(
                     "graph persistence delta is detached",
@@ -297,13 +310,10 @@ impl StateGraph {
                 &mut node.outgoing_expansions
             })?;
             graph.best_terminal = best_terminal;
+            final_head = head;
         }
-        let head = records
-            .last()
-            .map(|(head, _)| *head)
-            .ok_or(StateGraphError::Invalid("graph persistence chain is empty"))?;
         let validation = graph.validation_token()?;
-        graph.install_persistence_head(head);
+        graph.install_persistence_head(final_head);
         Ok((graph, validation))
     }
 

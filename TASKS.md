@@ -175,10 +175,12 @@ do not golf isolated subphases without campaign evidence.
   charged ticks) before two cold replays; reopen and validation cost remains
   material.
   V6 reopen now carries its one fail-closed graph reconstruction proof through
-  training projection and checkpoint validation. On the same q231 checkpoint,
-  read/authentication fell from 57.6 to 44.8 seconds (22%); completed-seed
+  training projection and checkpoint validation, and journal records are
+  decoded once while walking and rebuilding the chain rather than twice. On
+  the same q231 checkpoint, read/authentication fell from 57.6 to 34.3 seconds
+  (40%); completed-seed
   recovery also derives its corpus from that authenticated payload instead of
-  reopening it and fitting an unused lane-local model. The remaining 44.8
+  reopening it and fitting an unused lane-local model. The remaining 34.3
   seconds, preflight fleet launch, learner reconstruction, and repeated macro
   finalization keep this task open. A sealed campaign resume now returns its
   validated report idempotently, and a crash after publishing both final JSON

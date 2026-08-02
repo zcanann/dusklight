@@ -266,9 +266,10 @@ impl TacticQContentStore {
                 sha256: cursor.sha256,
             };
             let bytes = self.read_bytes(reference)?;
-            let parent = StateGraph::persistence_record_parent(&bytes)
+            let record = StateGraph::decode_persistence_record(&bytes)
                 .map_err(TacticQContentStoreError::domain)?;
-            records.push((cursor, bytes));
+            let parent = record.parent_sha256();
+            records.push((cursor, record));
             match parent {
                 Some(parent_sha256) => {
                     cursor = StateGraphPersistenceHead {
@@ -289,7 +290,7 @@ impl TacticQContentStore {
             }
         }
         records.reverse();
-        StateGraph::from_persistence_records_validated(&records)
+        StateGraph::from_persistence_records_validated(records)
             .map_err(TacticQContentStoreError::domain)
     }
 
