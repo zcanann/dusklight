@@ -534,7 +534,7 @@ int dMsgObject_c::_execute() {
 int dMsgObject_c::_draw() {
     u16 sVar7 = getStatusLocal();
     if (sVar7 != 0 && sVar7 != 1 && sVar7 != 0xb) {
-        if (isDraw()) {
+        if (isDraw() && mpScrnDraw != NULL && mpOutFont != NULL) {
             mpCtrl->render();
         }
         if (mpScrnDraw != NULL) {
@@ -864,6 +864,15 @@ void dMsgObject_c::waitProc() {
 }
 
 void dMsgObject_c::openProc() {
+#if TARGET_PC
+    if (mpScrnDraw == NULL || mpOutFont == NULL) {
+        talkStartInit();
+        if (mpScrnDraw == NULL || mpOutFont == NULL) {
+            return;
+        }
+    }
+#endif
+
     if (isMidonaMessage()) {
         bool uVar12 = 0;
         if (field_0x16a == 0) {
@@ -1411,7 +1420,7 @@ void dMsgObject_c::textmodeProc() {
 
 void dMsgObject_c::talkStartInit() {
     f32 dVar19 = 0.0f;
-    JUTFont* local_30 = mDoExt_getMesgFont();
+    JUTFont* local_30 = NULL;
     field_0x19b = 0;
     bool bVar1 = false;
     if (mFukiKind != mpRefer->getFukiKind()) {
@@ -1433,6 +1442,7 @@ void dMsgObject_c::talkStartInit() {
            field_0x4cd == 0 && mpTalkHeap != NULL))) &&
         (mpScrnDraw == NULL && (u32)dMeter2Info_getFloatingMessageID() != 0x13eb))
     {
+        local_30 = mDoExt_getMesgFont();
         if (!bVar1 && ((dComIfGp_isHeapLockFlag() == 0 || dComIfGp_isHeapLockFlag() == 5))) {
             dComIfGp_setHeapLockFlag(7);
         }

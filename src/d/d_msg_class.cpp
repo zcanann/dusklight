@@ -888,6 +888,15 @@ void jmessage_tMeasureProcessor::do_begin(void const* pEntry, char const* pszTex
     UNUSED(pszText);
     jmessage_tReference* pReference = (jmessage_tReference*)getReference();
 
+#if TARGET_PC
+    // A checkpoint can retain a message reference created before the headless
+    // font archive became available. Refresh it when message processing
+    // actually begins instead of dereferencing the stale null font later.
+    if (pReference->getFont() == NULL) {
+        pReference->setFont(mDoExt_getMesgFont());
+    }
+#endif
+
     pReference->resetCharactor();
     pReference->setRevoMessageID(0);
     field_0x38 = 1.0f;
@@ -1034,11 +1043,32 @@ void jmessage_tMeasureProcessor::do_character(int iCharacter) {
             field_0x49 = 0;
         }
 
-        pReference->addLineLength(mTotalLineCnt, field_0x38 * font->getWidth(iCharacter) / (f32)font->getCellWidth(), 1.0f);
+#if TARGET_PC
+        if (font == NULL) {
+            // Native automation does not render this text, but message state
+            // still needs deterministic layout progress when the archive is
+            // genuinely unavailable. One em is the neutral width fallback.
+            pReference->addLineLength(mTotalLineCnt, field_0x38, 1.0f);
+            if (field_0x46 != 0) {
+                pReference->addSelLength(
+                    field_0x46 - 1,
+                    (pReference->getSelFontSize() * field_0x38) +
+                        pReference->getSelCharSpace());
+            }
+        } else
+#endif
+        {
+            pReference->addLineLength(
+                mTotalLineCnt,
+                field_0x38 * font->getWidth(iCharacter) / (f32)font->getCellWidth(), 1.0f);
 
-        if (field_0x46 != 0) {
-            f32 var_f31 = pReference->getSelFontSize() / (f32)font->getCellWidth();
-            pReference->addSelLength(field_0x46 - 1, (var_f31 * (field_0x38 * font->getWidth(iCharacter))) + pReference->getSelCharSpace());
+            if (field_0x46 != 0) {
+                f32 var_f31 = pReference->getSelFontSize() / (f32)font->getCellWidth();
+                pReference->addSelLength(
+                    field_0x46 - 1,
+                    (var_f31 * (field_0x38 * font->getWidth(iCharacter))) +
+                        pReference->getSelCharSpace());
+            }
         }
 
         if (field_0x38 > 1.0f) {
