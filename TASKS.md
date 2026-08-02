@@ -64,8 +64,10 @@ detailed history in commits and sealed campaign artifacts.
   206-tick archive winner, and the automatic reducer removed one more tick;
   fresh process boots then reproduced the selected 205-tick route twice with
   identical boundary evidence. This proves selected-winner composition keeps
-  improving its latest parent instead of repeatedly editing an obsolete tape,
-  but the route remains far from competitive.
+  improving its latest parent instead of repeatedly editing an obsolete tape.
+  The 213-tick intermediate changed only 32 stick-X frames and retained the
+  same three roll presses, so these gains remain local residual progress rather
+  than learned efficient movement; the route is still far from competitive.
 
 Exit: each strict zero-shot improvement is automatically converted into a
 selected, independently replayable route, and the retained route reaches the
@@ -75,7 +77,12 @@ authenticated terminal in 124 ticks or less.
 
 - [ ] Evaluate candidate learning/search algorithms against the real horizon,
   branching factor, transition volume, and update latency; do not preserve
-  Q-learning by default.
+  Q-learning by default. A ten-minute self-experience treatment from the
+  authenticated 231 route evaluated 288 native alternatives over only 36
+  decisions, consumed 58 imported route transitions, performed 19 learner
+  updates, and retained no improvement. Its controlled policy-update probes
+  never changed the selected action, so this treatment currently fails at
+  policy effect.
 - [ ] Learn from successful and unsuccessful trajectories using sparse terminal
   value, authenticated tick cost, and generic state deltas.
 - [ ] Support online collection, off-policy replay, prioritized reuse, temporal
@@ -140,13 +147,16 @@ composition exceeds the trajectories from which it was learned.
 Optimize only costs demonstrated by the end-to-end learning and selection path;
 do not golf isolated subphases without campaign evidence.
 
-- [ ] Re-measure the combined campaign and automatic-selection path after the
-  producer-side duplicate validation removal. The first selection on an already
-  completed campaign took 12m06s, and independent reopen validation still takes
-  about 2m15s because it traverses the multi-megabyte minimization lineage.
-- [ ] Cache or share already-validated artifact identities within one process
-  when profiling confirms repeated lineage traversal remains the largest cost;
-  independent reopen validation must remain fail-closed.
+- [ ] Remove the measured learning-loop control-plane bottlenecks. In the
+  36-decision self-experience treatment, native simulation occupied only 15.2
+  seconds while graph scheduling and leasing took 179.8 seconds, generation
+  replay and coordination 150.6 seconds, model updates 135.9 seconds, and
+  persistence 148.8 seconds. Two-worker native utilization was only 8.4%.
+- [ ] Make completed-seed resume and finalization read-only and cheap: do not
+  launch a native fleet or repeat full replay fitting, graph projection, and
+  macro evaluation merely to validate and summarize already sealed evidence.
+- [ ] Cache or share already-validated artifact and graph identities within one
+  process; independent reopen validation must remain fail-closed.
 - [ ] Measure whether retained save-state branching beats replay from its
   authority point; simplify or remove it where it does not.
 - [ ] Revisit deterministic generation-barrier or other concurrent learning

@@ -627,6 +627,7 @@ fn validate_route_authority(
         execution_plan.budgets.decisions_per_lane,
         execution_plan_sha256,
         lane,
+        execution_plan.demonstration_chunk_ticks.is_some(),
     )?;
     if serde_json::to_vec(&seed_result).map_err(route_error)?
         != serde_json::to_vec(reported).map_err(route_error)?

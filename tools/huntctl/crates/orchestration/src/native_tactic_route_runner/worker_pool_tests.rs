@@ -1,5 +1,6 @@
 use super::*;
 use crate::native_suffix_worker::NativeSuffixWorkerIdentity;
+use crate::native_tactic_route_runner::execution_plan::EPISODE_GROUP_STRIDE;
 
 struct MissingCheckpointWorker {
     identity: NativeSuffixWorkerIdentity,
@@ -271,6 +272,36 @@ fn sole_worker_replays_one_portable_batch_and_rearms_the_primary_last() {
     assert_eq!(dispatches[0].proposal_indices, vec![1, 2, 3, 0]);
     assert!(dispatches[0].materialize_frontier);
     assert_eq!(dispatches[0].checkpoint_source, None);
+}
+
+#[test]
+fn generated_training_rows_are_selected_by_lane_identity_not_projection_offset() {
+    let lane = NativeTacticLanePlan {
+        lane_index: 1,
+        generation_index: 0,
+        generation_lane_index: 1,
+        seed: 22,
+        role: NativeTacticLaneRole::RankedExploration,
+        acquisition: NativeTacticAcquisitionPlan::FixedRank { rank: 1 },
+        epsilon_per_million: 350_000,
+        intervention: NativeTacticInterventionPlan::None,
+        root_refresh_phase: 1,
+        episode_group_base: EPISODE_GROUP_STRIDE,
+    };
+    let groups = [
+        7,
+        EPISODE_GROUP_STRIDE + 3,
+        u64::MAX,
+        EPISODE_GROUP_STRIDE + 99,
+        19,
+        EPISODE_GROUP_STRIDE + 400,
+    ];
+
+    assert_eq!(
+        generated_training_row_indices(&groups, &lane, 3).unwrap(),
+        vec![1, 3, 5]
+    );
+    assert!(generated_training_row_indices(&groups, &lane, 2).is_err());
 }
 
 #[test]

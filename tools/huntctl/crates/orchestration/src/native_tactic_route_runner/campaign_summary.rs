@@ -66,8 +66,9 @@ pub struct NativeTacticCampaignTreatmentSummary {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticCampaignOutcomeSummary {
-    /// Seeds with at least one authenticated terminal among all evaluated
-    /// proposals, whether or not the terminating proposal was retained.
+    /// Seeds with authenticated terminal support from either an imported
+    /// demonstration or an evaluated proposal. Proposal-only counts remain
+    /// separate below so imported support cannot masquerade as discovery.
     pub terminal_seeds: u64,
     /// Authenticated terminal proposals evaluated across the campaign.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
@@ -436,6 +437,7 @@ impl NativeTacticCampaignSummary {
             || self.treatment.proposal_width_per_decision == 0
             || self.treatment.decisions_per_seed == 0
             || self.outcome.seed_count != self.treatment.seeds.len() as u64
+            || self.outcome.terminal_seeds > self.outcome.seed_count
             || self.outcome.selected_terminal_seeds > self.outcome.terminal_seeds
             || self.outcome.selected_terminal_decisions > self.outcome.terminal_proposals
             || self.outcome.selected_terminal_seeds > self.outcome.selected_terminal_decisions
@@ -444,10 +446,12 @@ impl NativeTacticCampaignSummary {
                 && (self.outcome.terminal_proposals != 0
                     || self.outcome.selected_terminal_decisions != 0
                     || self.outcome.selected_terminal_seeds != 0))
-            || (self.schema == NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6
-                && (self.outcome.terminal_seeds > self.outcome.terminal_proposals
-                    || (self.outcome.terminal_seeds == 0)
-                        != (self.outcome.terminal_proposals == 0)))
+            || !valid_terminal_outcome_counts(
+                &self.schema,
+                self.treatment.demonstration_transitions,
+                self.outcome.terminal_seeds,
+                self.outcome.terminal_proposals,
+            )
             || self.outcome.total_decisions < self.outcome.useful_decisions
             || self.efficiency.native_worker_utilization_per_million > 1_000_000
             || self.work.proposal_dispatches
@@ -533,6 +537,23 @@ impl NativeTacticCampaignSummary {
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
     }
+}
+
+fn valid_terminal_outcome_counts(
+    schema: &str,
+    demonstration_transitions: u64,
+    terminal_seeds: u64,
+    terminal_proposals: u64,
+) -> bool {
+    if schema != NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6 {
+        return terminal_proposals == 0;
+    }
+    if terminal_proposals != 0 && terminal_seeds == 0 {
+        return false;
+    }
+    demonstration_transitions != 0
+        || (terminal_seeds <= terminal_proposals
+            && (terminal_seeds == 0) == (terminal_proposals == 0))
 }
 
 fn terminal_outcome_counts(route: &NativeTacticRouteReport) -> (u64, u64, u64) {
@@ -1043,6 +1064,28 @@ mod tests {
             .unwrap()
             .terminal = true;
         assert_eq!(terminal_outcome_counts(&route), (2, 1, 1));
+    }
+
+    #[test]
+    fn imported_terminal_support_does_not_claim_a_native_proposal() {
+        assert!(valid_terminal_outcome_counts(
+            NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6,
+            58,
+            1,
+            0,
+        ));
+        assert!(!valid_terminal_outcome_counts(
+            NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6,
+            0,
+            1,
+            0,
+        ));
+        assert!(valid_terminal_outcome_counts(
+            NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6,
+            0,
+            1,
+            2,
+        ));
     }
 
     #[test]

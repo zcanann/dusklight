@@ -86,17 +86,20 @@ pub(super) fn run_seed_coordinator(
         if !config.resume {
             return Err(route_message("unexpected pre-existing tactic seed result"));
         }
-        let result =
-            read_completed_seed_result(
-                &seed_result_path,
-                seed,
-                config.execution_plan.budgets.decisions_per_lane,
-                config.execution_plan.identity()?,
-                config.execution_plan.lanes.get(seed_index).ok_or_else(|| {
-                    route_message("tactic seed lane is absent from execution plan")
-                })?,
-            )?;
-        let generated_training = load_generated_training_corpus(&result)?;
+        let lane = config
+            .execution_plan
+            .lanes
+            .get(seed_index)
+            .ok_or_else(|| route_message("tactic seed lane is absent from execution plan"))?;
+        let result = read_completed_seed_result(
+            &seed_result_path,
+            seed,
+            config.execution_plan.budgets.decisions_per_lane,
+            config.execution_plan.identity()?,
+            lane,
+            config.execution_plan.demonstration_chunk_ticks.is_some(),
+        )?;
+        let generated_training = load_generated_training_corpus(&result, lane)?;
         Ok(CompletedNativeTacticSeed {
             result,
             generated_training,
@@ -140,16 +143,59 @@ pub(super) fn run_seed_coordinator(
 
 pub(super) fn load_generated_training_corpus(
     result: &NativeTacticSeedResult,
+    lane: &NativeTacticLanePlan,
 ) -> Result<TacticQTrainingCorpus, NativeTacticRouteRunError> {
     let corpus = TacticQCampaign::read_checkpoint(Path::new(&result.final_checkpoint))
-        .and_then(|campaign| campaign.training_corpus_from(result.imported_training_replay_rows))
-        .map_err(route_error)?;
+        .map_err(route_error)?
+        .training_corpus();
     if corpus.execution_authority_sha256 != result.execution_plan_sha256 {
         return Err(route_message(
             "generated tactic training corpus belongs to another execution plan",
         ));
     }
-    Ok(corpus)
+    let expected_rows = result
+        .training_replay_rows
+        .checked_sub(result.imported_training_replay_rows)
+        .ok_or_else(|| route_message("generated tactic replay accounting underflowed"))?;
+    let indices = generated_training_row_indices(&corpus.episode_groups, lane, expected_rows)?;
+    Ok(TacticQTrainingCorpus {
+        execution_authority_sha256: corpus.execution_authority_sha256,
+        feature_schema_sha256: corpus.feature_schema_sha256,
+        objective_sha256: corpus.objective_sha256,
+        root_checkpoint_sha256: corpus.root_checkpoint_sha256,
+        transitions: indices
+            .iter()
+            .map(|index| corpus.transitions[*index].clone())
+            .collect(),
+        routes: indices
+            .iter()
+            .map(|index| corpus.routes[*index].clone())
+            .collect(),
+        episode_groups: indices
+            .iter()
+            .map(|index| corpus.episode_groups[*index])
+            .collect(),
+    })
+}
+
+fn generated_training_row_indices(
+    episode_groups: &[u64],
+    lane: &NativeTacticLanePlan,
+    expected_rows: usize,
+) -> Result<Vec<usize>, NativeTacticRouteRunError> {
+    let indices = episode_groups
+        .iter()
+        .enumerate()
+        .filter_map(|(index, episode_group)| {
+            lane.owns_episode_group(*episode_group).then_some(index)
+        })
+        .collect::<Vec<_>>();
+    if indices.len() != expected_rows {
+        return Err(route_message(
+            "generated tactic replay rows do not match lane-owned accounting",
+        ));
+    }
+    Ok(indices)
 }
 
 pub(super) fn parameterized_catalog_for_state(

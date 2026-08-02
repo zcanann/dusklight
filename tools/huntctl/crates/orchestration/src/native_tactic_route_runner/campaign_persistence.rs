@@ -113,6 +113,7 @@ pub(super) fn read_completed_seed_result(
     decisions_per_seed: u64,
     execution_plan_sha256: Digest,
     lane: &NativeTacticLanePlan,
+    imported_demonstration: bool,
 ) -> Result<NativeTacticSeedResult, NativeTacticRouteRunError> {
     let result: NativeTacticSeedResult = read_bounded_json(path)?;
     let first_terminal = result.trace.iter().find(|decision| {
@@ -136,6 +137,11 @@ pub(super) fn read_completed_seed_result(
         .iter()
         .find(|decision| decision.best_authenticated_tick_after_decision.is_some());
     let has_authenticated_tick_timeline = first_authenticated_tick.is_some();
+    let authenticated_terminal_origin_matches = authenticated_terminal_origin_matches(
+        imported_demonstration,
+        first_authenticated_tick.map(|decision| decision.decision_index),
+        result.first_terminal_decision_index,
+    );
     if result.execution_plan_sha256 != execution_plan_sha256
         || result.seed != seed
         || result.decisions > decisions_per_seed
@@ -167,8 +173,7 @@ pub(super) fn read_completed_seed_result(
                     .map(|decision| decision.completed_executable_graph_expansions)
                     != Some(result.unique_useful_graph_expansions)))
         || (has_authenticated_tick_timeline
-            && (first_authenticated_tick.map(|decision| decision.decision_index)
-                != result.first_terminal_decision_index
+            && (!authenticated_terminal_origin_matches
                 || result.trace.windows(2).any(|pair| {
                     match (
                         pair[0].best_authenticated_tick_after_decision,
@@ -330,4 +335,46 @@ pub(super) fn read_completed_seed_result(
         }
     }
     Ok(result)
+}
+
+fn authenticated_terminal_origin_matches(
+    imported_demonstration: bool,
+    first_authenticated_decision: Option<u64>,
+    first_terminal_proposal_decision: Option<u64>,
+) -> bool {
+    match first_authenticated_decision {
+        None => true,
+        Some(0) if imported_demonstration => true,
+        Some(decision) => Some(decision) == first_terminal_proposal_decision,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::authenticated_terminal_origin_matches;
+
+    #[test]
+    fn imported_terminal_support_precedes_native_proposal_discovery() {
+        assert!(authenticated_terminal_origin_matches(true, Some(0), None));
+        assert!(authenticated_terminal_origin_matches(
+            true,
+            Some(0),
+            Some(17)
+        ));
+    }
+
+    #[test]
+    fn unassisted_terminal_timeline_still_names_its_discovery_decision() {
+        assert!(authenticated_terminal_origin_matches(
+            false,
+            Some(17),
+            Some(17)
+        ));
+        assert!(!authenticated_terminal_origin_matches(false, Some(0), None));
+        assert!(!authenticated_terminal_origin_matches(
+            false,
+            Some(16),
+            Some(17)
+        ));
+    }
 }

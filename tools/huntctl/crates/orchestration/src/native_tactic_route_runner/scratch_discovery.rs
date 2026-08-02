@@ -320,6 +320,7 @@ fn validate_seed_artifacts(
             plan.lanes
                 .get(index)
                 .ok_or_else(|| route_message("scratch plan seed lane is absent"))?,
+            plan.demonstration_chunk_ticks.is_some(),
         )?;
         let reported_sha256 =
             Digest(Sha256::digest(serde_json::to_vec(reported).map_err(route_error)?).into());
