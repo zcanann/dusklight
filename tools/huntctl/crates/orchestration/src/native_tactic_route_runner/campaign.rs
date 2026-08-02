@@ -156,13 +156,16 @@ pub(super) fn run_seed(
     {
         timing.orchestration_breakdown = Some(NativeTacticOrchestrationTiming::default());
     }
-    let setup_top_baseline = ExclusiveTopTimingSnapshot::capture(&timing);
     if timing.persistence_micros > 0 && timing.persistence_breakdown.is_none() {
         timing.persistence_breakdown = Some(NativeTacticPersistenceTiming {
             unattributed_micros: timing.persistence_micros,
             ..NativeTacticPersistenceTiming::default()
         });
     }
+    if resuming_seed {
+        reconcile_recovered_seed_timing(&mut timing)?;
+    }
+    let setup_top_baseline = ExclusiveTopTimingSnapshot::capture(&timing);
     let mut native_restore_accounting = performance.native_restore_accounting;
     let prior_wall_micros = timing.wall_micros;
     let traced_useful_decisions = trace

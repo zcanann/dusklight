@@ -185,7 +185,8 @@ pub use completion_marker::{
 use exclusive_timing::{
     CampaignExclusiveTimingInput, CampaignPhaseWallTiming, ExclusiveTopTimingSnapshot,
     SeedOrchestrationPhase as OrchestrationPhase, attribute_campaign_timing,
-    orchestration_detail_total, record_orchestration_detail, record_orchestration_total,
+    orchestration_detail_total, reconcile_recovered_seed_timing, record_orchestration_detail,
+    record_orchestration_total,
 };
 mod campaign_summary;
 pub use campaign_summary::{

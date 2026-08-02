@@ -112,6 +112,45 @@ pub(super) fn orchestration_detail_total(
         .transpose()
 }
 
+/// A recovery point is committed before the decision journal and the timing
+/// attribution for that decision's durable tail. Once the matching journal
+/// record exists, the decision is authoritative, but those post-checkpoint
+/// micros cannot be reconstructed by phase. Charge the exact recovered gap to
+/// the explicit timing boundary before adding work from this invocation.
+pub(super) fn reconcile_recovered_seed_timing(
+    timing: &mut NativeTacticRouteTiming,
+) -> Result<(), NativeTacticRouteRunError> {
+    if timing.orchestration_breakdown.is_none() {
+        return Ok(());
+    }
+    if !timing.persistence_attribution_is_valid() || !timing.orchestration_attribution_is_valid() {
+        return Err(route_message(
+            "recovered native tactic phase breakdown is internally detached",
+        ));
+    }
+    let attributed = [
+        timing.tactic_execution_micros,
+        timing.model_update_micros,
+        timing.evidence_projection_micros,
+        timing.persistence_micros,
+        timing.orchestration_micros,
+    ]
+    .into_iter()
+    .try_fold(0_u64, u64::checked_add)
+    .ok_or_else(|| route_message("recovered native tactic phase timing overflowed"))?;
+    let boundary = timing.wall_micros.checked_sub(attributed).ok_or_else(|| {
+        route_message("recovered native tactic phases exceed their committed wall")
+    })?;
+    record_orchestration_detail(timing, SeedOrchestrationPhase::TimingBoundary, boundary)?;
+    record_orchestration_total(timing, boundary)?;
+    if !timing.seed_wall_attribution_is_exact() {
+        return Err(route_message(
+            "recovered native tactic phases do not reconcile to their committed wall",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct CampaignExclusiveTimingInput {
     pub process_launch_micros: u64,
@@ -265,5 +304,40 @@ mod tests {
             .graph_scheduling_breakdown
             .registration_micros = 1;
         assert!(!timing.seed_wall_attribution_is_exact());
+    }
+
+    #[test]
+    fn recovered_decision_tail_is_charged_to_the_explicit_timing_boundary() {
+        let mut timing = NativeTacticRouteTiming {
+            wall_micros: 100,
+            tactic_execution_micros: 40,
+            model_update_micros: 10,
+            evidence_projection_micros: 5,
+            persistence_micros: 10,
+            persistence_breakdown: Some(NativeTacticPersistenceTiming {
+                unattributed_micros: 10,
+                ..NativeTacticPersistenceTiming::default()
+            }),
+            orchestration_micros: 15,
+            orchestration_breakdown: Some(NativeTacticOrchestrationTiming {
+                decision_bookkeeping_micros: 15,
+                ..NativeTacticOrchestrationTiming::default()
+            }),
+            ..NativeTacticRouteTiming::default()
+        };
+
+        reconcile_recovered_seed_timing(&mut timing).unwrap();
+
+        assert_eq!(timing.orchestration_micros, 35);
+        assert_eq!(
+            timing
+                .orchestration_breakdown
+                .unwrap()
+                .timing_boundary_micros,
+            20
+        );
+        assert!(timing.seed_wall_attribution_is_exact());
+        reconcile_recovered_seed_timing(&mut timing).unwrap();
+        assert_eq!(timing.orchestration_micros, 35);
     }
 }
