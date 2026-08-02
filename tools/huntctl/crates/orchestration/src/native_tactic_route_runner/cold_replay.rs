@@ -353,6 +353,35 @@ pub(crate) fn run_native_tape_cold_replay(
     ),
     NativeTacticRouteRunError,
 > {
+    let authority = ValidatedNativeResidualExecution::authenticate(
+        config.repository_root,
+        config.optimization,
+        config.execution,
+    )
+    .map_err(route_error)?;
+    run_native_tape_cold_replay_after_execution_validation(config, &authority)
+}
+
+/// Runs a tape proof after the caller has authenticated the immutable native
+/// execution binding in this process. Selection pipelines use this entry point
+/// so a multi-stage proof does not hash the game image again at every stage.
+pub(crate) fn run_native_tape_cold_replay_after_execution_validation(
+    config: &NativeTapeColdReplayConfig<'_>,
+    authority: &ValidatedNativeResidualExecution,
+) -> Result<
+    (
+        NativeTacticColdReplayArtifact,
+        Vec<NativeTacticColdReplayAttempt>,
+    ),
+    NativeTacticRouteRunError,
+> {
+    authority
+        .validate_scope(
+            config.repository_root,
+            config.optimization,
+            config.execution,
+        )
+        .map_err(route_error)?;
     if config.repetitions < MINIMUM_COLD_REPLAY_REPETITIONS
         || config.repetitions > MAXIMUM_COLD_REPLAY_REPETITIONS
         || config.timeout.is_zero()
@@ -361,10 +390,6 @@ pub(crate) fn run_native_tape_cold_replay(
             "native tape cold replay configuration is invalid",
         ));
     }
-    config
-        .execution
-        .validate_files(config.repository_root, config.optimization)
-        .map_err(route_error)?;
     let encoded = config.tape.encode().map_err(route_error)?;
     let expected_frames = config
         .optimization

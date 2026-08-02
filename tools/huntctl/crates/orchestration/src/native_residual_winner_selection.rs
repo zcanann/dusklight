@@ -1,6 +1,8 @@
 //! Automatic selection pipeline for the best strict residual improvement.
 
-use crate::native_residual_campaign::NativeResidualExecutionBinding;
+use crate::native_residual_campaign::{
+    NativeResidualExecutionBinding, ValidatedNativeResidualExecution,
+};
 use crate::optimization_request::OptimizationRequest;
 use crate::optimization_resume::load_optimization_resume_after_request_validation;
 use crate::residual_campaign::{ResidualCampaignCandidate, ResidualCampaignCheckpoint};
@@ -8,11 +10,11 @@ use crate::residual_campaign_runner::{artifact_reference, campaign_root, load_ch
 use crate::residual_winner_cold_replay::{
     RESIDUAL_WINNER_COLD_REPLAY_PROOF_FILE, ResidualWinnerColdReplayConfig,
     ResidualWinnerColdReplayProof, read_and_validate_residual_winner_cold_replay,
-    run_residual_winner_cold_replay,
+    run_residual_winner_cold_replay_after_execution_validation,
 };
 use crate::residual_winner_minimization::{
     ResidualWinnerMinimizationConfig, ResidualWinnerMinimizationSummary,
-    run_residual_winner_minimization,
+    run_residual_winner_minimization_after_execution_validation,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
@@ -70,10 +72,12 @@ pub fn select_native_residual_winner(
         .repository_root
         .canonicalize()
         .map_err(selection_error)?;
-    config
-        .execution
-        .validate_files(&root, config.optimization)
-        .map_err(selection_error)?;
+    let execution_authority = ValidatedNativeResidualExecution::authenticate(
+        &root,
+        config.optimization,
+        config.execution,
+    )
+    .map_err(selection_error)?;
     validate_source_artifact(
         &root,
         &config.source_request,
@@ -169,21 +173,24 @@ pub fn select_native_residual_winner(
             .map_err(selection_error);
     }
     let minimization_root = selection_root.join(MINIMIZATION_DIRECTORY);
-    let minimization = run_residual_winner_minimization(&ResidualWinnerMinimizationConfig {
-        repository_root: &root,
-        optimization: config.optimization,
-        execution: config.execution,
-        checkpoint: &checkpoint,
-        source_request: config.source_request.clone(),
-        source_execution: config.source_execution.clone(),
-        source_checkpoint: checkpoint_reference.clone(),
-        source_candidate: candidate_state.candidate.clone(),
-        candidate: &candidate,
-        output_root: &minimization_root,
-        candidate_budget: config.minimization_candidate_budget,
-        resume: true,
-        cancellation: None,
-    })
+    let minimization = run_residual_winner_minimization_after_execution_validation(
+        &ResidualWinnerMinimizationConfig {
+            repository_root: &root,
+            optimization: config.optimization,
+            execution: config.execution,
+            checkpoint: &checkpoint,
+            source_request: config.source_request.clone(),
+            source_execution: config.source_execution.clone(),
+            source_checkpoint: checkpoint_reference.clone(),
+            source_candidate: candidate_state.candidate.clone(),
+            candidate: &candidate,
+            output_root: &minimization_root,
+            candidate_budget: config.minimization_candidate_budget,
+            resume: true,
+            cancellation: None,
+        },
+        &execution_authority,
+    )
     .map_err(selection_error)?;
     if minimization.minimized_first_hit_tick >= incumbent.first_hit_tick {
         return Err(selection_message(
@@ -205,15 +212,18 @@ pub fn select_native_residual_winner(
         )
         .map_err(selection_error)?
     } else {
-        run_residual_winner_cold_replay(&ResidualWinnerColdReplayConfig {
-            repository_root: &root,
-            optimization: config.optimization,
-            execution: config.execution,
-            minimization_summary: &minimization,
-            minimization_summary_artifact: minimization_reference.clone(),
-            timeout: config.cold_replay_timeout,
-            output_root: &cold_replay_root,
-        })
+        run_residual_winner_cold_replay_after_execution_validation(
+            &ResidualWinnerColdReplayConfig {
+                repository_root: &root,
+                optimization: config.optimization,
+                execution: config.execution,
+                minimization_summary: &minimization,
+                minimization_summary_artifact: minimization_reference.clone(),
+                timeout: config.cold_replay_timeout,
+                output_root: &cold_replay_root,
+            },
+            &execution_authority,
+        )
         .map_err(selection_error)?
     };
     let proof_reference = artifact_reference(

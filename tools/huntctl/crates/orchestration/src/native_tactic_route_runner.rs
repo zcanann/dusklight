@@ -1,7 +1,9 @@
 //! Fresh-model tactic-Q route learning on an authenticated native checkpoint.
 
 use crate::discovery_horizon::minimum_discovery_horizon_ticks;
-use crate::native_residual_campaign::NativeResidualExecutionBinding;
+use crate::native_residual_campaign::{
+    NativeResidualExecutionBinding, ValidatedNativeResidualExecution,
+};
 use crate::native_suffix_result::{NativeTerminalBinding, ValidatedNativeSuffixBatch};
 use crate::native_suffix_worker::{
     NativeSuffixPrevalidatedFileIdentities, NativeSuffixWorkerError, NativeSuffixWorkerLaunch,
@@ -238,7 +240,8 @@ pub use cold_replay::{
     read_and_validate_native_tactic_cold_replay, run_native_tactic_cold_replay,
 };
 pub(crate) use cold_replay::{
-    NativeTapeColdReplayConfig, exact_cold_replay_attempts, run_native_tape_cold_replay,
+    NativeTapeColdReplayConfig, exact_cold_replay_attempts,
+    run_native_tape_cold_replay_after_execution_validation,
     validate_native_tape_cold_replay_artifacts,
 };
 mod cold_replay_bundle;

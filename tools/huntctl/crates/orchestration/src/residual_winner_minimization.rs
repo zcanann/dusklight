@@ -1,6 +1,8 @@
 //! Bounded post-discovery minimization over authenticated residual successes.
 
-use crate::native_residual_campaign::{NativeResidualAttempt, NativeResidualExecutionBinding};
+use crate::native_residual_campaign::{
+    NativeResidualAttempt, NativeResidualExecutionBinding, ValidatedNativeResidualExecution,
+};
 use crate::native_residual_campaign_runner::{
     NativeResidualCampaignRunConfig, NativeResidualExactReplayCandidate,
     NativeResidualExactReplayPool, validate_exact_replay_attempt_artifacts,
@@ -149,6 +151,29 @@ struct ReductionProposal {
 pub fn run_residual_winner_minimization(
     config: &ResidualWinnerMinimizationConfig<'_>,
 ) -> Result<ResidualWinnerMinimizationSummary, ResidualWinnerMinimizationError> {
+    let authority = ValidatedNativeResidualExecution::authenticate(
+        config.repository_root,
+        config.optimization,
+        config.execution,
+    )
+    .map_err(minimization_error)?;
+    run_residual_winner_minimization_after_execution_validation(config, &authority)
+}
+
+/// Runs minimization after the caller authenticated the immutable execution
+/// binding in this process. All lineage, checkpoint, candidate, and replay
+/// evidence is still validated here.
+pub(crate) fn run_residual_winner_minimization_after_execution_validation(
+    config: &ResidualWinnerMinimizationConfig<'_>,
+    authority: &ValidatedNativeResidualExecution,
+) -> Result<ResidualWinnerMinimizationSummary, ResidualWinnerMinimizationError> {
+    authority
+        .validate_scope(
+            config.repository_root,
+            config.optimization,
+            config.execution,
+        )
+        .map_err(minimization_error)?;
     if config.candidate_budget == 0 || config.candidate_budget > 100_000 {
         return Err(minimization_message(
             "residual winner minimization candidate budget must be in 1..=100000",
@@ -162,10 +187,6 @@ pub fn run_residual_winner_minimization(
     validate_bound_value(&root, &config.source_execution, config.execution)?;
     validate_bound_value(&root, &config.source_checkpoint, config.checkpoint)?;
     validate_bound_value(&root, &config.source_candidate, config.candidate)?;
-    config
-        .execution
-        .validate_files(&root, config.optimization)
-        .map_err(minimization_error)?;
     config
         .checkpoint
         .validate(config.optimization, config.execution.content_sha256)

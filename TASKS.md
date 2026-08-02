@@ -179,7 +179,13 @@ do not golf isolated subphases without campaign evidence.
   The standalone residual winner finalizer recovered the interrupted 193-tick
   archive, but took 267.2 seconds despite minimizing only two candidates (782
   charged ticks) before two cold replays; reopen and validation cost remains
-  material.
+  material. Residual selection now carries one unforgeable, process-local
+  execution-validation authority through minimization and both cold boots
+  instead of repeatedly hashing the game image. Re-proving the retained
+  191-tick route took 95.2 seconds versus the prior 148.5-second
+  summary-to-proof span (36% faster), with identical ticks and boundary
+  fingerprints; the one required fresh-process game-image authentication is
+  now the dominant floor.
   V6 reopen now carries its one fail-closed graph reconstruction proof through
   training projection and checkpoint validation, and journal records are
   decoded once while walking and rebuilding the chain rather than twice. A

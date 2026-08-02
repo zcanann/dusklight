@@ -1,11 +1,13 @@
 //! Complete process-boot replay proof for a minimized residual winner.
 
 use crate::native_residual_campaign::{
-    NativeResidualExecutionBinding, materialize_native_residual_process_tape,
+    NativeResidualExecutionBinding, ValidatedNativeResidualExecution,
+    materialize_native_residual_process_tape,
 };
 use crate::native_tactic_route_runner::{
     NativeTacticColdReplayArtifact, NativeTacticColdReplayAttempt, NativeTacticColdReplayFidelity,
-    NativeTapeColdReplayConfig, exact_cold_replay_attempts, run_native_tape_cold_replay,
+    NativeTapeColdReplayConfig, exact_cold_replay_attempts,
+    run_native_tape_cold_replay_after_execution_validation,
     validate_native_tape_cold_replay_artifacts,
 };
 use crate::optimization_request::OptimizationRequest;
@@ -66,15 +68,32 @@ pub struct ResidualWinnerColdReplayProof {
 pub fn run_residual_winner_cold_replay(
     config: &ResidualWinnerColdReplayConfig<'_>,
 ) -> Result<ResidualWinnerColdReplayProof, ResidualWinnerColdReplayError> {
+    let authority = ValidatedNativeResidualExecution::authenticate(
+        config.repository_root,
+        config.optimization,
+        config.execution,
+    )
+    .map_err(cold_error)?;
+    run_residual_winner_cold_replay_after_execution_validation(config, &authority)
+}
+
+/// Runs the cold proof after the caller authenticated the immutable execution
+/// binding in this process. The minimized route lineage and every emitted
+/// replay artifact remain fail-closed.
+pub(crate) fn run_residual_winner_cold_replay_after_execution_validation(
+    config: &ResidualWinnerColdReplayConfig<'_>,
+    authority: &ValidatedNativeResidualExecution,
+) -> Result<ResidualWinnerColdReplayProof, ResidualWinnerColdReplayError> {
     let (root, tape, tape_bytes) = validate_authority(
         config.repository_root,
         config.optimization,
         config.execution,
         config.minimization_summary,
         &config.minimization_summary_artifact,
+        authority,
     )?;
     validate_new_build_output(&root, config.output_root)?;
-    let (controller_tape, attempts) = run_native_tape_cold_replay(&NativeTapeColdReplayConfig {
+    let replay_config = NativeTapeColdReplayConfig {
         repository_root: &root,
         optimization: config.optimization,
         execution: config.execution,
@@ -84,8 +103,10 @@ pub fn run_residual_winner_cold_replay(
         repetitions: REQUIRED_REPETITIONS,
         timeout: config.timeout,
         output_root: config.output_root,
-    })
-    .map_err(cold_error)?;
+    };
+    let (controller_tape, attempts) =
+        run_native_tape_cold_replay_after_execution_validation(&replay_config, authority)
+            .map_err(cold_error)?;
     let mut proof = ResidualWinnerColdReplayProof {
         schema: RESIDUAL_WINNER_COLD_REPLAY_SCHEMA_V1.into(),
         content_sha256: Digest::ZERO,
@@ -257,7 +278,17 @@ fn validate_authority_from_reference(
 ) -> Result<(std::path::PathBuf, InputTape, Vec<u8>), ResidualWinnerColdReplayError> {
     let root = repository_root.canonicalize().map_err(cold_error)?;
     let summary = read_summary(&root, summary_reference)?;
-    validate_authority(&root, optimization, execution, &summary, summary_reference)
+    let authority = ValidatedNativeResidualExecution::authenticate(&root, optimization, execution)
+        .map_err(cold_error)?;
+    summary.validate_files(&root).map_err(cold_error)?;
+    validate_authority(
+        &root,
+        optimization,
+        execution,
+        &summary,
+        summary_reference,
+        &authority,
+    )
 }
 
 fn validate_authority(
@@ -266,12 +297,15 @@ fn validate_authority(
     execution: &NativeResidualExecutionBinding,
     summary: &ResidualWinnerMinimizationSummary,
     summary_reference: &ArtifactReference,
+    authority: &ValidatedNativeResidualExecution,
 ) -> Result<(std::path::PathBuf, InputTape, Vec<u8>), ResidualWinnerColdReplayError> {
     let root = repository_root.canonicalize().map_err(cold_error)?;
-    execution
-        .validate_files(&root, optimization)
+    authority
+        .validate_scope(&root, optimization, execution)
         .map_err(cold_error)?;
-    summary.validate_files(&root).map_err(cold_error)?;
+    optimization.validate().map_err(cold_error)?;
+    execution.validate_seal(optimization).map_err(cold_error)?;
+    summary.validate().map_err(cold_error)?;
     if &read_summary(&root, summary_reference)? != summary
         || summary.optimization_request_sha256 != optimization.content_sha256
         || summary.execution_binding_sha256 != execution.content_sha256

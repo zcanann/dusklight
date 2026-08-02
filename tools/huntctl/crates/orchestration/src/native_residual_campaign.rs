@@ -64,6 +64,50 @@ pub struct NativeResidualExecutionValidationReport {
     pub workers: u16,
 }
 
+/// Process-local proof that the immutable execution authority was fully
+/// authenticated. The fields are private so callers cannot opt into fast
+/// multi-stage pipelines without first hashing and validating every bound
+/// artifact, including the game image.
+pub(crate) struct ValidatedNativeResidualExecution {
+    repository_root: PathBuf,
+    optimization_request_sha256: Digest,
+    execution_binding_sha256: Digest,
+}
+
+impl ValidatedNativeResidualExecution {
+    pub(crate) fn authenticate(
+        repository_root: &Path,
+        optimization: &OptimizationRequest,
+        execution: &NativeResidualExecutionBinding,
+    ) -> Result<Self, NativeResidualCampaignError> {
+        let repository_root = repository_root.canonicalize().map_err(native_error)?;
+        execution.validate_files(&repository_root, optimization)?;
+        Ok(Self {
+            repository_root,
+            optimization_request_sha256: optimization.content_sha256,
+            execution_binding_sha256: execution.content_sha256,
+        })
+    }
+
+    pub(crate) fn validate_scope(
+        &self,
+        repository_root: &Path,
+        optimization: &OptimizationRequest,
+        execution: &NativeResidualExecutionBinding,
+    ) -> Result<(), NativeResidualCampaignError> {
+        let repository_root = repository_root.canonicalize().map_err(native_error)?;
+        if repository_root != self.repository_root
+            || optimization.content_sha256 != self.optimization_request_sha256
+            || execution.content_sha256 != self.execution_binding_sha256
+        {
+            return Err(native_message(
+                "validated native execution authority belongs to another scope",
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl NativeResidualExecutionBinding {
     #[allow(clippy::too_many_arguments)]
     pub fn seal(
@@ -1316,6 +1360,39 @@ mod tests {
         // still authenticates those files in validate_files.
         binding.validate_seal(&optimization).unwrap();
         assert!(binding.validate_files(&root, &optimization).is_err());
+    }
+
+    #[test]
+    fn validated_execution_authority_is_scoped_to_exact_inputs() {
+        let (root, _artifacts, optimization, executable, game_data, tape, program, world_context) =
+            fixture();
+        let card_fixture = resolve_card_fixture_manifest(&root, &optimization).unwrap();
+        let binding = NativeResidualExecutionBinding::seal(
+            &root,
+            &optimization,
+            &executable,
+            &game_data,
+            &tape,
+            &program,
+            &world_context,
+            &card_fixture,
+            8,
+            false,
+        )
+        .unwrap();
+        let authority =
+            ValidatedNativeResidualExecution::authenticate(&root, &optimization, &binding).unwrap();
+        authority
+            .validate_scope(&root, &optimization, &binding)
+            .unwrap();
+
+        let mut detached = binding.clone();
+        detached.content_sha256 = Digest([0x5a; 32]);
+        assert!(
+            authority
+                .validate_scope(&root, &optimization, &detached)
+                .is_err()
+        );
     }
 
     #[cfg(unix)]
