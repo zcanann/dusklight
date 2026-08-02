@@ -35,6 +35,30 @@ fn space() -> ResidualSearchSpace {
 }
 
 #[test]
+fn promoted_trajectory_scales_cover_local_segment_and_whole_route_mutations() {
+    let mut search_space = space();
+    search_space.end_frame_exclusive = 197;
+    search_space.include_trajectory_duration_scales().unwrap();
+
+    assert_eq!(
+        search_space.duration_values,
+        vec![1, 2, 4, 8, 16, 24, 32, 49, 98, 197]
+    );
+}
+
+#[test]
+fn promoted_trajectory_scales_respect_the_wire_duration_limit() {
+    let mut search_space = space();
+    search_space.end_frame_exclusive = MAX_FRAME_DOMAIN;
+    search_space.include_trajectory_duration_scales().unwrap();
+
+    assert!(search_space.duration_values.contains(&32));
+    assert!(search_space.duration_values.contains(&8_192));
+    assert!(search_space.duration_values.contains(&32_768));
+    assert_eq!(search_space.duration_values.last(), Some(&u16::MAX));
+}
+
+#[test]
 fn random_sampler_is_seeded_independent_and_compiles_unique_raw_tapes() {
     let (parent, bytes) = parent(96);
     let mut first = ResidualRandomSampler::new(space(), &bytes, 104_729).unwrap();

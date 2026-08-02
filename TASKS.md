@@ -56,15 +56,11 @@ detailed history in commits and sealed campaign artifacts.
 - [ ] Give scratch trajectories enough horizon, restarts, branching, and
   coverage diversity to reach the load zone without a demonstration or authored
   path.
-- [ ] Preserve every authenticated terminal proposal as a complete root-to-goal
-  trajectory even when the online policy did not select it.
 - [ ] Exercise the cold-replay-backed optimization handoff on each selected
   zero-shot terminal, minimize the resulting incumbent, and verify the derived
   request and execution from the named root.
 - [ ] Retain useful branch checkpoints and exact suffix provenance along the
   terminal trajectory without assuming that every checkpoint is worth keeping.
-- [ ] Generate local, segment-scale, and whole-trajectory mutations around the
-  retained success.
 - [ ] Evaluate mutations through the authoritative terminal by replaying,
   repairing, or replanning the remaining suffix. A short transition with no
   completion outcome is not a comparable route candidate.

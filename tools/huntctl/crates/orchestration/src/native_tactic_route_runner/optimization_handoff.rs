@@ -202,6 +202,11 @@ pub fn build_native_tactic_optimization_handoff(
     optimization.proposal.search_space.start_frame = 0;
     optimization.proposal.search_space.end_frame_exclusive =
         u64::try_from(incumbent.frames.len()).map_err(route_error)?;
+    optimization
+        .proposal
+        .search_space
+        .include_trajectory_duration_scales()
+        .map_err(route_error)?;
     optimization.proposal.critic_ranking = None;
     let output_relative = repository_relative(&root, &output)?;
     optimization.resume.state_path = format!("{output_relative}/state.json");

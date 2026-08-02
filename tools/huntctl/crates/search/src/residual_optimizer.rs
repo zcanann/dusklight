@@ -40,6 +40,60 @@ pub struct ResidualSearchSpace {
 }
 
 impl ResidualSearchSpace {
+    /// Retain the authored durations while adding canonical local and
+    /// trajectory-relative spans. This keeps a promoted terminal route from
+    /// inheriting a scratch campaign's short-window-only mutation surface.
+    pub fn include_trajectory_duration_scales(&mut self) -> Result<(), ResidualOptimizerError> {
+        let width = self
+            .end_frame_exclusive
+            .checked_sub(self.start_frame)
+            .ok_or_else(|| optimizer_error("residual search space frame range is invalid"))?;
+        if !(32..=MAX_FRAME_DOMAIN).contains(&width) {
+            return Err(optimizer_error(
+                "residual search space frame range cannot cover trajectory scales",
+            ));
+        }
+
+        let maximum_duration = width.min(u64::from(u16::MAX));
+        let mut required = BTreeSet::new();
+        for duration in [
+            1_u64,
+            2,
+            4,
+            8,
+            16,
+            32,
+            width / 8,
+            width / 4,
+            width / 2,
+            width,
+        ] {
+            let duration = duration.clamp(1, maximum_duration) as u16;
+            required.insert(duration);
+        }
+
+        let mut durations = self
+            .duration_values
+            .iter()
+            .copied()
+            .filter(|duration| u64::from(*duration) <= width)
+            .collect::<BTreeSet<_>>();
+        durations.extend(required.iter().copied());
+
+        // A maximally populated authored catalog still leaves room for the
+        // required scales by deterministically dropping non-required entries.
+        while durations.len() > MAX_CATEGORY_VALUES {
+            let removable = durations
+                .iter()
+                .copied()
+                .find(|duration| !required.contains(duration))
+                .ok_or_else(|| optimizer_error("too many required trajectory duration scales"))?;
+            durations.remove(&removable);
+        }
+        self.duration_values = durations.into_iter().collect();
+        self.validate()
+    }
+
     pub fn validate(&self) -> Result<(), ResidualOptimizerError> {
         let width = self.end_frame_exclusive.checked_sub(self.start_frame);
         if self.schema != RESIDUAL_SEARCH_SPACE_SCHEMA_V1
