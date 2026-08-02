@@ -486,7 +486,8 @@ fn run_native_tactic_route_with_optional_fleet(
         .map_err(route_error)?;
 
     let worker_count = config.workers;
-    let mut completed_preflight = load_completed_seed_preflight(config, execution_plan_sha256)?;
+    let mut completed_preflight =
+        load_completed_seed_preflight(config, execution_plan_sha256, &process_tape)?;
     let owned_fleet = (external_fleet.is_none() && completed_preflight.is_none())
         .then(|| launch_native_tactic_worker_fleet(config, config.output_root, worker_count))
         .transpose()?;
@@ -635,7 +636,7 @@ fn run_native_tactic_route_with_optional_fleet(
                     preflight.indexed_results,
                     preflight.tactic_macro_discovery,
                     shared_training_replay_rows,
-                    None,
+                    preflight.demonstration,
                 ));
             }
             let pool = pool
@@ -661,6 +662,10 @@ fn run_native_tactic_route_with_optional_fleet(
                 let mut learner = lock_learner_authority(&learner_authority)?;
                 publish_demonstration_replay(&mut learner, demonstration)?;
             }
+            campaign_phase_wall.campaign_setup_model_update_micros =
+                lock_learner_authority(&learner_authority)?
+                    .invocation_metrics()
+                    .update_micros;
             campaign_phase_wall.campaign_setup_micros = elapsed_micros(campaign_started.elapsed());
             for generation in &config.execution_plan.generations {
                 let generation_started = Instant::now();
@@ -752,7 +757,13 @@ fn run_native_tactic_route_with_optional_fleet(
                 for (_, completion) in &generation_results {
                     publish_completed_seed_replay(&mut learner, completion)?;
                 }
-                learner.force_update()?;
+                let generation_update = learner.force_update()?;
+                campaign_phase_wall.generation_model_update_micros = campaign_phase_wall
+                    .generation_model_update_micros
+                    .checked_add(generation_update.update_micros)
+                    .ok_or_else(|| {
+                        route_message("native tactic generation model timing overflowed")
+                    })?;
                 let generation_wall_micros = elapsed_micros(generation_started.elapsed());
                 let critical_lane_wall_micros = generation_results
                     .iter()
@@ -993,6 +1004,9 @@ fn run_native_tactic_route_with_optional_fleet(
             macro_validation_execution_micros: tactic_macro_discovery.validation_wall_micros,
             learner_update_micros: learner_metrics.update_micros,
             learner_reconstruction_micros: learner_metrics.reconstruction_micros,
+            campaign_setup_model_update_micros: campaign_phase_wall
+                .campaign_setup_model_update_micros,
+            generation_model_update_micros: campaign_phase_wall.generation_model_update_micros,
             seed_invocation_model_update_micros: campaign_phase_wall
                 .seed_invocation_model_update_micros,
             campaign_setup_wall_micros: campaign_phase_wall.campaign_setup_micros,

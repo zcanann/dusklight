@@ -191,6 +191,8 @@ pub(super) struct CampaignExclusiveTimingInput {
     pub macro_validation_execution_micros: u64,
     pub learner_update_micros: u64,
     pub learner_reconstruction_micros: u64,
+    pub campaign_setup_model_update_micros: u64,
+    pub generation_model_update_micros: u64,
     pub seed_invocation_model_update_micros: u64,
     pub campaign_setup_wall_micros: u64,
     pub generation_coordination_wall_micros: u64,
@@ -200,7 +202,9 @@ pub(super) struct CampaignExclusiveTimingInput {
 #[derive(Clone, Copy, Default)]
 pub(super) struct CampaignPhaseWallTiming {
     pub campaign_setup_micros: u64,
+    pub campaign_setup_model_update_micros: u64,
     pub generation_coordination_micros: u64,
+    pub generation_model_update_micros: u64,
     pub campaign_finalization_started_micros: u64,
     pub seed_invocation_critical_lane_wall_micros: u64,
     pub seed_invocation_model_update_micros: u64,
@@ -221,21 +225,28 @@ fn attribute_campaign_model_timing(
     timing: &mut NativeTacticRouteTiming,
     learner_update_micros: u64,
     learner_reconstruction_micros: u64,
+    campaign_setup_model_update_micros: u64,
+    generation_model_update_micros: u64,
     seed_invocation_model_update_micros: u64,
-) -> Result<(u64, u64), NativeTacticRouteRunError> {
-    let campaign_update_micros = learner_update_micros
-        .checked_sub(seed_invocation_model_update_micros)
-        .ok_or_else(|| {
-            route_message("native tactic invocation seed model timing exceeds learner timing")
-        })?;
-    let campaign_model_update_micros = campaign_update_micros
-        .checked_add(learner_reconstruction_micros)
+) -> Result<u64, NativeTacticRouteRunError> {
+    let attributed_update_micros = campaign_setup_model_update_micros
+        .checked_add(generation_model_update_micros)
+        .and_then(|total| total.checked_add(seed_invocation_model_update_micros))
+        .ok_or_else(|| route_message("native tactic learner update timing overflowed"))?;
+    if attributed_update_micros != learner_update_micros {
+        return Err(route_message(
+            "native tactic learner update timing differs from its measured phases",
+        ));
+    }
+    let campaign_model_update_micros = campaign_setup_model_update_micros
+        .checked_add(generation_model_update_micros)
+        .and_then(|total| total.checked_add(learner_reconstruction_micros))
         .ok_or_else(|| route_message("native tactic learner timing overflowed"))?;
     timing.model_update_micros = timing
         .model_update_micros
         .checked_add(campaign_model_update_micros)
         .ok_or_else(|| route_message("native tactic route model timing overflowed"))?;
-    Ok((campaign_model_update_micros, campaign_update_micros))
+    Ok(campaign_model_update_micros)
 }
 
 pub(super) fn attribute_campaign_timing(
@@ -244,17 +255,19 @@ pub(super) fn attribute_campaign_timing(
     seeds: &[NativeTacticSeedResult],
     input: CampaignExclusiveTimingInput,
 ) -> Result<(), NativeTacticRouteRunError> {
-    let (campaign_model_update_micros, generation_model_update_micros) =
-        attribute_campaign_model_timing(
-            timing,
-            input.learner_update_micros,
-            input.learner_reconstruction_micros,
-            input.seed_invocation_model_update_micros,
-        )?;
+    let campaign_model_update_micros = attribute_campaign_model_timing(
+        timing,
+        input.learner_update_micros,
+        input.learner_reconstruction_micros,
+        input.campaign_setup_model_update_micros,
+        input.generation_model_update_micros,
+        input.seed_invocation_model_update_micros,
+    )?;
 
     let campaign_setup_known_micros = input
         .process_launch_micros
         .checked_add(input.demonstration_execution_micros)
+        .and_then(|total| total.checked_add(input.campaign_setup_model_update_micros))
         .and_then(|total| total.checked_add(input.learner_reconstruction_micros))
         .ok_or_else(|| route_message("native tactic campaign setup timing overflowed"))?;
     let campaign_setup_orchestration_micros = input
@@ -263,7 +276,7 @@ pub(super) fn attribute_campaign_timing(
         .ok_or_else(|| route_message("native tactic campaign setup phases exceed setup wall"))?;
     let generation_orchestration_micros = input
         .generation_coordination_wall_micros
-        .checked_sub(generation_model_update_micros)
+        .checked_sub(input.generation_model_update_micros)
         .ok_or_else(|| {
             route_message("native tactic generation model timing exceeds coordination wall")
         })?;
@@ -482,11 +495,9 @@ mod tests {
             ..NativeTacticRouteTiming::default()
         };
 
-        let (campaign_model, generation_model) =
-            attribute_campaign_model_timing(&mut timing, 0, 3, 0).unwrap();
+        let campaign_model = attribute_campaign_model_timing(&mut timing, 0, 3, 0, 0, 0).unwrap();
 
         assert_eq!(campaign_model, 3);
-        assert_eq!(generation_model, 0);
         assert_eq!(timing.model_update_micros, 282);
     }
 
@@ -497,12 +508,18 @@ mod tests {
             ..NativeTacticRouteTiming::default()
         };
 
-        let (campaign_model, generation_model) =
-            attribute_campaign_model_timing(&mut timing, 55, 3, 40).unwrap();
+        let campaign_model = attribute_campaign_model_timing(&mut timing, 55, 3, 7, 8, 40).unwrap();
 
         assert_eq!(campaign_model, 18);
-        assert_eq!(generation_model, 15);
         assert_eq!(timing.model_update_micros, 58);
+    }
+
+    #[test]
+    fn learner_update_time_must_reconcile_to_measured_phases() {
+        let mut timing = NativeTacticRouteTiming::default();
+
+        assert!(attribute_campaign_model_timing(&mut timing, 55, 3, 7, 7, 40).is_err());
+        assert_eq!(timing.model_update_micros, 0);
     }
 
     #[test]

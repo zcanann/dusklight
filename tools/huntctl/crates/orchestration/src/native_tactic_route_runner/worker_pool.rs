@@ -783,7 +783,9 @@ mod pool;
 use pool::proposal_artifact_root;
 #[cfg(test)]
 pub(super) use pool::recorded_demonstration_chunks;
-pub(super) use pool::{load_or_capture_demonstration, run_tactic_proposal_worker};
+pub(super) use pool::{
+    load_existing_demonstration, load_or_capture_demonstration, run_tactic_proposal_worker,
+};
 
 #[cfg(test)]
 #[path = "worker_pool_tests.rs"]

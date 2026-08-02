@@ -97,7 +97,13 @@ authenticated terminal in 124 ticks or less.
   decisions, consumed 58 imported route transitions, performed 19 learner
   updates, and retained no improvement. Its controlled policy-update probes
   never changed the selected action, so this treatment currently fails at
-  policy effect.
+  policy effect. A ten-minute goal-relabeled fitted-Q follow-up from the
+  retained 191 route evaluated 192 alternatives over 24 decisions, consumed 48
+  machine-incumbent transitions, performed 13 learner updates, and again left
+  all 11 valid same-state selected actions unchanged. It retained 191 ticks and
+  spent 459.2 seconds fitting models, 3.4x the prior local-Q treatment's 135.9
+  seconds. At this sample scale it is slower and still has no causal policy
+  effect, so increasing its mining budget is not the next experiment.
 - [ ] Learn from successful and unsuccessful trajectories using sparse terminal
   value, authenticated tick cost, and generic state deltas.
 - [ ] Support online collection, off-policy replay, prioritized reuse, temporal
@@ -171,8 +177,10 @@ do not golf isolated subphases without campaign evidence.
   checkpoint admission and reuses it after checked transactional mutations;
   graph-derived learning batches and rankings no longer repeat the same full
   traversal at every decision. External and reopened artifacts still validate
-  fail-closed. The next campaign must measure the end-to-end effect rather than
-  treating the removed traversal as sufficient by itself.
+  fail-closed. The goal-relabeled follow-up measured only 24 decisions in 777.0
+  seconds (32.4 seconds/decision versus 27.6 previously), with 8.35% native
+  utilization. Its more expensive learner dominated the run, so the removed
+  traversal did not improve end-to-end throughput under that treatment.
 - [ ] Make completed-seed resume and finalization read-only and cheap: do not
   launch a native fleet or repeat full replay fitting, graph projection, and
   macro evaluation merely to validate and summarize already sealed evidence.
@@ -207,8 +215,8 @@ do not golf isolated subphases without campaign evidence.
   still require a deliberate read-only migration/cache path.
   Completed-seed recovery derives its corpus from that authenticated payload
   instead of reopening it and fitting an unused lane-local model. The remaining
-  22.7-second cold authentication cost, end-to-end finalization timing, and
-  demonstration-treatment recovery keep this task open. A sealed campaign
+  22.7-second cold authentication cost and end-to-end finalization timing keep
+  this task open. A sealed campaign
   resume now returns its validated report idempotently, and a crash after
   publishing both final JSON artifacts but before the binary completion marker
   reattaches them to every seed checkpoint, the replay and learner heads, the
@@ -220,9 +228,17 @@ do not golf isolated subphases without campaign evidence.
   must match it exactly. Once every zero-shot lane and that macro authority are
   present, resume authenticates the root directly from the completed seed
   graphs before fleet launch, skips the native pool, and reads the durable
-  replay and learner head without fitting or publishing a model. This path
-  still needs end-to-end timing evidence, faster checkpoint authentication,
-  and equivalent read-only handling for the separate demonstration treatment.
+  replay and learner head without fitting or publishing a model. The same
+  preflight now authenticates an existing demonstration report and binary
+  corpus without launching a fleet, preserves the separate treatment in the
+  final report, and falls back to live capture only when that configured
+  evidence is absent. This path still needs end-to-end timing evidence and
+  faster checkpoint authentication.
+  The 191-tick goal-relabeled campaign also exposed setup fitting being
+  misattributed to generation coordination. Campaign timing now measures setup,
+  live-seed, and post-generation model work separately and requires their exact
+  sum to match learner authority; read-only resume then finalized all 24 sealed
+  decisions in 106.9 seconds without launching a native child.
 - [ ] Cache or share already-validated artifact and graph identities within one
   process; independent reopen validation must remain fail-closed.
 - [ ] Measure whether retained save-state branching beats replay from its

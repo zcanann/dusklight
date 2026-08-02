@@ -444,6 +444,19 @@ pub(in crate::native_tactic_route_runner) fn load_or_capture_demonstration(
     route_prefix: &InputTape,
     root_checkpoint_sha256: Digest,
 ) -> Result<Option<NativeTacticDemonstration>, NativeTacticRouteRunError> {
+    if let Some(demonstration) = load_existing_demonstration(
+        config,
+        encoder.schema_sha256,
+        reward_spec,
+        process_tape,
+        pool.root_source_frame,
+        root_checkpoint_sha256,
+    )? {
+        return Ok(Some(demonstration));
+    }
+    let Some(chunk_ticks) = config.execution_plan.demonstration_chunk_ticks else {
+        return Ok(None);
+    };
     let corpus_path = config
         .output_root
         .join(NATIVE_TACTIC_DEMONSTRATION_CORPUS_FILE);
@@ -453,80 +466,6 @@ pub(in crate::native_tactic_route_runner) fn load_or_capture_demonstration(
     let report_path = config
         .output_root
         .join(NATIVE_TACTIC_DEMONSTRATION_REPORT_FILE);
-
-    if report_path.exists() {
-        if !config.resume || !corpus_path.exists() {
-            return Err(route_message(
-                "demonstration evidence exists outside a resumable route run",
-            ));
-        }
-        let report: NativeTacticDemonstrationReport = read_bounded_json(&report_path)?;
-        let corpus_bytes = fs::read(&corpus_path).map_err(route_error)?;
-        let corpus_sha256 = Digest(Sha256::digest(&corpus_bytes).into());
-        let corpus = TacticQTrainingCorpus::read(&corpus_path).map_err(route_error)?;
-        let configured_chunk_matches = config
-            .execution_plan
-            .demonstration_chunk_ticks
-            .is_none_or(|ticks| ticks == report.chunk_ticks);
-        let demonstrated_route = corpus
-            .routes
-            .last()
-            .ok_or_else(|| route_message("demonstration corpus is empty"))?;
-        let expected_route_end = usize::try_from(report.native_ticks)
-            .ok()
-            .and_then(|ticks| pool.root_source_frame.checked_add(ticks));
-        let demonstrated_route_sha256 =
-            Digest(Sha256::digest(&demonstrated_route.encode().map_err(route_error)?).into());
-        if report.schema != NATIVE_TACTIC_DEMONSTRATION_REPORT_SCHEMA_V1
-            || report.optimization_request_sha256 != config.optimization.content_sha256
-            || report.execution_binding_sha256 != config.execution.content_sha256
-            || report.objective_sha256 != config.optimization.terminal_predicate.definition_sha256
-            || report.feature_schema_sha256 != encoder.schema_sha256
-            || report.root_checkpoint_sha256 != root_checkpoint_sha256
-            || config.execution_plan.proposal_policy != TacticProposalPolicy::Learned
-            || report.source_boundary_index != config.optimization.route.source_boundary_index
-            || !configured_chunk_matches
-            || report.transition_count == 0
-            || report.transition_count != corpus.transitions.len() as u64
-            || report.transition_count != corpus.routes.len() as u64
-            || report.first_hit_tick >= config.optimization.budgets.exploration_horizon_ticks
-            || report.native_ticks != report.first_hit_tick.saturating_add(1)
-            || report.corpus_path != path_text(&corpus_path)
-            || report.corpus_sha256 != corpus_sha256
-            || report.demonstrated_route_tape_sha256 != demonstrated_route_sha256
-            || expected_route_end.is_none_or(|end| {
-                process_tape.frames.get(..end) != Some(demonstrated_route.frames.as_slice())
-            })
-            || corpus.feature_schema_sha256 != encoder.schema_sha256
-            || corpus.objective_sha256 != config.optimization.terminal_predicate.definition_sha256
-            || corpus.root_checkpoint_sha256 != root_checkpoint_sha256
-            || corpus
-                .transitions
-                .last()
-                .is_none_or(|transition| !transition.value_sample.terminal)
-            || !demonstration_corpus_is_attached(
-                &corpus,
-                pool.root_source_frame,
-                &report,
-                reward_spec,
-            )
-        {
-            return Err(route_message(
-                "resumable demonstration evidence is detached from this route run",
-            ));
-        }
-        return Ok(Some(NativeTacticDemonstration { corpus, report }));
-    }
-
-    if corpus_path.exists() {
-        return Err(route_message(
-            "incomplete demonstration evidence cannot be resumed",
-        ));
-    }
-    let Some(chunk_ticks) = config.execution_plan.demonstration_chunk_ticks else {
-        return Ok(None);
-    };
-
     let captured = capture_terminal_route_replay(
         config,
         pool,
@@ -586,6 +525,87 @@ pub(in crate::native_tactic_route_runner) fn load_or_capture_demonstration(
         &serde_json::to_vec_pretty(&report).map_err(route_error)?,
     )?;
     Ok(Some(NativeTacticDemonstration { corpus, report }))
+}
+
+pub(in crate::native_tactic_route_runner) fn load_existing_demonstration(
+    config: &NativeTacticRouteRunConfig<'_>,
+    feature_schema_sha256: Digest,
+    reward_spec: &TacticRewardSpec,
+    process_tape: &InputTape,
+    root_source_frame: usize,
+    root_checkpoint_sha256: Digest,
+) -> Result<Option<NativeTacticDemonstration>, NativeTacticRouteRunError> {
+    let corpus_path = config
+        .output_root
+        .join(NATIVE_TACTIC_DEMONSTRATION_CORPUS_FILE);
+    let report_path = config
+        .output_root
+        .join(NATIVE_TACTIC_DEMONSTRATION_REPORT_FILE);
+    if report_path.exists() {
+        if !config.resume || !corpus_path.exists() {
+            return Err(route_message(
+                "demonstration evidence exists outside a resumable route run",
+            ));
+        }
+        let report: NativeTacticDemonstrationReport = read_bounded_json(&report_path)?;
+        let corpus_bytes = fs::read(&corpus_path).map_err(route_error)?;
+        let corpus_sha256 = Digest(Sha256::digest(&corpus_bytes).into());
+        let corpus = TacticQTrainingCorpus::read(&corpus_path).map_err(route_error)?;
+        let configured_chunk_matches = config
+            .execution_plan
+            .demonstration_chunk_ticks
+            .is_none_or(|ticks| ticks == report.chunk_ticks);
+        let demonstrated_route = corpus
+            .routes
+            .last()
+            .ok_or_else(|| route_message("demonstration corpus is empty"))?;
+        let expected_route_end = usize::try_from(report.native_ticks)
+            .ok()
+            .and_then(|ticks| root_source_frame.checked_add(ticks));
+        let demonstrated_route_sha256 =
+            Digest(Sha256::digest(&demonstrated_route.encode().map_err(route_error)?).into());
+        if report.schema != NATIVE_TACTIC_DEMONSTRATION_REPORT_SCHEMA_V1
+            || report.optimization_request_sha256 != config.optimization.content_sha256
+            || report.execution_binding_sha256 != config.execution.content_sha256
+            || report.objective_sha256 != config.optimization.terminal_predicate.definition_sha256
+            || report.feature_schema_sha256 != feature_schema_sha256
+            || report.root_checkpoint_sha256 != root_checkpoint_sha256
+            || config.execution_plan.proposal_policy != TacticProposalPolicy::Learned
+            || report.source_boundary_index != config.optimization.route.source_boundary_index
+            || !configured_chunk_matches
+            || report.transition_count == 0
+            || report.transition_count != corpus.transitions.len() as u64
+            || report.transition_count != corpus.routes.len() as u64
+            || report.first_hit_tick >= config.optimization.budgets.exploration_horizon_ticks
+            || report.native_ticks != report.first_hit_tick.saturating_add(1)
+            || report.corpus_path != path_text(&corpus_path)
+            || report.corpus_sha256 != corpus_sha256
+            || report.demonstrated_route_tape_sha256 != demonstrated_route_sha256
+            || expected_route_end.is_none_or(|end| {
+                process_tape.frames.get(..end) != Some(demonstrated_route.frames.as_slice())
+            })
+            || corpus.feature_schema_sha256 != feature_schema_sha256
+            || corpus.objective_sha256 != config.optimization.terminal_predicate.definition_sha256
+            || corpus.root_checkpoint_sha256 != root_checkpoint_sha256
+            || corpus
+                .transitions
+                .last()
+                .is_none_or(|transition| !transition.value_sample.terminal)
+            || !demonstration_corpus_is_attached(&corpus, root_source_frame, &report, reward_spec)
+        {
+            return Err(route_message(
+                "resumable demonstration evidence is detached from this route run",
+            ));
+        }
+        return Ok(Some(NativeTacticDemonstration { corpus, report }));
+    }
+
+    if corpus_path.exists() {
+        return Err(route_message(
+            "incomplete demonstration evidence cannot be resumed",
+        ));
+    }
+    Ok(None)
 }
 
 pub(in crate::native_tactic_route_runner) fn demonstration_corpus_is_attached(
