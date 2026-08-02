@@ -16,7 +16,6 @@ pub const NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_MANIFEST: &str = "manifest.json";
 const CAMPAIGN_DIRECTORY: &str = "campaign";
 const COLD_REPLAY_DIRECTORY: &str = "cold-replay";
 const MAXIMUM_BUNDLE_TREE_ENTRIES: usize = 100_000;
-const MAXIMUM_ACCEPTED_FIRST_HIT_TICK: u64 = 123;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -123,7 +122,6 @@ impl NativeTacticColdReplayEvidenceBundle {
             || self.state_graph_sha256 == Digest::ZERO
             || self.terminal_result_sha256 == Digest::ZERO
             || self.controller_tape_sha256 == Digest::ZERO
-            || self.first_hit_tick > MAXIMUM_ACCEPTED_FIRST_HIT_TICK
             || self.repetitions < 2
             || !self.passed
         {
@@ -403,17 +401,17 @@ mod tests {
     }
 
     #[test]
-    fn sealed_manifest_requires_two_exact_repetitions() {
+    fn sealed_manifest_requires_two_exact_repetitions_without_imposing_a_score_threshold() {
         manifest().validate_shape().unwrap();
         let mut invalid = manifest();
         invalid.repetitions = 1;
         invalid.content_sha256 = invalid.identity().unwrap();
         assert!(invalid.validate_shape().is_err());
 
-        let mut too_slow = manifest();
-        too_slow.first_hit_tick = 124;
-        too_slow.content_sha256 = too_slow.identity().unwrap();
-        assert!(too_slow.validate_shape().is_err());
+        let mut discovery = manifest();
+        discovery.first_hit_tick = 314;
+        discovery.content_sha256 = discovery.identity().unwrap();
+        discovery.validate_shape().unwrap();
     }
 
     #[test]
