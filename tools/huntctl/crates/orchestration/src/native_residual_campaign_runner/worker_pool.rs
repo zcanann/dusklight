@@ -172,6 +172,40 @@ impl<'a> WorkerPool<'a> {
             )))
         }
     }
+
+    /// Discard only this pool's process-local sessions after a failed batch.
+    ///
+    /// A native process can exit before the control client can perform its
+    /// ordinary shutdown handshake. Recovery must not turn that expected
+    /// transport error into a second campaign failure, but stale checkpoint
+    /// state must not be reused by the replacement process either.
+    pub(super) fn reset_after_batch_failure(
+        &mut self,
+    ) -> Result<(), NativeResidualCampaignRunnerError> {
+        let mut cleanup_failures = Vec::new();
+        for lane in &mut self.lanes {
+            if let Some(session) = lane.session.take() {
+                let _ = session.shutdown();
+            }
+            match fs::remove_dir_all(&lane.state_root) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => cleanup_failures.push(format!(
+                    "worker {} state {}: {error}",
+                    lane.index,
+                    lane.state_root.display()
+                )),
+            }
+        }
+        if cleanup_failures.is_empty() {
+            Ok(())
+        } else {
+            Err(native_message(format!(
+                "native residual worker recovery cleanup failed: {}",
+                cleanup_failures.join("; ")
+            )))
+        }
+    }
 }
 
 impl Drop for WorkerPool<'_> {

@@ -1083,6 +1083,45 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
+    if args.first().map(String::as_str) == Some("select-residual-winner") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let source_request = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--request")?,
+            "residual optimization request",
+        )?;
+        let optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(repository_root.join(&source_request.path))?)?;
+        let source_execution = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--execution")?,
+            "residual optimization execution",
+        )?;
+        let execution: huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding =
+            serde_json::from_slice(&fs::read(repository_root.join(&source_execution.path))?)?;
+        let selected = huntctl::search_evaluator::native_residual_winner_selection::select_native_residual_winner(
+            &huntctl::search_evaluator::native_residual_winner_selection::NativeResidualWinnerSelectionConfig {
+                repository_root: &repository_root,
+                optimization: &optimization,
+                execution: &execution,
+                source_request,
+                source_execution,
+                minimization_candidate_budget: u64_option(
+                    command_args,
+                    "--minimization-candidate-budget",
+                    256,
+                )?,
+                cold_replay_timeout: Duration::from_secs(u64::from(u32_option(
+                    command_args,
+                    "--selection-timeout-seconds",
+                    120,
+                )?)),
+            },
+        )?;
+        println!("{}", serde_json::to_string_pretty(&selected)?);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("run-residual-optimization") {
         let command_args = &args[1..];
         let repository_root = repository_root(command_args)?.canonicalize()?;

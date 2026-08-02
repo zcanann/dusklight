@@ -277,6 +277,31 @@ fn execute_native_attempts(
     generation: u64,
     alternate_namespace: Option<&str>,
 ) -> Result<BTreeMap<String, Vec<NativeResidualAttempt>>, NativeResidualCampaignRunnerError> {
+    execute_native_attempts_with_recovery(
+        root,
+        campaign,
+        config,
+        profile,
+        candidates,
+        pool,
+        generation,
+        alternate_namespace,
+        0,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_native_attempts_with_recovery(
+    root: &Path,
+    campaign: &Path,
+    config: &NativeResidualCampaignRunConfig<'_>,
+    profile: dusklight_search::search::SegmentProfile,
+    candidates: &[&PreparedCandidate],
+    pool: &mut WorkerPool<'_>,
+    generation: u64,
+    alternate_namespace: Option<&str>,
+    recovery_depth: u32,
+) -> Result<BTreeMap<String, Vec<NativeResidualAttempt>>, NativeResidualCampaignRunnerError> {
     let lane_count = pool.lanes.len();
     let mut attempts = candidates
         .iter()
@@ -332,7 +357,41 @@ fn execute_native_attempts(
             }
         }
         ensure_not_cancelled(config)?;
-        let mut outputs = pool.run_jobs(jobs)?;
+        let mut outputs = match pool.run_jobs(jobs) {
+            Ok(outputs) => outputs,
+            Err(error) => {
+                pool.reset_after_batch_failure()?;
+                if candidates.len() == 1 {
+                    return Err(native_message(format!(
+                        "native residual candidate {} still crashes in an isolated batch after {recovery_depth} recovery splits: {error}",
+                        candidates[0].envelope.id
+                    )));
+                }
+                let split = candidates.len().div_ceil(2);
+                let mut recovered = BTreeMap::new();
+                for subset in candidates.chunks(split) {
+                    let subset_attempts = execute_native_attempts_with_recovery(
+                        root,
+                        campaign,
+                        config,
+                        profile,
+                        subset,
+                        pool,
+                        generation,
+                        alternate_namespace,
+                        recovery_depth + 1,
+                    )?;
+                    for (candidate_id, rows) in subset_attempts {
+                        if recovered.insert(candidate_id, rows).is_some() {
+                            return Err(native_message(
+                                "native residual recovery produced a duplicate candidate",
+                            ));
+                        }
+                    }
+                }
+                return Ok(recovered);
+            }
+        };
         ensure_not_cancelled(config)?;
         outputs.extend(adopted);
         outputs.sort_by_key(|output| output.lane);

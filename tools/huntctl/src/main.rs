@@ -99,6 +99,9 @@ fn print_usage() {
         "Residual winner promotion:\n  huntctl campaign promote-residual-winner --request REQUEST.json --execution EXECUTION.json --selection SELECTION.json --id NEW_ID --output build/DIR/optimization.request.json [--repository-root DIR]\n"
     );
     eprintln!(
+        "Residual winner selection:\n  huntctl campaign select-residual-winner --request REQUEST.json --execution EXECUTION.json [--minimization-candidate-budget N] [--selection-timeout-seconds N] [--repository-root DIR]\n"
+    );
+    eprintln!(
         "Residual winner minimization may be resumed with the same arguments plus --resume.\n"
     );
     eprintln!(

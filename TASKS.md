@@ -53,7 +53,7 @@ detailed history in commits and sealed campaign artifacts.
 
 ### 1. Optimize selected zero-shot terminals
 
-- [ ] Improve the retained 199-tick zero-shot route to 124 ticks or less using
+- [ ] Improve the retained 193-tick zero-shot route to 124 ticks or less using
   generic optimization. The automatic selector first converted the 231-tick
   archive winner into a minimized, twice-cold-replayed refinement incumbent.
   A bounded two-worker campaign against that promoted parent admitted 448
@@ -68,7 +68,12 @@ detailed history in commits and sealed campaign artifacts.
   ticks; fresh process boots reproduced the selected 199-tick route twice with
   identical tape and terminal boundary fingerprint. This proves selected-winner
   composition keeps improving its latest parent instead of repeatedly editing
-  an obsolete tape.
+  an obsolete tape. A fourth promoted campaign found 193 ticks after 128
+  admitted candidates. A legal proposal later triggered a deterministic native
+  message-font crash, but the sealed checkpoint finalizer selected, minimized,
+  and reproduced the retained 193-tick route from two fresh process boots with
+  identical tape and terminal boundary fingerprint. The winner therefore does
+  not depend on completing or replaying the crashed generation.
   The 213-tick intermediate changed only 32 stick-X frames and retained the
   same three roll presses, so these gains remain local residual progress rather
   than learned efficient movement; the route is still far from competitive.
@@ -165,6 +170,10 @@ do not golf isolated subphases without campaign evidence.
 - [ ] Make completed-seed resume and finalization read-only and cheap: do not
   launch a native fleet or repeat full replay fitting, graph projection, and
   macro evaluation merely to validate and summarize already sealed evidence.
+  The standalone residual winner finalizer recovered the interrupted 193-tick
+  archive, but took 267.2 seconds despite minimizing only two candidates (782
+  charged ticks) before two cold replays; reopen and validation cost remains
+  material.
   V6 reopen now carries its one fail-closed graph reconstruction proof through
   training projection and checkpoint validation. On the same q231 checkpoint,
   read/authentication fell from 57.6 to 44.8 seconds (22%); completed-seed
@@ -194,6 +203,12 @@ experience per second; retained save states have measured positive return.
 - [ ] Make fresh and resumed concurrent campaigns logically reproducible, with
   exact ownership for sampling, updates, model publication, checkpoints, and
   accepted experience.
+- [ ] Make legal-action native crashes bounded and auditable. The 199-tick
+  refinement campaign deterministically reached a null message-font
+  dereference from a legal headless proposal. Residual batches now replace only
+  their owned sessions and bisect failed work down to an exact candidate, but
+  the headless font defect and an explicit singleton-crash/censored-evidence
+  contract remain to be completed.
 - [ ] Keep models, replay, checkpoints, and manifests compact, bounded, binary,
   versioned, checksummed, atomic, and migration-tested.
 - [ ] Refactor oversized and mixed-responsibility code along observation,
