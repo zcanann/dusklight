@@ -525,10 +525,13 @@ fn validate_route_authority(
         .lanes
         .get(seed_index)
         .ok_or_else(|| route_message("cold replay seed has no execution-plan lane"))?;
-    let seed_root = Path::new(&reported.final_checkpoint)
+    let reported_terminal_tape = reported
+        .best_terminal_tape
+        .as_deref()
+        .ok_or_else(|| route_message("cold replay seed has no best terminal tape"))?;
+    let seed_root = Path::new(reported_terminal_tape)
         .parent()
-        .and_then(Path::parent)
-        .ok_or_else(|| route_message("cold replay seed checkpoint has no seed root"))?;
+        .ok_or_else(|| route_message("cold replay terminal tape has no seed root"))?;
     let seed_result = read_completed_seed_result(
         &seed_root.join("seed-result.json"),
         seed,

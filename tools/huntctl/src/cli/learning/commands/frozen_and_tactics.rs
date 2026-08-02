@@ -866,10 +866,23 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .map(PathBuf::from)
                     .unwrap_or(std::env::current_dir()?),
             )?;
-            let request: OptimizationRequest =
-                serde_json::from_slice(&fs::read(required_path(learn_args, "--request")?)?)?;
-            let execution: NativeResidualExecutionBinding =
-                serde_json::from_slice(&fs::read(required_path(learn_args, "--execution")?)?)?;
+            let request_path = option(learn_args, "--request");
+            let execution_path = option(learn_args, "--execution");
+            if request_path.is_some() != execution_path.is_some() {
+                return Err("--request and --execution must be supplied together".into());
+            }
+            let request: Option<OptimizationRequest> = request_path
+                .as_deref()
+                .map(fs::read)
+                .transpose()?
+                .map(|bytes| serde_json::from_slice(&bytes))
+                .transpose()?;
+            let execution: Option<NativeResidualExecutionBinding> = execution_path
+                .as_deref()
+                .map(fs::read)
+                .transpose()?
+                .map(|bytes| serde_json::from_slice(&bytes))
+                .transpose()?;
             let bundle_argument = required_path(learn_args, "--bundle")?;
             let bundle = if bundle_argument.is_absolute() {
                 bundle_argument
@@ -886,8 +899,8 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             let handoff =
                 build_native_tactic_optimization_handoff(&NativeTacticOptimizationHandoffConfig {
                     repository_root: &repository_root,
-                    source_optimization: &request,
-                    source_execution: &execution,
+                    source_optimization: request.as_ref(),
+                    source_execution: execution.as_ref(),
                     cold_replay_bundle_root: &bundle,
                     output_root: &output,
                     request_id: request_id.as_deref(),

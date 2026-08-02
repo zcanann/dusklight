@@ -6,13 +6,13 @@ pub(super) fn retain_successful_result(
     candidate: &TacticQFinalResult,
     best: &mut Option<TacticQFinalResult>,
 ) -> Result<(), NativeTacticRouteRunError> {
+    write_retained_result(root, decision_index, candidate)?;
     if best
         .as_ref()
         .is_some_and(|incumbent| !successful_result_is_better(candidate, incumbent))
     {
         return Ok(());
     }
-    write_retained_result(root, decision_index, candidate)?;
     *best = Some(candidate.clone());
     Ok(())
 }
@@ -57,6 +57,24 @@ fn write_retained_result(
         candidate.route_tape.frames.len(),
         candidate.content_sha256
     ));
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_file() && !metadata.file_type().is_symlink() => {
+            let retained = TacticQFinalResult::read(&path).map_err(route_error)?;
+            if retained != *candidate {
+                return Err(route_message(
+                    "retained terminal path collides with different evidence",
+                ));
+            }
+            return Ok(());
+        }
+        Ok(_) => {
+            return Err(route_message(
+                "retained terminal path is not a physical file",
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(route_error(error)),
+    }
     candidate.write(&path).map_err(route_error)?;
     Ok(())
 }
@@ -82,7 +100,10 @@ pub(super) fn load_best_retained_success(
         .map(|entry| entry.map(|entry| entry.path()).map_err(route_error))
         .collect::<Result<Vec<_>, _>>()?;
     paths.sort();
-    if paths.len() > MAX_ROUTE_DECISIONS as usize {
+    let maximum_retained_successes = (MAX_ROUTE_DECISIONS as usize)
+        .checked_mul(MAX_TACTIC_PROPOSALS_PER_DECISION)
+        .ok_or_else(|| route_message("retained-success limit overflowed"))?;
+    if paths.len() > maximum_retained_successes {
         return Err(route_message("retained-success directory is oversized"));
     }
     let mut best = None;

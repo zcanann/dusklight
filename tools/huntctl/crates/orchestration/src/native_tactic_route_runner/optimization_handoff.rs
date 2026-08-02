@@ -23,8 +23,8 @@ const EXECUTION_BINDING_FILE: &str = "execution.json";
 #[derive(Clone, Debug)]
 pub struct NativeTacticOptimizationHandoffConfig<'a> {
     pub repository_root: &'a Path,
-    pub source_optimization: &'a OptimizationRequest,
-    pub source_execution: &'a NativeResidualExecutionBinding,
+    pub source_optimization: Option<&'a OptimizationRequest>,
+    pub source_execution: Option<&'a NativeResidualExecutionBinding>,
     pub cold_replay_bundle_root: &'a Path,
     pub output_root: &'a Path,
     pub request_id: Option<&'a str>,
@@ -51,7 +51,8 @@ pub struct NativeTacticOptimizationHandoff {
 
 impl NativeTacticOptimizationHandoff {
     fn seal(
-        config: &NativeTacticOptimizationHandoffConfig<'_>,
+        source_optimization: &OptimizationRequest,
+        source_execution: &NativeResidualExecutionBinding,
         bundle: ArtifactReference,
         authority: &NativeTacticColdReplayAuthority,
         incumbent_tape: ArtifactReference,
@@ -62,8 +63,8 @@ impl NativeTacticOptimizationHandoff {
         let mut handoff = Self {
             schema: NATIVE_TACTIC_OPTIMIZATION_HANDOFF_SCHEMA_V1.into(),
             content_sha256: Digest::ZERO,
-            source_optimization_request_sha256: config.source_optimization.content_sha256,
-            source_execution_binding_sha256: config.source_execution.content_sha256,
+            source_optimization_request_sha256: source_optimization.content_sha256,
+            source_execution_binding_sha256: source_execution.content_sha256,
             cold_replay_bundle: bundle,
             cold_replay_proof_sha256: authority.proof.content_sha256,
             seed: authority.manifest.seed,
@@ -133,15 +134,9 @@ pub fn build_native_tactic_optimization_handoff(
     config: &NativeTacticOptimizationHandoffConfig<'_>,
 ) -> Result<NativeTacticOptimizationHandoff, NativeTacticRouteRunError> {
     let root = config.repository_root.canonicalize().map_err(route_error)?;
-    config
-        .source_execution
-        .validate_files(&root, config.source_optimization)
-        .map_err(route_error)?;
-    if config.source_optimization.campaign_class != CampaignClass::FromScratchDiscovery
-        || config.source_optimization.incumbent.is_some()
-    {
+    if config.source_optimization.is_some() != config.source_execution.is_some() {
         return Err(route_message(
-            "terminal optimization handoff requires an incumbent-free from-scratch campaign",
+            "terminal optimization source request and execution must be supplied together",
         ));
     }
     let bundle_root = config
@@ -154,11 +149,27 @@ pub fn build_native_tactic_optimization_handoff(
         ));
     }
     let authority = NativeTacticColdReplayEvidenceBundle::read_authority(&bundle_root)?;
-    if authority.proof.optimization_request_sha256 != config.source_optimization.content_sha256
-        || authority.proof.execution_binding_sha256 != config.source_execution.content_sha256
+    let source_optimization = authority.source_optimization();
+    let source_execution = authority.source_execution();
+    if config
+        .source_optimization
+        .is_some_and(|provided| provided.content_sha256 != source_optimization.content_sha256)
+        || config
+            .source_execution
+            .is_some_and(|provided| provided.content_sha256 != source_execution.content_sha256)
     {
         return Err(route_message(
             "terminal optimization cold replay belongs to another request or execution",
+        ));
+    }
+    source_execution
+        .validate_files(&root, source_optimization)
+        .map_err(route_error)?;
+    if source_optimization.campaign_class != CampaignClass::FromScratchDiscovery
+        || source_optimization.incumbent.is_some()
+    {
+        return Err(route_message(
+            "terminal optimization handoff requires an incumbent-free from-scratch campaign",
         ));
     }
     let output = resolve_new_build_directory(&root, config.output_root)?;
@@ -174,7 +185,7 @@ pub fn build_native_tactic_optimization_handoff(
         &bundle_root.join(NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_MANIFEST),
     )?;
 
-    let mut optimization = config.source_optimization.clone();
+    let mut optimization = source_optimization.clone();
     optimization.id = config
         .request_id
         .map(str::to_owned)
@@ -215,14 +226,14 @@ pub fn build_native_tactic_optimization_handoff(
     let execution = NativeResidualExecutionBinding::seal(
         &root,
         &optimization,
-        &root.join(&config.source_execution.executable.path),
-        &root.join(&config.source_execution.game_data.path),
+        &root.join(&source_execution.executable.path),
+        &root.join(&source_execution.game_data.path),
         &process_tape_path,
-        &root.join(&config.source_execution.milestone_program.path),
-        &root.join(&config.source_execution.world_context.path),
-        &root.join(&config.source_execution.card_fixture_manifest.path),
-        config.source_execution.checkpoint_validation_ticks,
-        config.source_execution.verify_state_hashes,
+        &root.join(&source_execution.milestone_program.path),
+        &root.join(&source_execution.world_context.path),
+        &root.join(&source_execution.card_fixture_manifest.path),
+        source_execution.checkpoint_validation_ticks,
+        source_execution.verify_state_hashes,
     )
     .map_err(route_error)?;
     let execution_path = output.join(EXECUTION_BINDING_FILE);
@@ -232,7 +243,8 @@ pub fn build_native_tactic_optimization_handoff(
     )?;
 
     let handoff = NativeTacticOptimizationHandoff::seal(
-        config,
+        source_optimization,
+        source_execution,
         bundle_reference,
         &authority,
         incumbent_reference,

@@ -42,6 +42,8 @@ pub struct NativeTacticColdReplayAuthority {
     pub manifest: NativeTacticColdReplayEvidenceBundle,
     pub proof: NativeTacticColdReplayProof,
     pub controller_tape: InputTape,
+    source_optimization: OptimizationRequest,
+    source_execution: NativeResidualExecutionBinding,
 }
 
 impl NativeTacticColdReplayAuthority {
@@ -50,32 +52,46 @@ impl NativeTacticColdReplayAuthority {
     /// tape, while residual execution restores the authenticated source
     /// boundary before applying this local input program.
     pub fn incumbent_tape(&self) -> Result<InputTape, NativeTacticRouteRunError> {
-        let start = usize::try_from(self.proof.source_boundary_index).map_err(route_error)?;
-        let local_frames = usize::try_from(self.proof.first_hit_tick)
-            .map_err(route_error)?
-            .checked_add(1)
-            .ok_or_else(|| route_message("optimization authority route length overflowed"))?;
-        let end = start
-            .checked_add(local_frames)
-            .ok_or_else(|| route_message("optimization authority route length overflowed"))?;
-        let frames = self
-            .controller_tape
-            .frames
-            .get(start..end)
-            .ok_or_else(|| route_message("optimization authority tape is shorter than its proof"))?
-            .to_vec();
-        if end != self.controller_tape.frames.len() {
-            return Err(route_message(
-                "optimization authority tape extends beyond its first terminal boundary",
-            ));
-        }
-        Ok(InputTape {
-            boot: self.controller_tape.boot.clone(),
-            tick_rate_numerator: self.controller_tape.tick_rate_numerator,
-            tick_rate_denominator: self.controller_tape.tick_rate_denominator,
-            frames,
-        })
+        optimization_incumbent_tape(&self.proof, &self.controller_tape)
     }
+
+    pub fn source_optimization(&self) -> &OptimizationRequest {
+        &self.source_optimization
+    }
+
+    pub fn source_execution(&self) -> &NativeResidualExecutionBinding {
+        &self.source_execution
+    }
+}
+
+fn optimization_incumbent_tape(
+    proof: &NativeTacticColdReplayProof,
+    controller_tape: &InputTape,
+) -> Result<InputTape, NativeTacticRouteRunError> {
+    let start = usize::try_from(proof.source_boundary_index).map_err(route_error)?;
+    let local_frames = usize::try_from(proof.first_hit_tick)
+        .map_err(route_error)?
+        .checked_add(1)
+        .ok_or_else(|| route_message("optimization authority route length overflowed"))?;
+    let end = start
+        .checked_add(local_frames)
+        .ok_or_else(|| route_message("optimization authority route length overflowed"))?;
+    let frames = controller_tape
+        .frames
+        .get(start..end)
+        .ok_or_else(|| route_message("optimization authority tape is shorter than its proof"))?
+        .to_vec();
+    if end != controller_tape.frames.len() {
+        return Err(route_message(
+            "optimization authority tape extends beyond its first terminal boundary",
+        ));
+    }
+    Ok(InputTape {
+        boot: controller_tape.boot.clone(),
+        tick_rate_numerator: controller_tape.tick_rate_numerator,
+        tick_rate_denominator: controller_tape.tick_rate_denominator,
+        frames,
+    })
 }
 
 impl NativeTacticColdReplayEvidenceBundle {
@@ -97,7 +113,7 @@ impl NativeTacticColdReplayEvidenceBundle {
                 "cold replay evidence output cannot be nested inside an input bundle",
             ));
         }
-        let (scratch, proof) = validate_pair(&scratch_bundle_root, &cold_replay_root)?;
+        let (scratch, proof, _, _) = validate_pair(&scratch_bundle_root, &cold_replay_root)?;
         fs::create_dir(&output).map_err(route_error)?;
         let mut guard = ColdReplayBundleBuildGuard::new(output.clone());
         copy_physical_tree(&scratch_bundle_root, &output.join(CAMPAIGN_DIRECTORY))?;
@@ -144,7 +160,7 @@ impl NativeTacticColdReplayEvidenceBundle {
         let bundle: Self =
             read_bounded_json(&bundle_root.join(NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_MANIFEST))?;
         bundle.validate_shape()?;
-        let (scratch, proof) = validate_pair(
+        let (scratch, proof, source_optimization, source_execution) = validate_pair(
             &bundle_root.join(CAMPAIGN_DIRECTORY),
             &bundle_root.join(COLD_REPLAY_DIRECTORY),
         )?;
@@ -172,6 +188,8 @@ impl NativeTacticColdReplayEvidenceBundle {
             manifest: bundle,
             proof,
             controller_tape,
+            source_optimization,
+            source_execution,
         })
     }
 
@@ -219,6 +237,8 @@ fn validate_pair(
     (
         NativeTacticScratchEvidenceBundle,
         NativeTacticColdReplayProof,
+        OptimizationRequest,
+        NativeResidualExecutionBinding,
     ),
     NativeTacticRouteRunError,
 > {
@@ -305,7 +325,7 @@ fn validate_pair(
             "cold replay proof differs from its self-contained scratch campaign",
         ));
     }
-    Ok((scratch, proof))
+    Ok((scratch, proof, request, execution))
 }
 
 fn resolved_new_directory(path: &Path) -> Result<PathBuf, NativeTacticRouteRunError> {
@@ -492,21 +512,17 @@ mod tests {
         for (index, frame) in frames.iter_mut().enumerate() {
             frame.pads[0].stick_x = index as i8;
         }
-        let mut authority = NativeTacticColdReplayAuthority {
-            manifest: manifest(),
-            proof,
-            controller_tape: InputTape {
-                frames,
-                ..InputTape::default()
-            },
+        let mut controller_tape = InputTape {
+            frames,
+            ..InputTape::default()
         };
 
-        let incumbent = authority.incumbent_tape().unwrap();
+        let incumbent = optimization_incumbent_tape(&proof, &controller_tape).unwrap();
         assert_eq!(incumbent.frames.len(), 3);
         assert_eq!(incumbent.frames[0].pads[0].stick_x, 10);
         assert_eq!(incumbent.frames[2].pads[0].stick_x, 12);
 
-        authority.controller_tape.frames.push(InputFrame::default());
-        assert!(authority.incumbent_tape().is_err());
+        controller_tape.frames.push(InputFrame::default());
+        assert!(optimization_incumbent_tape(&proof, &controller_tape).is_err());
     }
 }

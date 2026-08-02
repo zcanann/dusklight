@@ -257,7 +257,7 @@ fn print_usage() {
         "  huntctl learn seal-tactic-throughput-treatment --control-bundle CURVE-BUNDLE --control-sample-ordinal N --treatment-report ROUTE.json --bundle EVIDENCE-DIR [--repository-root DIR]\n  huntctl learn validate-tactic-throughput-treatment-bundle --bundle EVIDENCE-DIR"
     );
     eprintln!(
-        "  huntctl learn promote-tactic-terminal-for-optimization --request OPTIMIZATION.json --execution EXECUTION.json --bundle EVIDENCE-DIR --output build/DIR [--id ID] [--repository-root DIR]"
+        "  huntctl learn promote-tactic-terminal-for-optimization --bundle EVIDENCE-DIR --output build/DIR [--request OPTIMIZATION.json --execution EXECUTION.json] [--id ID] [--repository-root DIR]"
     );
     eprintln!("  huntctl learn validate-tactic-scratch-comparison --report COMPARISON.json");
     eprintln!(
