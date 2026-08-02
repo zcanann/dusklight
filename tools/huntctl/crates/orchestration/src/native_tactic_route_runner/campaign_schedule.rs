@@ -21,6 +21,14 @@ pub(super) fn should_schedule_branch(
         || (decision_index > 0 && decision_index % branch_every_decisions == 0)
 }
 
+/// A terminal state has no legal continuation action surface. Leave any
+/// pending learner publication unconsumed until the forced branch restores an
+/// actionable root or interior frontier; the ordinary post-branch refresh then
+/// evaluates the publication against that exact state.
+pub(super) fn should_probe_policy_before_branch(terminal_restart: bool) -> bool {
+    !terminal_restart
+}
+
 pub(super) fn prefer_root_for_periodic_branch(
     force_scheduled_frontier: bool,
     root_refresh_due: bool,

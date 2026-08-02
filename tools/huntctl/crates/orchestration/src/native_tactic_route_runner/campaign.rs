@@ -1,5 +1,6 @@
 pub(super) use super::campaign_schedule::{
-    first_demonstration_intervention, prefer_root_for_periodic_branch, should_schedule_branch,
+    first_demonstration_intervention, prefer_root_for_periodic_branch,
+    should_probe_policy_before_branch, should_schedule_branch,
 };
 use super::*;
 
@@ -316,8 +317,11 @@ pub(super) fn run_seed(
             return Err(route_cancelled("native tactic route paused"));
         }
         let planned_acquisition_rank = lane.acquisition.rank(campaign.decision_index);
+        let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
         let mut policy_update_probes = Vec::new();
-        if let Some(session) = replay_session.as_mut() {
+        if should_probe_policy_before_branch(terminal_restart)
+            && let Some(session) = replay_session.as_mut()
+        {
             let learner_refresh_started = Instant::now();
             if let Some(snapshot) = session.pending_snapshot()? {
                 let fixed_feedback = parameterized_feedback_for_state(
@@ -362,7 +366,6 @@ pub(super) fn run_seed(
                 elapsed_micros(learner_refresh_started.elapsed()),
             )?;
         }
-        let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
         let terminal_support_acquisition = campaign
             .graph_terminal_path_available()
             .map_err(route_error)?

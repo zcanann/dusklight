@@ -91,6 +91,12 @@ fn graph_branch_schedule_prioritizes_terminal_support_and_retains_discovery_cade
 }
 
 #[test]
+fn terminal_restart_defers_policy_probe_until_after_branch_restore() {
+    assert!(campaign::should_probe_policy_before_branch(false));
+    assert!(!campaign::should_probe_policy_before_branch(true));
+}
+
+#[test]
 fn demonstration_frontier_intervention_only_forces_the_first_expansion() {
     let unexpanded = acquisition_with_expansion_count(0);
     let revisited = acquisition_with_expansion_count(1);
