@@ -122,8 +122,18 @@ authenticated terminal in 124 ticks or less.
   held-out action rankings (37.9% versus 12.1% chance; 26.6% Wilson lower
   bound), authorized reachability on 29 decisions, made it primary on 17, and
   changed one of 31 controlled same-state choices after a learner update. The
-  treatment now proves policy effect, but retained 191 ticks; matched controls
-  and terminal-outcome improvement remain open.
+  treatment now proves policy effect, but retained 191 ticks. The first random
+  control exposed an invalid comparison: non-learning policies received the
+  48-transition demonstration in the replay corpus but not in their executable
+  frontier graph. Assisted controls now import that common graph prior while
+  still ignoring learned scores; unassisted random remains scratch. The
+  corrected learned, frozen, and random-valid arms each ran 64 decisions, 512
+  proposals, and exactly 560 authenticated graph expansions from the same
+  demonstration. Learned produced 54 useful decisions versus 50 frozen and 40
+  random, but every arm retained only the inherited 191-tick terminal. This is
+  evidence that updates affect acquisition, not that they improve terminal
+  outcomes; do not extend this treatment without changing the learning or
+  selection method.
 - [ ] Learn from successful and unsuccessful trajectories using sparse terminal
   value, authenticated tick cost, and generic state deltas.
 - [ ] Support online collection, off-policy replay, prioritized reuse, temporal
@@ -203,9 +213,13 @@ do not golf isolated subphases without campaign evidence.
   traversal did not improve end-to-end throughput under that treatment.
   After the critic-routing correction, the 64-decision causal treatment
   completed in 352.2 seconds (5.50 seconds/decision) with 9.92% native
-  utilization and 124.8 seconds of model work. The end-to-end learning loop is
-  now inside the ten-minute gate at a sample count sufficient to adopt a
-  policy; matched worker-scaling evidence is still required.
+  utilization and 124.8 seconds of model work. Its matched frozen and random
+  controls completed in 214.0 and 215.2 seconds with only 19.7 and 17.6 seconds
+  of model work. The end-to-end learning loop is inside the ten-minute gate at
+  a sample count sufficient to adopt a policy, but online fitting adds roughly
+  137 seconds without improving the terminal. Matched worker-scaling evidence
+  is still required, and model cost should be reduced only alongside a changed
+  treatment capable of improving outcomes.
 - [ ] Make completed-seed resume and finalization read-only and cheap: do not
   launch a native fleet or repeat full replay fitting, graph projection, and
   macro evaluation merely to validate and summarize already sealed evidence.
