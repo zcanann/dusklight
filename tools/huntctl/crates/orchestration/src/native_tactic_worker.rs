@@ -1016,7 +1016,11 @@ pub(crate) fn pad_runs(frames: &[InputFrame]) -> Result<Vec<MacroAction>, Native
     }
     Ok(runs
         .into_iter()
-        .map(|(pad, frames)| MacroAction::PadRun { pad, frames })
+        .map(|(pad, frames)| MacroAction::PadRun {
+            pad,
+            frames,
+            port_one_secondary_pads: None,
+        })
         .collect())
 }
 

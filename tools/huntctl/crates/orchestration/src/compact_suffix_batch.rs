@@ -163,11 +163,21 @@ pub fn encode_compact_suffix_batch(
             .map_err(|_| CompactSuffixBatchError::new("PAD run count exceeds 65535"))?;
         payload.extend_from_slice(&run_count.to_le_bytes());
         for action in &candidate.actions {
-            let MacroAction::PadRun { pad, frames } = action else {
+            let MacroAction::PadRun {
+                pad,
+                frames,
+                port_one_secondary_pads,
+            } = action
+            else {
                 return Err(CompactSuffixBatchError::new(
                     "compact suffix candidate contains a non-PAD action",
                 ));
             };
+            if port_one_secondary_pads.is_some() {
+                return Err(CompactSuffixBatchError::new(
+                    "compact suffix candidate contains noncanonical secondary ports",
+                ));
+            }
             let frames = u16::try_from(*frames)
                 .map_err(|_| CompactSuffixBatchError::new("PAD run duration exceeds 65535"))?;
             if frames == 0 {
@@ -281,6 +291,7 @@ mod tests {
                         error: -1,
                     },
                     frames: 4,
+                    port_one_secondary_pads: None,
                 }],
                 controller_program_hex: None,
             }],

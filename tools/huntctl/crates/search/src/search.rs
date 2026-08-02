@@ -161,6 +161,11 @@ pub enum MacroAction {
     PadRun {
         pad: SearchPadState,
         frames: u32,
+        /// Exact unowned port states for imported port-one tapes whose
+        /// secondary ports use a noncanonical but semantically inert encoding.
+        /// `None` retains the canonical disconnected representation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        port_one_secondary_pads: Option<[RawPadState; 3]>,
     },
 }
 
@@ -505,8 +510,16 @@ impl Candidate {
                             .map(|frame| imported_frame(frame.pads[0])),
                     );
                 }
-                MacroAction::PadRun { pad, frames: count } => {
-                    push_frames(&mut frames, imported_frame((*pad).into()), *count)
+                MacroAction::PadRun {
+                    pad,
+                    frames: count,
+                    port_one_secondary_pads,
+                } => {
+                    let mut frame = imported_frame((*pad).into());
+                    if let Some(secondary) = port_one_secondary_pads {
+                        frame.pads[1..].copy_from_slice(secondary);
+                    }
+                    push_frames(&mut frames, frame, *count)
                 }
             }
         }
@@ -704,20 +717,27 @@ impl Candidate {
             }
         }
 
-        let is_path_frame = |pad: RawPadState| {
-            pad == RawPadState {
-                stick_x: pad.stick_x,
-                stick_y: pad.stick_y,
-                ..RawPadState::default()
-            }
+        let is_path_frame = |frame: &InputFrame| {
+            let pad = frame.pads[0];
+            frame.pads[1..] == [disconnected; 3]
+                && pad
+                    == RawPadState {
+                        stick_x: pad.stick_x,
+                        stick_y: pad.stick_y,
+                        ..RawPadState::default()
+                    }
+        };
+        let secondary_payload = |frame: &InputFrame| {
+            (frame.pads[1..] != [disconnected; 3])
+                .then(|| [frame.pads[1], frame.pads[2], frame.pads[3]])
         };
         let mut actions = Vec::new();
         let mut index = 0;
         while index < tape.frames.len() {
-            if is_path_frame(tape.frames[index].pads[0]) {
+            if is_path_frame(&tape.frames[index]) {
                 let start = index;
                 while index < tape.frames.len()
-                    && is_path_frame(tape.frames[index].pads[0])
+                    && is_path_frame(&tape.frames[index])
                     && index - start < MAX_PATH_POINTS
                 {
                     index += 1;
@@ -742,16 +762,19 @@ impl Candidate {
             }
 
             let pad = SearchPadState::from(tape.frames[index].pads[0]);
+            let secondary_pads = secondary_payload(&tape.frames[index]);
             let start = index;
             while index < tape.frames.len()
                 && tape.frames[index].pads[0] == RawPadState::from(pad)
-                && !is_path_frame(tape.frames[index].pads[0])
+                && secondary_payload(&tape.frames[index]) == secondary_pads
+                && !is_path_frame(&tape.frames[index])
             {
                 index += 1;
             }
             actions.push(MacroAction::PadRun {
                 pad,
                 frames: (index - start) as u32,
+                port_one_secondary_pads: secondary_pads,
             });
         }
         let candidate = Self {
@@ -781,25 +804,27 @@ impl Candidate {
             error: -1,
             ..RawPadState::default()
         };
-        let mut runs: Vec<(SearchPadState, u32)> = Vec::new();
+        let mut runs: Vec<(SearchPadState, Option<[RawPadState; 3]>, u32)> = Vec::new();
         for frame in &tape.frames {
             if frame.owned_ports != 0x01
                 || frame.wait_condition != crate::tape::WaitCondition::None
                 || frame.wait_timeout_ticks != 0
-                || frame.pads[1..] != [disconnected; 3]
             {
                 return Err(SearchError::NonCanonicalTape(
-                    "anchored movement imports require absolute port-one ownership, no reactive waits, and canonical disconnected secondary ports"
+                    "anchored movement imports require absolute port-one ownership and no reactive waits"
                         .into(),
                 ));
             }
             let pad = SearchPadState::from(frame.pads[0]);
-            if let Some((last, frames)) = runs.last_mut()
+            let secondary_pads = (frame.pads[1..] != [disconnected; 3])
+                .then(|| [frame.pads[1], frame.pads[2], frame.pads[3]]);
+            if let Some((last, last_secondary_pads, frames)) = runs.last_mut()
                 && *last == pad
+                && *last_secondary_pads == secondary_pads
             {
                 *frames = frames.checked_add(1).ok_or(SearchError::TooManyFrames)?;
             } else {
-                runs.push((pad, 1));
+                runs.push((pad, secondary_pads, 1));
             }
         }
         let candidate = Self {
@@ -808,7 +833,13 @@ impl Candidate {
             boot: tape.boot.clone(),
             actions: runs
                 .into_iter()
-                .map(|(pad, frames)| MacroAction::PadRun { pad, frames })
+                .map(
+                    |(pad, port_one_secondary_pads, frames)| MacroAction::PadRun {
+                        pad,
+                        frames,
+                        port_one_secondary_pads,
+                    },
+                )
                 .collect(),
             ancestry: Ancestry {
                 generation: 0,

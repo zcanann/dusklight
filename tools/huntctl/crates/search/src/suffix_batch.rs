@@ -1117,7 +1117,11 @@ mod tests {
             schema: CANDIDATE_SCHEMA.into(),
             segment: SegmentProfile::Fsp103ToFsp104,
             boot: TapeBoot::Process,
-            actions: vec![MacroAction::PadRun { pad, frames: 5 }],
+            actions: vec![MacroAction::PadRun {
+                pad,
+                frames: 5,
+                port_one_secondary_pads: None,
+            }],
             ancestry: Ancestry::default(),
         }
     }
@@ -1171,6 +1175,7 @@ mod tests {
                     error: 0,
                 },
                 frames: 1,
+                port_one_secondary_pads: None,
             })
             .collect();
         let batch = propose_suffix_batch(

@@ -23,6 +23,7 @@ fn candidate() -> Candidate {
                     error: 0,
                 },
                 frames: 4,
+                port_one_secondary_pads: None,
             },
             MacroAction::Neutral { frames: 3 },
             MacroAction::Move {

@@ -1350,6 +1350,7 @@ fn tactic_root_probe_batch_with_ticks(
             actions: vec![MacroAction::PadRun {
                 pad: SearchPadState::from(RawPadState::default()),
                 frames: u32::try_from(maximum_ticks).map_err(route_error)?,
+                port_one_secondary_pads: None,
             }],
             controller_program_hex: None,
         }],

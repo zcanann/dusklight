@@ -253,6 +253,7 @@ fn semantic_movement_import_is_lossless_and_exposes_motion_paths() {
                     ..RawPadState::default()
                 }),
                 frames: 1,
+                port_one_secondary_pads: None,
             },
             MacroAction::PadRun {
                 pad: SearchPadState::from(RawPadState {
@@ -261,6 +262,7 @@ fn semantic_movement_import_is_lossless_and_exposes_motion_paths() {
                     ..RawPadState::default()
                 }),
                 frames: 3,
+                port_one_secondary_pads: None,
             },
         ],
         ancestry: Ancestry::default(),
@@ -343,6 +345,42 @@ fn promoted_tunnel_suffix_imports_losslessly_as_compact_pad_runs() {
     }
     assert!(stick_mutations > 20);
     assert!(button_mutations > 20);
+}
+
+#[test]
+fn tactic_terminal_suffix_retains_default_connected_unowned_ports() {
+    let tape = InputTape {
+        frames: (0..32)
+            .map(|index| {
+                let mut frame = InputFrame {
+                    owned_ports: 1,
+                    ..InputFrame::default()
+                };
+                frame.pads[0].stick_x = if index < 16 { -126 } else { -80 };
+                frame.pads[0].stick_y = if index < 16 { -14 } else { 90 };
+                frame
+            })
+            .collect(),
+        ..InputTape::default()
+    };
+
+    let candidate = Candidate::from_absolute_tape(SegmentProfile::Fsp103ToFsp104, &tape).unwrap();
+
+    assert_eq!(candidate.compile().unwrap(), tape);
+    assert!(candidate.actions.iter().all(|action| matches!(
+        action,
+        MacroAction::PadRun {
+            port_one_secondary_pads: Some(secondary),
+            ..
+        } if *secondary == [RawPadState::default(); 3]
+    )));
+    let mut rng = SplitMix64::new(0x155_921);
+    for generation in 1..=64 {
+        let child = mutate(&candidate, generation, &mut rng).unwrap();
+        assert!(child.compile().unwrap().frames.iter().all(|frame| {
+            frame.owned_ports == 1 && frame.pads[1..] == [RawPadState::default(); 3]
+        }));
+    }
 }
 
 #[test]

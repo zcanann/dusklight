@@ -1179,10 +1179,15 @@ fn shorter_actions(action: &MacroAction) -> Vec<MacroAction> {
                 });
             }
         }
-        MacroAction::PadRun { pad, frames } if *frames > 1 => {
+        MacroAction::PadRun {
+            pad,
+            frames,
+            port_one_secondary_pads,
+        } if *frames > 1 => {
             actions.push(MacroAction::PadRun {
                 pad: *pad,
                 frames: frames - 1,
+                port_one_secondary_pads: *port_one_secondary_pads,
             });
         }
         _ => {}
