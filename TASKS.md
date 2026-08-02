@@ -59,13 +59,6 @@ detailed history in commits and sealed campaign artifacts.
 - [ ] Exercise the cold-replay-backed optimization handoff on each selected
   zero-shot terminal, minimize the resulting incumbent, and verify the derived
   request and execution from the named root.
-- [ ] Retain useful branch checkpoints and exact suffix provenance along the
-  terminal trajectory without assuming that every checkpoint is worth keeping.
-- [ ] Evaluate mutations through the authoritative terminal by replaying,
-  repairing, or replanning the remaining suffix. A short transition with no
-  completion outcome is not a comparable route candidate.
-- [ ] Keep diverse terminal trajectories and reject mutations that improve a
-  proxy while losing the load-zone completion.
 
 Exit: a zero-shot discovery is automatically converted into a selected,
 cold-replayable route, and subsequent candidates can be compared by authenticated
