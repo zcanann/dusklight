@@ -28,6 +28,7 @@ pub struct NativeTacticOptimizationHandoffConfig<'a> {
     pub cold_replay_bundle_root: &'a Path,
     pub output_root: &'a Path,
     pub request_id: Option<&'a str>,
+    pub workers: Option<u16>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -191,6 +192,14 @@ pub fn build_native_tactic_optimization_handoff(
         .map(str::to_owned)
         .unwrap_or_else(|| derived_request_id(&optimization.id, authority.manifest.seed));
     optimization.campaign_class = CampaignClass::LocalTasRefinement;
+    if let Some(workers) = config.workers {
+        if workers == 0 {
+            return Err(route_message(
+                "terminal optimization worker override must be positive",
+            ));
+        }
+        optimization.execution.workers = workers;
+    }
     optimization.incumbent = Some(OptimizationIncumbent {
         tape: incumbent_reference.clone(),
         first_hit_tick: authority.manifest.first_hit_tick,

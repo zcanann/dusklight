@@ -958,6 +958,9 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     cold_replay_bundle_root: &bundle,
                     output_root: &output,
                     request_id: request_id.as_deref(),
+                    workers: option(learn_args, "--workers")
+                        .map(|workers| workers.parse::<u16>())
+                        .transpose()?,
                 })?;
             println!(
                 "{}",
