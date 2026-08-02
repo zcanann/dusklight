@@ -47,11 +47,10 @@ pub(super) fn load_or_create_seed_campaign(
             seed,
         )?;
         let mut resumed_campaign = resumed.0;
-        let imported = if config
-            .execution_plan
-            .proposal_policy
-            .uses_learned_selector()
-        {
+        let imported = if imports_inherited_learner_snapshot(
+            config.execution_plan.proposal_policy,
+            config.execution_plan.demonstration_chunk_ticks.is_some(),
+        ) {
             resumed_campaign
                 .consume_learner_snapshot(&inherited_learner_snapshot)
                 .map_err(route_error)?;
@@ -110,11 +109,10 @@ pub(super) fn load_or_create_seed_campaign(
         campaign
             .bind_execution_authority(execution_plan_sha256)
             .map_err(route_error)?;
-        let imported = if config
-            .execution_plan
-            .proposal_policy
-            .uses_learned_selector()
-        {
+        let imported = if imports_inherited_learner_snapshot(
+            config.execution_plan.proposal_policy,
+            config.execution_plan.demonstration_chunk_ticks.is_some(),
+        ) {
             campaign
                 .consume_learner_snapshot(&inherited_learner_snapshot)
                 .map_err(route_error)?;
@@ -132,4 +130,53 @@ pub(super) fn load_or_create_seed_campaign(
         native_ticks,
         episode,
     })
+}
+
+/// Import the common prior whenever this treatment either ranks with it or
+/// explicitly requested an assisted demonstration. Random-valid and
+/// structured controls still ignore learned scores, but they must start from
+/// the same executable demonstration frontier as the adaptive treatment.
+fn imports_inherited_learner_snapshot(
+    proposal_policy: TacticProposalPolicy,
+    has_demonstration: bool,
+) -> bool {
+    proposal_policy.uses_learned_selector() || has_demonstration
+}
+
+#[cfg(test)]
+mod tests {
+    use super::imports_inherited_learner_snapshot;
+    use crate::native_tactic_route_runner::TacticProposalPolicy;
+
+    #[test]
+    fn assisted_controls_import_the_common_demonstration_frontier() {
+        for policy in [
+            TacticProposalPolicy::Learned,
+            TacticProposalPolicy::FrozenPolicy,
+            TacticProposalPolicy::RandomValid,
+            TacticProposalPolicy::StructuredNonLearning,
+        ] {
+            assert!(imports_inherited_learner_snapshot(policy, true));
+        }
+    }
+
+    #[test]
+    fn unassisted_non_learning_controls_remain_scratch_campaigns() {
+        assert!(imports_inherited_learner_snapshot(
+            TacticProposalPolicy::Learned,
+            false,
+        ));
+        assert!(imports_inherited_learner_snapshot(
+            TacticProposalPolicy::FrozenPolicy,
+            false,
+        ));
+        assert!(!imports_inherited_learner_snapshot(
+            TacticProposalPolicy::RandomValid,
+            false,
+        ));
+        assert!(!imports_inherited_learner_snapshot(
+            TacticProposalPolicy::StructuredNonLearning,
+            false,
+        ));
+    }
 }
