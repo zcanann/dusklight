@@ -184,6 +184,21 @@ impl NativeResidualExecutionBinding {
         self.validate_files_after_request_validation(&root, optimization)
     }
 
+    /// Authenticate the execution inputs consumed by orchestration without
+    /// rereading the native executable, its libraries, or the game image.
+    /// A worker launch must still call `validate_files`; completed offline
+    /// projection has no native runtime to authorize.
+    pub(crate) fn validate_control_files(
+        &self,
+        repository_root: &Path,
+        optimization: &OptimizationRequest,
+    ) -> Result<NativeResidualExecutionValidationReport, NativeResidualCampaignError> {
+        let root = repository_root.canonicalize().map_err(native_error)?;
+        optimization.validate().map_err(native_error)?;
+        self.validate_seal(optimization)?;
+        self.validate_control_files_after_request_validation(&root, optimization)
+    }
+
     fn validate_files_after_request_validation(
         &self,
         repository_root: &Path,
@@ -192,6 +207,14 @@ impl NativeResidualExecutionBinding {
         let root = repository_root.canonicalize().map_err(native_error)?;
         optimization.validate().map_err(native_error)?;
         self.validate_seal(optimization)?;
+        self.validate_runtime_files_after_request_validation(&root)?;
+        self.validate_control_files_after_request_validation(&root, optimization)
+    }
+
+    fn validate_runtime_files_after_request_validation(
+        &self,
+        root: &Path,
+    ) -> Result<(), NativeResidualCampaignError> {
         let executable = validate_artifact(&root, "executable", &self.executable, false)?;
         if self.runtime_dependencies.len() > 256
             || self
@@ -220,6 +243,14 @@ impl NativeResidualExecutionBinding {
         // path in the binding and authenticate the target bytes, while keeping
         // every other execution artifact confined to the repository.
         let _game_data = validate_artifact(&root, "game data", &self.game_data, true)?;
+        Ok(())
+    }
+
+    fn validate_control_files_after_request_validation(
+        &self,
+        root: &Path,
+        optimization: &OptimizationRequest,
+    ) -> Result<NativeResidualExecutionValidationReport, NativeResidualCampaignError> {
         let tape_path =
             validate_artifact(&root, "process boot tape", &self.process_boot_tape, false)?;
         let program_path =

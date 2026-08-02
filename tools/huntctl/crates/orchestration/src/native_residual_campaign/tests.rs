@@ -125,6 +125,9 @@ fn execution_binding_seals_the_exact_native_checkpoint_authority() {
     binding.validate_seal(&optimization).unwrap();
 
     fs::write(_artifacts.0.join("renderer.dll"), b"tampered").unwrap();
+    binding
+        .validate_control_files(&root, &optimization)
+        .unwrap();
     assert!(binding.validate_files(&root, &optimization).is_err());
     fs::write(_artifacts.0.join("renderer.dll"), b"renderer").unwrap();
     fs::write(&program, b"tampered").unwrap();
@@ -132,6 +135,11 @@ fn execution_binding_seals_the_exact_native_checkpoint_authority() {
     // checkpoint bound to it, not the old runtime files. A fresh launch
     // still authenticates those files in validate_files.
     binding.validate_seal(&optimization).unwrap();
+    assert!(
+        binding
+            .validate_control_files(&root, &optimization)
+            .is_err()
+    );
     assert!(binding.validate_files(&root, &optimization).is_err());
 }
 

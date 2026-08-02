@@ -440,7 +440,7 @@ fn run_native_tactic_route_with_optional_fleet(
     let root = config.repository_root.canonicalize().map_err(route_error)?;
     config
         .execution
-        .validate_files(&root, config.optimization)
+        .validate_control_files(&root, config.optimization)
         .map_err(route_error)?;
     if config.output_root.exists() && !config.resume {
         return Err(route_message(format!(
@@ -640,7 +640,16 @@ fn run_native_tactic_route_with_optional_fleet(
         prevalidated_useful_graph_expansions,
     ) = (|| {
         if let Some(preflight) = completed_preflight.take() {
-            campaign_phase_wall.campaign_setup_micros = elapsed_micros(campaign_started.elapsed());
+            // Reused demonstration evidence retains its historical execution
+            // phase in aggregate timing even though this invocation does not
+            // execute it. Keep the setup wall large enough to own that durable
+            // phase rather than charging fast validation as demonstration work.
+            let durable_demonstration_wall_micros = preflight
+                .demonstration
+                .as_ref()
+                .map_or(0, |demonstration| demonstration.wall_micros);
+            campaign_phase_wall.campaign_setup_micros =
+                elapsed_micros(campaign_started.elapsed()).max(durable_demonstration_wall_micros);
             campaign_phase_wall.campaign_finalization_started_micros =
                 campaign_phase_wall.campaign_setup_micros;
             let tactic_macro_discovery = match preflight.tactic_macro_discovery {
