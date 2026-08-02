@@ -123,9 +123,40 @@ pub(super) fn reconcile_recovered_seed_timing(
     if timing.orchestration_breakdown.is_none() {
         return Ok(());
     }
+    if let Some(breakdown) = timing.persistence_breakdown.as_mut() {
+        let attributed = breakdown
+            .checked_total_micros()
+            .ok_or_else(|| route_message("recovered tactic persistence timing overflowed"))?;
+        let boundary = timing
+            .persistence_micros
+            .checked_sub(attributed)
+            .ok_or_else(|| {
+                route_message("recovered tactic persistence phases exceed their committed total")
+            })?;
+        breakdown.unattributed_micros = breakdown
+            .unattributed_micros
+            .checked_add(boundary)
+            .ok_or_else(|| route_message("recovered tactic persistence timing overflowed"))?;
+    }
+    if let Some(breakdown) = timing.orchestration_breakdown.as_mut() {
+        let attributed = breakdown
+            .checked_total_micros()
+            .ok_or_else(|| route_message("recovered tactic orchestration timing overflowed"))?;
+        let boundary = timing
+            .orchestration_micros
+            .checked_sub(attributed)
+            .ok_or_else(|| {
+                route_message("recovered tactic orchestration phases exceed their committed total")
+            })?;
+        breakdown.timing_boundary_micros =
+            breakdown
+                .timing_boundary_micros
+                .checked_add(boundary)
+                .ok_or_else(|| route_message("recovered tactic orchestration timing overflowed"))?;
+    }
     if !timing.persistence_attribution_is_valid() || !timing.orchestration_attribution_is_valid() {
         return Err(route_message(
-            "recovered native tactic phase breakdown is internally detached",
+            "recovered native tactic phase breakdown is detached",
         ));
     }
     let attributed = [
@@ -339,5 +370,42 @@ mod tests {
         assert!(timing.seed_wall_attribution_is_exact());
         reconcile_recovered_seed_timing(&mut timing).unwrap();
         assert_eq!(timing.orchestration_micros, 35);
+    }
+
+    #[test]
+    fn recovered_subphase_gaps_are_explicit_before_wall_reconciliation() {
+        let mut timing = NativeTacticRouteTiming {
+            wall_micros: 100,
+            tactic_execution_micros: 40,
+            model_update_micros: 10,
+            evidence_projection_micros: 5,
+            persistence_micros: 12,
+            persistence_breakdown: Some(NativeTacticPersistenceTiming {
+                unattributed_micros: 10,
+                ..NativeTacticPersistenceTiming::default()
+            }),
+            orchestration_micros: 18,
+            orchestration_breakdown: Some(NativeTacticOrchestrationTiming {
+                decision_bookkeeping_micros: 15,
+                ..NativeTacticOrchestrationTiming::default()
+            }),
+            ..NativeTacticRouteTiming::default()
+        };
+
+        reconcile_recovered_seed_timing(&mut timing).unwrap();
+
+        assert_eq!(
+            timing.persistence_breakdown.unwrap().unattributed_micros,
+            12
+        );
+        assert_eq!(timing.orchestration_micros, 33);
+        assert_eq!(
+            timing
+                .orchestration_breakdown
+                .unwrap()
+                .timing_boundary_micros,
+            18
+        );
+        assert!(timing.seed_wall_attribution_is_exact());
     }
 }
