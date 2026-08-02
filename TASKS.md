@@ -111,8 +111,14 @@ authenticated terminal in 124 ticks or less.
   exploitation partition; other partitions continue using the all-experience
   reachability critic, whose held-out calibration persists after terminal
   discovery. This policy-semantic change has a versioned learner snapshot and
-  migrates older heads explicitly. A bounded follow-up must now show a
-  calibrated same-state action change before any larger mining run.
+  migrates older heads explicitly. A 16-decision, 128-proposal causal follow-up
+  then completed in 91.6 seconds and exposed reachability evidence on 12
+  post-terminal decisions. At its 128-row calibration prefix the model won only
+  3 of 10 held-out action rankings (30.0% versus a 12.1% chance rate; 10.8%
+  Wilson lower bound), so the gate correctly blocked all 12 deployments and no
+  same-state action changed. The wiring and throughput are now adequate for a
+  bounded larger-sample discriminator, but the treatment has not yet proved
+  policy effect.
 - [ ] Learn from successful and unsuccessful trajectories using sparse terminal
   value, authenticated tick cost, and generic state deltas.
 - [ ] Support online collection, off-policy replay, prioritized reuse, temporal
