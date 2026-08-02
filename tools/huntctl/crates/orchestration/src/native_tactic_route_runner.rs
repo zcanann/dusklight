@@ -237,6 +237,10 @@ pub use cold_replay::{
     NativeTacticColdReplayFidelity, NativeTacticColdReplayProof,
     read_and_validate_native_tactic_cold_replay, run_native_tactic_cold_replay,
 };
+pub(crate) use cold_replay::{
+    NativeTapeColdReplayConfig, exact_cold_replay_attempts, run_native_tape_cold_replay,
+    validate_native_tape_cold_replay_artifacts,
+};
 mod cold_replay_bundle;
 pub use cold_replay_bundle::{
     NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V1,

@@ -16,6 +16,7 @@ use huntctl::search_evaluator::TournamentDefinition;
 use std::error::Error;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
 mod helpers;
 use helpers::{
@@ -463,6 +464,98 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
             serde_json::from_slice(&fs::read(input)?)?;
         summary.validate_files(&repository_root)?;
         println!("{}", serde_json::to_string_pretty(&summary)?);
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("prove-residual-winner-cold-replay") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let request_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--request")?,
+            "residual winner cold replay request",
+        )?;
+        let execution_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--execution")?,
+            "residual winner cold replay execution",
+        )?;
+        let minimization_artifact = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--minimization")?,
+            "residual winner minimization summary",
+        )?;
+        let optimization: OptimizationRequest = serde_json::from_slice(&fs::read(request_path)?)?;
+        let execution: huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding =
+            serde_json::from_slice(&fs::read(execution_path)?)?;
+        let minimization: huntctl::search_evaluator::residual_winner_minimization::ResidualWinnerMinimizationSummary =
+            serde_json::from_slice(&fs::read(repository_root.join(&minimization_artifact.path))?)?;
+        let output_relative = required_path(command_args, "--output")?;
+        if output_relative.is_absolute()
+            || output_relative
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+            || !output_relative.starts_with("build")
+        {
+            return Err(
+                "residual winner cold replay output must be a repository-relative build/ path"
+                    .into(),
+            );
+        }
+        let proof = huntctl::search_evaluator::residual_winner_cold_replay::run_residual_winner_cold_replay(
+            &huntctl::search_evaluator::residual_winner_cold_replay::ResidualWinnerColdReplayConfig {
+                repository_root: &repository_root,
+                optimization: &optimization,
+                execution: &execution,
+                minimization_summary: &minimization,
+                minimization_summary_artifact: minimization_artifact,
+                timeout: Duration::from_secs(u64::from(u32_option(
+                    command_args,
+                    "--timeout-seconds",
+                    120,
+                )?)),
+                output_root: &repository_root.join(output_relative),
+            },
+        )?;
+        println!("{}", serde_json::to_string_pretty(&proof)?);
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("validate-residual-winner-cold-replay") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let request_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--request")?,
+            "residual winner cold replay request",
+        )?;
+        let execution_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--execution")?,
+            "residual winner cold replay execution",
+        )?;
+        let proof_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--input")?,
+            "residual winner cold replay proof",
+        )?;
+        if proof_path.file_name().and_then(|name| name.to_str())
+            != Some(
+                huntctl::search_evaluator::residual_winner_cold_replay::RESIDUAL_WINNER_COLD_REPLAY_PROOF_FILE,
+            )
+        {
+            return Err("residual winner cold replay input must be proof.json".into());
+        }
+        let optimization: OptimizationRequest = serde_json::from_slice(&fs::read(request_path)?)?;
+        let execution: huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding =
+            serde_json::from_slice(&fs::read(execution_path)?)?;
+        let proof = huntctl::search_evaluator::residual_winner_cold_replay::read_and_validate_residual_winner_cold_replay(
+            &repository_root,
+            &optimization,
+            &execution,
+            proof_path
+                .parent()
+                .ok_or("residual winner cold replay proof has no parent")?,
+        )?;
+        println!("{}", serde_json::to_string_pretty(&proof)?);
         return Ok(());
     }
     if args.first().map(String::as_str) == Some("minimize-residual-winner") {

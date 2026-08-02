@@ -55,7 +55,7 @@ pub struct NativeTacticColdReplayFidelity {
 }
 
 impl NativeTacticColdReplayFidelity {
-    fn exact_headless() -> Self {
+    pub(crate) fn exact_headless() -> Self {
         Self {
             request_fidelity: HarnessFidelityMode::Headless,
             profile: NATIVE_TACTIC_COLD_REPLAY_FIDELITY_PROFILE_V1.into(),
@@ -71,7 +71,7 @@ impl NativeTacticColdReplayFidelity {
         }
     }
 
-    fn is_exact_headless(&self) -> bool {
+    pub(crate) fn is_exact_headless(&self) -> bool {
         self == &Self::exact_headless()
     }
 }
@@ -138,6 +138,18 @@ struct ValidatedRouteAuthority {
     first_hit_tick: u64,
 }
 
+pub(crate) struct NativeTapeColdReplayConfig<'a> {
+    pub repository_root: &'a Path,
+    pub optimization: &'a OptimizationRequest,
+    pub execution: &'a NativeResidualExecutionBinding,
+    pub tape: &'a InputTape,
+    pub tape_bytes: &'a [u8],
+    pub first_hit_tick: u64,
+    pub repetitions: u32,
+    pub timeout: Duration,
+    pub output_root: &'a Path,
+}
+
 impl NativeTacticColdReplayProof {
     fn seal(
         config: &NativeTacticColdReplayConfig<'_>,
@@ -193,34 +205,20 @@ impl NativeTacticColdReplayProof {
     }
 
     pub(super) fn validate_shape(&self) -> Result<(), NativeTacticRouteRunError> {
-        let first = self.attempts.first();
         let expected_tape_frame = self
             .source_boundary_index
             .checked_add(self.first_hit_tick)
             .ok_or_else(|| route_message("cold replay terminal tape frame overflowed"))?;
-        let exact_attempts = self.attempts.len()
+        let exact_attempts = exact_cold_replay_attempts(
+            &self.attempts,
+            &self.controller_tape,
+            self.source_boundary_index,
+            self.first_hit_tick,
+            self.controller_tape_frames,
+        ) && self.attempts.len()
             >= usize::try_from(MINIMUM_COLD_REPLAY_REPETITIONS).map_err(route_error)?
             && self.attempts.len()
-                <= usize::try_from(MAXIMUM_COLD_REPLAY_REPETITIONS).map_err(route_error)?
-            && first.is_some()
-            && self.attempts.iter().enumerate().all(|(index, attempt)| {
-                usize::try_from(attempt.repetition).ok() == Some(index + 1)
-                    && attempt.controller_tape.sha256 == self.controller_tape.sha256
-                    && attempt.first_hit_tick == self.first_hit_tick
-                    && attempt.tape_frame == expected_tape_frame
-                    && attempt.tape_frame.checked_add(1) == Some(self.controller_tape_frames)
-                    && attempt.boundary_index == self.controller_tape_frames
-                    && attempt.milestone_result.sha256 != Digest::ZERO
-                    && attempt.stdout.sha256 != Digest::ZERO
-                    && attempt.stderr.sha256 != Digest::ZERO
-                    && exact_boundary_fingerprint(&attempt.boundary_fingerprint)
-                    && first.is_some_and(|first| {
-                        attempt.sim_tick == first.sim_tick
-                            && attempt.tape_frame == first.tape_frame
-                            && attempt.boundary_index == first.boundary_index
-                            && attempt.boundary_fingerprint == first.boundary_fingerprint
-                    })
-            });
+                <= usize::try_from(MAXIMUM_COLD_REPLAY_REPETITIONS).map_err(route_error)?;
         if self.schema != NATIVE_TACTIC_COLD_REPLAY_PROOF_SCHEMA_V1
             || self.content_sha256 == Digest::ZERO
             || self.content_sha256 != self.identity()?
@@ -273,6 +271,37 @@ impl NativeTacticColdReplayProof {
     }
 }
 
+pub(crate) fn exact_cold_replay_attempts(
+    attempts: &[NativeTacticColdReplayAttempt],
+    controller_tape: &NativeTacticColdReplayArtifact,
+    source_boundary_index: u64,
+    first_hit_tick: u64,
+    controller_tape_frames: u64,
+) -> bool {
+    let Some(first) = attempts.first() else {
+        return false;
+    };
+    let Some(expected_tape_frame) = source_boundary_index.checked_add(first_hit_tick) else {
+        return false;
+    };
+    attempts.iter().enumerate().all(|(index, attempt)| {
+        usize::try_from(attempt.repetition).ok() == Some(index + 1)
+            && attempt.controller_tape.sha256 == controller_tape.sha256
+            && attempt.first_hit_tick == first_hit_tick
+            && attempt.tape_frame == expected_tape_frame
+            && attempt.tape_frame.checked_add(1) == Some(controller_tape_frames)
+            && attempt.boundary_index == controller_tape_frames
+            && attempt.milestone_result.sha256 != Digest::ZERO
+            && attempt.stdout.sha256 != Digest::ZERO
+            && attempt.stderr.sha256 != Digest::ZERO
+            && exact_boundary_fingerprint(&attempt.boundary_fingerprint)
+            && attempt.sim_tick == first.sim_tick
+            && attempt.tape_frame == first.tape_frame
+            && attempt.boundary_index == first.boundary_index
+            && attempt.boundary_fingerprint == first.boundary_fingerprint
+    })
+}
+
 pub fn run_native_tactic_cold_replay(
     config: &NativeTacticColdReplayConfig<'_>,
 ) -> Result<NativeTacticColdReplayProof, NativeTacticRouteRunError> {
@@ -286,45 +315,17 @@ pub fn run_native_tactic_cold_replay(
         config.seed,
         config.maximum_first_hit_tick,
     )?;
-    if config.output_root.exists() {
-        return Err(route_message(format!(
-            "native tactic cold replay output already exists: {}",
-            config.output_root.display()
-        )));
-    }
-    fs::create_dir_all(config.output_root).map_err(route_error)?;
-    let tape_path = config.output_root.join(NATIVE_TACTIC_COLD_REPLAY_TAPE_FILE);
-    write_new(&tape_path, &authority.tape_bytes)?;
-    let controller_tape =
-        artifact_reference(NATIVE_TACTIC_COLD_REPLAY_TAPE_FILE, &authority.tape_bytes);
-    let executable = authority
-        .repository_root
-        .join(&config.execution.executable.path);
-    let game_data = authority
-        .repository_root
-        .join(&config.execution.game_data.path);
-    let milestone_program = authority
-        .repository_root
-        .join(&config.execution.milestone_program.path);
-    let card_fixture = config
-        .execution
-        .card_fixture_root(&authority.repository_root, config.optimization)
-        .map_err(route_error)?;
-    let logical_ticks = authority.tape.frames.len().to_string();
-    let mut attempts =
-        Vec::with_capacity(usize::try_from(config.repetitions).map_err(route_error)?);
-    for repetition in 1..=config.repetitions {
-        attempts.push(run_cold_replay_attempt(
-            config,
-            &authority,
-            &executable,
-            &game_data,
-            &milestone_program,
-            &card_fixture,
-            &logical_ticks,
-            repetition,
-        )?);
-    }
+    let (controller_tape, attempts) = run_native_tape_cold_replay(&NativeTapeColdReplayConfig {
+        repository_root: &authority.repository_root,
+        optimization: config.optimization,
+        execution: config.execution,
+        tape: &authority.tape,
+        tape_bytes: &authority.tape_bytes,
+        first_hit_tick: authority.first_hit_tick,
+        repetitions: config.repetitions,
+        timeout: config.timeout,
+        output_root: config.output_root,
+    })?;
     let proof = NativeTacticColdReplayProof::seal(config, &authority, controller_tape, attempts)?;
     write_new(
         &config
@@ -343,10 +344,89 @@ pub fn run_native_tactic_cold_replay(
     Ok(proof)
 }
 
+pub(crate) fn run_native_tape_cold_replay(
+    config: &NativeTapeColdReplayConfig<'_>,
+) -> Result<
+    (
+        NativeTacticColdReplayArtifact,
+        Vec<NativeTacticColdReplayAttempt>,
+    ),
+    NativeTacticRouteRunError,
+> {
+    if config.repetitions < MINIMUM_COLD_REPLAY_REPETITIONS
+        || config.repetitions > MAXIMUM_COLD_REPLAY_REPETITIONS
+        || config.timeout.is_zero()
+    {
+        return Err(route_message(
+            "native tape cold replay configuration is invalid",
+        ));
+    }
+    config
+        .execution
+        .validate_files(config.repository_root, config.optimization)
+        .map_err(route_error)?;
+    let encoded = config.tape.encode().map_err(route_error)?;
+    let expected_frames = config
+        .optimization
+        .route
+        .source_boundary_index
+        .checked_add(config.first_hit_tick)
+        .and_then(|value| value.checked_add(1))
+        .ok_or_else(|| route_message("native tape cold replay route length overflowed"))?;
+    if encoded != config.tape_bytes
+        || config.tape.boot != dusklight_automation_contracts::tape::TapeBoot::Process
+        || config.tape.tick_rate_numerator != 30
+        || config.tape.tick_rate_denominator != 1
+        || u64::try_from(config.tape.frames.len()).map_err(route_error)? != expected_frames
+    {
+        return Err(route_message(
+            "native tape cold replay requires an exact complete process-boot route",
+        ));
+    }
+    if config.output_root.exists() {
+        return Err(route_message(format!(
+            "native tape cold replay output already exists: {}",
+            config.output_root.display()
+        )));
+    }
+    fs::create_dir_all(config.output_root).map_err(route_error)?;
+    let tape_path = config.output_root.join(NATIVE_TACTIC_COLD_REPLAY_TAPE_FILE);
+    write_new(&tape_path, config.tape_bytes)?;
+    let controller_tape =
+        artifact_reference(NATIVE_TACTIC_COLD_REPLAY_TAPE_FILE, config.tape_bytes);
+    let executable = config
+        .repository_root
+        .join(&config.execution.executable.path);
+    let game_data = config
+        .repository_root
+        .join(&config.execution.game_data.path);
+    let milestone_program = config
+        .repository_root
+        .join(&config.execution.milestone_program.path);
+    let card_fixture = config
+        .execution
+        .card_fixture_root(config.repository_root, config.optimization)
+        .map_err(route_error)?;
+    let logical_ticks = config.tape.frames.len().to_string();
+    let mut attempts =
+        Vec::with_capacity(usize::try_from(config.repetitions).map_err(route_error)?);
+    for repetition in 1..=config.repetitions {
+        attempts.push(run_cold_replay_attempt(
+            config,
+            &executable,
+            &game_data,
+            &milestone_program,
+            &card_fixture,
+            &logical_ticks,
+            repetition,
+        )?);
+    }
+    Ok((controller_tape, attempts))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_cold_replay_attempt(
-    config: &NativeTacticColdReplayConfig<'_>,
-    authority: &ValidatedRouteAuthority,
+    config: &NativeTapeColdReplayConfig<'_>,
     executable: &Path,
     game_data: &Path,
     milestone_program: &Path,
@@ -364,12 +444,12 @@ fn run_cold_replay_attempt(
     let stderr_path = trial.join("stderr.txt");
     fs::create_dir_all(&state).map_err(route_error)?;
     fs::create_dir_all(&renderer_cache).map_err(route_error)?;
-    write_new(&tape_path, &authority.tape_bytes)?;
+    write_new(&tape_path, config.tape_bytes)?;
     let stdout = fs::File::create(&stdout_path).map_err(route_error)?;
     let stderr = fs::File::create(&stderr_path).map_err(route_error)?;
     let mut command = Command::new(executable);
     command
-        .current_dir(&authority.repository_root)
+        .current_dir(config.repository_root)
         .arg("--dvd")
         .arg(game_data)
         .arg("--input-tape")
@@ -428,12 +508,12 @@ fn run_cold_replay_attempt(
     let stderr_bytes = read_bounded_artifact(&stderr_path)?;
     parse_attempt(
         config.optimization,
-        &authority.tape,
-        authority.first_hit_tick,
+        config.tape,
+        config.first_hit_tick,
         repetition,
         artifact_reference(
             &format!("{trial_relative}/controller.tape"),
-            &authority.tape_bytes,
+            config.tape_bytes,
         ),
         artifact_reference(
             &format!("{trial_relative}/milestones.json"),
@@ -670,14 +750,35 @@ pub(super) fn validate_native_tactic_cold_replay_artifacts(
     expected_first_hit_tick: u64,
 ) -> Result<(), NativeTacticRouteRunError> {
     proof.validate_shape()?;
-    let tape_bytes = read_proof_artifact(proof_root, &proof.controller_tape)?;
+    validate_native_tape_cold_replay_artifacts(
+        proof_root,
+        optimization,
+        expected_tape,
+        expected_tape_bytes,
+        expected_first_hit_tick,
+        &proof.controller_tape,
+        &proof.attempts,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn validate_native_tape_cold_replay_artifacts(
+    proof_root: &Path,
+    optimization: &OptimizationRequest,
+    expected_tape: &InputTape,
+    expected_tape_bytes: &[u8],
+    expected_first_hit_tick: u64,
+    controller_tape: &NativeTacticColdReplayArtifact,
+    attempts: &[NativeTacticColdReplayAttempt],
+) -> Result<(), NativeTacticRouteRunError> {
+    let tape_bytes = read_proof_artifact(proof_root, controller_tape)?;
     let tape = InputTape::decode(&tape_bytes).map_err(route_error)?.tape;
     if tape_bytes != expected_tape_bytes || &tape != expected_tape {
         return Err(route_message(
             "cold replay controller bytes differ from the graph-selected route",
         ));
     }
-    for retained in &proof.attempts {
+    for retained in attempts {
         let attempt_tape_bytes = read_proof_artifact(proof_root, &retained.controller_tape)?;
         let milestone_bytes = read_proof_artifact(proof_root, &retained.milestone_result)?;
         let stdout_bytes = read_proof_artifact(proof_root, &retained.stdout)?;

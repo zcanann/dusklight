@@ -35,6 +35,7 @@ pub mod residual_campaign_runner;
 pub mod residual_critic_ranking;
 pub mod residual_horizon_tightening;
 pub mod residual_reverse_curriculum;
+pub mod residual_winner_cold_replay;
 pub mod residual_winner_minimization;
 pub mod scheduler;
 pub mod stage_actor_coverage;
