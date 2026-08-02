@@ -179,11 +179,9 @@ fn exact_replay_batch(
     let native_candidates = candidates
         .iter()
         .map(|candidate| {
-            let imported =
-                Candidate::from_absolute_tape(segment, &candidate.tape).map_err(native_error)?;
             Ok(NativeSuffixCandidate {
                 id: wire_candidate_id(&candidate.id, repetition),
-                actions: project_native_port_one_actions(imported.actions)?,
+                actions: exact_replay_native_actions(segment, &candidate.tape)?,
                 controller_program_hex: None,
             })
         })
@@ -206,6 +204,14 @@ fn exact_replay_batch(
         checkpoint_cache: None,
         candidates: native_candidates,
     })
+}
+
+fn exact_replay_native_actions(
+    segment: dusklight_search::search::SegmentProfile,
+    tape: &InputTape,
+) -> Result<Vec<MacroAction>, NativeResidualCampaignRunnerError> {
+    let imported = Candidate::from_absolute_tape(segment, tape).map_err(native_error)?;
+    project_native_port_one_actions(imported.actions)
 }
 
 fn project_native_port_one_actions(

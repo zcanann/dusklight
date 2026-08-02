@@ -191,6 +191,25 @@ fn native_wire_projection_discards_only_neutral_secondary_port_envelopes() {
 }
 
 #[test]
+fn exact_replay_batch_and_validator_share_projected_native_actions() {
+    let root = repository();
+    let optimization = optimization(&root);
+    let (_parent, _parent_bytes, prepared) = prepared_generation(&root, &optimization);
+    let mut tape = prepared[0].compiled.tape.clone();
+    for frame in &mut tape.frames {
+        frame.owned_ports = 15;
+        frame.pads[1..].fill(RawPadState::default());
+    }
+    let segment = segment_profile(&root, &optimization).unwrap();
+    let imported = Candidate::from_absolute_tape(segment, &tape).unwrap();
+    let expected = project_native_port_one_actions(imported.actions).unwrap();
+    assert_eq!(
+        exact_replay_native_actions(segment, &tape).unwrap(),
+        expected
+    );
+}
+
+#[test]
 fn residual_evaluation_charges_and_binds_alternate_terminal_attempts() {
     let root = repository();
     let optimization = optimization(&root);

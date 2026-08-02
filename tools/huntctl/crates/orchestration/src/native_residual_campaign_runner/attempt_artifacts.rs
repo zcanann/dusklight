@@ -203,9 +203,8 @@ pub(crate) fn validate_exact_replay_attempt_artifacts(
     let batch: NativeSuffixBatch =
         serde_json::from_slice(&read_artifact(root, &attempt.batch_request).map_err(native_error)?)
             .map_err(native_error)?;
-    let expected =
-        Candidate::from_absolute_tape(segment_profile(root, optimization)?, expected_tape)
-            .map_err(native_error)?;
+    let expected_actions =
+        exact_replay_native_actions(segment_profile(root, optimization)?, expected_tape)?;
     let actual = batch
         .candidates
         .iter()
@@ -222,7 +221,7 @@ pub(crate) fn validate_exact_replay_attempt_artifacts(
             != usize::try_from(optimization.budgets.exploration_horizon_ticks)
                 .map_err(native_error)?
         || batch.verify_state_hashes != execution.verify_state_hashes
-        || actual.actions != expected.actions
+        || actual.actions != expected_actions
     {
         return Err(native_message(
             "exact replay attempt differs from its expected residual tape or execution boundary",
