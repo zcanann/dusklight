@@ -1736,6 +1736,56 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert!(v3_acquisition.best_mean_q.is_some());
     assert!(v3_acquisition.maximum_ensemble_variance.is_some());
 
+    let relabeled_actions = |_: &FactSnapshot| {
+        Ok::<_, &'static str>(
+            catalog
+                .option_descriptors()
+                .cloned()
+                .map(|mut descriptor| {
+                    descriptor.option_type =
+                        dusklight_control::option_execution::OptionType::Target;
+                    descriptor
+                })
+                .collect(),
+        )
+    };
+    let [_, v3_relabeled_frontier] = frontier_v3
+        .sample_root_and_ranked_frontier(
+            5,
+            0,
+            &[],
+            usize::MAX,
+            false,
+            0,
+            &encode,
+            &relabeled_actions,
+        )
+        .unwrap();
+    let v3_relabeled_acquisition = v3_relabeled_frontier.acquisition.unwrap();
+    assert!(v3_relabeled_acquisition.terminal_value_supported);
+    assert!(v3_relabeled_acquisition.best_mean_q.is_none());
+    assert!(v3_relabeled_acquisition.maximum_ensemble_variance.is_none());
+
+    let mut frontier_v4 = TacticQCampaign::resume(uninterrupted.checkpoint().unwrap()).unwrap();
+    frontier_v4.value_treatment = TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4;
+    frontier_v4.campaign_learner_authority_managed = false;
+    let [_, v4_relabeled_frontier] = frontier_v4
+        .sample_root_and_ranked_frontier(
+            5,
+            0,
+            &[],
+            usize::MAX,
+            false,
+            0,
+            &encode,
+            &relabeled_actions,
+        )
+        .unwrap();
+    let v4_relabeled_acquisition = v4_relabeled_frontier.acquisition.unwrap();
+    assert!(v4_relabeled_acquisition.terminal_value_supported);
+    assert!(v4_relabeled_acquisition.best_mean_q.is_some());
+    assert!(v4_relabeled_acquisition.maximum_ensemble_variance.is_some());
+
     let mut frontier_v2 = TacticQCampaign::resume(uninterrupted.checkpoint().unwrap()).unwrap();
     frontier_v2.value_treatment = TacticValueTreatment::GoalRelabeledFittedQKnnV2;
     frontier_v2.campaign_learner_authority_managed = false;

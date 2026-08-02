@@ -156,8 +156,17 @@ authenticated terminal in 124 ticks or less.
   preserving V2 as a control. Synthetic campaign tests prove that only V3
   publishes the action-conditioned uncertainty needed to distinguish this
   estimate from V2's state-only value and that it causally precedes coverage.
-  A matched native V2/V3/control treatment is still required before claiming
-  improved terminal outcomes.
+  Inspection then found a second representation defect: demonstration chunks
+  and live parameterized tactics can encode comparable controller programs
+  under different broad option-type labels, while V3 refuses to score any
+  action class absent from terminal replay. The explicit
+  `goal_relabeled_universal_frontier_double_q` V4 treatment uses one shared
+  Double-Q action head while retaining the full controller descriptor in its
+  continuous regression features. Model and campaign tests prove that V3
+  remains unsupported across an unseen label while V4 transfers the same
+  terminal evidence; V2 and V3 remain unchanged controls. A matched native
+  V2/V3/V4/control treatment is still required before claiming improved
+  terminal outcomes.
 - [ ] Learn from successful and unsuccessful trajectories using sparse terminal
   value, authenticated tick cost, and generic state deltas.
 - [ ] Support online collection, off-policy replay, prioritized reuse, temporal
