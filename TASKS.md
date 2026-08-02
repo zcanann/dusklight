@@ -53,7 +53,7 @@ detailed history in commits and sealed campaign artifacts.
 
 ### 1. Optimize selected zero-shot terminals
 
-- [ ] Improve the retained 191-tick zero-shot route to 124 ticks or less using
+- [ ] Improve the retained 190-tick zero-shot route to 124 ticks or less using
   generic optimization. The automatic selector first converted the 231-tick
   archive winner into a minimized, twice-cold-replayed refinement incumbent.
   A bounded two-worker campaign against that promoted parent admitted 448
@@ -82,7 +82,11 @@ detailed history in commits and sealed campaign artifacts.
   primary committed-load attempt missed, and selection correctly excluded it.
   The 213-tick intermediate changed only 32 stick-X frames and retained the
   same three roll presses, so these gains remain local residual progress rather
-  than learned efficient movement; the route is still far from competitive.
+  than learned efficient movement. A later graph-scheduler correction exposed
+  terminal alternatives across the machine-incumbent route and promoted a
+  190-tick selected result. Two fresh process boots reproduced its identical
+  controller tape, terminal boundary fingerprint, and 190-tick first hit. The
+  route is still far from competitive.
 
 Exit: each strict zero-shot improvement is automatically converted into a
 selected, independently replayable route, and the retained route reaches the
@@ -132,8 +136,18 @@ authenticated terminal in 124 ticks or less.
   demonstration. Learned produced 54 useful decisions versus 50 frozen and 40
   random, but every arm retained only the inherited 191-tick terminal. This is
   evidence that updates affect acquisition, not that they improve terminal
-  outcomes; do not extend this treatment without changing the learning or
-  selection method.
+  outcomes. Their traces then exposed a scheduler defect common to every arm:
+  `branch_every=4` and the four-way acquisition cycle were both indexed by the
+  decision number, so every periodic graph branch landed on rank zero and all
+  ranked exploration was starved. Graph acquisition now advances by branch
+  episode, and assisted frontier coverage is scheduled directly rather than
+  being throttled by the ordinary branch cadence. In the corrected matched
+  arms, learned, frozen, and random all promoted 190 ticks. Random reached it
+  at decision 14, frozen at 34, and learned at 57; learned consumed 11,808
+  native ticks and 457.3 seconds versus 10,618/250.9 frozen and 11,209/267.6
+  random. The scheduler repair improves search, but online learning still
+  fails the terminal-outcome comparison. Do not extend this exact treatment
+  without changing the learning or selection method.
 - [ ] Learn from successful and unsuccessful trajectories using sparse terminal
   value, authenticated tick cost, and generic state deltas.
 - [ ] Support online collection, off-policy replay, prioritized reuse, temporal
@@ -219,7 +233,11 @@ do not golf isolated subphases without campaign evidence.
   a sample count sufficient to adopt a policy, but online fitting adds roughly
   137 seconds without improving the terminal. Matched worker-scaling evidence
   is still required, and model cost should be reduced only alongside a changed
-  treatment capable of improving outcomes.
+  treatment capable of improving outcomes. After repairing graph-acquisition
+  starvation, the denser corrected schedule took 457.3 seconds learned versus
+  250.9 frozen and 267.6 random. All three produced the same 190-tick best, so
+  the learner's additional 152.9 seconds of model work remains pure overhead
+  at this quality level.
 - [ ] Make completed-seed resume and finalization read-only and cheap: do not
   launch a native fleet or repeat full replay fitting, graph projection, and
   macro evaluation merely to validate and summarize already sealed evidence.
