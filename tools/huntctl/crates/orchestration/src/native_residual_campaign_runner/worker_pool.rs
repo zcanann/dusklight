@@ -258,6 +258,9 @@ impl<'a> NativeResidualExactReplayPool<'a> {
                 "native exact replay candidate IDs are invalid or duplicated",
             ));
         }
+        if cold_process_per_repetition {
+            self.replace_with_fresh_worker_pool()?;
+        }
         let lane_count = self.pool.lanes.len();
         if lane_count == 0 {
             return Err(native_message("native exact replay has no worker lanes"));
@@ -350,13 +353,7 @@ impl<'a> NativeResidualExactReplayPool<'a> {
                 }
             }
             if cold_process_per_repetition && repetition < repetitions {
-                self.pool.shutdown()?;
-                self.pool = WorkerPool::new(
-                    self.root,
-                    self.campaign,
-                    self.config.optimization,
-                    self.config.execution,
-                )?;
+                self.replace_with_fresh_worker_pool()?;
             }
         }
         self.round = self
@@ -372,6 +369,17 @@ impl<'a> NativeResidualExactReplayPool<'a> {
             ));
         }
         Ok(attempts)
+    }
+
+    fn replace_with_fresh_worker_pool(&mut self) -> Result<(), NativeResidualCampaignRunnerError> {
+        self.pool.shutdown()?;
+        self.pool = WorkerPool::new(
+            self.root,
+            self.campaign,
+            self.config.optimization,
+            self.config.execution,
+        )?;
+        Ok(())
     }
 }
 
