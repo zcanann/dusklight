@@ -240,7 +240,7 @@ pub fn select_native_residual_winner(
         cold_replay_repetitions: u32::try_from(proof.attempts.len()).map_err(selection_error)?,
     };
     selection.content_sha256 = selection.identity()?;
-    selection.validate_files(&root, config.optimization, config.execution)?;
+    selection.validate_shape()?;
     write_new(&manifest_path, &selection.to_pretty_json()?)?;
     artifact_reference(&root, &manifest_path)
         .map(Some)

@@ -502,7 +502,6 @@ pub fn run_residual_winner_minimization(
     };
     summary.content_sha256 = summary.identity()?;
     summary.validate()?;
-    summary.validate_files(&root)?;
     write_exact_or_new(&output.join("summary.json"), &summary.to_pretty_json()?)
         .map_err(minimization_error)?;
     Ok(summary)

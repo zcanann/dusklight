@@ -558,6 +558,59 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
         println!("{}", serde_json::to_string_pretty(&proof)?);
         return Ok(());
     }
+    if args.first().map(String::as_str) == Some("promote-residual-winner") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let request_artifact = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--request")?,
+            "residual winner source request",
+        )?;
+        let execution_artifact = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--execution")?,
+            "residual winner source execution",
+        )?;
+        let selection_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--selection")?,
+            "residual winner selection",
+        )?;
+        let output = repository_build_output(
+            &repository_root,
+            &required_path(command_args, "--output")?,
+            "promoted residual request",
+        )?;
+        refuse_existing_output(&output, "promoted residual request")?;
+        let optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(repository_root.join(&request_artifact.path))?)?;
+        let execution: huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding =
+            serde_json::from_slice(&fs::read(repository_root.join(&execution_artifact.path))?)?;
+        let selection: huntctl::search_evaluator::native_residual_winner_selection::NativeResidualWinnerSelection =
+            serde_json::from_slice(&fs::read(selection_path)?)?;
+        if selection.source_request != request_artifact
+            || selection.source_execution != execution_artifact
+        {
+            return Err(
+                "residual winner selection differs from the supplied source request or execution"
+                    .into(),
+            );
+        }
+        let promoted_id = option(command_args, "--id").ok_or("missing required --id ID")?;
+        let promoted = huntctl::search_evaluator::native_residual_winner_promotion::promote_native_residual_winner(
+            &huntctl::search_evaluator::native_residual_winner_promotion::NativeResidualWinnerPromotionConfig {
+                repository_root: &repository_root,
+                optimization: &optimization,
+                execution: &execution,
+                selection: &selection,
+                promoted_id: &promoted_id,
+                output_request: &output,
+            },
+        )?;
+        write_new_file(&output, promoted.to_pretty_json()?)?;
+        println!("{}", serde_json::to_string_pretty(&promoted)?);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("minimize-residual-winner") {
         let command_args = &args[1..];
         let repository_root = repository_root(command_args)?.canonicalize()?;

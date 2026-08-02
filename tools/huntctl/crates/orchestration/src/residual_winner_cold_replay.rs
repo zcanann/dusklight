@@ -123,12 +123,16 @@ pub fn run_residual_winner_cold_replay(
             .join(RESIDUAL_WINNER_COLD_REPLAY_PROOF_FILE),
         &proof.to_pretty_json()?,
     )?;
-    proof.validate_files(
-        &root,
-        config.optimization,
-        config.execution,
+    validate_native_tape_cold_replay_artifacts(
         config.output_root,
-    )?;
+        config.optimization,
+        &tape,
+        &tape_bytes,
+        proof.first_hit_tick,
+        &proof.controller_tape,
+        &proof.attempts,
+    )
+    .map_err(cold_error)?;
     Ok(proof)
 }
 
