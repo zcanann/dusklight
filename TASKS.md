@@ -53,14 +53,20 @@ detailed history in commits and sealed campaign artifacts.
 
 ### 1. Optimize selected zero-shot terminals
 
-- [ ] Run residual optimization from each selected zero-shot terminal handoff,
-  minimize the incumbent, and cold-replay every improvement. The portable
-  terminal authority, replay-backed handoff, and derived request/execution
-  validation are complete; the remaining work is actual tick reduction.
+- [ ] Improve the retained 231-tick zero-shot route to 124 ticks or less using
+  generic optimization. The first bounded two-worker residual campaign reduced
+  its 239-tick handoff to 231; deterministic minimization reduced input
+  complexity from 194 to 192, and two separately backed exact native replays
+  reproduced the load-zone terminal at tick 231. This proves the handoff,
+  reduction, and proof path works, but is not competitive route quality.
+- [ ] Whenever optimization admits a strict incumbent improvement, trigger
+  bounded minimization, splice the minimized suffix into the complete route,
+  and cold-replay that route twice from the named root. A lucky discovery, an
+  operator-run reducer, or checkpoint-local suffix proof is not a scored route.
 
-Exit: a zero-shot discovery is automatically converted into a selected,
-cold-replayable route, and subsequent candidates can be compared by authenticated
-terminal tick cost.
+Exit: each strict zero-shot improvement is automatically converted into a
+selected, independently replayable route, and the retained route reaches the
+authenticated terminal in 124 ticks or less.
 
 ### 2. Prove that accumulated experience improves future behavior
 
