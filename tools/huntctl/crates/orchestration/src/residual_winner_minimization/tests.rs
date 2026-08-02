@@ -393,17 +393,18 @@ fn summary_reproduces_every_accepted_reduction_and_rejects_resealed_drift() {
                 exact_replays: vec![rejected_attempt],
             },
         ],
-        final_replay_process_mode: "cold_process_per_repetition".into(),
+        final_replay_process_mode: ResidualFinalReplayProcessMode::ColdWorkerPerRepetition,
         final_exact_replays,
         retention: archive.snapshot().unwrap(),
     };
     summary.content_sha256 = summary.identity().unwrap();
     summary.validate().unwrap();
 
-    let mut process_mode_drift = summary.clone();
-    process_mode_drift.final_replay_process_mode = "persistent_process".into();
-    process_mode_drift.content_sha256 = process_mode_drift.identity().unwrap();
-    assert!(process_mode_drift.validate().is_err());
+    let mut process_mode_drift = serde_json::to_value(&summary).unwrap();
+    process_mode_drift["final_replay_process_mode"] = serde_json::json!("persistent_process");
+    assert!(
+        serde_json::from_value::<ResidualWinnerMinimizationSummary>(process_mode_drift).is_err()
+    );
 
     let mut final_proof_drift = summary.clone();
     final_proof_drift.final_exact_replays[1].first_hit_tick = Some(7);

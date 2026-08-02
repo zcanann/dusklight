@@ -85,6 +85,12 @@ pub enum ResidualWinnerMinimizationStatus {
     CandidateBudgetExhausted,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResidualFinalReplayProcessMode {
+    ColdWorkerPerRepetition,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResidualWinnerMinimizationSummary {
@@ -115,7 +121,7 @@ pub struct ResidualWinnerMinimizationSummary {
     pub minimized_tape: Option<ArtifactReference>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evaluations: Vec<ResidualReductionEvaluation>,
-    pub final_replay_process_mode: String,
+    pub final_replay_process_mode: ResidualFinalReplayProcessMode,
     pub final_exact_replays: Vec<NativeResidualAttempt>,
     pub retention: ResidualRetentionSnapshot,
 }
@@ -490,7 +496,7 @@ pub fn run_residual_winner_minimization(
         minimized_candidate,
         minimized_tape,
         evaluations: evaluation_records,
-        final_replay_process_mode: "cold_process_per_repetition".into(),
+        final_replay_process_mode: ResidualFinalReplayProcessMode::ColdWorkerPerRepetition,
         final_exact_replays,
         retention: archive.snapshot().map_err(minimization_error)?,
     };
@@ -890,7 +896,8 @@ impl ResidualWinnerMinimizationSummary {
             || self.evaluated_candidates != self.evaluations.len() as u64
             || self.accepted_reduction_count > self.evaluated_candidates
             || self.accepted_reduction_count != accepted_count
-            || self.final_replay_process_mode != "cold_process_per_repetition"
+            || self.final_replay_process_mode
+                != ResidualFinalReplayProcessMode::ColdWorkerPerRepetition
             || replay_ticks != Some(self.charged_simulated_ticks)
             || !valid_exact_replay_consensus(
                 &self.final_exact_replays,
@@ -1004,7 +1011,7 @@ impl ResidualWinnerMinimizationSummary {
     fn identity(&self) -> Result<Digest, ResidualWinnerMinimizationError> {
         let mut canonical = self.clone();
         canonical.content_sha256 = Digest::ZERO;
-        canonical_digest(b"dusklight.residual-winner-minimization/v2\0", &canonical)
+        canonical_digest(b"dusklight.residual-winner-minimization/v3\0", &canonical)
     }
 }
 
