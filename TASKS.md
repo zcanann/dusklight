@@ -53,14 +53,15 @@ detailed history in commits and sealed campaign artifacts.
 
 ### 1. Optimize selected zero-shot terminals
 
-- [ ] Improve the retained 231-tick zero-shot route to 124 ticks or less using
-  generic optimization. The first bounded two-worker residual campaign reduced
-  its 239-tick handoff to 231. The automatic selector chose the archive-ranked
-  winner, minimized it, spliced it onto the authenticated 506-frame prefix, and
-  reproduced the load-zone terminal from two fresh process boots at full-route
-  frame 737 with identical boundary evidence. The selected suffix is now a
-  validated 231-tick refinement incumbent, not an operator-picked discovery,
-  but its route quality remains far from competitive.
+- [ ] Improve the retained 213-tick zero-shot route to 124 ticks or less using
+  generic optimization. The automatic selector first converted the 231-tick
+  archive winner into a minimized, twice-cold-replayed refinement incumbent.
+  A bounded two-worker campaign against that promoted parent admitted 448
+  candidates before its simulated-tick budget, improved 231 -> 226 -> 213, and
+  automatically minimized, spliced, and reproduced the 213-tick winner from
+  two fresh process boots with identical terminal boundary evidence. This
+  proves selected-winner composition improves the parent instead of repeatedly
+  editing an obsolete tape, but the route remains far from competitive.
 
 Exit: each strict zero-shot improvement is automatically converted into a
 selected, independently replayable route, and the retained route reaches the
