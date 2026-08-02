@@ -106,11 +106,11 @@ use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticRouteDiagnosisReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
     NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
     NativeTacticScratchDiscoveryReport, NativeTacticScratchEvidenceBundle,
-    NativeTacticThroughputCurveConfig, NativeTacticThroughputCurveRun,
-    NativeTacticThroughputEvidenceBundle, NativeTacticThroughputTreatmentBundle,
-    audit_native_tactic_fault_recovery, build_native_tactic_optimization_handoff,
-    read_and_validate_native_tactic_cold_replay, run_native_tactic_cold_replay,
-    run_native_tactic_restore_locality, run_native_tactic_route,
+    NativeTacticTerminalEvidenceBundle, NativeTacticThroughputCurveConfig,
+    NativeTacticThroughputCurveRun, NativeTacticThroughputEvidenceBundle,
+    NativeTacticThroughputTreatmentBundle, audit_native_tactic_fault_recovery,
+    build_native_tactic_optimization_handoff, read_and_validate_native_tactic_cold_replay,
+    run_native_tactic_cold_replay, run_native_tactic_restore_locality, run_native_tactic_route,
     run_native_tactic_throughput_curve_controlled, tactic_macro_registry_identity,
 };
 use huntctl::search_evaluator::native_tactic_worker::NativeGenericExecutionStrategy;
@@ -431,6 +431,8 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "validate-tactic-campaign-summary"
             | "prove-tactic-route-cold-replay"
             | "validate-tactic-route-cold-replay"
+            | "seal-tactic-terminal-bundle"
+            | "validate-tactic-terminal-bundle"
             | "seal-tactic-cold-replay-bundle"
             | "validate-tactic-cold-replay-bundle"
             | "promote-tactic-terminal-for-optimization"
@@ -525,6 +527,8 @@ mod tests {
             "validate-tactic-scratch-bundle",
             "prove-tactic-route-cold-replay",
             "validate-tactic-route-cold-replay",
+            "seal-tactic-terminal-bundle",
+            "validate-tactic-terminal-bundle",
             "seal-tactic-cold-replay-bundle",
             "validate-tactic-cold-replay-bundle",
             "promote-tactic-terminal-for-optimization",

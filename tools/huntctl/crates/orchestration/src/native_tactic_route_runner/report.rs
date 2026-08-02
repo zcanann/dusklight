@@ -929,6 +929,10 @@ pub(super) struct CompletedNativeTacticSeed {
     /// Work performed by this coordinator invocation only; unlike the durable
     /// seed wall in `result`, this is zero when a completed seed is reused.
     pub(super) invocation_wall_micros: u64,
+    /// Learner-update work already included in this invocation's durable seed
+    /// timing. Campaign timing uses this to avoid comparing cross-restart seed
+    /// totals with process-local learner-authority metrics.
+    pub(super) invocation_model_update_micros: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

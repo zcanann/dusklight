@@ -408,7 +408,7 @@ impl NativeTacticScratchEvidenceBundle {
     }
 }
 
-fn bundle_seed(
+pub(super) fn bundle_seed(
     store: &ContentStore,
     repository_root: &Path,
     source_boundary_index: u64,
@@ -537,7 +537,7 @@ fn bundle_seed(
     })
 }
 
-fn validate_seed(
+pub(super) fn validate_seed(
     bundle_root: &Path,
     source_boundary_index: u64,
     route: &NativeTacticRouteReport,
@@ -655,7 +655,7 @@ fn terminal_tape_first_hit_tick(tape: &InputTape, source_boundary_index: u64) ->
         .and_then(|frames| route_frames_first_hit_tick(frames, source_boundary_index))
 }
 
-fn bundle_authority(
+pub(super) fn bundle_authority(
     store: &ContentStore,
     repository_root: &Path,
     role: &str,
@@ -711,7 +711,7 @@ fn validate_authorities(
     Ok(())
 }
 
-fn execution_identity(
+pub(super) fn execution_identity(
     execution: &NativeResidualExecutionBinding,
 ) -> NativeTacticScratchExecutionIdentity {
     NativeTacticScratchExecutionIdentity {
@@ -730,7 +730,7 @@ fn execution_identity(
     }
 }
 
-fn bundle_file(
+pub(super) fn bundle_file(
     store: &ContentStore,
     path: &Path,
     kind: ContentKind,
@@ -742,7 +742,7 @@ fn bundle_file(
     })
 }
 
-fn bundle_bytes(
+pub(super) fn bundle_bytes(
     store: &ContentStore,
     bytes: &[u8],
     kind: ContentKind,
@@ -781,7 +781,7 @@ fn canonical_json_sha256<T: Serialize>(value: &T) -> Result<Digest, NativeTactic
     ))
 }
 
-fn confined_source(
+pub(super) fn confined_source(
     repository_root: &Path,
     declared: &Path,
 ) -> Result<PathBuf, NativeTacticRouteRunError> {

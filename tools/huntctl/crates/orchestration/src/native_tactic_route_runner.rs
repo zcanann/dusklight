@@ -240,6 +240,7 @@ pub use cold_replay::{
 mod cold_replay_bundle;
 pub use cold_replay_bundle::{
     NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V1,
+    NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V2,
     NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_MANIFEST, NativeTacticColdReplayAuthority,
     NativeTacticColdReplayEvidenceBundle,
 };
@@ -274,6 +275,11 @@ pub use scratch_evidence_bundle::{
     NativeTacticScratchAuthorityArtifact, NativeTacticScratchBundleArtifact,
     NativeTacticScratchEvidenceBundle, NativeTacticScratchExecutionIdentity,
     NativeTacticScratchSeedEvidence,
+};
+mod terminal_evidence_bundle;
+pub use terminal_evidence_bundle::{
+    NATIVE_TACTIC_TERMINAL_EVIDENCE_BUNDLE_SCHEMA_V1, NATIVE_TACTIC_TERMINAL_EVIDENCE_MANIFEST,
+    NativeTacticTerminalEvidenceBundle,
 };
 mod scratch_campaign_audit;
 pub use scratch_campaign_audit::{
@@ -676,6 +682,20 @@ fn run_native_tactic_route_with_optional_fleet(
                     .map(|(_, completion)| completion.invocation_wall_micros)
                     .max()
                     .unwrap_or(0);
+                let seed_invocation_model_update_micros = generation_results
+                    .iter()
+                    .try_fold(0_u64, |total, (_, completion)| {
+                        total.checked_add(completion.invocation_model_update_micros)
+                    })
+                    .ok_or_else(|| {
+                        route_message("native tactic invocation model timing overflowed")
+                    })?;
+                campaign_phase_wall.seed_invocation_model_update_micros = campaign_phase_wall
+                    .seed_invocation_model_update_micros
+                    .checked_add(seed_invocation_model_update_micros)
+                    .ok_or_else(|| {
+                        route_message("native tactic invocation model timing overflowed")
+                    })?;
                 campaign_phase_wall.generation_coordination_micros = campaign_phase_wall
                     .generation_coordination_micros
                     .checked_add(
@@ -852,6 +872,8 @@ fn run_native_tactic_route_with_optional_fleet(
             macro_validation_execution_micros: tactic_macro_discovery.validation_wall_micros,
             learner_update_micros: learner_metrics.update_micros,
             learner_reconstruction_micros: learner_metrics.reconstruction_micros,
+            seed_invocation_model_update_micros: campaign_phase_wall
+                .seed_invocation_model_update_micros,
             campaign_setup_wall_micros: campaign_phase_wall.campaign_setup_micros,
             generation_coordination_wall_micros: campaign_phase_wall.generation_coordination_micros,
             campaign_finalization_wall_micros,

@@ -15,13 +15,14 @@ use super::{
     NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport, NativeTacticRouteReport,
     NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
     NativeTacticScratchComparisonReport, NativeTacticScratchDiscoveryReport,
-    NativeTacticScratchEvidenceBundle, NativeTacticThroughputCurveConfig,
-    NativeTacticThroughputCurveRun, NativeTacticThroughputEvidenceBundle,
-    NativeTacticThroughputTreatmentBundle, OptimizationRequest, Sha256, TacticFrozenPolicy,
-    TacticProposalPolicy, TacticQCampaign, TacticQFinalResult, TacticQTrainingCorpus,
-    audit_native_tactic_fault_recovery, build_native_tactic_optimization_handoff, cli,
-    command_conservative_q, flag, native_frozen_policy_probe_model, native_tactic_execution_plan,
-    option, prove_generalized_tactic_held_out_value, read_and_validate_native_tactic_cold_replay,
+    NativeTacticScratchEvidenceBundle, NativeTacticTerminalEvidenceBundle,
+    NativeTacticThroughputCurveConfig, NativeTacticThroughputCurveRun,
+    NativeTacticThroughputEvidenceBundle, NativeTacticThroughputTreatmentBundle,
+    OptimizationRequest, Sha256, TacticFrozenPolicy, TacticProposalPolicy, TacticQCampaign,
+    TacticQFinalResult, TacticQTrainingCorpus, audit_native_tactic_fault_recovery,
+    build_native_tactic_optimization_handoff, cli, command_conservative_q, flag,
+    native_frozen_policy_probe_model, native_tactic_execution_plan, option,
+    prove_generalized_tactic_held_out_value, read_and_validate_native_tactic_cold_replay,
     realize_native_frozen_policy_tape, repeated_option, required_path,
     run_native_tactic_cold_replay, run_native_tactic_policy, run_native_tactic_restore_locality,
     run_native_tactic_route, run_native_tactic_throughput_curve_controlled,
@@ -841,13 +842,66 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&proof)?);
             Ok(())
         }
+        Some("seal-tactic-terminal-bundle") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let request_path = required_path(learn_args, "--request")?;
+            let execution_path = required_path(learn_args, "--execution")?;
+            let route_report_path = required_path(learn_args, "--report")?;
+            let request: OptimizationRequest = serde_json::from_slice(&fs::read(&request_path)?)?;
+            let execution: NativeResidualExecutionBinding =
+                serde_json::from_slice(&fs::read(&execution_path)?)?;
+            let route: NativeTacticRouteReport =
+                serde_json::from_slice(&fs::read(&route_report_path)?)?;
+            let seed = option(learn_args, "--seed")
+                .ok_or("seal-tactic-terminal-bundle requires --seed")?
+                .parse::<u64>()?;
+            let bundle = NativeTacticTerminalEvidenceBundle::build(
+                &required_path(learn_args, "--bundle")?,
+                &repository_root,
+                &request_path,
+                &execution_path,
+                &route_report_path,
+                &request,
+                &execution,
+                &route,
+                seed,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
+            Ok(())
+        }
+        Some("validate-tactic-terminal-bundle") => {
+            let bundle = NativeTacticTerminalEvidenceBundle::read_and_validate(&required_path(
+                &args[1..],
+                "--bundle",
+            )?)?;
+            println!("{}", serde_json::to_string_pretty(&bundle)?);
+            Ok(())
+        }
         Some("seal-tactic-cold-replay-bundle") => {
             let learn_args = &args[1..];
-            let bundle = NativeTacticColdReplayEvidenceBundle::build(
-                &required_path(learn_args, "--bundle")?,
-                &required_path(learn_args, "--scratch-bundle")?,
-                &required_path(learn_args, "--proof-root")?,
-            )?;
+            let campaign_bundle = option(learn_args, "--campaign-bundle");
+            let scratch_bundle = option(learn_args, "--scratch-bundle");
+            if campaign_bundle.is_some() == scratch_bundle.is_some() {
+                return Err("supply exactly one of --campaign-bundle or --scratch-bundle".into());
+            }
+            let bundle = if let Some(campaign_bundle) = campaign_bundle {
+                NativeTacticColdReplayEvidenceBundle::build_terminal(
+                    &required_path(learn_args, "--bundle")?,
+                    Path::new(&campaign_bundle),
+                    &required_path(learn_args, "--proof-root")?,
+                )?
+            } else {
+                NativeTacticColdReplayEvidenceBundle::build(
+                    &required_path(learn_args, "--bundle")?,
+                    Path::new(scratch_bundle.as_deref().expect("checked above")),
+                    &required_path(learn_args, "--proof-root")?,
+                )?
+            };
             println!("{}", serde_json::to_string_pretty(&bundle)?);
             Ok(())
         }

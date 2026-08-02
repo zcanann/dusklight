@@ -168,6 +168,7 @@ pub(super) fn run_seed(
     let setup_top_baseline = ExclusiveTopTimingSnapshot::capture(&timing);
     let mut native_restore_accounting = performance.native_restore_accounting;
     let prior_wall_micros = timing.wall_micros;
+    let prior_model_update_micros = timing.model_update_micros;
     let traced_useful_decisions = trace
         .iter()
         .filter(|decision| decision_trace_is_useful(decision))
@@ -1652,6 +1653,10 @@ pub(super) fn run_seed(
             .any(|proposal| proposal.terminal)
     });
     let completed_invocation_micros = elapsed_micros(invocation_started.elapsed());
+    let invocation_model_update_micros = timing
+        .model_update_micros
+        .checked_sub(prior_model_update_micros)
+        .ok_or_else(|| route_message("native tactic invocation model timing regressed"))?;
     let finalization_wall_micros = completed_invocation_micros
         .checked_sub(finalization_started_micros)
         .ok_or_else(|| route_message("native tactic finalization clock regressed"))?;
@@ -1748,5 +1753,6 @@ pub(super) fn run_seed(
         },
         generated_training,
         invocation_wall_micros: completed_invocation_micros,
+        invocation_model_update_micros,
     })
 }

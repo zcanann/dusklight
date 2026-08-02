@@ -101,6 +101,7 @@ pub(super) fn run_seed_coordinator(
             result,
             generated_training,
             invocation_wall_micros: 0,
+            invocation_model_update_micros: 0,
         })
     } else {
         let lane_pool = pool.for_lane(

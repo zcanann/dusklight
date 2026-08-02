@@ -3,6 +3,7 @@
 use super::cold_replay::{read_proof_artifact, validate_native_tactic_cold_replay_artifacts};
 use super::scratch_discovery::route_report_sha256;
 use super::scratch_evidence_bundle::{blob_path, read_blob, read_json_blob};
+use super::terminal_evidence_bundle::NativeTacticTerminalEvidenceBundle;
 use super::*;
 use crate::native_residual_campaign::NativeResidualExecutionBinding;
 use crate::tactic_q_campaign::TacticQFinalResult;
@@ -12,6 +13,8 @@ use std::path::Component;
 
 pub const NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V1: &str =
     "dusklight-native-tactic-cold-replay-evidence-bundle/v1";
+pub const NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V2: &str =
+    "dusklight-native-tactic-cold-replay-evidence-bundle/v2";
 pub const NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_MANIFEST: &str = "manifest.json";
 const CAMPAIGN_DIRECTORY: &str = "campaign";
 const COLD_REPLAY_DIRECTORY: &str = "cold-replay";
@@ -22,7 +25,10 @@ const MAXIMUM_BUNDLE_TREE_ENTRIES: usize = 100_000;
 pub struct NativeTacticColdReplayEvidenceBundle {
     pub schema: String,
     pub content_sha256: Digest,
-    pub scratch_bundle_sha256: Digest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scratch_bundle_sha256: Option<Digest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_bundle_sha256: Option<Digest>,
     pub cold_replay_proof_sha256: Digest,
     pub seed: u64,
     pub state_graph_sha256: Digest,
@@ -125,7 +131,65 @@ impl NativeTacticColdReplayEvidenceBundle {
         let mut bundle = Self {
             schema: NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V1.into(),
             content_sha256: Digest::ZERO,
-            scratch_bundle_sha256: scratch.content_sha256,
+            scratch_bundle_sha256: Some(scratch.content_sha256),
+            terminal_bundle_sha256: None,
+            cold_replay_proof_sha256: proof.content_sha256,
+            seed: proof.seed,
+            state_graph_sha256: proof.state_graph_sha256,
+            terminal_result_sha256: proof.terminal_result_sha256,
+            controller_tape_sha256: proof.controller_tape.sha256,
+            first_hit_tick: proof.first_hit_tick,
+            repetitions: u32::try_from(proof.attempts.len()).map_err(route_error)?,
+            passed: true,
+        };
+        bundle.content_sha256 = bundle.identity()?;
+        write_new(
+            &output.join(NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_MANIFEST),
+            &bundle.to_pretty_json()?,
+        )?;
+        let retained = Self::read_and_validate(&output)?;
+        if retained != bundle {
+            return Err(route_message(
+                "retained cold replay evidence differs after publication",
+            ));
+        }
+        guard.commit();
+        Ok(bundle)
+    }
+
+    pub fn build_terminal(
+        bundle_root: &Path,
+        terminal_bundle_root: &Path,
+        cold_replay_root: &Path,
+    ) -> Result<Self, NativeTacticRouteRunError> {
+        if bundle_root.exists() {
+            return Err(route_message(
+                "native tactic cold replay evidence bundle output already exists",
+            ));
+        }
+        let terminal_bundle_root = terminal_bundle_root.canonicalize().map_err(route_error)?;
+        let cold_replay_root = cold_replay_root.canonicalize().map_err(route_error)?;
+        let output = resolved_new_directory(bundle_root)?;
+        if output.starts_with(&terminal_bundle_root) || output.starts_with(&cold_replay_root) {
+            return Err(route_message(
+                "cold replay evidence output cannot be nested inside an input bundle",
+            ));
+        }
+        let (terminal, proof, _, _) =
+            validate_terminal_pair(&terminal_bundle_root, &cold_replay_root)?;
+        fs::create_dir(&output).map_err(route_error)?;
+        let mut guard = ColdReplayBundleBuildGuard::new(output.clone());
+        copy_physical_tree(&terminal_bundle_root, &output.join(CAMPAIGN_DIRECTORY))?;
+        copy_cold_replay_evidence(
+            &cold_replay_root,
+            &output.join(COLD_REPLAY_DIRECTORY),
+            &proof,
+        )?;
+        let mut bundle = Self {
+            schema: NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V2.into(),
+            content_sha256: Digest::ZERO,
+            scratch_bundle_sha256: None,
+            terminal_bundle_sha256: Some(terminal.content_sha256),
             cold_replay_proof_sha256: proof.content_sha256,
             seed: proof.seed,
             state_graph_sha256: proof.state_graph_sha256,
@@ -160,11 +224,22 @@ impl NativeTacticColdReplayEvidenceBundle {
         let bundle: Self =
             read_bounded_json(&bundle_root.join(NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_MANIFEST))?;
         bundle.validate_shape()?;
-        let (scratch, proof, source_optimization, source_execution) = validate_pair(
-            &bundle_root.join(CAMPAIGN_DIRECTORY),
-            &bundle_root.join(COLD_REPLAY_DIRECTORY),
-        )?;
-        if bundle.scratch_bundle_sha256 != scratch.content_sha256
+        let campaign_root = bundle_root.join(CAMPAIGN_DIRECTORY);
+        let replay_root = bundle_root.join(COLD_REPLAY_DIRECTORY);
+        let (campaign_sha256, proof, source_optimization, source_execution) = if bundle.schema
+            == NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V1
+        {
+            let (scratch, proof, request, execution) = validate_pair(&campaign_root, &replay_root)?;
+            (scratch.content_sha256, proof, request, execution)
+        } else {
+            let (terminal, proof, request, execution) =
+                validate_terminal_pair(&campaign_root, &replay_root)?;
+            (terminal.content_sha256, proof, request, execution)
+        };
+        if bundle
+            .scratch_bundle_sha256
+            .or(bundle.terminal_bundle_sha256)
+            != Some(campaign_sha256)
             || bundle.cold_replay_proof_sha256 != proof.content_sha256
             || bundle.seed != proof.seed
             || bundle.state_graph_sha256 != proof.state_graph_sha256
@@ -194,10 +269,22 @@ impl NativeTacticColdReplayEvidenceBundle {
     }
 
     fn validate_shape(&self) -> Result<(), NativeTacticRouteRunError> {
-        if self.schema != NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V1
+        let campaign_authority_valid = match self.schema.as_str() {
+            NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V1 => {
+                self.scratch_bundle_sha256.is_some() && self.terminal_bundle_sha256.is_none()
+            }
+            NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V2 => {
+                self.scratch_bundle_sha256.is_none() && self.terminal_bundle_sha256.is_some()
+            }
+            _ => false,
+        };
+        if !campaign_authority_valid
             || self.content_sha256 == Digest::ZERO
             || self.content_sha256 != self.identity()?
-            || self.scratch_bundle_sha256 == Digest::ZERO
+            || self
+                .scratch_bundle_sha256
+                .or(self.terminal_bundle_sha256)
+                .is_none_or(|digest| digest == Digest::ZERO)
             || self.cold_replay_proof_sha256 == Digest::ZERO
             || self.state_graph_sha256 == Digest::ZERO
             || self.terminal_result_sha256 == Digest::ZERO
@@ -217,7 +304,15 @@ impl NativeTacticColdReplayEvidenceBundle {
         canonical.content_sha256 = Digest::ZERO;
         let bytes = serde_json::to_vec(&canonical).map_err(route_error)?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-tactic-cold-replay-evidence-bundle/v1\0");
+        hasher.update(match self.schema.as_str() {
+            NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V1 => {
+                b"dusklight.native-tactic-cold-replay-evidence-bundle/v1\0".as_slice()
+            }
+            NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V2 => {
+                b"dusklight.native-tactic-cold-replay-evidence-bundle/v2\0".as_slice()
+            }
+            _ => return Err(route_message("unknown cold replay bundle schema")),
+        });
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -326,6 +421,105 @@ fn validate_pair(
         ));
     }
     Ok((scratch, proof, request, execution))
+}
+
+fn validate_terminal_pair(
+    terminal_bundle_root: &Path,
+    cold_replay_root: &Path,
+) -> Result<
+    (
+        NativeTacticTerminalEvidenceBundle,
+        NativeTacticColdReplayProof,
+        OptimizationRequest,
+        NativeResidualExecutionBinding,
+    ),
+    NativeTacticRouteRunError,
+> {
+    let terminal = NativeTacticTerminalEvidenceBundle::read_and_validate(terminal_bundle_root)?;
+    let proof: NativeTacticColdReplayProof =
+        read_bounded_json(&cold_replay_root.join(NATIVE_TACTIC_COLD_REPLAY_PROOF_FILE))?;
+    proof.validate_shape()?;
+    let request: OptimizationRequest =
+        read_json_blob(terminal_bundle_root, &terminal.optimization_request)?;
+    let execution: NativeResidualExecutionBinding =
+        read_json_blob(terminal_bundle_root, &terminal.execution_binding)?;
+    let plan = NativeTacticExecutionPlan::read(&blob_path(
+        terminal_bundle_root,
+        &terminal.execution_plan.blob,
+    ))?;
+    let route: NativeTacticRouteReport =
+        read_json_blob(terminal_bundle_root, &terminal.route_report)?;
+    let reported_seed = route
+        .seeds
+        .iter()
+        .find(|seed| seed.seed == proof.seed)
+        .ok_or_else(|| route_message("cold replay seed is absent from the bundled route report"))?;
+    let tape_artifact = terminal
+        .terminal
+        .best_terminal_tape
+        .as_ref()
+        .ok_or_else(|| route_message("terminal evidence has no bundled terminal tape"))?;
+    let result_artifact = terminal
+        .terminal
+        .best_terminal_result
+        .as_ref()
+        .ok_or_else(|| route_message("terminal evidence has no bundled terminal result"))?;
+    let tape_bytes = read_blob(terminal_bundle_root, tape_artifact)?;
+    let tape = InputTape::decode(&tape_bytes).map_err(route_error)?.tape;
+    let result = TacticQFinalResult::read(&blob_path(terminal_bundle_root, &result_artifact.blob))
+        .map_err(route_error)?;
+    validate_native_tactic_cold_replay_artifacts(
+        cold_replay_root,
+        &proof,
+        &request,
+        &tape,
+        &tape_bytes,
+        proof.first_hit_tick,
+    )?;
+    if proof.optimization_request_sha256 != request.content_sha256
+        || proof.execution_binding_sha256 != execution.content_sha256
+        || proof.execution_plan_sha256 != plan.identity()?
+        || proof.route_report_sha256 != route_report_sha256(&route)?
+        || proof.route_report_sha256 != terminal.route_report.logical_identity_sha256
+        || proof.seed != terminal.terminal.seed
+        || proof.state_graph_sha256 != terminal.terminal.state_graph_sha256
+        || proof.terminal_result_sha256 != result.content_sha256
+        || proof.terminal_result_sha256 != result_artifact.logical_identity_sha256
+        || proof.terminal_state_sha256 != result.terminal_state_sha256
+        || proof.terminal_state_sha256
+            != terminal
+                .terminal
+                .best_terminal_state_sha256
+                .unwrap_or(Digest::ZERO)
+        || proof.objective_sha256 != result.objective_sha256
+        || proof.source_boundary_index != request.route.source_boundary_index
+        || proof.source_boundary_fingerprint != request.route.source_boundary_fingerprint
+        || proof.native_source_boundary_fingerprint
+            != request.route.native_source_boundary_fingerprint
+        || proof.goal != request.terminal_predicate.goal
+        || proof.terminal_program_sha256 != request.terminal_predicate.program_sha256
+        || proof.terminal_definition_sha256 != request.terminal_predicate.definition_sha256
+        || proof.first_hit_tick
+            != terminal
+                .terminal
+                .best_authenticated_tick
+                .unwrap_or(u64::MAX)
+        || proof.first_hit_tick >= request.budgets.exploration_horizon_ticks
+        || proof.first_hit_tick != reported_seed.best_authenticated_tick.unwrap_or(u64::MAX)
+        || proof.controller_tape.sha256 != result.route_tape_sha256
+        || proof.controller_tape.sha256 != tape_artifact.blob.sha256
+        || proof.executable != execution.executable
+        || proof.runtime_dependencies != execution.runtime_dependencies
+        || proof.game_data != execution.game_data
+        || proof.milestone_program != execution.milestone_program
+        || proof.world_context != execution.world_context
+        || proof.card_fixture_manifest != execution.card_fixture_manifest
+    {
+        return Err(route_message(
+            "cold replay proof differs from its self-contained terminal campaign",
+        ));
+    }
+    Ok((terminal, proof, request, execution))
 }
 
 fn resolved_new_directory(path: &Path) -> Result<PathBuf, NativeTacticRouteRunError> {
@@ -469,7 +663,8 @@ mod tests {
         let mut manifest = NativeTacticColdReplayEvidenceBundle {
             schema: NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V1.into(),
             content_sha256: Digest::ZERO,
-            scratch_bundle_sha256: Digest([1; 32]),
+            scratch_bundle_sha256: Some(Digest([1; 32])),
+            terminal_bundle_sha256: None,
             cold_replay_proof_sha256: Digest([2; 32]),
             seed: 155_921,
             state_graph_sha256: Digest([3; 32]),
@@ -503,6 +698,15 @@ mod tests {
         let mut detached = original.clone();
         detached.cold_replay_proof_sha256 = Digest([9; 32]);
         assert_ne!(original.content_sha256, detached.identity().unwrap());
+    }
+
+    #[test]
+    fn selected_terminal_manifest_is_distinct_from_scratch_acceptance() {
+        let mut terminal = manifest();
+        terminal.schema = NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V2.into();
+        terminal.terminal_bundle_sha256 = terminal.scratch_bundle_sha256.take();
+        terminal.content_sha256 = terminal.identity().unwrap();
+        terminal.validate_shape().unwrap();
     }
 
     #[test]
