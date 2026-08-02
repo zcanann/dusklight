@@ -33,14 +33,14 @@ use crate::residual_campaign_runner::{
 };
 use crate::residual_critic_ranking::PreparedResidualCriticRanker;
 use dusklight_automation_contracts::artifact::Digest;
-use dusklight_automation_contracts::tape::InputTape;
+use dusklight_automation_contracts::tape::{InputTape, RawPadState};
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
 use dusklight_search::residual_action::extend_tape_with_released_input;
 use dusklight_search::residual_retention::{
     ResidualGenerationEvaluation, ResidualOutcomeArchive, rank_residual_generation,
 };
-use dusklight_search::search::Candidate;
+use dusklight_search::search::{Candidate, MacroAction};
 use dusklight_search::suffix_batch::{
     NATIVE_SUFFIX_BATCH_SCHEMA, NativeCheckpointValidation, NativeSuffixBatch,
     NativeSuffixCandidate,
@@ -144,7 +144,7 @@ fn native_batch(
                 .map_err(native_error)?;
             Ok(NativeSuffixCandidate {
                 id: wire_candidate_id(&candidate.envelope.id, repetition),
-                actions: imported.actions,
+                actions: project_native_port_one_actions(imported.actions)?,
                 controller_program_hex: None,
             })
         })
@@ -183,7 +183,7 @@ fn exact_replay_batch(
                 Candidate::from_absolute_tape(segment, &candidate.tape).map_err(native_error)?;
             Ok(NativeSuffixCandidate {
                 id: wire_candidate_id(&candidate.id, repetition),
-                actions: imported.actions,
+                actions: project_native_port_one_actions(imported.actions)?,
                 controller_program_hex: None,
             })
         })
@@ -206,6 +206,40 @@ fn exact_replay_batch(
         checkpoint_cache: None,
         candidates: native_candidates,
     })
+}
+
+fn project_native_port_one_actions(
+    mut actions: Vec<MacroAction>,
+) -> Result<Vec<MacroAction>, NativeResidualCampaignRunnerError> {
+    let disconnected = RawPadState {
+        connected: false,
+        error: -1,
+        ..RawPadState::default()
+    };
+    for action in &mut actions {
+        let MacroAction::PadRun {
+            imported_owned_ports,
+            port_one_secondary_pads,
+            ..
+        } = action
+        else {
+            return Err(native_error(
+                "native residual wire projection requires exact PAD runs",
+            ));
+        };
+        if port_one_secondary_pads.is_some_and(|secondary| {
+            secondary
+                .into_iter()
+                .any(|pad| pad != RawPadState::default() && pad != disconnected)
+        }) {
+            return Err(native_error(
+                "native residual wire projection cannot discard active secondary-port input",
+            ));
+        }
+        *imported_owned_ports = None;
+        *port_one_secondary_pads = None;
+    }
+    Ok(actions)
 }
 
 fn wire_candidate_id(candidate_id: &str, repetition: u16) -> String {

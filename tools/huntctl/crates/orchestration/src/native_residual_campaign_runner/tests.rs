@@ -149,6 +149,48 @@ fn native_batch_losslessly_bridges_residual_tapes_at_the_route_checkpoint() {
 }
 
 #[test]
+fn native_wire_projection_discards_only_neutral_secondary_port_envelopes() {
+    let pad = dusklight_search::search::SearchPadState::from(RawPadState {
+        stick_x: -126,
+        stick_y: -14,
+        ..RawPadState::default()
+    });
+    let projected = project_native_port_one_actions(vec![MacroAction::PadRun {
+        pad,
+        frames: 4,
+        imported_owned_ports: Some(15),
+        port_one_secondary_pads: Some([RawPadState::default(); 3]),
+    }])
+    .unwrap();
+
+    assert_eq!(
+        projected,
+        vec![MacroAction::PadRun {
+            pad,
+            frames: 4,
+            imported_owned_ports: None,
+            port_one_secondary_pads: None,
+        }]
+    );
+
+    let mut active_secondary = RawPadState::default();
+    active_secondary.buttons = 1;
+    assert!(
+        project_native_port_one_actions(vec![MacroAction::PadRun {
+            pad,
+            frames: 4,
+            imported_owned_ports: Some(15),
+            port_one_secondary_pads: Some([
+                active_secondary,
+                RawPadState::default(),
+                RawPadState::default(),
+            ]),
+        }])
+        .is_err()
+    );
+}
+
+#[test]
 fn residual_evaluation_charges_and_binds_alternate_terminal_attempts() {
     let root = repository();
     let optimization = optimization(&root);
