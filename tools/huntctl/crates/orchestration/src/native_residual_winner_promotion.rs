@@ -35,10 +35,20 @@ pub fn promote_native_residual_winner(
         .repository_root
         .canonicalize()
         .map_err(promotion_error)?;
-    config
-        .selection
-        .validate_files(&root, config.optimization, config.execution)
-        .map_err(promotion_error)?;
+    config.selection.validate_shape().map_err(promotion_error)?;
+    let source_optimization: OptimizationRequest =
+        read_reference(&root, &config.selection.source_request)?;
+    let source_execution: NativeResidualExecutionBinding =
+        read_reference(&root, &config.selection.source_execution)?;
+    if source_optimization != *config.optimization
+        || source_execution != *config.execution
+        || config.selection.optimization_request_sha256 != config.optimization.content_sha256
+        || config.selection.execution_binding_sha256 != config.execution.content_sha256
+    {
+        return Err(promotion_message(
+            "selected winner differs from its supplied source request or execution",
+        ));
+    }
     let output_relative = canonical_build_output(&root, config.output_request)?;
     if root.join(&output_relative).exists() {
         return Err(promotion_message(
@@ -47,7 +57,13 @@ pub fn promote_native_residual_winner(
     }
     let minimization: ResidualWinnerMinimizationSummary =
         read_reference(&root, &config.selection.minimization_summary)?;
-    if minimization.minimized_first_hit_tick != config.selection.selected_first_hit_tick
+    minimization.validate().map_err(promotion_error)?;
+    if minimization.source_request != config.selection.source_request
+        || minimization.source_execution != config.selection.source_execution
+        || minimization.source_checkpoint != config.selection.source_checkpoint
+        || minimization.source_candidate != config.selection.source_candidate
+        || minimization.discovered_candidate_sha256 != config.selection.discovered_candidate_sha256
+        || minimization.minimized_first_hit_tick != config.selection.selected_first_hit_tick
         || minimization.minimized_tape_sha256 != config.selection.minimized_tape_sha256
     {
         return Err(promotion_message(
@@ -64,9 +80,12 @@ pub fn promote_native_residual_winner(
         ));
     }
     let output_directory = root.join(output_parent);
-    fs::create_dir_all(&output_directory).map_err(promotion_error)?;
     let incumbent_path = output_directory.join("incumbent.tape");
-    write_new(&incumbent_path, &suffix_bytes)?;
+    if incumbent_path.exists() {
+        return Err(promotion_message(
+            "promoted residual incumbent output already exists",
+        ));
+    }
     let minimized_tape = ArtifactReference {
         path: slash_path(&output_parent.join("incumbent.tape"))?,
         sha256: minimization.minimized_tape_sha256,
@@ -98,6 +117,13 @@ pub fn promote_native_residual_winner(
     request.reverse_curriculum = None;
     request.refresh_content_sha256().map_err(promotion_error)?;
     request.validate().map_err(promotion_error)?;
+    fs::create_dir_all(&output_directory).map_err(promotion_error)?;
+    write_new(&incumbent_path, &suffix_bytes)?;
+    if let Err(error) = request.validate_files(&root) {
+        let _ = fs::remove_file(&incumbent_path);
+        let _ = fs::remove_dir(&output_directory);
+        return Err(promotion_error(error));
+    }
     Ok(request)
 }
 

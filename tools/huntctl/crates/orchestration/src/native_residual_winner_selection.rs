@@ -323,7 +323,7 @@ impl NativeResidualWinnerSelection {
         Ok(())
     }
 
-    fn validate_shape(&self) -> Result<(), NativeResidualWinnerSelectionError> {
+    pub(crate) fn validate_shape(&self) -> Result<(), NativeResidualWinnerSelectionError> {
         if self.schema != NATIVE_RESIDUAL_WINNER_SELECTION_SCHEMA_V1
             || self.content_sha256 == Digest::ZERO
             || self.content_sha256 != self.identity()?
