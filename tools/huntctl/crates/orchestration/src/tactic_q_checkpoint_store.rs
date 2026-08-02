@@ -512,12 +512,8 @@ impl TacticQContentStore {
     }
 
     fn read_bytes(&self, reference: StoredContentRef) -> Result<Vec<u8>, TacticQContentStoreError> {
-        let blob = self
-            .store
-            .reference_for_digest(reference.kind, reference.sha256)
-            .map_err(TacticQContentStoreError::Store)?;
         self.store
-            .read_bytes(&blob)
+            .read_bytes_for_digest(reference.kind, reference.sha256)
             .map_err(TacticQContentStoreError::Store)
     }
 }

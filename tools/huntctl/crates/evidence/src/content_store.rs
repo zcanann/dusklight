@@ -240,8 +240,62 @@ impl ContentStore {
     }
 
     pub fn read_bytes(&self, blob: &ContentBlob) -> Result<Vec<u8>, ContentStoreError> {
-        self.verify(blob)?;
-        fs::read(self.root.join(&blob.relative_path)).map_err(ContentStoreError::Io)
+        if blob.schema != CONTENT_BLOB_SCHEMA_V1
+            || blob.media_type != blob.kind.media_type()
+            || blob.relative_path != self.relative_blob_path(blob.sha256)
+        {
+            return Err(ContentStoreError::InvalidReference);
+        }
+        let path = self.root.join(&blob.relative_path);
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return Err(ContentStoreError::InvalidReference);
+        }
+        if metadata.len() != blob.size {
+            return Err(ContentStoreError::SizeMismatch {
+                expected: blob.size,
+                observed: metadata.len(),
+            });
+        }
+        if blob.size > MAX_CONTENT_BLOB_BYTES {
+            return Err(ContentStoreError::TooLarge(blob.size));
+        }
+        let bytes = fs::read(path)?;
+        let observed_size =
+            u64::try_from(bytes.len()).map_err(|_| ContentStoreError::TooLarge(u64::MAX))?;
+        if observed_size != blob.size {
+            return Err(ContentStoreError::SourceChanged {
+                expected: blob.size,
+                observed: observed_size,
+            });
+        }
+        let observed = Digest(Sha256::digest(&bytes).into());
+        if observed != blob.sha256 {
+            return Err(ContentStoreError::HashMismatch {
+                expected: blob.sha256,
+                observed,
+            });
+        }
+        Ok(bytes)
+    }
+
+    /// Reads content addressed only by its kind and digest with one verified
+    /// pass over the stored bytes. This avoids separately hashing a blob while
+    /// constructing a reference and then hashing it again while reading it.
+    pub fn read_bytes_for_digest(
+        &self,
+        kind: ContentKind,
+        digest: Digest,
+    ) -> Result<Vec<u8>, ContentStoreError> {
+        let path = self.blob_path(digest);
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return Err(ContentStoreError::InvalidReference);
+        }
+        if metadata.len() > MAX_CONTENT_BLOB_BYTES {
+            return Err(ContentStoreError::TooLarge(metadata.len()));
+        }
+        self.read_bytes(&self.reference(kind, digest, metadata.len()))
     }
 
     pub fn reference_for_digest(
@@ -608,6 +662,12 @@ mod tests {
         .unwrap();
         let reference = store.put_bytes(b"different", ContentKind::Model).unwrap();
         assert!(store.verify(&reference).is_ok());
+        assert_eq!(
+            store
+                .read_bytes_for_digest(ContentKind::Model, reference.sha256)
+                .unwrap(),
+            b"different"
+        );
         assert!(
             store
                 .verify(&ContentBlob {
@@ -618,6 +678,11 @@ mod tests {
                     schema: CONTENT_BLOB_SCHEMA_V1.into(),
                     relative_path: store.relative_blob_path(Digest(Sha256::digest(bytes).into())),
                 })
+                .is_err()
+        );
+        assert!(
+            store
+                .read_bytes_for_digest(ContentKind::Model, Digest(Sha256::digest(bytes).into()),)
                 .is_err()
         );
         fs::remove_dir_all(root).unwrap();

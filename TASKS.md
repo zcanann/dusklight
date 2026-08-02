@@ -176,11 +176,15 @@ do not golf isolated subphases without campaign evidence.
   material.
   V6 reopen now carries its one fail-closed graph reconstruction proof through
   training projection and checkpoint validation, and journal records are
-  decoded once while walking and rebuilding the chain rather than twice. On
-  the same q231 checkpoint, read/authentication fell from 57.6 to 34.3 seconds
-  (40%); completed-seed
+  decoded once while walking and rebuilding the chain rather than twice. A
+  phase profile of that same q231 checkpoint then attributed 27.5 of 37.3
+  seconds to journal object reads and decoding, 4.2 seconds to graph
+  validation, and 4.9 seconds to final checkpoint validation. Content-addressed
+  reads now hash the bytes they return once instead of verifying each object
+  twice and reading it a third time. On the same checkpoint,
+  read/authentication has fallen from 57.6 to 28.2 seconds (51%); completed-seed
   recovery also derives its corpus from that authenticated payload instead of
-  reopening it and fitting an unused lane-local model. The remaining 34.3
+  reopening it and fitting an unused lane-local model. The remaining 28.2
   seconds, preflight fleet launch, learner reconstruction, and repeated macro
   finalization keep this task open. A sealed campaign resume now returns its
   validated report idempotently, and a crash after publishing both final JSON
