@@ -206,9 +206,23 @@ impl<'a> NativeResidualExactReplayPool<'a> {
         candidates: &[NativeResidualExactReplayCandidate],
     ) -> Result<BTreeMap<String, Vec<NativeResidualAttempt>>, NativeResidualCampaignRunnerError>
     {
+        self.replay_with_repetitions(candidates, self.config.optimization.execution.repetitions)
+    }
+
+    pub(crate) fn replay_with_repetitions(
+        &mut self,
+        candidates: &[NativeResidualExactReplayCandidate],
+        repetitions: u16,
+    ) -> Result<BTreeMap<String, Vec<NativeResidualAttempt>>, NativeResidualCampaignRunnerError>
+    {
         if candidates.is_empty() {
             return Err(native_message(
                 "native exact replay requires at least one candidate",
+            ));
+        }
+        if repetitions == 0 {
+            return Err(native_message(
+                "native exact replay requires at least one repetition",
             ));
         }
         let mut ids = BTreeSet::new();
@@ -233,7 +247,7 @@ impl<'a> NativeResidualExactReplayPool<'a> {
             .iter()
             .map(|candidate| (candidate.id.clone(), Vec::new()))
             .collect::<BTreeMap<_, _>>();
-        for repetition in 1..=self.config.optimization.execution.repetitions {
+        for repetition in 1..=repetitions {
             ensure_not_cancelled(self.config)?;
             let mut groups = vec![Vec::new(); lane_count];
             for (index, candidate) in candidates.iter().enumerate() {
@@ -323,7 +337,7 @@ impl<'a> NativeResidualExactReplayPool<'a> {
             .ok_or_else(|| native_message("native exact replay round overflowed"))?;
         if attempts
             .values()
-            .any(|rows| rows.len() != usize::from(self.config.optimization.execution.repetitions))
+            .any(|rows| rows.len() != usize::from(repetitions))
         {
             return Err(native_message(
                 "native exact replay did not return every sealed repetition",

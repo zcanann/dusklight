@@ -345,8 +345,12 @@ fn summary_reproduces_every_accepted_reduction_and_rejects_resealed_drift() {
         path: path.into(),
         sha256: Digest([byte; 32]),
     };
+    let mut second_final_attempt = attempt.clone();
+    second_final_attempt.repetition = 2;
+    second_final_attempt.wire_candidate_id = "final-proof-r002".into();
+    let final_exact_replays = vec![attempt.clone(), second_final_attempt];
     let mut summary = ResidualWinnerMinimizationSummary {
-        schema: RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V1.into(),
+        schema: RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V2.into(),
         content_sha256: Digest::ZERO,
         status: ResidualWinnerMinimizationStatus::Minimized,
         optimization_request_sha256: optimization.content_sha256,
@@ -366,7 +370,7 @@ fn summary_reproduces_every_accepted_reduction_and_rejects_resealed_drift() {
         evaluated_candidates: 2,
         candidate_budget: 3,
         accepted_reduction_count: 1,
-        charged_simulated_ticks: 13,
+        charged_simulated_ticks: 25,
         minimized_candidate: Some(reference("build/min/minimized.candidate.json", 35)),
         minimized_tape: Some(reference("build/min/minimized.tape", 36)),
         evaluations: vec![
@@ -389,10 +393,16 @@ fn summary_reproduces_every_accepted_reduction_and_rejects_resealed_drift() {
                 exact_replays: vec![rejected_attempt],
             },
         ],
+        final_exact_replays,
         retention: archive.snapshot().unwrap(),
     };
     summary.content_sha256 = summary.identity().unwrap();
     summary.validate().unwrap();
+
+    let mut final_proof_drift = summary.clone();
+    final_proof_drift.final_exact_replays[1].first_hit_tick = Some(7);
+    final_proof_drift.content_sha256 = final_proof_drift.identity().unwrap();
+    assert!(final_proof_drift.validate().is_err());
 
     summary.evaluations[0].input_complexity = source_complexity;
     summary.content_sha256 = summary.identity().unwrap();

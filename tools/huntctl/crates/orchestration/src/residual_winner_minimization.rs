@@ -32,10 +32,11 @@ use std::sync::atomic::AtomicBool;
 
 pub const RESIDUAL_MINIMIZED_CANDIDATE_SCHEMA_V1: &str =
     "dusklight-residual-minimized-candidate/v1";
-pub const RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V1: &str =
-    "dusklight-residual-winner-minimization/v1";
+pub const RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V2: &str =
+    "dusklight-residual-winner-minimization/v2";
 pub const RESIDUAL_WINNER_MINIMIZATION_REQUEST_SCHEMA_V1: &str =
     "dusklight-residual-winner-minimization-request/v1";
+const FINAL_EXACT_REPLAY_REPETITIONS: u16 = 2;
 
 pub struct ResidualWinnerMinimizationConfig<'a> {
     pub repository_root: &'a Path,
@@ -114,6 +115,7 @@ pub struct ResidualWinnerMinimizationSummary {
     pub minimized_tape: Option<ArtifactReference>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evaluations: Vec<ResidualReductionEvaluation>,
+    pub final_exact_replays: Vec<NativeResidualAttempt>,
     pub retention: ResidualRetentionSnapshot,
 }
 
@@ -423,8 +425,47 @@ pub fn run_residual_winner_minimization(
     } else {
         (None, None)
     };
+    let final_proposal = ReductionProposal {
+        id: "final-proof".into(),
+        candidate: current_candidate.clone(),
+        compiled: current_compiled.clone(),
+        input_complexity: current_complexity,
+    };
+    let mut final_replays = replay_pool
+        .replay_with_repetitions(
+            &[NativeResidualExactReplayCandidate {
+                id: final_proposal.id.clone(),
+                tape: final_proposal.compiled.tape.clone(),
+            }],
+            FINAL_EXACT_REPLAY_REPETITIONS,
+        )
+        .map_err(minimization_error)?;
+    let final_exact_replays = final_replays
+        .remove(&final_proposal.id)
+        .ok_or_else(|| minimization_message("final exact replay result disappeared"))?;
+    let final_evidence = exact_replay_evidence_with_repetitions(
+        config.optimization,
+        &final_proposal,
+        &final_exact_replays,
+        FINAL_EXACT_REPLAY_REPETITIONS,
+    )?;
+    if final_evidence.verdict
+        != (ExactTerminalVerdict::Reached {
+            first_hit_tick: current_first_hit,
+        })
+    {
+        return Err(minimization_message(
+            "final minimized tape did not reproduce its exact terminal tick twice",
+        ));
+    }
+    charged_ticks = final_exact_replays
+        .iter()
+        .try_fold(charged_ticks, |total, attempt| {
+            total.checked_add(attempt.simulated_ticks)
+        })
+        .ok_or_else(|| minimization_message("minimization tick charge overflowed"))?;
     let mut summary = ResidualWinnerMinimizationSummary {
-        schema: RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V1.into(),
+        schema: RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V2.into(),
         content_sha256: Digest::ZERO,
         status,
         optimization_request_sha256: config.optimization.content_sha256,
@@ -448,6 +489,7 @@ pub fn run_residual_winner_minimization(
         minimized_candidate,
         minimized_tape,
         evaluations: evaluation_records,
+        final_exact_replays,
         retention: archive.snapshot().map_err(minimization_error)?,
     };
     summary.content_sha256 = summary.identity()?;
@@ -699,40 +741,74 @@ impl ResidualWinnerMinimizationSummary {
                 "residual minimization retention cannot be reproduced",
             ));
         }
-        match (&self.minimized_candidate, &self.minimized_tape) {
-            (Some(candidate_reference), Some(tape_reference)) => {
-                let candidate: ResidualMinimizedCandidate =
-                    read_bound_value(&root, candidate_reference)?;
-                candidate.validate_against(
-                    &parent,
-                    &parent_bytes,
-                    optimization.budgets.exploration_horizon_ticks,
-                )?;
-                let tape_bytes = read_bound_bytes(&root, tape_reference)?;
-                let final_compiled = compile_residual_candidate_to_horizon(
-                    &parent,
-                    &parent_bytes,
-                    &candidate.candidate,
-                    optimization.budgets.exploration_horizon_ticks,
-                )
-                .map_err(minimization_error)?;
-                if candidate.source_candidate != self.source_candidate
-                    || candidate.discovered_tape_sha256 != self.discovered_tape_sha256
-                    || candidate.candidate.content_sha256 != self.minimized_candidate_sha256
-                    || candidate.compilation.realized_tape_sha256 != self.minimized_tape_sha256
-                    || tape_bytes != final_compiled.bytes
-                {
+        let (final_candidate, final_compiled) =
+            match (&self.minimized_candidate, &self.minimized_tape) {
+                (Some(candidate_reference), Some(tape_reference)) => {
+                    let candidate: ResidualMinimizedCandidate =
+                        read_bound_value(&root, candidate_reference)?;
+                    candidate.validate_against(
+                        &parent,
+                        &parent_bytes,
+                        optimization.budgets.exploration_horizon_ticks,
+                    )?;
+                    let tape_bytes = read_bound_bytes(&root, tape_reference)?;
+                    let final_compiled = compile_residual_candidate_to_horizon(
+                        &parent,
+                        &parent_bytes,
+                        &candidate.candidate,
+                        optimization.budgets.exploration_horizon_ticks,
+                    )
+                    .map_err(minimization_error)?;
+                    if candidate.source_candidate != self.source_candidate
+                        || candidate.discovered_tape_sha256 != self.discovered_tape_sha256
+                        || candidate.candidate.content_sha256 != self.minimized_candidate_sha256
+                        || candidate.compilation.realized_tape_sha256 != self.minimized_tape_sha256
+                        || tape_bytes != final_compiled.bytes
+                    {
+                        return Err(minimization_message(
+                            "residual minimization final artifacts differ",
+                        ));
+                    }
+                    (candidate.candidate, final_compiled)
+                }
+                (None, None) => (source_candidate.candidate, source_compiled),
+                _ => {
                     return Err(minimization_message(
-                        "residual minimization final artifacts differ",
+                        "residual minimization final artifact set is incomplete",
                     ));
                 }
-            }
-            (None, None) => {}
-            _ => {
-                return Err(minimization_message(
-                    "residual minimization final artifact set is incomplete",
-                ));
-            }
+            };
+        for attempt in &self.final_exact_replays {
+            validate_exact_replay_attempt_artifacts(
+                &root,
+                &optimization,
+                &execution,
+                &terminal,
+                &final_compiled.tape,
+                attempt,
+            )
+            .map_err(minimization_error)?;
+        }
+        let final_proposal = ReductionProposal {
+            id: "validated-final-proof".into(),
+            candidate: final_candidate,
+            input_complexity: self.minimized_input_complexity,
+            compiled: final_compiled,
+        };
+        let evidence = exact_replay_evidence_with_repetitions(
+            &optimization,
+            &final_proposal,
+            &self.final_exact_replays,
+            FINAL_EXACT_REPLAY_REPETITIONS,
+        )?;
+        if evidence.verdict
+            != (ExactTerminalVerdict::Reached {
+                first_hit_tick: self.minimized_first_hit_tick,
+            })
+        {
+            return Err(minimization_message(
+                "residual minimization final proof differs from its sealed terminal tick",
+            ));
         }
         Ok(())
     }
@@ -778,18 +854,25 @@ impl ResidualWinnerMinimizationSummary {
             .iter()
             .filter(|evaluation| evaluation.accepted)
             .count() as u64;
-        let replay_ticks = self
-            .evaluations
-            .iter()
-            .try_fold(0_u64, |total, evaluation| {
-                evaluation
-                    .exact_replays
-                    .iter()
-                    .try_fold(total, |total, attempt| {
-                        total.checked_add(attempt.simulated_ticks)
-                    })
-            });
-        if self.schema != RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V1
+        let evaluation_replay_ticks =
+            self.evaluations
+                .iter()
+                .try_fold(0_u64, |total, evaluation| {
+                    evaluation
+                        .exact_replays
+                        .iter()
+                        .try_fold(total, |total, attempt| {
+                            total.checked_add(attempt.simulated_ticks)
+                        })
+                });
+        let replay_ticks = evaluation_replay_ticks.and_then(|total| {
+            self.final_exact_replays
+                .iter()
+                .try_fold(total, |total, attempt| {
+                    total.checked_add(attempt.simulated_ticks)
+                })
+        });
+        if self.schema != RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V2
             || self.optimization_request_sha256 == Digest::ZERO
             || self.execution_binding_sha256 == Digest::ZERO
             || self.discovered_candidate_sha256 == Digest::ZERO
@@ -806,7 +889,11 @@ impl ResidualWinnerMinimizationSummary {
             || self.accepted_reduction_count > self.evaluated_candidates
             || self.accepted_reduction_count != accepted_count
             || replay_ticks != Some(self.charged_simulated_ticks)
-            || (self.evaluated_candidates == 0) != (self.charged_simulated_ticks == 0)
+            || !valid_exact_replay_consensus(
+                &self.final_exact_replays,
+                Some(self.minimized_first_hit_tick),
+            )
+            || self.final_exact_replays.len() != usize::from(FINAL_EXACT_REPLAY_REPETITIONS)
             || minimized != (self.accepted_reduction_count > 0)
             || minimized != self.minimized_candidate.is_some()
             || minimized != self.minimized_tape.is_some()
@@ -914,7 +1001,7 @@ impl ResidualWinnerMinimizationSummary {
     fn identity(&self) -> Result<Digest, ResidualWinnerMinimizationError> {
         let mut canonical = self.clone();
         canonical.content_sha256 = Digest::ZERO;
-        canonical_digest(b"dusklight.residual-winner-minimization/v1\0", &canonical)
+        canonical_digest(b"dusklight.residual-winner-minimization/v2\0", &canonical)
     }
 }
 
@@ -989,7 +1076,21 @@ fn exact_replay_evidence(
     proposal: &ReductionProposal,
     attempts: &[NativeResidualAttempt],
 ) -> Result<ResidualEvaluationEvidence, ResidualWinnerMinimizationError> {
-    if attempts.len() != usize::from(optimization.execution.repetitions) {
+    exact_replay_evidence_with_repetitions(
+        optimization,
+        proposal,
+        attempts,
+        optimization.execution.repetitions,
+    )
+}
+
+fn exact_replay_evidence_with_repetitions(
+    optimization: &OptimizationRequest,
+    proposal: &ReductionProposal,
+    attempts: &[NativeResidualAttempt],
+    repetitions: u16,
+) -> Result<ResidualEvaluationEvidence, ResidualWinnerMinimizationError> {
+    if repetitions == 0 || attempts.len() != usize::from(repetitions) {
         return Err(minimization_message(
             "minimization exact replay omits a required repetition",
         ));
