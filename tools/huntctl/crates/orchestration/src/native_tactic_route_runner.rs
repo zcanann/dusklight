@@ -434,6 +434,9 @@ fn run_native_tactic_route_with_optional_fleet(
             config.output_root.display()
         )));
     }
+    if let Some(report) = recover_completed_campaign(config, imported_promoted_tactics.as_ref())? {
+        return Ok(report);
+    }
     let (report_path, summary_path, completion_path) =
         prepare_campaign_completion(config.output_root, config.resume)?;
     fs::create_dir_all(config.output_root).map_err(route_error)?;
@@ -1091,7 +1094,9 @@ mod macro_discovery;
 use macro_discovery::{mine_and_store_tactic_macros, validate_and_store_tactic_macros};
 mod macro_import;
 pub use macro_import::tactic_macro_registry_identity;
-use macro_import::{ImportedPromotedTactic, load_imported_promoted_tactics};
+use macro_import::{
+    ImportedPromotedTactic, ImportedPromotedTactics, load_imported_promoted_tactics,
+};
 
 mod replay_sharing;
 use replay_sharing::{
@@ -1142,6 +1147,8 @@ use campaign_persistence::{
     cancellation_requested, load_seed_performance, read_completed_seed, read_completed_seed_result,
     resume_seed,
 };
+mod campaign_completion_recovery;
+use campaign_completion_recovery::recover_completed_campaign;
 mod journal;
 use journal::{
     TacticDecisionJournalAppender, compact_tactic_decision_journal, decision_record,

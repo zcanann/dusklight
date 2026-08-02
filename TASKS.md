@@ -180,7 +180,12 @@ do not golf isolated subphases without campaign evidence.
   recovery also derives its corpus from that authenticated payload instead of
   reopening it and fitting an unused lane-local model. The remaining 44.8
   seconds, preflight fleet launch, learner reconstruction, and repeated macro
-  finalization keep this task open.
+  finalization keep this task open. A sealed campaign resume now returns its
+  validated report idempotently, and a crash after publishing both final JSON
+  artifacts but before the binary completion marker reattaches them to every
+  seed checkpoint, the replay and learner heads, the macro registry, and the
+  sealed plan without launching a fleet. All-seed-complete recovery before
+  those final artifacts exist still needs the same read-only treatment.
 - [ ] Cache or share already-validated artifact and graph identities within one
   process; independent reopen validation must remain fail-closed.
 - [ ] Measure whether retained save-state branching beats replay from its
