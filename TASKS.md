@@ -177,12 +177,23 @@ authenticated terminal in 124 ticks or less.
   The first authority-enabled rerun retained 190 ticks with 50 useful
   decisions, 10,792 native ticks, 129.2 seconds of model work, and 396.6
   seconds wall time. It proved live frontier authority on decisions 16 and 20,
-  but the remaining rank-zero slots reverted to root refreshes: branch gating
-  consulted transient process-local terminal restorability while action
-  selection consulted durable authenticated terminal replay. Frontier
-  scheduling now uses that same durable native-terminal support. Re-run V4
-  once under this corrected gate before accepting or rejecting the treatment;
-  neither partially-authorized 190-tick result is a valid quality verdict.
+  but later reported action-partition-zero decisions did not use that scorer.
+  Replacing transient graph restorability with authenticated terminal replay
+  did not change the behavior: the definitive rerun again retained 190 ticks,
+  used exactly 10,792 native ticks, and exposed learned frontier value and
+  uncertainty only on decisions 16 and 20 (46.08 seconds to first terminal,
+  129.9 seconds of model work, 399.4 seconds wall time). The remaining mismatch
+  is scheduling authority, not terminal evidence lifetime: action selection
+  labels its acquisition partition from `decision_index`, while branch
+  scheduling advances its acquisition rank from the independently incremented
+  branch `episode`. The trace reports only the former, so it can claim rank zero
+  while the branch path uses another rank or no branch at all. Unify the
+  acquisition-partition authority used by frontier selection, action selection,
+  and reporting without reintroducing the old branch/decision cadence alias;
+  then rerun V4 once. Add explicit terminal-frontier value/uncertainty and
+  selected-rank counts to the compact campaign summary so this authority is
+  auditable without parsing the 19 MB raw report. Until that repair, none of
+  the 190-tick V4 runs is a valid treatment verdict.
 - [ ] Learn from successful and unsuccessful trajectories using sparse terminal
   value, authenticated tick cost, and generic state deltas.
 - [ ] Support online collection, off-policy replay, prioritized reuse, temporal
