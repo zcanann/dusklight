@@ -62,14 +62,15 @@ It is not an input to the scored campaign.
 Implementation checkpoint (2026-08-02): `huntctl learn scratch-route` owns one
 native child per cold-root episode, uses a fixed 256-action route-agnostic
 catalog and one coarse tabular learner, and persists a checksummed binary
-checkpoint. A one-episode Windows smoke executed 900 logical native
-ticks through 103 decisions in 36.5 seconds wall / 14.6 seconds native, retained
-90 unique transitions, and changed 59 greedy choices. It found no terminal;
-this is execution evidence, not the intermediate gate.
+checkpoint. A two-episode Windows smoke resumed that checkpoint, executed
+1,800 logical native ticks, retained 200 unique transitions, applied 210
+backward-return updates, and changed 141 greedy choices in 81.6 seconds total
+wall time. It found no terminal; this is execution evidence, not the
+intermediate gate.
 
-Intermediate gate: reach the real load zone from scratch in minutes, not hours.
-If five fixed ten-minute seeds produce fewer than three terminals, stop and
-diagnose section 2 instead of extending the run.
+- [ ] Intermediate gate: run five fixed ten-minute seeds and reach the real
+  load zone from scratch in minutes, not hours. If fewer than three seeds find
+  a terminal, stop and diagnose section 2 instead of extending the run.
 
 Exit: the same minimal learner selects and reproduces a zero-shot route of 124
 ticks or less.

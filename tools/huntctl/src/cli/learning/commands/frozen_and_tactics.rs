@@ -172,6 +172,11 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 episodes: u64_option(learn_args, "--episodes", 100)?,
                 maximum_episode_ticks,
                 epsilon_per_million,
+                maximum_wall_time: Duration::from_secs(u64_option(
+                    learn_args,
+                    "--wall-time-seconds",
+                    600,
+                )?),
                 cold_replay_timeout: Duration::from_secs(u64_option(
                     learn_args,
                     "--cold-replay-timeout-seconds",
@@ -184,6 +189,7 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "schema": report.schema,
                     "report": output.join("report.json"),
                     "completed_episodes": report.completed_episodes,
+                    "stop_reason": report.stop_reason,
                     "unique_transitions": report.unique_transitions,
                     "terminal_episodes": report.terminal_episodes,
                     "fastest_selected_ticks": report.fastest_selected_ticks,

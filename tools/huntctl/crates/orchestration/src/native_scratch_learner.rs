@@ -39,10 +39,10 @@ use std::io::{Cursor, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-pub const NATIVE_SCRATCH_REPORT_SCHEMA_V1: &str = "dusklight-native-scratch-report/v1";
-const NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V1: &str = "dusklight-native-scratch-checkpoint/v1";
+pub const NATIVE_SCRATCH_REPORT_SCHEMA_V2: &str = "dusklight-native-scratch-report/v2";
+const NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V2: &str = "dusklight-native-scratch-checkpoint/v2";
 const CHECKPOINT_MAGIC: &[u8; 8] = b"DSSCRQ01";
-const CHECKPOINT_VERSION: u16 = 1;
+const CHECKPOINT_VERSION: u16 = 2;
 const CHECKPOINT_HEADER_BYTES: usize = 8 + 2 + 2 + 8 + 32;
 const CHECKPOINT_COMPRESSION_LEVEL: i32 = 1;
 const MAX_EPISODES: u64 = 1_000_000;
@@ -58,6 +58,7 @@ pub struct NativeScratchRunConfig<'a> {
     pub episodes: u64,
     pub maximum_episode_ticks: u32,
     pub epsilon_per_million: u32,
+    pub maximum_wall_time: Duration,
     pub cold_replay_timeout: Duration,
 }
 
@@ -73,6 +74,7 @@ pub struct NativeScratchReport {
     pub seed: u64,
     pub maximum_episode_ticks: u32,
     pub epsilon_per_million: u32,
+    pub stop_reason: String,
     pub completed_episodes: u64,
     pub distinct_episode_tapes: u64,
     pub duplicate_episode_tapes: u64,
@@ -186,7 +188,9 @@ pub fn run_native_scratch_learner(
     validate_checkpoint(&checkpoint, config, action_universe_sha256)?;
     let prior_wall_micros = checkpoint.report.wall_micros;
 
-    while checkpoint.report.completed_episodes < config.episodes {
+    while checkpoint.report.completed_episodes < config.episodes
+        && started.elapsed() < config.maximum_wall_time
+    {
         let episode_index = checkpoint.report.completed_episodes;
         let episode_root = config
             .output_root
@@ -326,6 +330,17 @@ pub fn run_native_scratch_learner(
         write_checkpoint_atomic(&checkpoint_path, &checkpoint)?;
         write_report_atomic(&config.output_root.join("report.json"), &checkpoint.report)?;
     }
+    checkpoint.report.stop_reason = if checkpoint.report.completed_episodes >= config.episodes {
+        "episode_limit"
+    } else {
+        "wall_time_limit"
+    }
+    .into();
+    checkpoint.report.wall_micros =
+        prior_wall_micros.saturating_add(elapsed_micros(started.elapsed()));
+    seal_report(&mut checkpoint.report)?;
+    write_checkpoint_atomic(&checkpoint_path, &checkpoint)?;
+    write_report_atomic(&config.output_root.join("report.json"), &checkpoint.report)?;
     Ok(checkpoint.report)
 }
 
@@ -577,7 +592,7 @@ fn fresh_checkpoint(
     action_count: usize,
 ) -> Result<NativeScratchCheckpoint, NativeScratchRunError> {
     Ok(NativeScratchCheckpoint {
-        schema: NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V1.into(),
+        schema: NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V2.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -589,7 +604,7 @@ fn fresh_checkpoint(
         unique_transitions: BTreeMap::new(),
         completed_action_sequences: Vec::new(),
         report: NativeScratchReport {
-            schema: NATIVE_SCRATCH_REPORT_SCHEMA_V1.into(),
+            schema: NATIVE_SCRATCH_REPORT_SCHEMA_V2.into(),
             report_sha256: Digest::ZERO,
             optimization_request_sha256: config.optimization.content_sha256,
             execution_binding_sha256: config.execution.content_sha256,
@@ -598,6 +613,7 @@ fn fresh_checkpoint(
             seed: config.seed,
             maximum_episode_ticks: config.maximum_episode_ticks,
             epsilon_per_million: config.epsilon_per_million,
+            stop_reason: "not_started".into(),
             completed_episodes: 0,
             distinct_episode_tapes: 0,
             duplicate_episode_tapes: 0,
@@ -627,6 +643,7 @@ fn validate_config(config: &NativeScratchRunConfig<'_>) -> Result<(), NativeScra
         || u64::from(config.maximum_episode_ticks)
             > config.optimization.budgets.exploration_horizon_ticks
         || config.epsilon_per_million > EPSILON_SCALE
+        || config.maximum_wall_time.is_zero()
         || config.cold_replay_timeout.is_zero()
     {
         return Err(run_message("native scratch configuration is invalid"));
@@ -640,7 +657,7 @@ fn validate_checkpoint(
     action_universe_sha256: Digest,
 ) -> Result<(), NativeScratchRunError> {
     checkpoint.q.validate().map_err(run_error)?;
-    if checkpoint.schema != NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V1
+    if checkpoint.schema != NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V2
         || checkpoint.optimization_request_sha256 != config.optimization.content_sha256
         || checkpoint.execution_binding_sha256 != config.execution.content_sha256
         || checkpoint.objective_sha256 != config.optimization.terminal_predicate.definition_sha256
@@ -829,7 +846,7 @@ mod tests {
     #[test]
     fn binary_checkpoint_round_trips_and_rejects_corruption() {
         let mut report = NativeScratchReport {
-            schema: NATIVE_SCRATCH_REPORT_SCHEMA_V1.into(),
+            schema: NATIVE_SCRATCH_REPORT_SCHEMA_V2.into(),
             report_sha256: Digest::ZERO,
             optimization_request_sha256: Digest([1; 32]),
             execution_binding_sha256: Digest([2; 32]),
@@ -838,6 +855,7 @@ mod tests {
             seed: 5,
             maximum_episode_ticks: 900,
             epsilon_per_million: 200_000,
+            stop_reason: "not_started".into(),
             completed_episodes: 0,
             distinct_episode_tapes: 0,
             duplicate_episode_tapes: 0,
@@ -858,7 +876,7 @@ mod tests {
         };
         seal_report(&mut report).unwrap();
         let checkpoint = NativeScratchCheckpoint {
-            schema: NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V1.into(),
+            schema: NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V2.into(),
             optimization_request_sha256: report.optimization_request_sha256,
             execution_binding_sha256: report.execution_binding_sha256,
             objective_sha256: report.objective_sha256,

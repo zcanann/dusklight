@@ -238,7 +238,7 @@ fn print_usage() {
         "  huntctl learn execute-tactic-policy --request OPTIMIZATION.json --execution EXECUTION.json --policy POLICY.json --output build/DIR [--maximum-decisions N] [--repository-root DIR]"
     );
     eprintln!(
-        "  huntctl learn scratch-route --request OPTIMIZATION.json --execution EXECUTION.json --output build/DIR [--seed N] [--episodes N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
+        "  huntctl learn scratch-route --request OPTIMIZATION.json --execution EXECUTION.json --output build/DIR [--seed N] [--episodes N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--wall-time-seconds N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
     );
     eprintln!(
         "  huntctl learn prove-generalized-tactics (--campaign-root DIR | --input CORPUS.dtqc [--input MORE.dtqc]) --output REPORT.json [--goal-distance-feature N]"
