@@ -104,6 +104,28 @@ fn branch_acquisition_rank_does_not_alias_the_decision_cadence() {
 }
 
 #[test]
+fn terminal_support_owns_rank_zero_before_demonstration_coverage() {
+    let acquisition = NativeTacticAcquisitionPlan::CyclicSupportAndRanks {
+        cycle_width: 4,
+        ranked_lanes_per_cycle: 3,
+    };
+    let discovery = campaign::scheduled_branch_acquisition(acquisition, 3, false, true, true);
+    assert_eq!(discovery.rank, 3);
+    assert!(!discovery.terminal_support);
+    assert!(discovery.demonstration);
+
+    let optimization = campaign::scheduled_branch_acquisition(acquisition, 4, false, true, true);
+    assert_eq!(optimization.rank, 0);
+    assert!(optimization.terminal_support);
+    assert!(!optimization.demonstration);
+
+    let restart = campaign::scheduled_branch_acquisition(acquisition, 5, true, true, true);
+    assert_eq!(restart.rank, 0);
+    assert!(!restart.terminal_support);
+    assert!(!restart.demonstration);
+}
+
+#[test]
 fn only_rank_zero_optimization_uses_the_live_frontier_model() {
     assert!(campaign::should_rank_frontier_with_live_model(
         true, false, false,

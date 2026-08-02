@@ -1,5 +1,14 @@
 use super::NativeTacticAcquisitionPlan;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ScheduledBranchAcquisition {
+    /// Acquisition partition that owns both the restored frontier and the
+    /// action selected from it.
+    pub rank: u64,
+    pub terminal_support: bool,
+    pub demonstration: bool,
+}
+
 pub(super) fn next_branch_acquisition_rank(
     acquisition: NativeTacticAcquisitionPlan,
     current_episode: u64,
@@ -7,6 +16,30 @@ pub(super) fn next_branch_acquisition_rank(
     current_episode
         .checked_add(1)
         .map(|next_episode| acquisition.rank(next_episode))
+}
+
+pub(super) fn scheduled_branch_acquisition(
+    acquisition: NativeTacticAcquisitionPlan,
+    episode: u64,
+    terminal_restart: bool,
+    native_terminal_supported: bool,
+    demonstration_coverage_pending: bool,
+) -> ScheduledBranchAcquisition {
+    let planned_rank = acquisition.rank(episode);
+    let terminal_support = native_terminal_supported && planned_rank == 0;
+    // A supported terminal frontier is optimization authority, while the
+    // demonstration curriculum is only coverage. Do not let permanently
+    // pending demonstration coverage consume rank-zero optimization slots.
+    let demonstration = demonstration_coverage_pending && !terminal_restart && !terminal_support;
+    ScheduledBranchAcquisition {
+        rank: if terminal_restart || terminal_support {
+            0
+        } else {
+            planned_rank
+        },
+        terminal_support,
+        demonstration,
+    }
 }
 
 pub(super) fn first_demonstration_intervention(

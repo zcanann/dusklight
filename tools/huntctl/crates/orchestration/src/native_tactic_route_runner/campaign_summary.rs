@@ -17,6 +17,8 @@ pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V5: &str =
     "dusklight-native-tactic-campaign-summary/v5";
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6: &str =
     "dusklight-native-tactic-campaign-summary/v6";
+pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7: &str =
+    "dusklight-native-tactic-campaign-summary/v7";
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE: &str = "campaign-summary.json";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -140,6 +142,20 @@ pub struct NativeTacticCampaignGoalReachabilitySummary {
     pub frontier_policy_authorized_decisions: u64,
     pub frontier_policy_blocked_decisions: u64,
     pub unproven_frontier_policy_deployments: u64,
+    /// Branch acquisitions backed by authenticated terminal return evidence.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub terminal_frontier_acquisitions: u64,
+    /// Terminal-backed acquisitions for which the frontier scorer published a
+    /// learned value and an uncertainty estimate, respectively.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub terminal_frontier_value_decisions: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub terminal_frontier_uncertainty_decisions: u64,
+    /// Actual acquisition partitions used for action selection after any
+    /// branch restore. This deliberately reports the branch clock rather than
+    /// re-deriving a partition from decision cadence.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub selected_acquisition_rank_counts: BTreeMap<u64, u64>,
     pub reachability_primary_decisions: u64,
     pub unproven_reachability_primary_decisions: u64,
     pub most_mature_source_transitions: u64,
@@ -308,7 +324,7 @@ impl NativeTacticCampaignSummary {
 
         let mut summary = Self {
             schema: if route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44 {
-                NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6.into()
+                NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7.into()
             } else {
                 NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4.into()
             },
@@ -422,6 +438,7 @@ impl NativeTacticCampaignSummary {
             NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4
                 | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V5
                 | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6
+                | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7
         ) || self.content_sha256 == Digest::ZERO
             || self.route_report_sha256 == Digest::ZERO
             || self.identities.optimization_request_sha256 == Digest::ZERO
@@ -442,10 +459,12 @@ impl NativeTacticCampaignSummary {
             || self.outcome.selected_terminal_decisions > self.outcome.terminal_proposals
             || self.outcome.selected_terminal_seeds > self.outcome.selected_terminal_decisions
             || self.outcome.selected_terminal_decisions > self.outcome.total_decisions
-            || (self.schema != NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6
-                && (self.outcome.terminal_proposals != 0
-                    || self.outcome.selected_terminal_decisions != 0
-                    || self.outcome.selected_terminal_seeds != 0))
+            || (!matches!(
+                self.schema.as_str(),
+                NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6 | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7
+            ) && (self.outcome.terminal_proposals != 0
+                || self.outcome.selected_terminal_decisions != 0
+                || self.outcome.selected_terminal_seeds != 0))
             || !valid_terminal_outcome_counts(
                 &self.schema,
                 self.treatment.demonstration_transitions,
@@ -470,7 +489,9 @@ impl NativeTacticCampaignSummary {
             || (!self.causal_chain.learning_expected && self.causal_chain.policy_update_probes != 0)
             || (matches!(
                 self.schema.as_str(),
-                NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V5 | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6
+                NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V5
+                    | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6
+                    | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7
             ) && self.causal_chain.learning_expected
                 && self.causal_chain.causal_chain_ready_for_matched_evaluation
                 && (self.causal_chain.policy_update_probes == 0
@@ -492,6 +513,20 @@ impl NativeTacticCampaignSummary {
                     .goal_reachability
                     .frontier_policy_authorized_decisions
                     .saturating_add(self.goal_reachability.frontier_policy_blocked_decisions)
+            || (self.schema == NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7
+                && (self.goal_reachability.terminal_frontier_value_decisions
+                    > self.goal_reachability.terminal_frontier_acquisitions
+                    || self
+                        .goal_reachability
+                        .terminal_frontier_uncertainty_decisions
+                        > self.goal_reachability.terminal_frontier_value_decisions
+                    || self
+                        .goal_reachability
+                        .selected_acquisition_rank_counts
+                        .values()
+                        .copied()
+                        .fold(0_u64, u64::saturating_add)
+                        != self.outcome.total_decisions))
             || (self.goal_reachability.calibration_authority_enforced
                 && (self
                     .goal_reachability
@@ -545,7 +580,10 @@ fn valid_terminal_outcome_counts(
     terminal_seeds: u64,
     terminal_proposals: u64,
 ) -> bool {
-    if schema != NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6 {
+    if !matches!(
+        schema,
+        NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6 | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7
+    ) {
         return terminal_proposals == 0;
     }
     if terminal_proposals != 0 && terminal_seeds == 0 {
@@ -597,11 +635,21 @@ fn goal_reachability_summary(
     let mut frontier_policy_authorized_decisions = 0_u64;
     let mut frontier_policy_blocked_decisions = 0_u64;
     let mut unproven_frontier_policy_deployments = 0_u64;
+    let mut terminal_frontier_acquisitions = 0_u64;
+    let mut terminal_frontier_value_decisions = 0_u64;
+    let mut terminal_frontier_uncertainty_decisions = 0_u64;
+    let mut selected_acquisition_rank_counts = BTreeMap::<u64, u64>::new();
     let mut reachability_primary_decisions = 0_u64;
     let mut unproven_reachability_primary_decisions = 0_u64;
     let mut most_mature: Option<&GoalReachabilityCalibration> = None;
 
     for decision in traces {
+        if route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44 {
+            let count = selected_acquisition_rank_counts
+                .entry(decision.acquisition_rank)
+                .or_default();
+            *count = count.saturating_add(1);
+        }
         let deployment_ready = decision
             .goal_reachability_calibration
             .as_ref()
@@ -652,6 +700,19 @@ fn goal_reachability_summary(
                 unproven_action_policy_deployments.saturating_add(1);
         }
         if let Some(acquisition) = &decision.branch_acquisition {
+            if route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44
+                && acquisition.terminal_value_supported
+            {
+                terminal_frontier_acquisitions = terminal_frontier_acquisitions.saturating_add(1);
+                if acquisition.best_mean_q.is_some() {
+                    terminal_frontier_value_decisions =
+                        terminal_frontier_value_decisions.saturating_add(1);
+                }
+                if acquisition.maximum_ensemble_variance.is_some() {
+                    terminal_frontier_uncertainty_decisions =
+                        terminal_frontier_uncertainty_decisions.saturating_add(1);
+                }
+            }
             if acquisition.goal_reachability_evidence_available {
                 frontier_evidence_decisions = frontier_evidence_decisions.saturating_add(1);
                 if acquisition.goal_reachability_supported {
@@ -695,6 +756,10 @@ fn goal_reachability_summary(
         frontier_policy_authorized_decisions,
         frontier_policy_blocked_decisions,
         unproven_frontier_policy_deployments,
+        terminal_frontier_acquisitions,
+        terminal_frontier_value_decisions,
+        terminal_frontier_uncertainty_decisions,
+        selected_acquisition_rank_counts,
         reachability_primary_decisions,
         unproven_reachability_primary_decisions,
         most_mature_source_transitions: most_mature
@@ -997,6 +1062,26 @@ mod tests {
     fn v44_summary_requires_a_same_state_policy_effect() {
         let (_, mut route, _) = retained_report_and_plan();
         route.schema = NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44.into();
+        route.seeds[0].trace[0].branch_acquisition = Some(TacticFrontierAcquisition {
+            expansion_count: 1,
+            terminal: false,
+            terminal_value_supported: true,
+            achieved_goal_value_supported: false,
+            goal_reachability_supported: false,
+            goal_reachability_evidence_available: false,
+            reward: -0.1,
+            best_mean_q: Some(-12.0),
+            best_goal_progress_per_tick: None,
+            predicted_terminal_ticks_to_go: Some(12.0),
+            predicted_total_terminal_ticks: Some(20.0),
+            exact_terminal_ticks_to_go: None,
+            exact_total_terminal_ticks: None,
+            maximum_ensemble_variance: Some(0.25),
+            generalized_nearest_distance: None,
+            discovery_spatial_novelty: None,
+            novelty_rank: 0,
+            replayed_prefix_ticks: 8,
+        });
         let snapshots = route
             .seeds
             .iter()
@@ -1031,6 +1116,18 @@ mod tests {
         assert_eq!(summary.policy_update_probes, 1);
         assert_eq!(summary.valid_policy_update_probes, 1);
         assert_eq!(summary.selected_action_changes_from_policy_update, 1);
+        let frontier = goal_reachability_summary(&route);
+        assert_eq!(frontier.terminal_frontier_acquisitions, 1);
+        assert_eq!(frontier.terminal_frontier_value_decisions, 1);
+        assert_eq!(frontier.terminal_frontier_uncertainty_decisions, 1);
+        assert_eq!(
+            frontier
+                .selected_acquisition_rank_counts
+                .values()
+                .copied()
+                .sum::<u64>(),
+            route.total_decisions
+        );
 
         route
             .seeds
