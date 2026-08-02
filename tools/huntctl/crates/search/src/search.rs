@@ -161,9 +161,12 @@ pub enum MacroAction {
     PadRun {
         pad: SearchPadState,
         frames: u32,
-        /// Exact unowned port states for imported port-one tapes whose
-        /// secondary ports use a noncanonical but semantically inert encoding.
-        /// `None` retains the canonical disconnected representation.
+        /// Exact ownership mask for an imported frame. `None` retains the
+        /// canonical port-one-only representation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        imported_owned_ports: Option<u8>,
+        /// Exact secondary-port states for imported frames whose other ports
+        /// do not use the canonical disconnected representation.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         port_one_secondary_pads: Option<[RawPadState; 3]>,
     },
@@ -406,7 +409,18 @@ impl Candidate {
                     plan.validate()
                         .map_err(|error| SearchError::NonCanonicalTape(error.to_string()))?;
                 }
-                MacroAction::PadRun { frames, .. } => validate_duration(*frames)?,
+                MacroAction::PadRun {
+                    frames,
+                    imported_owned_ports,
+                    ..
+                } => {
+                    validate_duration(*frames)?;
+                    if imported_owned_ports.is_some_and(|owned| owned & 1 == 0) {
+                        return Err(SearchError::NonCanonicalTape(
+                            "imported PAD run must retain primary-port ownership".into(),
+                        ));
+                    }
+                }
             }
             frames = frames
                 .checked_add(action.frame_count())
@@ -513,9 +527,13 @@ impl Candidate {
                 MacroAction::PadRun {
                     pad,
                     frames: count,
+                    imported_owned_ports,
                     port_one_secondary_pads,
                 } => {
                     let mut frame = imported_frame((*pad).into());
+                    if let Some(owned_ports) = imported_owned_ports {
+                        frame.owned_ports = *owned_ports;
+                    }
                     if let Some(secondary) = port_one_secondary_pads {
                         frame.pads[1..].copy_from_slice(secondary);
                     }
@@ -774,6 +792,7 @@ impl Candidate {
             actions.push(MacroAction::PadRun {
                 pad,
                 frames: (index - start) as u32,
+                imported_owned_ports: None,
                 port_one_secondary_pads: secondary_pads,
             });
         }
@@ -804,9 +823,9 @@ impl Candidate {
             error: -1,
             ..RawPadState::default()
         };
-        let mut runs: Vec<(SearchPadState, Option<[RawPadState; 3]>, u32)> = Vec::new();
+        let mut runs: Vec<(SearchPadState, Option<u8>, Option<[RawPadState; 3]>, u32)> = Vec::new();
         for frame in &tape.frames {
-            if frame.owned_ports != 0x01
+            if frame.owned_ports & 0x01 == 0
                 || frame.wait_condition != crate::tape::WaitCondition::None
                 || frame.wait_timeout_ticks != 0
             {
@@ -816,15 +835,17 @@ impl Candidate {
                 ));
             }
             let pad = SearchPadState::from(frame.pads[0]);
+            let imported_owned_ports = (frame.owned_ports != 0x01).then_some(frame.owned_ports);
             let secondary_pads = (frame.pads[1..] != [disconnected; 3])
                 .then(|| [frame.pads[1], frame.pads[2], frame.pads[3]]);
-            if let Some((last, last_secondary_pads, frames)) = runs.last_mut()
+            if let Some((last, last_owned_ports, last_secondary_pads, frames)) = runs.last_mut()
                 && *last == pad
+                && *last_owned_ports == imported_owned_ports
                 && *last_secondary_pads == secondary_pads
             {
                 *frames = frames.checked_add(1).ok_or(SearchError::TooManyFrames)?;
             } else {
-                runs.push((pad, secondary_pads, 1));
+                runs.push((pad, imported_owned_ports, secondary_pads, 1));
             }
         }
         let candidate = Self {
@@ -834,10 +855,13 @@ impl Candidate {
             actions: runs
                 .into_iter()
                 .map(
-                    |(pad, port_one_secondary_pads, frames)| MacroAction::PadRun {
-                        pad,
-                        frames,
-                        port_one_secondary_pads,
+                    |(pad, imported_owned_ports, port_one_secondary_pads, frames)| {
+                        MacroAction::PadRun {
+                            pad,
+                            frames,
+                            imported_owned_ports,
+                            port_one_secondary_pads,
+                        }
                     },
                 )
                 .collect(),

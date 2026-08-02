@@ -1120,6 +1120,7 @@ mod tests {
             actions: vec![MacroAction::PadRun {
                 pad,
                 frames: 5,
+                imported_owned_ports: None,
                 port_one_secondary_pads: None,
             }],
             ancestry: Ancestry::default(),
@@ -1175,6 +1176,7 @@ mod tests {
                     error: 0,
                 },
                 frames: 1,
+                imported_owned_ports: None,
                 port_one_secondary_pads: None,
             })
             .collect();

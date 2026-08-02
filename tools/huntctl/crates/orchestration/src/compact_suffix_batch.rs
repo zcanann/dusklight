@@ -166,6 +166,7 @@ pub fn encode_compact_suffix_batch(
             let MacroAction::PadRun {
                 pad,
                 frames,
+                imported_owned_ports,
                 port_one_secondary_pads,
             } = action
             else {
@@ -173,7 +174,7 @@ pub fn encode_compact_suffix_batch(
                     "compact suffix candidate contains a non-PAD action",
                 ));
             };
-            if port_one_secondary_pads.is_some() {
+            if imported_owned_ports.is_some() || port_one_secondary_pads.is_some() {
                 return Err(CompactSuffixBatchError::new(
                     "compact suffix candidate contains noncanonical secondary ports",
                 ));
@@ -291,6 +292,7 @@ mod tests {
                         error: -1,
                     },
                     frames: 4,
+                    imported_owned_ports: None,
                     port_one_secondary_pads: None,
                 }],
                 controller_program_hex: None,

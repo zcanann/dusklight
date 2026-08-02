@@ -253,6 +253,7 @@ fn semantic_movement_import_is_lossless_and_exposes_motion_paths() {
                     ..RawPadState::default()
                 }),
                 frames: 1,
+                imported_owned_ports: None,
                 port_one_secondary_pads: None,
             },
             MacroAction::PadRun {
@@ -262,6 +263,7 @@ fn semantic_movement_import_is_lossless_and_exposes_motion_paths() {
                     ..RawPadState::default()
                 }),
                 frames: 3,
+                imported_owned_ports: None,
                 port_one_secondary_pads: None,
             },
         ],
@@ -353,7 +355,7 @@ fn tactic_terminal_suffix_retains_default_connected_unowned_ports() {
         frames: (0..32)
             .map(|index| {
                 let mut frame = InputFrame {
-                    owned_ports: 1,
+                    owned_ports: if (8..12).contains(&index) { 15 } else { 1 },
                     ..InputFrame::default()
                 };
                 frame.pads[0].stick_x = if index < 16 { -126 } else { -80 };
@@ -374,11 +376,18 @@ fn tactic_terminal_suffix_retains_default_connected_unowned_ports() {
             ..
         } if *secondary == [RawPadState::default(); 3]
     )));
+    assert!(candidate.actions.iter().any(|action| matches!(
+        action,
+        MacroAction::PadRun {
+            imported_owned_ports: Some(15),
+            ..
+        }
+    )));
     let mut rng = SplitMix64::new(0x155_921);
     for generation in 1..=64 {
         let child = mutate(&candidate, generation, &mut rng).unwrap();
         assert!(child.compile().unwrap().frames.iter().all(|frame| {
-            frame.owned_ports == 1 && frame.pads[1..] == [RawPadState::default(); 3]
+            matches!(frame.owned_ports, 1 | 15) && frame.pads[1..] == [RawPadState::default(); 3]
         }));
     }
 }
