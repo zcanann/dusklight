@@ -68,9 +68,17 @@ backward-return updates, and changed 141 greedy choices in 81.6 seconds total
 wall time. It found no terminal; this is execution evidence, not the
 intermediate gate.
 
-- [ ] Intermediate gate: run five fixed ten-minute seeds and reach the real
+- [x] Intermediate gate: run five fixed ten-minute seeds and reach the real
   load zone from scratch in minutes, not hours. If fewer than three seeds find
   a terminal, stop and diagnose section 2 instead of extending the run.
+
+Gate result (2026-08-02): failed at 2/5 seeds. Each seed ran 36 cold-root,
+900-tick episodes. Seeds 130363 and 181081 produced two authenticated terminal
+episodes each, improving 624 to 481 ticks and 876 to 561 ticks respectively;
+seeds 104729, 155921, and 208609 produced none. Across the gate the learner
+retained 11,815 unique transitions in 2,601 seconds wall time. This proves
+occasional scratch discovery, but not the required reliability or route
+quality.
 
 Exit: the same minimal learner selects and reproduces a zero-shot route of 124
 ticks or less.
@@ -79,12 +87,32 @@ ticks or less.
 
 Do not implement every branch. Collect enough evidence to select exactly one.
 
-- [ ] Determine whether failure is caused by action expressivity, insufficient
+- [x] Determine whether failure is caused by action expressivity, insufficient
   exploration, incorrect value/return propagation, or insufficient native
   samples. Prove the classification with the retained episode stream and a
   focused deterministic test.
-- [ ] Record the diagnosis and the smallest proposed intervention in this file
+- [x] Record the diagnosis and the smallest proposed intervention in this file
   before implementing it.
+
+Diagnosis (2026-08-02): **insufficient exploration before the first terminal**.
+The unchanged action catalog reached and cold-replayed the real load zone four
+times, so basic expressivity is present. In both successful seeds the later
+terminal was substantially faster than the first and thousands of deployed
+updates changed greedy choices, so backward credit is operating. Native work
+consumed 2,407 of 2,601 wall seconds and still yielded thousands of unique
+transitions per seed, so orchestration overhead is not the first failure.
+However, an equal-horizon censored episode gives every root action the same
+-900 return regardless of where its trajectory went; a deterministic learner
+test now fixes that fact. Until a sparse terminal is found, ordinary Q value
+therefore contains no directional discovery signal and three seeds never
+escaped that condition.
+
+Smallest proposed intervention: until the first authenticated terminal only,
+select the least-visited eligible action in the current coarse state (seeded
+ties), using the Q table's existing visit counts. Disable this count-based
+exploration immediately after success and return to the unchanged
+epsilon-greedy tick optimizer. This changes selection only: it adds no reward,
+route coordinate, waypoint, model, or retained trajectory input.
 
 Conditional interventions:
 

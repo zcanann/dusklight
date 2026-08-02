@@ -570,4 +570,46 @@ mod tests {
             75.0
         );
     }
+
+    #[test]
+    fn equal_horizon_failures_cannot_rank_different_starting_actions() {
+        let mut table = ScratchQTable::new(2).unwrap();
+        let start = state(0);
+        for (action_index, midpoint) in [(0, state(100)), (1, state(-100))] {
+            table
+                .update_episode(
+                    &[
+                        ScratchTransition {
+                            state: start.clone(),
+                            action_index,
+                            realized_ticks: 400,
+                            next_state: midpoint.clone(),
+                            terminal: false,
+                        },
+                        ScratchTransition {
+                            state: midpoint,
+                            action_index,
+                            realized_ticks: 500,
+                            next_state: state(action_index as i32 + 1),
+                            terminal: false,
+                        },
+                    ],
+                    false,
+                    900,
+                )
+                .unwrap();
+        }
+        let first = table.values[&ScratchStateAction {
+            state: start.clone(),
+            action_index: 0,
+        }]
+            .mean_return;
+        let second = table.values[&ScratchStateAction {
+            state: start,
+            action_index: 1,
+        }]
+            .mean_return;
+        assert_eq!(first, -900.0);
+        assert_eq!(second, -900.0);
+    }
 }
