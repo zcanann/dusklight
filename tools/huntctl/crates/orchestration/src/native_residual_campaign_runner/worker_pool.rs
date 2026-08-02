@@ -215,6 +215,25 @@ impl<'a> NativeResidualExactReplayPool<'a> {
         repetitions: u16,
     ) -> Result<BTreeMap<String, Vec<NativeResidualAttempt>>, NativeResidualCampaignRunnerError>
     {
+        self.replay_with_process_mode(candidates, repetitions, false)
+    }
+
+    pub(crate) fn replay_with_cold_repetitions(
+        &mut self,
+        candidates: &[NativeResidualExactReplayCandidate],
+        repetitions: u16,
+    ) -> Result<BTreeMap<String, Vec<NativeResidualAttempt>>, NativeResidualCampaignRunnerError>
+    {
+        self.replay_with_process_mode(candidates, repetitions, true)
+    }
+
+    fn replay_with_process_mode(
+        &mut self,
+        candidates: &[NativeResidualExactReplayCandidate],
+        repetitions: u16,
+        cold_process_per_repetition: bool,
+    ) -> Result<BTreeMap<String, Vec<NativeResidualAttempt>>, NativeResidualCampaignRunnerError>
+    {
         if candidates.is_empty() {
             return Err(native_message(
                 "native exact replay requires at least one candidate",
@@ -329,6 +348,15 @@ impl<'a> NativeResidualExactReplayPool<'a> {
                             &output.validated,
                         ));
                 }
+            }
+            if cold_process_per_repetition && repetition < repetitions {
+                self.pool.shutdown()?;
+                self.pool = WorkerPool::new(
+                    self.root,
+                    self.campaign,
+                    self.config.optimization,
+                    self.config.execution,
+                )?;
             }
         }
         self.round = self

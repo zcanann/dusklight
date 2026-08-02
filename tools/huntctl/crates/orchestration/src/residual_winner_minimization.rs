@@ -32,8 +32,8 @@ use std::sync::atomic::AtomicBool;
 
 pub const RESIDUAL_MINIMIZED_CANDIDATE_SCHEMA_V1: &str =
     "dusklight-residual-minimized-candidate/v1";
-pub const RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V2: &str =
-    "dusklight-residual-winner-minimization/v2";
+pub const RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V3: &str =
+    "dusklight-residual-winner-minimization/v3";
 pub const RESIDUAL_WINNER_MINIMIZATION_REQUEST_SCHEMA_V1: &str =
     "dusklight-residual-winner-minimization-request/v1";
 const FINAL_EXACT_REPLAY_REPETITIONS: u16 = 2;
@@ -115,6 +115,7 @@ pub struct ResidualWinnerMinimizationSummary {
     pub minimized_tape: Option<ArtifactReference>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evaluations: Vec<ResidualReductionEvaluation>,
+    pub final_replay_process_mode: String,
     pub final_exact_replays: Vec<NativeResidualAttempt>,
     pub retention: ResidualRetentionSnapshot,
 }
@@ -432,7 +433,7 @@ pub fn run_residual_winner_minimization(
         input_complexity: current_complexity,
     };
     let mut final_replays = replay_pool
-        .replay_with_repetitions(
+        .replay_with_cold_repetitions(
             &[NativeResidualExactReplayCandidate {
                 id: final_proposal.id.clone(),
                 tape: final_proposal.compiled.tape.clone(),
@@ -465,7 +466,7 @@ pub fn run_residual_winner_minimization(
         })
         .ok_or_else(|| minimization_message("minimization tick charge overflowed"))?;
     let mut summary = ResidualWinnerMinimizationSummary {
-        schema: RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V2.into(),
+        schema: RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V3.into(),
         content_sha256: Digest::ZERO,
         status,
         optimization_request_sha256: config.optimization.content_sha256,
@@ -489,6 +490,7 @@ pub fn run_residual_winner_minimization(
         minimized_candidate,
         minimized_tape,
         evaluations: evaluation_records,
+        final_replay_process_mode: "cold_process_per_repetition".into(),
         final_exact_replays,
         retention: archive.snapshot().map_err(minimization_error)?,
     };
@@ -872,7 +874,7 @@ impl ResidualWinnerMinimizationSummary {
                     total.checked_add(attempt.simulated_ticks)
                 })
         });
-        if self.schema != RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V2
+        if self.schema != RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V3
             || self.optimization_request_sha256 == Digest::ZERO
             || self.execution_binding_sha256 == Digest::ZERO
             || self.discovered_candidate_sha256 == Digest::ZERO
@@ -888,6 +890,7 @@ impl ResidualWinnerMinimizationSummary {
             || self.evaluated_candidates != self.evaluations.len() as u64
             || self.accepted_reduction_count > self.evaluated_candidates
             || self.accepted_reduction_count != accepted_count
+            || self.final_replay_process_mode != "cold_process_per_repetition"
             || replay_ticks != Some(self.charged_simulated_ticks)
             || !valid_exact_replay_consensus(
                 &self.final_exact_replays,

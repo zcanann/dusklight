@@ -350,7 +350,7 @@ fn summary_reproduces_every_accepted_reduction_and_rejects_resealed_drift() {
     second_final_attempt.wire_candidate_id = "final-proof-r002".into();
     let final_exact_replays = vec![attempt.clone(), second_final_attempt];
     let mut summary = ResidualWinnerMinimizationSummary {
-        schema: RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V2.into(),
+        schema: RESIDUAL_WINNER_MINIMIZATION_SCHEMA_V3.into(),
         content_sha256: Digest::ZERO,
         status: ResidualWinnerMinimizationStatus::Minimized,
         optimization_request_sha256: optimization.content_sha256,
@@ -393,11 +393,17 @@ fn summary_reproduces_every_accepted_reduction_and_rejects_resealed_drift() {
                 exact_replays: vec![rejected_attempt],
             },
         ],
+        final_replay_process_mode: "cold_process_per_repetition".into(),
         final_exact_replays,
         retention: archive.snapshot().unwrap(),
     };
     summary.content_sha256 = summary.identity().unwrap();
     summary.validate().unwrap();
+
+    let mut process_mode_drift = summary.clone();
+    process_mode_drift.final_replay_process_mode = "persistent_process".into();
+    process_mode_drift.content_sha256 = process_mode_drift.identity().unwrap();
+    assert!(process_mode_drift.validate().is_err());
 
     let mut final_proof_drift = summary.clone();
     final_proof_drift.final_exact_replays[1].first_hit_tick = Some(7);
