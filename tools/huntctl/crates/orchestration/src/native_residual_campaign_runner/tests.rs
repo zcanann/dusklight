@@ -405,3 +405,20 @@ fn worker_pool_drop_shuts_down_and_removes_its_ephemeral_session_tree() {
     assert!(!session_root.exists());
     fs::remove_dir_all(session_root.ancestors().nth(2).expect("test campaign root")).unwrap();
 }
+
+#[test]
+fn generation_budget_uses_exact_retained_ticks_but_never_speculates_on_missing_work() {
+    assert!(generation_exceeds_remaining_tick_budget(
+        9_570, 131_072, None
+    ));
+    assert!(!generation_exceeds_remaining_tick_budget(
+        9_570,
+        131_072,
+        Some(9_000)
+    ));
+    assert!(generation_exceeds_remaining_tick_budget(
+        9_570,
+        131_072,
+        Some(9_571)
+    ));
+}

@@ -62,6 +62,8 @@ pub struct ResidualCampaignRunSummary {
     pub optimization_request_sha256: Digest,
     pub execution_binding_sha256: Digest,
     pub completed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<&'static str>,
     pub generation: u64,
     pub sealed_candidates: u64,
     pub completed_candidates: u64,
@@ -1249,6 +1251,7 @@ fn summary(
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.harness_template.content_sha256,
         completed: true,
+        stop_reason: None,
         generation,
         sealed_candidates: resume.candidates.len() as u64,
         completed_candidates: resume.completed_candidates,

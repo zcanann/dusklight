@@ -809,7 +809,9 @@ fn validate_next_event(
     Ok(())
 }
 
-fn maximum_candidate_ticks(request: &OptimizationRequest) -> Result<u64, OptimizationResumeError> {
+pub(crate) fn maximum_candidate_ticks(
+    request: &OptimizationRequest,
+) -> Result<u64, OptimizationResumeError> {
     let terminal_runs = 1_u64
         .checked_add(request.execution.alternate_terminal_goals.len() as u64)
         .ok_or_else(|| resume_error("candidate terminal-run count overflowed"))?;

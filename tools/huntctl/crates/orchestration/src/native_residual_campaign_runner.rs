@@ -20,7 +20,7 @@ use crate::optimization_resume::{
     OptimizationResumeEvent, OptimizationResumeState,
     append_optimization_resume_events_from_validated_state,
     initialize_optimization_resume_after_request_validation,
-    load_optimization_resume_after_request_validation,
+    load_optimization_resume_after_request_validation, maximum_candidate_ticks,
 };
 use crate::residual_campaign::{
     ResidualCampaignCheckpoint, ResidualCampaignOptimizer, ResidualReplayCheckpoint,
@@ -359,6 +359,12 @@ fn execute_native_attempts(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GenerationEvaluationOutcome {
+    Completed,
+    SimulatedTickBudgetExhausted,
+}
+
 fn evaluate_generation(
     root: &Path,
     campaign: &Path,
@@ -370,7 +376,7 @@ fn evaluate_generation(
     pool: &mut WorkerPool<'_>,
     alternate_pools: &mut [WorkerPool<'_>],
     generation: u64,
-) -> Result<(), NativeResidualCampaignRunnerError> {
+) -> Result<GenerationEvaluationOutcome, NativeResidualCampaignRunnerError> {
     ensure_not_cancelled(config)?;
     let candidates = load_generation(
         root,
@@ -392,8 +398,19 @@ fn evaluate_generation(
         })
         .collect::<Vec<_>>();
     if pending.is_empty() {
-        return Ok(());
+        return Ok(GenerationEvaluationOutcome::Completed);
     }
+
+    let remaining_simulated_ticks = config
+        .optimization
+        .budgets
+        .simulated_tick_budget
+        .checked_sub(resume.charged_simulated_ticks)
+        .ok_or_else(|| native_message("residual campaign already exceeds its tick budget"))?;
+    let maximum_pending_ticks = maximum_candidate_ticks(config.optimization)
+        .map_err(native_error)?
+        .checked_mul(u64::try_from(pending.len()).map_err(native_error)?)
+        .ok_or_else(|| native_message("residual generation tick bound overflowed"))?;
 
     let mut evaluations = BTreeMap::new();
     let mut dispatch = Vec::new();
@@ -411,6 +428,30 @@ fn evaluate_generation(
             evaluations.insert(candidate.envelope.id.clone(), evaluation);
         } else {
             dispatch.push(*candidate);
+        }
+    }
+
+    if generation_exceeds_remaining_tick_budget(
+        remaining_simulated_ticks,
+        maximum_pending_ticks,
+        None,
+    ) && !dispatch.is_empty()
+    {
+        return Ok(GenerationEvaluationOutcome::SimulatedTickBudgetExhausted);
+    }
+
+    if dispatch.is_empty() {
+        let exact_pending_ticks = evaluations.values().try_fold(0_u64, |total, evaluation| {
+            total
+                .checked_add(evaluation.simulated_ticks)
+                .ok_or_else(|| native_message("residual generation tick total overflowed"))
+        })?;
+        if generation_exceeds_remaining_tick_budget(
+            remaining_simulated_ticks,
+            maximum_pending_ticks,
+            Some(exact_pending_ticks),
+        ) {
+            return Ok(GenerationEvaluationOutcome::SimulatedTickBudgetExhausted);
         }
     }
 
@@ -532,7 +573,15 @@ fn evaluate_generation(
                 .map_err(native_error)?;
         }
     }
-    Ok(())
+    Ok(GenerationEvaluationOutcome::Completed)
+}
+
+fn generation_exceeds_remaining_tick_budget(
+    remaining_ticks: u64,
+    maximum_generation_ticks: u64,
+    exact_retained_ticks: Option<u64>,
+) -> bool {
+    exact_retained_ticks.unwrap_or(maximum_generation_ticks) > remaining_ticks
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1212,6 +1261,7 @@ fn run_campaign_loop(
                         &archive,
                         checkpoint.replay_corpus.clone(),
                         checkpoint.audit.clone(),
+                        None,
                     ));
                 }
                 let generation = checkpoint.generation;
@@ -1283,7 +1333,7 @@ fn run_campaign_loop(
                     )
                     .map_err(native_error)?;
                 }
-                evaluate_generation(
+                if evaluate_generation(
                     root,
                     campaign,
                     config,
@@ -1294,7 +1344,18 @@ fn run_campaign_loop(
                     pool,
                     alternate_pools,
                     generation,
-                )?;
+                )? == GenerationEvaluationOutcome::SimulatedTickBudgetExhausted
+                {
+                    return Ok(summary(
+                        config,
+                        &resume,
+                        generation,
+                        &archive,
+                        checkpoint.replay_corpus.clone(),
+                        checkpoint.audit.clone(),
+                        Some("simulated_tick_budget_exhausted"),
+                    ));
+                }
                 ensure_not_cancelled(config)?;
                 let replay_corpus = append_generation_replay(
                     root,
@@ -1368,6 +1429,7 @@ fn run_campaign_loop(
                         &archive,
                         checkpoint.replay_corpus.clone(),
                         checkpoint.audit.clone(),
+                        None,
                     ));
                 }
                 if state.pending.is_empty() {
@@ -1414,7 +1476,7 @@ fn run_campaign_loop(
                         "pending CEM checkpoint differs from its atomic candidate batch",
                     ));
                 }
-                evaluate_generation(
+                if evaluate_generation(
                     root,
                     campaign,
                     config,
@@ -1425,7 +1487,18 @@ fn run_campaign_loop(
                     pool,
                     alternate_pools,
                     generation,
-                )?;
+                )? == GenerationEvaluationOutcome::SimulatedTickBudgetExhausted
+                {
+                    return Ok(summary(
+                        config,
+                        &resume,
+                        generation,
+                        &archive,
+                        checkpoint.replay_corpus.clone(),
+                        checkpoint.audit.clone(),
+                        Some("simulated_tick_budget_exhausted"),
+                    ));
+                }
                 ensure_not_cancelled(config)?;
                 let ranked =
                     generation_rank(root, config, parent, parent_bytes, &resume, generation)?;
@@ -1465,12 +1538,14 @@ fn summary(
     archive: &ResidualOutcomeArchive,
     replay_corpus: Option<ResidualReplayCheckpoint>,
     audit: Option<ResidualCampaignAudit>,
+    stop_reason: Option<&'static str>,
 ) -> ResidualCampaignRunSummary {
     ResidualCampaignRunSummary {
-        schema: "dusklight-residual-campaign-run-summary/v3",
+        schema: "dusklight-residual-campaign-run-summary/v4",
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
-        completed: true,
+        completed: stop_reason.is_none(),
+        stop_reason,
         generation,
         sealed_candidates: resume.candidates.len() as u64,
         completed_candidates: resume.completed_candidates,
