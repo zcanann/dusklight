@@ -2,15 +2,16 @@
 
 ## Mission
 
-Build an algorithm-agnostic learning and search framework that finds routes and
-solutions substantially better than human play.
+Build an algorithm-agnostic learning and search framework that can discover and
+optimize native routes substantially beyond human play. Q-learning is one
+candidate, not a requirement; use the method that learns best from the samples
+and native throughput we can actually sustain.
 
 The framework receives a native starting state, generic observations, the legal
 action surface, and an authoritative terminal predicate. It must explore, learn
-which behavior produced useful outcomes, optimize native completion cost, and
-emit an exactly replayable input graph. Q-learning is one candidate, not a
-requirement; use whichever online, offline, model-based, hierarchical, or search
-method works best at the sample sizes and throughput we can actually sustain.
+which behavior produced useful outcomes, turn discoveries into retained
+policies or trajectories, minimize native completion cost, and emit an exactly
+replayable input graph.
 
 The action hierarchy must include all three sources:
 
@@ -18,140 +19,162 @@ The action hierarchy must include all three sources:
 - reusable parameterized tactics supplied by us;
 - tactics discovered, evaluated, promoted, composed, and retired by the system.
 
-A human route is optional experience and a benchmark. It is never the route
-definition, a required seed, or a ceiling on the learned policy.
+## ToOrdonSprings benchmark contract
 
-Ordon is the first proving ground. Its native load zone is the only success
-authority. The known 125-tick human route is a weak baseline: 123 ticks is the
-first proof that the framework can improve it, not the final optimization target.
+Ordon is the first proving ground. The native load-zone predicate is the only
+success authority, and native elapsed ticks are the score.
+
+The headline result is **zero-shot**: the scored campaign starts from the named
+root state without a human demonstration, authored route, waypoint sequence,
+route-specific reward, proxy terminal, or tactic extracted from the human route.
+It may use generic observations and a route-agnostic action/tactic library fixed
+before the scored run. Human play may be evaluated later as optional off-policy
+experience, but that is a separate treatment and cannot satisfy the zero-shot
+claim.
+
+The known human ToOrdonSprings route takes 125 ticks. Use this explicit ladder:
+
+- **124 ticks:** first meaningful zero-shot human beat;
+- **123 ticks:** stronger evidence that the framework can optimize beyond the
+  baseline;
+- **120 ticks or less:** clearly superior, TAS-grade headline result.
+
+A score counts only when the framework's retained output reaches the native
+load zone and cold-replays at least twice from the named root with identical
+inputs, state identities, terminal proof, and tick count. A terminal reached by
+an unselected coverage proposal is discovery evidence, not a scored route or
+learning result.
 
 ## Work queue
 
-These milestones are coupled, not a waterfall. Keep a thin end-to-end campaign
-runnable, advance the earliest missing learning capability, and pull throughput
-or architecture work forward when measurement shows that it blocks the next
-useful iteration. Do not build a perfect harness around a learner that cannot
-solve the task. Remove completed items; keep detailed history in commits and
-sealed campaign artifacts.
+These are the current missing capabilities, in execution order. Keep a thin
+end-to-end campaign runnable, remove completed work from this file, and retain
+detailed history in commits and sealed campaign artifacts.
 
-### 1. Make experimentation fast enough to support learning
+### 1. Turn scratch terminal discovery into an optimizable route
 
-- Use existing campaign evidence to attribute native execution, observation,
-  save-state capture/restore, replay, learning, IPC, scheduling, persistence, and
-  idle time. Do not rerun merely to derive another metric already present in raw
-  evidence.
-- Remove the largest measured cost, retain a matched before/after comparison,
-  and repeat in descending measured order.
-- Measure whether save-state branching beats replay from an authority point;
-  simplify or remove it wherever it does not.
-- Eliminate worker starvation, redundant native work, unnecessary serialization,
-  and central bottlenecks. Keep queues and memory bounded.
+- [ ] Give scratch trajectories enough horizon, restarts, branching, and
+  coverage diversity to reach the load zone without a demonstration or authored
+  path.
+- [ ] Preserve every authenticated terminal proposal as a complete root-to-goal
+  trajectory even when the online policy did not select it.
+- [ ] Reconstruct, minimize, and cold-replay that trajectory from the named root
+  before treating it as optimization authority.
+- [ ] Retain useful branch checkpoints and exact suffix provenance along the
+  terminal trajectory without assuming that every checkpoint is worth keeping.
+- [ ] Generate local, segment-scale, and whole-trajectory mutations around the
+  retained success.
+- [ ] Evaluate mutations through the authoritative terminal by replaying,
+  repairing, or replanning the remaining suffix. A short transition with no
+  completion outcome is not a comparable route candidate.
+- [ ] Keep diverse terminal trajectories and reject mutations that improve a
+  proxy while losing the load-zone completion.
 
-Exit: a standard two-worker campaign completes within ten minutes, two workers
-materially outperform one on unique useful native transitions per second, and
-retained save-state reuse has a measured positive return.
+Exit: a zero-shot discovery is automatically converted into a selected,
+cold-replayable route, and subsequent candidates can be compared by authenticated
+terminal tick cost.
 
-### 2. Make scratch exploration reach sparse terminals
+### 2. Prove that accumulated experience improves future behavior
 
-- Allow trajectories long enough to solve the task accidentally. A human takes
-  roughly four seconds; exploration must support much longer attempts and useful
-  branching instead of being trapped by an arbitrary short decision horizon.
-- Explore primitive inputs, applicable supplied tactics, tactic parameters,
-  restarts, and branch points with explicit coverage/diversity accounting.
-- Expose generic state needed to distinguish outcomes: motion history, velocity,
-  orientation, camera, analog input, prompted-action availability, action
-  duration, and the resulting state deltas.
-- Preserve unsuccessful trajectories. Straight travel, velocity loss, collision,
-  rolling, camera alignment, and detours must be learnable from transitions and
-  eventual outcomes, not encoded as Ordon-specific rewards.
-
-Exit: repeated held-out scratch campaigns reach the native load-zone predicate
-without a demonstration, authored route, waypoint sequence, proxy terminal, or
-route-specific exception.
-
-### 3. Make experience improve future behavior
-
-- Evaluate learning/search algorithms against the real transition volume,
-  horizon, branching factor, and update latency; do not preserve Q-learning if a
-  different method learns more effectively from the available samples.
-- Learn from both successful and unsuccessful trajectories with sparse terminal
-  value and authenticated native tick cost.
-- Separate exploration discovery from policy adoption and optimization. A
-  terminal reached by an unselected coverage proposal proves only that search
-  found it; learning counts only when retained experience causally improves
-  subsequent search or policy behavior relative to matched non-learning
-  controls. Online continuation need not imitate a retained winning route.
-- Support online collection, off-policy replay, prioritized reuse, temporal
+- [ ] Evaluate candidate learning/search algorithms against the real horizon,
+  branching factor, transition volume, and update latency; do not preserve
+  Q-learning by default.
+- [ ] Learn from successful and unsuccessful trajectories using sparse terminal
+  value, authenticated tick cost, and generic state deltas.
+- [ ] Support online collection, off-policy replay, prioritized reuse, temporal
   credit assignment, continued exploration, and escape from local optima.
-- After the first terminal, evaluate multi-scale trajectory mutations through
-  the authoritative terminal by replaying, repairing, or replanning the
-  remaining suffix. Short local transitions without completion outcomes cannot
-  train or compare terminal-cost optimization; use whichever trajectory
-  optimizer best converts a retained success into lower native tick cost.
-- Make useful behavior stable across ordinary seed ordering, campaign
-  composition, and update cadence; a terminal found by one curriculum must not
-  disappear merely because additional valid experience precedes it.
-- Surface the complete legal action set at each decision, including prompted
-  actions such as roll, jump, mount, lift, or future game-specific affordances.
-- Demonstrate causality using learned, frozen-policy, and random-valid treatments
-  drawn from the same comprehensive campaign design and resource budgets.
+- [ ] Surface motion history, velocity, orientation, camera, analog input,
+  prompted-action availability, action duration, and resulting state deltas.
+  Straight travel, velocity loss, collision slowdown, rolling, camera alignment,
+  and detours must be learnable rather than encoded as Ordon-specific rewards.
+- [ ] Run learned/adaptive, frozen-policy, and random-valid treatments over the
+  same candidate stream, native budget, and campaign design.
+- [ ] Require the adaptive treatment to reproduce terminals more often, consume
+  fewer native samples, or achieve lower terminal ticks on held-out seeds.
+- [ ] Verify that useful behavior survives ordinary seed ordering, campaign
+  composition, and update-cadence changes.
 
-Exit: on held-out seeds, accumulated experience changes future choices and the
-learned treatment reaches terminals more often, with fewer native samples, or at
-lower tick cost than both controls. It must continue improving after its first
-success.
+Exit: retained experience causally changes future choices and improves terminal
+outcomes relative to both controls. Merely finding another coverage terminal
+does not pass.
+
+### 3. Beat and then substantially exceed the human route zero-shot
+
+- [ ] Produce and independently verify a zero-shot 124-tick route.
+- [ ] Continue the same generic learning/search process to 123 ticks or less.
+- [ ] Reach 120 ticks or less without adding an Ordon-specific route, reward,
+  waypoint, exception, or hand-authored input sequence.
+- [ ] Minimize the winning input graph without changing its terminal identity or
+  native tick count.
+- [ ] Retain a fixed-budget result distribution, not only the best lucky seed,
+  so sample cost and reliability remain visible.
+- [ ] After the zero-shot result exists, run a separate human-demonstration
+  ablation to determine whether ordinary human play improves sample efficiency
+  without becoming required or imposing a policy ceiling.
+
+Checkpoint: 124 ticks is the first human beat; 123 ticks is stronger progress.
+
+Exit: a zero-shot route reaches the native load zone in 120 ticks or less and
+cold-replays twice with identical evidence.
 
 ### 4. Learn and compose tactics
 
-- Represent primitives and tactics through one interruptible, parameterized
-  option interface so the learner can choose either at every valid boundary.
-- Supply reusable tactics we know are valuable without supplying a route. Initial
-  examples include moving toward a chosen heading, one-frame direction plus
-  camera lock, camera lock plus action, rolling, and state-conditioned analog
-  steering.
-- Mine useful sub-trajectories and repeated control structure from collected
-  experience; propose tactics with learned initiation conditions, parameters,
-  termination conditions, and expected outcomes.
-- Evaluate proposed tactics against primitives and existing tactics, promote
-  those that improve held-out search or policy performance, retire regressions,
-  and allow tactics to compose other tactics.
-- Keep primitive actions available so a bad abstraction cannot cap the policy.
+- [ ] Represent primitives and tactics through one interruptible, parameterized
+  option interface so either can be chosen at every valid boundary.
+- [ ] Supply route-agnostic tactics such as moving toward a chosen heading,
+  one-frame direction plus camera lock, camera lock plus action, rolling, and
+  state-conditioned analog steering.
+- [ ] Keep every currently legal primitive and prompted action available,
+  including roll, jump, mount, lift, and future game-specific affordances.
+- [ ] Mine useful sub-trajectories and repeated control structure; propose
+  tactics with learned initiation conditions, parameters, termination
+  conditions, and expected outcomes.
+- [ ] Promote tactics only when held-out results improve over primitives and
+  existing tactics; retire regressions and permit tactic composition.
+- [ ] Keep primitive actions available so a bad abstraction cannot cap the
+  policy.
 
-Exit: ablations show that supplied tactics improve search without encoding an
-Ordon route, at least one automatically discovered/promoted tactic improves
-held-out performance, and composition can exceed the trajectories from which the
-tactics were learned.
+Exit: supplied tactics improve search without encoding an Ordon route, at least
+one automatically discovered tactic improves held-out performance, and tactic
+composition exceeds the trajectories from which it was learned.
 
-### 5. Beat the human route and keep optimizing
+### 5. Scale throughput only when the learning experiment demands it
 
-- Optionally ingest ordinary human play as off-policy replay, extracting useful
-  states, transitions, action availability, and sub-trajectories without
-  behavioral cloning becoming mandatory.
-- Search beyond the demonstration, retain diverse competitive routes, and spend
-  native samples where uncertainty or improvement potential is highest.
-- Authenticate the terminal and native tick count, minimize the winning input
-  graph, and cold-replay candidates from the named root state.
+The present campaign speed is sufficient to expose the missing learning and
+terminal-optimization behavior. Do not continue golfing infrastructure merely
+because a measurable subphase is nonzero.
 
-Checkpoint: an independently learned Ordon route reaches the native load zone in
-123 ticks or less and cold-replays twice with identical inputs, state identities,
-terminal proof, and tick count.
+- [ ] Re-profile only after terminal-aware rollouts are working, using existing
+  raw evidence before launching another campaign.
+- [ ] Optimize the largest measured cost only when it prevents useful learning
+  iterations or pushes a standard two-worker campaign beyond ten minutes.
+- [ ] Measure whether retained save-state branching beats replay from its
+  authority point; simplify or remove it where it does not.
+- [ ] Revisit deterministic generation-barrier or other concurrent learning
+  schedules only after policy adoption and terminal optimization have causal
+  tests.
+- [ ] Eliminate measured worker starvation, redundant native work, unnecessary
+  serialization, and central bottlenecks while keeping queues and memory
+  bounded.
 
-Exit: continued learning/search materially beats the best available human route
-under the same native rules and a fixed optimization budget. A demonstration
-ablation shows that human play may improve sample efficiency but is neither
-required nor a policy ceiling.
+Exit: the next learning experiment, not an isolated microbenchmark, completes
+within ten minutes; two workers materially improve unique accepted native
+experience per second; retained save states have measured positive return.
 
 ### 6. Prove the framework is durable and general
 
-- Apply the unchanged observation, action, learning, tactic, orchestration, and
-  evaluation contracts to a second native route.
-- Make fresh and resumed concurrent campaigns logically reproducible, with exact
-  ownership for sampling, updates, model publication, checkpoints, and accepted
-  experience.
-- Keep models, replay, checkpoints, and manifests compact, bounded, binary,
+- [ ] Apply the unchanged observation, action, learning, tactic, orchestration,
+  and evaluation contracts to a second native route.
+- [ ] Make fresh and resumed concurrent campaigns logically reproducible, with
+  exact ownership for sampling, updates, model publication, checkpoints, and
+  accepted experience.
+- [ ] Keep models, replay, checkpoints, and manifests compact, bounded, binary,
   versioned, checksummed, atomic, and migration-tested.
+- [ ] Refactor oversized and mixed-responsibility code along observation,
+  execution, state, replay, learning, tactics, workers, persistence, and
+  reporting boundaries; enforce source-size and dependency gates.
 
-Exit: the second route passes scratch discovery, learned improvement over
+Exit: the second route passes zero-shot discovery, learned improvement over
 controls, tactic use, and exact cold replay without route-specific framework
 changes; interruption and resume reproduce accepted-experience identities.
 
@@ -167,16 +190,16 @@ phase.
 - Search retained benchmark artifacts and commit history before implementing a
   treatment; repeat a rejected intervention only when a named premise changed.
 - Record observations, legal actions, choices, executions, transitions, replay
-  admissions, updates, tactic decisions, terminals, timings, retries, rejections,
-  duplicates, and censored work with stable identities.
+  admissions, updates, tactic decisions, terminals, timings, retries,
+  rejections, duplicates, and censored work with stable identities.
 - Throughput means unique accepted native experience per wall-clock second, not
   attempts, queued work, duplicate branches, or replayed frames.
-- Refactor oversized and mixed-responsibility code along observation, execution,
-  state, replay, learning, tactic, worker, persistence, and reporting boundaries.
-  Enforce source-size and dependency gates so monoliths do not regrow.
+- Score retained outputs, not the luckiest proposal observed anywhere in a
+  batch. Report discovery, policy adoption, optimization, and final replay as
+  separate outcomes.
 - Own child processes directly. Cancellation, timeout, crash recovery, cleanup,
   progress, and resume must not scan for or affect unrelated processes.
 - Use focused tests during iteration and broad suites at meaningful integration
   checkpoints. Do not substitute repeated testing for implementation progress.
-- Benchmark gains count only when generic mechanisms, held-out evaluation, exact
-  replay, and appropriate controls rule out route-specific gaming.
+- Benchmark gains count only when generic mechanisms, held-out evaluation,
+  exact replay, and appropriate controls rule out route-specific gaming.
