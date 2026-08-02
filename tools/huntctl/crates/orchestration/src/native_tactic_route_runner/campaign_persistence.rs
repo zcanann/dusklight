@@ -131,6 +131,96 @@ pub(super) struct ValidatedCompletedNativeTacticSeed {
     pub(super) checkpoint: TacticQCampaignCheckpoint,
 }
 
+pub(super) struct ValidatedCompletedSeedPreflight {
+    pub(super) result: NativeTacticSeedResult,
+    pub(super) root_facts: FactSnapshot,
+    pub(super) root_checkpoint_sha256: Digest,
+    pub(super) feature_schema_sha256: Digest,
+    pub(super) objective_sha256: Digest,
+    pub(super) useful_graph_expansions: CampaignUsefulGraphExpansionSet,
+}
+
+pub(super) fn read_completed_seed_preflight(
+    path: &Path,
+    seed: u64,
+    decisions_per_seed: u64,
+    execution_plan_sha256: Digest,
+    lane: &NativeTacticLanePlan,
+    imported_demonstration: bool,
+) -> Result<ValidatedCompletedSeedPreflight, NativeTacticRouteRunError> {
+    let seed_root = path
+        .parent()
+        .ok_or_else(|| route_message("completed tactic seed result has no seed root"))?;
+    let completion_path = seed_root.join(NATIVE_TACTIC_SEED_COMPLETION_FILE);
+    if completion_path.is_file() {
+        let metadata = fs::symlink_metadata(path).map_err(route_error)?;
+        if !metadata.file_type().is_file()
+            || metadata.file_type().is_symlink()
+            || metadata.len() > MAX_RESUME_JSON_BYTES
+        {
+            return Err(route_message("completed tactic seed result is oversized"));
+        }
+        let result_bytes = fs::read(path).map_err(route_error)?;
+        let result: NativeTacticSeedResult =
+            serde_json::from_slice(&result_bytes).map_err(route_error)?;
+        validate_completed_seed_result(
+            &result,
+            seed,
+            decisions_per_seed,
+            execution_plan_sha256,
+            lane,
+            imported_demonstration,
+        )?;
+        let completion = NativeTacticSeedCompletion::read_and_validate(
+            &completion_path,
+            seed_root,
+            &result,
+            &result_bytes,
+        )?;
+        validate_completed_terminal_artifacts(
+            &result,
+            execution_plan_sha256,
+            completion.objective_sha256(),
+            completion.root_checkpoint_sha256(),
+        )?;
+        return Ok(ValidatedCompletedSeedPreflight {
+            result,
+            root_facts: completion.root_facts().clone(),
+            root_checkpoint_sha256: completion.root_checkpoint_sha256(),
+            feature_schema_sha256: completion.feature_schema_sha256(),
+            objective_sha256: completion.objective_sha256(),
+            useful_graph_expansions: completion.useful_graph_expansions()?,
+        });
+    }
+
+    let completed = read_completed_seed(
+        path,
+        seed,
+        decisions_per_seed,
+        execution_plan_sha256,
+        lane,
+        imported_demonstration,
+    )?;
+    let root_facts = completed
+        .checkpoint
+        .state_graph
+        .node(completed.checkpoint.state_graph.root())
+        .ok_or_else(|| route_message("completed seed graph has no root state"))?
+        .state
+        .as_ref()
+        .clone();
+    let mut useful_graph_expansions = CampaignUsefulGraphExpansionSet::default();
+    useful_graph_expansions.include_graph(&completed.checkpoint.state_graph);
+    Ok(ValidatedCompletedSeedPreflight {
+        result: completed.result,
+        root_facts,
+        root_checkpoint_sha256: completed.checkpoint.root_checkpoint_sha256,
+        feature_schema_sha256: completed.checkpoint.feature_schema_sha256,
+        objective_sha256: completed.checkpoint.objective_sha256,
+        useful_graph_expansions,
+    })
+}
+
 pub(super) fn read_completed_seed(
     path: &Path,
     seed: u64,
@@ -140,6 +230,27 @@ pub(super) fn read_completed_seed(
     imported_demonstration: bool,
 ) -> Result<ValidatedCompletedNativeTacticSeed, NativeTacticRouteRunError> {
     let result: NativeTacticSeedResult = read_bounded_json(path)?;
+    validate_completed_seed_result(
+        &result,
+        seed,
+        decisions_per_seed,
+        execution_plan_sha256,
+        lane,
+        imported_demonstration,
+    )?;
+    let checkpoint = TacticQCampaign::read_checkpoint_payload(Path::new(&result.final_checkpoint))
+        .map_err(route_error)?;
+    validate_completed_seed_against_checkpoint(result, checkpoint, execution_plan_sha256)
+}
+
+fn validate_completed_seed_result(
+    result: &NativeTacticSeedResult,
+    seed: u64,
+    decisions_per_seed: u64,
+    execution_plan_sha256: Digest,
+    lane: &NativeTacticLanePlan,
+    imported_demonstration: bool,
+) -> Result<(), NativeTacticRouteRunError> {
     let first_terminal = result.trace.iter().find(|decision| {
         decision
             .proposal_batch
@@ -249,8 +360,14 @@ pub(super) fn read_completed_seed(
             "completed tactic seed result is invalid or belongs to another run",
         ));
     }
-    let checkpoint = TacticQCampaign::read_checkpoint_payload(Path::new(&result.final_checkpoint))
-        .map_err(route_error)?;
+    Ok(())
+}
+
+fn validate_completed_seed_against_checkpoint(
+    result: NativeTacticSeedResult,
+    checkpoint: TacticQCampaignCheckpoint,
+    execution_plan_sha256: Digest,
+) -> Result<ValidatedCompletedNativeTacticSeed, NativeTacticRouteRunError> {
     let graph_sha256 = checkpoint
         .state_graph
         .content_sha256()
@@ -359,6 +476,64 @@ pub(super) fn read_completed_seed(
         }
     }
     Ok(ValidatedCompletedNativeTacticSeed { result, checkpoint })
+}
+
+fn validate_completed_terminal_artifacts(
+    result: &NativeTacticSeedResult,
+    execution_plan_sha256: Digest,
+    objective_sha256: Digest,
+    root_checkpoint_sha256: Digest,
+) -> Result<(), NativeTacticRouteRunError> {
+    if let (Some(result_path), Some(tape_path), Some(first_hit_tick)) = (
+        result.best_terminal_result.as_deref(),
+        result.best_terminal_tape.as_deref(),
+        result.best_authenticated_tick,
+    ) {
+        let source_frame = result
+            .trace
+            .first()
+            .map(|decision| decision.before.tape_frame)
+            .ok_or_else(|| route_message("terminal seed result has no source decision"))?;
+        let terminal_result =
+            TacticQFinalResult::read(Path::new(result_path)).map_err(route_error)?;
+        let tape = InputTape::decode(&fs::read(tape_path).map_err(route_error)?)
+            .map_err(route_error)?
+            .tape;
+        if terminal_result.execution_authority_sha256 != execution_plan_sha256
+            || terminal_result.objective_sha256 != objective_sha256
+            || terminal_result.root_checkpoint_sha256 != root_checkpoint_sha256
+            || terminal_result.route_tape != tape
+            || Some(terminal_result.terminal_state_sha256) != result.best_terminal_state_sha256
+            || route_checkpoint(root_checkpoint_sha256, &tape).map_err(route_error)?
+                != result
+                    .best_terminal_route_checkpoint_sha256
+                    .ok_or_else(|| route_message("terminal route checkpoint is absent"))?
+            || authenticated_first_hit_tick(&terminal_result, source_frame) != Some(first_hit_tick)
+        {
+            return Err(route_message(
+                "completed tactic best-terminal artifacts belong to another execution plan",
+            ));
+        }
+    }
+    if let (Some(final_path), Some(tape_path)) = (
+        result.final_result.as_deref(),
+        result.successful_tape.as_deref(),
+    ) {
+        let final_result = TacticQFinalResult::read(Path::new(final_path)).map_err(route_error)?;
+        let tape = InputTape::decode(&fs::read(tape_path).map_err(route_error)?)
+            .map_err(route_error)?
+            .tape;
+        if final_result.execution_authority_sha256 != execution_plan_sha256
+            || final_result.objective_sha256 != objective_sha256
+            || final_result.root_checkpoint_sha256 != root_checkpoint_sha256
+            || final_result.route_tape != tape
+        {
+            return Err(route_message(
+                "completed tactic terminal artifacts belong to another execution plan",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn authenticated_terminal_origin_matches(

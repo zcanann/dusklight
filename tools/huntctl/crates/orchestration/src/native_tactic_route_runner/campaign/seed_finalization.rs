@@ -121,6 +121,14 @@ pub(super) fn finalize_seed(
         &trace,
         lease_ledger.accounting()?,
     )?;
+    let mut useful_graph_expansions = CampaignUsefulGraphExpansionSet::default();
+    useful_graph_expansions.include_graph(final_state_graph);
+    let root_facts = final_state_graph
+        .node(final_state_graph.root())
+        .ok_or_else(|| route_message("completed tactic seed graph has no root state"))?
+        .state
+        .as_ref()
+        .clone();
     let terminal_discovered = best_graph_terminal.is_some();
     let (best_terminal_tape, best_terminal_result) = if let Some(result) = best_success.as_ref() {
         let retained_candidate_started = Instant::now();
@@ -225,51 +233,60 @@ pub(super) fn finalize_seed(
         per_second_millionths(native_ticks, timing.wall_micros);
     timing.episodes_per_second_millionths =
         per_second_millionths(episode.saturating_add(1), timing.wall_micros);
+    let result = NativeTacticSeedResult {
+        execution_plan_sha256,
+        seed,
+        terminal_discovered,
+        best_authenticated_tick,
+        first_terminal_decision_index: first_terminal.map(|decision| decision.decision_index),
+        time_to_first_terminal_micros: first_terminal
+            .map(|decision| decision.cumulative_wall_micros),
+        wall_budget_reached,
+        stop_reasons,
+        success,
+        decisions: campaign.decision_index,
+        episodes: episode + 1,
+        native_ticks,
+        replay_rows: campaign.replay().len(),
+        training_replay_rows: campaign.training_replay_len(),
+        imported_training_replay_rows,
+        duplicate_training_transitions,
+        censored_training_transitions,
+        learner_updates: 0,
+        replay_sharing,
+        visited_states: campaign.visited_state_count(),
+        useful_decisions,
+        unique_useful_graph_expansions,
+        native_restore_accounting,
+        timing,
+        selection_counts,
+        diagnostics: None,
+        final_checkpoint: path_text(&final_checkpoint_path),
+        state_graph_sha256,
+        useful_graph_expansion_set_sha256,
+        graph_metrics: Some(graph_metrics),
+        best_terminal_state_sha256: best_graph_terminal
+            .as_ref()
+            .map(|path| path.terminal.state_sha256),
+        best_terminal_route_checkpoint_sha256: best_graph_terminal
+            .as_ref()
+            .map(|path| path.route_checkpoint_sha256),
+        best_terminal_tape,
+        best_terminal_result,
+        successful_tape,
+        final_result,
+        trace,
+    };
     Ok(CompletedNativeTacticSeed {
-        result: NativeTacticSeedResult {
-            execution_plan_sha256,
-            seed,
-            terminal_discovered,
-            best_authenticated_tick,
-            first_terminal_decision_index: first_terminal.map(|decision| decision.decision_index),
-            time_to_first_terminal_micros: first_terminal
-                .map(|decision| decision.cumulative_wall_micros),
-            wall_budget_reached,
-            stop_reasons,
-            success,
-            decisions: campaign.decision_index,
-            episodes: episode + 1,
-            native_ticks,
-            replay_rows: campaign.replay().len(),
-            training_replay_rows: campaign.training_replay_len(),
-            imported_training_replay_rows,
-            duplicate_training_transitions,
-            censored_training_transitions,
-            learner_updates: 0,
-            replay_sharing,
-            visited_states: campaign.visited_state_count(),
-            useful_decisions,
-            unique_useful_graph_expansions,
-            native_restore_accounting,
-            timing,
-            selection_counts,
-            diagnostics: None,
-            final_checkpoint: path_text(&final_checkpoint_path),
-            state_graph_sha256,
-            useful_graph_expansion_set_sha256,
-            graph_metrics: Some(graph_metrics),
-            best_terminal_state_sha256: best_graph_terminal
-                .as_ref()
-                .map(|path| path.terminal.state_sha256),
-            best_terminal_route_checkpoint_sha256: best_graph_terminal
-                .as_ref()
-                .map(|path| path.route_checkpoint_sha256),
-            best_terminal_tape,
-            best_terminal_result,
-            successful_tape,
-            final_result,
-            trace,
-        },
+        completion_projection: Some(NativeTacticSeedCompletionProjection {
+            final_checkpoint_content_sha256: final_checkpoint_commit.content_sha256,
+            feature_schema_sha256: campaign.feature_schema_sha256,
+            objective_sha256: campaign.objective_sha256,
+            root_checkpoint_sha256: campaign.root_checkpoint_sha256,
+            root_facts,
+            useful_graph_expansion_identities: useful_graph_expansions.identities(),
+        }),
+        result,
         generated_training,
         invocation_wall_micros: completed_invocation_micros,
         invocation_model_update_micros,

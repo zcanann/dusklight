@@ -926,6 +926,10 @@ pub struct NativeTacticGraphMetrics {
 pub(super) struct CompletedNativeTacticSeed {
     pub(super) result: NativeTacticSeedResult,
     pub(super) generated_training: TacticQTrainingCorpus,
+    /// Compact authority projected from the validated in-memory graph. New
+    /// seeds publish it after `seed-result.json`; resumed legacy seeds leave it
+    /// absent and continue through full checkpoint validation.
+    pub(super) completion_projection: Option<NativeTacticSeedCompletionProjection>,
     /// Work performed by this coordinator invocation only; unlike the durable
     /// seed wall in `result`, this is zero when a completed seed is reused.
     pub(super) invocation_wall_micros: u64,

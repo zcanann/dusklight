@@ -271,12 +271,30 @@ do not golf isolated subphases without campaign evidence.
   campaign finalized the same 24 decisions, 4,346 historical native ticks, and
   191-tick terminal in 88.8 seconds with no native launch (18.1 seconds / 16.9%
   faster). Two fail-closed clone-admission attempts warmed the filesystem cache
-  first, so a clean cold measurement remains required.
+  first, so a clean cold measurement remains required. That seed's 25 graph
+  records larger than one MiB total 380.4 MB even though sealed preflight needs
+  only root authority, graph identity/metrics, and the useful-expansion set.
+  New seed finalization now publishes those facts as a 35.3 KB checksummed
+  binary completion projection bound to the exact seed-result bytes, final
+  checkpoint file, lease journal, and terminal artifacts. All-seed-complete and
+  orphan-report recovery use it without reconstructing the historical graph;
+  legacy seeds retain the full fail-closed fallback. After one deliberate
+  compatibility migration, the same diagnostic campaign finalized in 67.2
+  seconds with the same 24 decisions, 4,346 historical native ticks, and
+  191-tick terminal and no native launch: 21.6 seconds / 24.3% below the prior
+  88.8-second path and 39.7 seconds / 37.1% below the original 106.9 seconds.
+  Retaining the replay objects decoded during reopen for final snapshot
+  projection produced no measurable end-to-end gain (67.22 versus 67.16
+  seconds) and was reverted rather than adding an unbounded cache. The
+  remaining roughly 67-second authority/reporting path and a clean cold
+  measurement keep this task open.
 - [ ] Cache or share already-validated artifact and graph identities within one
   process; independent reopen validation must remain fail-closed. Completed-seed
   preflight now carries the campaign-wide useful-expansion set directly from
   the authenticated graphs into final reporting instead of reopening every
-  final checkpoint and decoding the same graph journals a second time.
+  final checkpoint and decoding the same graph journals a second time. Newly
+  sealed seeds additionally carry that projection across processes without
+  retaining a live graph or weakening legacy checkpoint validation.
 - [ ] Measure whether retained save-state branching beats replay from its
   authority point; simplify or remove it where it does not.
 - [ ] Revisit deterministic generation-barrier or other concurrent learning

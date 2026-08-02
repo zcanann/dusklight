@@ -104,6 +104,7 @@ pub(super) fn run_seed_coordinator(
         Ok(CompletedNativeTacticSeed {
             result: completed.result,
             generated_training,
+            completion_projection: None,
             invocation_wall_micros: 0,
             invocation_model_update_micros: 0,
         })
@@ -134,10 +135,12 @@ pub(super) fn run_seed_coordinator(
             seed_index,
             seed,
         )?;
-        write_new(
-            &seed_result_path,
-            &serde_json::to_vec_pretty(&completion.result).map_err(route_error)?,
-        )?;
+        let result_bytes = serde_json::to_vec_pretty(&completion.result).map_err(route_error)?;
+        write_new(&seed_result_path, &result_bytes)?;
+        let projection = completion.completion_projection.as_ref().ok_or_else(|| {
+            route_message("newly completed tactic seed has no completion projection")
+        })?;
+        publish_seed_completion(&seed_root, &completion.result, &result_bytes, projection)?;
         Ok(completion)
     }
 }

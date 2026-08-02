@@ -106,23 +106,29 @@ fn validate_report_binding(
     Ok(())
 }
 
+struct ValidatedReportSeedAuthority {
+    feature_schema_sha256: Digest,
+    objective_sha256: Digest,
+    root_checkpoint_sha256: Digest,
+}
+
 fn validate_report_seed_authority(
     config: &NativeTacticRouteRunConfig<'_>,
     report: &NativeTacticRouteReport,
-) -> Result<TacticQCampaignCheckpoint, NativeTacticRouteRunError> {
+) -> Result<ValidatedReportSeedAuthority, NativeTacticRouteRunError> {
     if report.seeds.len() != config.execution_plan.lanes.len() {
         return Err(route_message(
             "completed tactic campaign report has detached seed cardinality",
         ));
     }
-    let mut first_checkpoint = None;
+    let mut first_authority = None;
     for (seed_index, lane) in config.execution_plan.lanes.iter().enumerate() {
         let seed = lane.seed;
         let result_path = config
             .output_root
             .join(format!("seed-{seed_index:03}-{seed}"))
             .join("seed-result.json");
-        let completed = read_completed_seed(
+        let completed = read_completed_seed_preflight(
             &result_path,
             seed,
             config.execution_plan.budgets.decisions_per_lane,
@@ -141,24 +147,38 @@ fn validate_report_seed_authority(
                 "completed tactic campaign report seed differs from durable seed evidence",
             ));
         }
-        if first_checkpoint.is_none() {
-            first_checkpoint = Some(completed.checkpoint);
+        let authority = ValidatedReportSeedAuthority {
+            feature_schema_sha256: completed.feature_schema_sha256,
+            objective_sha256: completed.objective_sha256,
+            root_checkpoint_sha256: completed.root_checkpoint_sha256,
+        };
+        if first_authority
+            .as_ref()
+            .is_some_and(|first: &ValidatedReportSeedAuthority| {
+                first.feature_schema_sha256 != authority.feature_schema_sha256
+                    || first.objective_sha256 != authority.objective_sha256
+                    || first.root_checkpoint_sha256 != authority.root_checkpoint_sha256
+            })
+        {
+            return Err(route_message(
+                "completed tactic campaign seeds disagree on authority",
+            ));
         }
+        first_authority.get_or_insert(authority);
     }
-    first_checkpoint
-        .ok_or_else(|| route_message("completed tactic campaign has no seed checkpoint"))
+    first_authority.ok_or_else(|| route_message("completed tactic campaign has no seed authority"))
 }
 
 fn validate_report_control_plane(
     config: &NativeTacticRouteRunConfig<'_>,
     report: &NativeTacticRouteReport,
-    checkpoint: &TacticQCampaignCheckpoint,
+    authority: &ValidatedReportSeedAuthority,
 ) -> Result<(), NativeTacticRouteRunError> {
     let identity = TacticReplayControlPlaneIdentity::new(
         report.execution_plan_sha256,
-        checkpoint.feature_schema_sha256,
-        checkpoint.objective_sha256,
-        checkpoint.root_checkpoint_sha256,
+        authority.feature_schema_sha256,
+        authority.objective_sha256,
+        authority.root_checkpoint_sha256,
     )
     .map_err(route_error)?;
     let store = TacticQContentStore::open(
@@ -201,7 +221,7 @@ fn validate_report_control_plane(
 fn validate_report_macro_authority(
     config: &NativeTacticRouteRunConfig<'_>,
     report: &NativeTacticRouteReport,
-    checkpoint: &TacticQCampaignCheckpoint,
+    authority: &ValidatedReportSeedAuthority,
 ) -> Result<(), NativeTacticRouteRunError> {
     let macro_report = &report.tactic_macro_discovery;
     let registry_path = Path::new(&macro_report.registry_path);
@@ -226,9 +246,9 @@ fn validate_report_macro_authority(
         && read_macro_discovery_report(
             config.output_root,
             report.execution_plan_sha256,
-            checkpoint.objective_sha256,
-            checkpoint.feature_schema_sha256,
-            checkpoint.root_checkpoint_sha256,
+            authority.objective_sha256,
+            authority.feature_schema_sha256,
+            authority.root_checkpoint_sha256,
         )? != *macro_report
     {
         return Err(route_message(

@@ -179,6 +179,11 @@ use causal_policy_probe::build_policy_update_probe;
 use causal_policy_probe::{PolicyUpdateProbeContext, consume_policy_update_with_probe};
 mod completion_marker;
 use completion_marker::publish_completion;
+mod seed_completion;
+use seed_completion::{
+    NATIVE_TACTIC_SEED_COMPLETION_FILE, NativeTacticSeedCompletion,
+    NativeTacticSeedCompletionProjection, publish_seed_completion,
+};
 mod exclusive_timing;
 pub use completion_marker::{
     NATIVE_TACTIC_CAMPAIGN_COMPLETION_FILE, NATIVE_TACTIC_CAMPAIGN_COMPLETION_SCHEMA_V1,
@@ -1243,8 +1248,8 @@ use candidate_retention::{
 };
 mod campaign_persistence;
 use campaign_persistence::{
-    cancellation_requested, load_seed_performance, read_completed_seed, read_completed_seed_result,
-    resume_seed,
+    cancellation_requested, load_seed_performance, read_completed_seed,
+    read_completed_seed_preflight, read_completed_seed_result, resume_seed,
 };
 mod campaign_completion_recovery;
 use campaign_completion_recovery::recover_completed_campaign;

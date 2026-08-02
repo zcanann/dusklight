@@ -14,6 +14,10 @@ impl CampaignUsefulGraphExpansionSet {
             .extend(graph.completed_executable_expansion_identities());
     }
 
+    pub(super) fn include_set(&mut self, other: &Self) {
+        self.identities.extend(other.identities.iter().copied());
+    }
+
     #[cfg(test)]
     fn include_identities(&mut self, identities: impl IntoIterator<Item = Digest>) {
         self.identities.extend(identities);
@@ -31,6 +35,22 @@ impl CampaignUsefulGraphExpansionSet {
             hasher.update(identity.0);
         }
         Digest(hasher.finalize().into())
+    }
+
+    pub(super) fn identities(&self) -> Vec<Digest> {
+        self.identities.iter().copied().collect()
+    }
+
+    pub(super) fn from_identities(
+        identities: Vec<Digest>,
+    ) -> Result<Self, NativeTacticRouteRunError> {
+        let set = identities.iter().copied().collect::<BTreeSet<_>>();
+        if identities.len() != set.len() || identities.iter().copied().ne(set.iter().copied()) {
+            return Err(route_message(
+                "completed seed useful graph identities are duplicated or unsorted",
+            ));
+        }
+        Ok(Self { identities: set })
     }
 }
 

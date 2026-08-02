@@ -47,7 +47,7 @@ pub(super) fn load_completed_seed_preflight(
         .zip(result_paths)
         .enumerate()
     {
-        let completed = read_completed_seed(
+        let completed = read_completed_seed_preflight(
             &result_path,
             lane.seed,
             config.execution_plan.budgets.decisions_per_lane,
@@ -55,33 +55,25 @@ pub(super) fn load_completed_seed_preflight(
             lane,
             config.execution_plan.demonstration_chunk_ticks.is_some(),
         )?;
-        let root = completed
-            .checkpoint
-            .state_graph
-            .node(completed.checkpoint.state_graph.root())
-            .ok_or_else(|| route_message("completed seed graph has no root state"))?
-            .state
-            .as_ref()
-            .clone();
+        let root = completed.root_facts.clone();
         if initial_facts
             .as_ref()
             .is_some_and(|expected| expected != &root)
             || root_checkpoint_sha256
-                .is_some_and(|expected| expected != completed.checkpoint.root_checkpoint_sha256)
+                .is_some_and(|expected| expected != completed.root_checkpoint_sha256)
             || feature_schema_sha256
-                .is_some_and(|expected| expected != completed.checkpoint.feature_schema_sha256)
-            || objective_sha256
-                .is_some_and(|expected| expected != completed.checkpoint.objective_sha256)
+                .is_some_and(|expected| expected != completed.feature_schema_sha256)
+            || objective_sha256.is_some_and(|expected| expected != completed.objective_sha256)
         {
             return Err(route_message(
                 "completed tactic seeds disagree on campaign root authority",
             ));
         }
         initial_facts.get_or_insert(root);
-        root_checkpoint_sha256.get_or_insert(completed.checkpoint.root_checkpoint_sha256);
-        feature_schema_sha256.get_or_insert(completed.checkpoint.feature_schema_sha256);
-        objective_sha256.get_or_insert(completed.checkpoint.objective_sha256);
-        useful_graph_expansions.include_graph(&completed.checkpoint.state_graph);
+        root_checkpoint_sha256.get_or_insert(completed.root_checkpoint_sha256);
+        feature_schema_sha256.get_or_insert(completed.feature_schema_sha256);
+        objective_sha256.get_or_insert(completed.objective_sha256);
+        useful_graph_expansions.include_set(&completed.useful_graph_expansions);
         indexed_results.push((seed_index, completed.result));
     }
     let initial_facts = initial_facts
