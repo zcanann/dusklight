@@ -256,7 +256,12 @@ do not golf isolated subphases without campaign evidence.
   misattributed to generation coordination. Campaign timing now measures setup,
   live-seed, and post-generation model work separately and requires their exact
   sum to match learner authority; read-only resume then finalized all 24 sealed
-  decisions in 106.9 seconds without launching a native child.
+  decisions in 106.9 seconds without launching a native child. After reusing
+  the preflight graph projection, a hard-linked diagnostic clone of the same
+  campaign finalized the same 24 decisions, 4,346 historical native ticks, and
+  191-tick terminal in 88.8 seconds with no native launch (18.1 seconds / 16.9%
+  faster). Two fail-closed clone-admission attempts warmed the filesystem cache
+  first, so a clean cold measurement remains required.
 - [ ] Cache or share already-validated artifact and graph identities within one
   process; independent reopen validation must remain fail-closed. Completed-seed
   preflight now carries the campaign-wide useful-expansion set directly from
