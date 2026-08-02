@@ -1,8 +1,10 @@
 //! Sealed request boundary for resumable route optimization campaigns.
 
 use crate::native_residual_campaign::NativeResidualExecutionBinding;
-use crate::native_tactic_route_runner::NativeTacticColdReplayEvidenceBundle;
-use crate::residual_winner_cold_replay::read_and_validate_residual_winner_cold_replay;
+use crate::native_tactic_route_runner::{
+    NativeTacticColdReplayEvidenceBundle, validate_native_tape_cold_replay_artifacts,
+};
+use crate::residual_winner_cold_replay::ResidualWinnerColdReplayProof;
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_harness_contracts::objective_suite::{
@@ -890,16 +892,25 @@ impl OptimizationRequest {
                             "residual cold-replay authority cannot cite its own request",
                         ));
                     }
+                    source_request.validate_files_with_depth(&root, tightening_depth + 1)?;
+                    source_execution
+                        .validate_seal(&source_request)
+                        .map_err(|source| request_error(source.to_string()))?;
                     let proof_root = proof_path.parent().ok_or_else(|| {
                         request_error("residual cold-replay proof has no artifact root")
                     })?;
-                    let replay = read_and_validate_residual_winner_cold_replay(
-                        &root,
-                        &source_request,
-                        &source_execution,
-                        proof_root,
-                    )
-                    .map_err(|source| request_error(source.to_string()))?;
+                    let replay: ResidualWinnerColdReplayProof =
+                        serde_json::from_slice(&fs::read(&proof_path).map_err(|source| {
+                            request_error(format!(
+                                "cannot read residual cold-replay proof: {source}"
+                            ))
+                        })?)
+                        .map_err(|source| {
+                            request_error(format!("invalid residual cold-replay proof: {source}"))
+                        })?;
+                    replay
+                        .validate_shape()
+                        .map_err(|source| request_error(source.to_string()))?;
                     if replay.optimization_request_sha256 != source_request.content_sha256
                         || replay.execution_binding_sha256 != source_execution.content_sha256
                         || replay.source_boundary_index != self.route.source_boundary_index
@@ -918,6 +929,47 @@ impl OptimizationRequest {
                             "residual cold-replay incumbent differs from its source, route, terminal, or minimized suffix",
                         ));
                     }
+                    let parent_id = segment.parent.as_deref().ok_or_else(|| {
+                        request_error("residual cold-replay incumbent segment has no parent")
+                    })?;
+                    let artifact_root = timeline_path.parent().ok_or_else(|| {
+                        request_error("optimization timeline has no artifact root")
+                    })?;
+                    let parent = materialize_segment_chain(&timeline, artifact_root, parent_id)
+                        .map_err(|source| request_error(source.to_string()))?;
+                    let suffix_frames = usize::try_from(incumbent.first_hit_tick)
+                        .map_err(|source| request_error(source.to_string()))?
+                        .checked_add(1)
+                        .ok_or_else(|| {
+                            request_error("residual cold-replay suffix length overflowed")
+                        })?;
+                    if parent.tape.frames.len() as u64 != self.route.source_boundary_index
+                        || incumbent_tape.frames.len() < suffix_frames
+                        || parent.tape.boot != incumbent_tape.boot
+                        || parent.tape.tick_rate_numerator != incumbent_tape.tick_rate_numerator
+                        || parent.tape.tick_rate_denominator != incumbent_tape.tick_rate_denominator
+                    {
+                        return Err(request_error(
+                            "residual cold-replay incumbent cannot be spliced onto its exact route prefix",
+                        ));
+                    }
+                    let mut complete_route = parent.tape;
+                    complete_route
+                        .frames
+                        .extend_from_slice(&incumbent_tape.frames[..suffix_frames]);
+                    let complete_route_bytes = complete_route
+                        .encode()
+                        .map_err(|source| request_error(source.to_string()))?;
+                    validate_native_tape_cold_replay_artifacts(
+                        proof_root,
+                        self,
+                        &complete_route,
+                        &complete_route_bytes,
+                        incumbent.first_hit_tick,
+                        &replay.controller_tape,
+                        &replay.attempts,
+                    )
+                    .map_err(|source| request_error(source.to_string()))?;
                 }
             }
             self.proposal

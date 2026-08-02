@@ -196,7 +196,7 @@ impl ResidualWinnerColdReplayProof {
         .map_err(cold_error)
     }
 
-    fn validate_shape(&self) -> Result<(), ResidualWinnerColdReplayError> {
+    pub(crate) fn validate_shape(&self) -> Result<(), ResidualWinnerColdReplayError> {
         let expected_frames = self
             .source_boundary_index
             .checked_add(self.first_hit_tick)
