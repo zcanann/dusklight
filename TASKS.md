@@ -108,11 +108,15 @@ therefore contains no directional discovery signal and three seeds never
 escaped that condition.
 
 Smallest proposed intervention: until the first authenticated terminal only,
-select the least-visited eligible action in the current coarse state (seeded
-ties), using the Q table's existing visit counts. Disable this count-based
-exploration immediately after success and return to the unchanged
-epsilon-greedy tick optimizer. This changes selection only: it adds no reward,
-route coordinate, waypoint, model, or retained trajectory input.
+train the existing Q table on a count-based novelty return over coarse position
+cells. Infrequently visited cells provide the only exploration value and native
+ticks remain the only cost. Persist the cell counts. On the first terminal,
+clear the novelty-trained values, seed the same table from that successful
+episode using the ordinary terminal/tick return, and permanently disable
+novelty. This adds no route coordinate, waypoint, collision heuristic, second
+model, or retained trajectory input. Merely choosing the least-visited action
+in the current full state is not an intervention: the plain learner already
+prefers its unvisited zero-valued actions over negatively valued failures.
 
 Conditional interventions:
 
