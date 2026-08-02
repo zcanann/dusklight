@@ -901,7 +901,7 @@ fn incumbent_demonstration_batch(
         checkpoint_cache: None,
         candidates: vec![NativeSuffixCandidate {
             id: "incumbent-demonstration".into(),
-            actions: imported.actions,
+            actions: project_native_port_one_actions(imported.actions)?,
             controller_program_hex: None,
         }],
     })
