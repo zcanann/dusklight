@@ -180,12 +180,44 @@ impl StateGraph {
                 let first = evidence.values().next().ok_or(StateGraphError::Invariant(
                     "completed expansion has no evidence",
                 ))?;
+                let source_route = self
+                    .routes
+                    .get(&expansion.source.route_checkpoint_sha256)
+                    .ok_or(StateGraphError::Invariant(
+                        "completed expansion source route is absent",
+                    ))?;
+                let route =
+                    self.routes
+                        .get(route_checkpoint_sha256)
+                        .ok_or(StateGraphError::Invariant(
+                            "completed expansion target route is absent",
+                        ))?;
                 let any_executable = evidence
                     .values()
                     .any(|row| row.authority == super::ExpansionEvidenceAuthority::Executable);
                 for (evidence_sha256, row) in evidence {
+                    row.transition.execution.validate_against_tape(route)?;
+                    let start =
+                        usize::try_from(row.transition.execution.realized_tape_range.start_frame)
+                            .map_err(|_| {
+                            StateGraphError::Invariant("expansion tape range overflows")
+                        })?;
+                    let end = usize::try_from(
+                        row.transition
+                            .execution
+                            .realized_tape_range
+                            .end_frame_exclusive,
+                    )
+                    .map_err(|_| StateGraphError::Invariant("expansion tape range overflows"))?;
                     if row.transition.validate_and_replay_identity_sha256()? != *evidence_sha256
                         || !super::same_native_realization(&first.transition, &row.transition)
+                        || start != source_route.frames.len()
+                        || end != route.frames.len()
+                        || route.frames.get(..start) != Some(source_route.frames.as_slice())
+                        || row.transition.execution_authority_sha256
+                            != self.identity.execution_authority_sha256
+                        || row.transition.feature_schema_sha256
+                            != self.identity.feature_schema_sha256
                         || row.transition.before_state_sha256 != expansion.source.state_sha256
                         || row.transition.source_checkpoint_sha256
                             != expansion.source.route_checkpoint_sha256

@@ -188,7 +188,13 @@ do not golf isolated subphases without campaign evidence.
   validation, and 4.9 seconds to final checkpoint validation. Content-addressed
   reads now hash the bytes they return once instead of verifying each object
   twice and reading it a third time. On the same checkpoint,
-  read/authentication has fallen from 57.6 to 28.2 seconds (51%); completed-seed
+  read/authentication first fell from 57.6 to 28.2 seconds. Graph validation now
+  also authenticates every completed transition's authority, source-prefix
+  continuity, endpoint, and exact tape execution once. V6 training rows are
+  constructed directly from that validated graph and carry their projection
+  keys into checkpoint admission instead of rehashing every route again; the
+  same checkpoint now reads in 22.7 seconds (61% below the original);
+  completed-seed
   journals now also compact to a fresh authenticated base after 63 deltas, so
   new campaigns and any subsequently mutated legacy campaign cannot accumulate
   unbounded reopen work. Existing sealed deep journals remain compatible and

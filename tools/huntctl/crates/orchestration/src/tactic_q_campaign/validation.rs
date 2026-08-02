@@ -15,22 +15,32 @@ pub(crate) fn validate_checkpoint_for_resume(
     checkpoint: &TacticQCampaignCheckpoint,
 ) -> Result<TacticQCheckpointRuntimeValidation, TacticQCampaignError> {
     let validated_graph = checkpoint.state_graph.validated()?;
-    validate_checkpoint_for_resume_with_validated_graph(checkpoint, validated_graph)
+    validate_checkpoint_for_resume_with_validated_graph(checkpoint, validated_graph, None)
 }
 
-pub(crate) fn validate_checkpoint_for_resume_with_graph_token(
+pub(crate) fn validate_checkpoint_for_resume_with_derived_graph_projection(
     checkpoint: &TacticQCampaignCheckpoint,
     token: &StateGraphValidationToken,
+    training_projection_keys: Vec<(Digest, Digest)>,
 ) -> Result<TacticQCheckpointRuntimeValidation, TacticQCampaignError> {
     let validated_graph = checkpoint.state_graph.validated_with_token(token)?;
-    validate_checkpoint_for_resume_with_validated_graph(checkpoint, validated_graph)
+    validate_checkpoint_for_resume_with_validated_graph(
+        checkpoint,
+        validated_graph,
+        Some(training_projection_keys),
+    )
 }
 
 fn validate_checkpoint_for_resume_with_validated_graph(
     checkpoint: &TacticQCampaignCheckpoint,
     validated_graph: ValidatedStateGraph<'_>,
+    derived_training_projection_keys: Option<Vec<(Digest, Digest)>>,
 ) -> Result<TacticQCheckpointRuntimeValidation, TacticQCampaignError> {
-    let validation = validate_checkpoint_snapshot_for_runtime(checkpoint, validated_graph)?;
+    let validation = validate_checkpoint_snapshot_for_runtime(
+        checkpoint,
+        validated_graph,
+        derived_training_projection_keys,
+    )?;
     if checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V6 && !checkpoint.persistence_validated {
         return Err(TacticQCampaignError::InvalidState(
             "campaign checkpoint persistence was not authenticated",
@@ -49,12 +59,13 @@ pub(crate) fn validate_checkpoint_snapshot(
     checkpoint: &TacticQCampaignCheckpoint,
 ) -> Result<(), TacticQCampaignError> {
     let validated_graph = checkpoint.state_graph.validated()?;
-    validate_checkpoint_snapshot_for_runtime(checkpoint, validated_graph).map(drop)
+    validate_checkpoint_snapshot_for_runtime(checkpoint, validated_graph, None).map(drop)
 }
 
 fn validate_checkpoint_snapshot_for_runtime(
     checkpoint: &TacticQCampaignCheckpoint,
     validated_graph: ValidatedStateGraph<'_>,
+    derived_training_projection_keys: Option<Vec<(Digest, Digest)>>,
 ) -> Result<TacticQCheckpointRuntimeValidation, TacticQCampaignError> {
     if checkpoint.content_sha256 == Digest::ZERO {
         return Err(TacticQCampaignError::InvalidState(
@@ -68,19 +79,24 @@ fn validate_checkpoint_snapshot_for_runtime(
             reconstructed,
         });
     }
-    validate_checkpoint_payload_for_runtime(checkpoint, validated_graph)
+    validate_checkpoint_payload_for_runtime(
+        checkpoint,
+        validated_graph,
+        derived_training_projection_keys,
+    )
 }
 
 pub(crate) fn validate_checkpoint_payload(
     checkpoint: &TacticQCampaignCheckpoint,
 ) -> Result<(), TacticQCampaignError> {
     let validated_graph = checkpoint.state_graph.validated()?;
-    validate_checkpoint_payload_for_runtime(checkpoint, validated_graph).map(drop)
+    validate_checkpoint_payload_for_runtime(checkpoint, validated_graph, None).map(drop)
 }
 
 fn validate_checkpoint_payload_for_runtime(
     checkpoint: &TacticQCampaignCheckpoint,
     validated_graph: ValidatedStateGraph<'_>,
+    derived_training_projection_keys: Option<Vec<(Digest, Digest)>>,
 ) -> Result<TacticQCheckpointRuntimeValidation, TacticQCampaignError> {
     checkpoint.current.validate()?;
     checkpoint
@@ -179,28 +195,47 @@ fn validate_checkpoint_payload_for_runtime(
             "campaign checkpoint current state is not the replay endpoint",
         ));
     }
-    let training_replay = &checkpoint.training_replay;
-    let training_routes = &checkpoint.training_replay_routes;
-    let training_groups = &checkpoint.training_episode_groups;
-    let mut training_identities = BTreeSet::new();
-    for ((transition, route), _) in training_replay
-        .iter()
-        .zip(training_routes)
-        .zip(training_groups)
-    {
-        validate_training_transition(
-            checkpoint.execution_authority_sha256,
-            checkpoint.feature_schema_sha256,
-            checkpoint.root_checkpoint_sha256,
-            transition,
-            route,
-        )?;
-        if !training_identities.insert(transition.replay_identity_sha256()?) {
+    let training_projection_keys = if let Some(keys) = derived_training_projection_keys {
+        if keys.len() != checkpoint.training_replay.len()
+            || !keys.windows(2).all(|pair| pair[0] < pair[1])
+        {
             return Err(TacticQCampaignError::InvalidState(
-                "campaign training replay is detached or duplicated",
+                "derived campaign training projection is detached or duplicated",
             ));
         }
-    }
+        keys
+    } else {
+        let mut training_identities = BTreeSet::new();
+        for ((transition, route), _) in checkpoint
+            .training_replay
+            .iter()
+            .zip(&checkpoint.training_replay_routes)
+            .zip(&checkpoint.training_episode_groups)
+        {
+            validate_training_transition(
+                checkpoint.execution_authority_sha256,
+                checkpoint.feature_schema_sha256,
+                checkpoint.root_checkpoint_sha256,
+                transition,
+                route,
+            )?;
+            if !training_identities.insert(transition.replay_identity_sha256()?) {
+                return Err(TacticQCampaignError::InvalidState(
+                    "campaign training replay is detached or duplicated",
+                ));
+            }
+        }
+        validate_training_projection_and_keys(
+            validated_graph,
+            &checkpoint.training_replay,
+            &checkpoint.training_replay_routes,
+            &checkpoint.training_episode_groups,
+        )?
+    };
+    let training_identities = training_projection_keys
+        .iter()
+        .map(|(_, evidence_sha256)| *evidence_sha256)
+        .collect::<BTreeSet<_>>();
     if checkpoint.replay.iter().any(|transition| {
         transition
             .replay_identity_sha256()
@@ -210,12 +245,6 @@ fn validate_checkpoint_payload_for_runtime(
             "retained replay is absent from training replay",
         ));
     }
-    let training_projection_keys = validate_training_projection_and_keys(
-        validated_graph,
-        &checkpoint.training_replay,
-        &checkpoint.training_replay_routes,
-        &checkpoint.training_episode_groups,
-    )?;
     let current_route =
         route_checkpoint(checkpoint.root_checkpoint_sha256, &checkpoint.route_tape)?;
     if checkpoint

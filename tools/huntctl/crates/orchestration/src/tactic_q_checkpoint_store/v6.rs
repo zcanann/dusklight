@@ -254,7 +254,11 @@ pub(super) fn load_checkpoint(
         persistence: Some(persistence),
         persistence_validated: true,
     };
-    validate_checkpoint_for_resume_with_graph_token(&checkpoint, &state_graph_validation)?;
+    validate_checkpoint_for_resume_with_derived_graph_projection(
+        &checkpoint,
+        &state_graph_validation,
+        training.keys,
+    )?;
     Ok(checkpoint)
 }
 

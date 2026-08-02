@@ -11,8 +11,8 @@ use crate::tactic_q_campaign::{
     TacticQCampaignError, TacticQCheckpointIdentityV6, TacticQCheckpointPersistence,
     TacticQCheckpointSerializationBenchmark, TacticQFinalResult, TacticQLearnerSnapshot,
     TacticQTrainingCorpus, checkpoint_digest, graph_training_projection_validated,
-    validate_checkpoint, validate_checkpoint_for_resume_with_graph_token, validate_final_result,
-    validate_training_corpus,
+    validate_checkpoint, validate_checkpoint_for_resume_with_derived_graph_projection,
+    validate_final_result, validate_training_corpus,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
