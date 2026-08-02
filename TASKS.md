@@ -189,7 +189,12 @@ do not golf isolated subphases without campaign evidence.
   mining, held-out native comparisons, promotion accounting, and reuse evidence
   now publish one checksummed binary authority immediately after validation;
   resume reuses it instead of repeating macro evaluation, and any later report
-  must match it exactly.
+  must match it exactly. Once every zero-shot lane and that macro authority are
+  present, resume authenticates the root directly from the completed seed
+  graphs before fleet launch, skips the native pool, and reads the durable
+  replay and learner head without fitting or publishing a model. This path
+  still needs end-to-end timing evidence, faster checkpoint authentication,
+  and equivalent read-only handling for the separate demonstration treatment.
 - [ ] Cache or share already-validated artifact and graph identities within one
   process; independent reopen validation must remain fail-closed.
 - [ ] Measure whether retained save-state branching beats replay from its

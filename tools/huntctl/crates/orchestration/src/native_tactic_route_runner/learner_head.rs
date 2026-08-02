@@ -77,6 +77,15 @@ pub(super) struct CampaignLearnerHeadJournal {
 }
 
 impl CampaignLearnerHeadJournal {
+    pub(super) fn open_existing(
+        replay: &TacticReplayControlPlane,
+    ) -> Result<Self, NativeTacticRouteRunError> {
+        if !journal_path(replay).is_file() {
+            return Err(route_message("campaign learner-head journal is absent"));
+        }
+        Self::open_or_create(replay)
+    }
+
     pub(super) fn open_or_create(
         replay: &TacticReplayControlPlane,
     ) -> Result<Self, NativeTacticRouteRunError> {

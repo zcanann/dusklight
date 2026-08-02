@@ -360,8 +360,8 @@ mod learner_head;
 use learner_head::{CampaignLearnerHead, CampaignLearnerHeadJournal};
 mod learner_authority;
 use learner_authority::{
-    CampaignLearnerPublishResult, CampaignTacticLearnerAuthority, SharedTacticLearnerAuthority,
-    lock_learner_authority,
+    CampaignLearnerPublishResult, CampaignTacticLearnerAuthority, CompletedCampaignLearnerView,
+    SharedTacticLearnerAuthority, lock_learner_authority,
 };
 
 fn launch_native_tactic_worker_fleet(
@@ -483,20 +483,28 @@ fn run_native_tactic_route_with_optional_fleet(
         .map_err(route_error)?;
 
     let worker_count = config.workers;
-    let owned_fleet = external_fleet
-        .is_none()
+    let mut completed_preflight = load_completed_seed_preflight(config, execution_plan_sha256)?;
+    let owned_fleet = (external_fleet.is_none() && completed_preflight.is_none())
         .then(|| launch_native_tactic_worker_fleet(config, config.output_root, worker_count))
         .transpose()?;
-    let fleet = external_fleet
-        .or(owned_fleet.as_ref())
-        .ok_or_else(|| route_message("native tactic worker fleet is absent"))?;
-    fleet.validate_for(config)?;
-    let process_launch_micros = if external_fleet.is_some() {
+    let fleet = external_fleet.or(owned_fleet.as_ref());
+    if completed_preflight.is_none() {
+        fleet
+            .ok_or_else(|| route_message("native tactic worker fleet is absent"))?
+            .validate_for(config)?;
+    }
+    let process_launch_micros = if completed_preflight.is_some() || external_fleet.is_some() {
         0
     } else {
-        fleet.launch_micros()
+        fleet
+            .ok_or_else(|| route_message("native tactic worker fleet is absent"))?
+            .launch_micros()
     };
-    let initial_facts = fleet.initial_facts().clone();
+    let initial_facts = completed_preflight
+        .as_ref()
+        .map(|preflight| preflight.initial_facts.clone())
+        .or_else(|| fleet.map(|fleet| fleet.initial_facts().clone()))
+        .ok_or_else(|| route_message("native tactic root facts are absent"))?;
     let GoalConditionedTacticContext {
         encoder,
         report: goal_target,
@@ -511,7 +519,11 @@ fn run_native_tactic_route_with_optional_fleet(
             .as_ref()
             .map(|imported| imported.report.registry_sha256),
     );
-    let root_checkpoint_sha256 = fleet.root_checkpoint_sha256();
+    let root_checkpoint_sha256 = completed_preflight
+        .as_ref()
+        .map(|preflight| preflight.root_checkpoint_sha256)
+        .or_else(|| fleet.map(NativeTacticWorkerFleet::root_checkpoint_sha256))
+        .ok_or_else(|| route_message("native tactic root checkpoint is absent"))?;
     let reward_spec = route_tactic_reward_spec();
     let root_source_frame = usize::try_from(initial_facts.tape_frame)
         .map_err(|_| route_message("native tactic source frame exceeds platform limits"))?;
@@ -548,33 +560,88 @@ fn run_native_tactic_route_with_optional_fleet(
         )
         .map_err(route_error)?
     };
-    let learner_authority: SharedTacticLearnerAuthority =
-        Arc::new(Mutex::new(CampaignTacticLearnerAuthority::new(
-            replay_control_plane,
-            route_option_value_config(execution_plan_sha256),
-            encoder.goal_distance_feature(),
-            config.execution_plan.value_treatment,
-            config.execution_plan.refit_every_decisions,
-            match config.execution_plan.replay_sharing {
-                NativeTacticReplaySharingPlan::BoundedStaleness {
-                    maximum_stale_replay_revisions,
-                } => Some(maximum_stale_replay_revisions),
-                NativeTacticReplaySharingPlan::GenerationBarrier => None,
-            },
-        )?));
+    let (learner_authority, completed_learner_view) = if completed_preflight.is_some() {
+        (
+            None,
+            Some(CompletedCampaignLearnerView::open(replay_control_plane)?),
+        )
+    } else {
+        (
+            Some(Arc::new(Mutex::new(CampaignTacticLearnerAuthority::new(
+                replay_control_plane,
+                route_option_value_config(execution_plan_sha256),
+                encoder.goal_distance_feature(),
+                config.execution_plan.value_treatment,
+                config.execution_plan.refit_every_decisions,
+                match config.execution_plan.replay_sharing {
+                    NativeTacticReplaySharingPlan::BoundedStaleness {
+                        maximum_stale_replay_revisions,
+                    } => Some(maximum_stale_replay_revisions),
+                    NativeTacticReplaySharingPlan::GenerationBarrier => None,
+                },
+            )?))),
+            None,
+        )
+    };
     let frozen_policy_snapshot =
         if config.execution_plan.proposal_policy == TacticProposalPolicy::FrozenPolicy {
-            Some(lock_learner_authority(&learner_authority)?.snapshot())
+            Some(
+                lock_learner_authority(
+                    learner_authority
+                        .as_ref()
+                        .ok_or_else(|| route_message("live learner authority is absent"))?,
+                )?
+                .snapshot(),
+            )
         } else {
             None
         };
 
-    let pool = fleet.pool(config, execution_plan_sha256, root_source_frame)?;
-    let checkpoint_cache_capacity_per_worker_bytes =
-        u64::try_from(pool.checkpoint_cache_capacity_bytes).map_err(route_error)?;
+    let pool = if completed_preflight.is_some() {
+        None
+    } else {
+        Some(
+            fleet
+                .ok_or_else(|| route_message("native tactic worker fleet is absent"))?
+                .pool(config, execution_plan_sha256, root_source_frame)?,
+        )
+    };
+    let checkpoint_cache_capacity_per_worker_bytes = u64::try_from(pool.as_ref().map_or_else(
+        || {
+            tactic_checkpoint_cache_capacity_per_worker(
+                config.execution_plan.budgets.memory_bytes,
+                config.checkpoint_capacity_workers,
+            )
+        },
+        |pool| Ok(pool.checkpoint_cache_capacity_bytes),
+    )?)
+    .map_err(route_error)?;
     let mut campaign_phase_wall = CampaignPhaseWallTiming::default();
     let (mut indexed_results, tactic_macro_discovery, shared_training_replay_rows, demonstration) =
         (|| {
+            if let Some(preflight) = completed_preflight.take() {
+                campaign_phase_wall.campaign_setup_micros =
+                    elapsed_micros(campaign_started.elapsed());
+                campaign_phase_wall.campaign_finalization_started_micros =
+                    campaign_phase_wall.campaign_setup_micros;
+                let shared_training_replay_rows = completed_learner_view
+                    .as_ref()
+                    .ok_or_else(|| route_message("completed learner authority is absent"))?
+                    .replay_len() as u64;
+                return Ok((
+                    preflight.indexed_results,
+                    preflight.tactic_macro_discovery,
+                    shared_training_replay_rows,
+                    None,
+                ));
+            }
+            let pool = pool
+                .clone()
+                .ok_or_else(|| route_message("native tactic worker pool is absent"))?;
+            let learner_authority = learner_authority
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| route_message("live learner authority is absent"))?;
             let mut results = Vec::with_capacity(config.execution_plan.lanes.len());
             let demonstration = load_or_capture_demonstration(
                 config,
@@ -862,7 +929,14 @@ fn run_native_tactic_route_with_optional_fleet(
     // covers only this invocation. Replace this invocation's seed critical
     // lane with the complete durable lane so neither portion is lost or
     // counted twice.
-    let observed_route_cutoff_wall_micros = elapsed_micros(campaign_started.elapsed());
+    // A completed-seed preflight reuses durable macro validation instead of
+    // waiting through it again. Keep that authenticated historical phase in
+    // the campaign wall floor so exclusive timing remains additive.
+    let observed_route_cutoff_wall_micros = elapsed_micros(campaign_started.elapsed()).max(
+        campaign_phase_wall
+            .campaign_finalization_started_micros
+            .saturating_add(tactic_macro_discovery.validation_wall_micros),
+    );
     let campaign_finalization_wall_micros = observed_route_cutoff_wall_micros
         .checked_sub(campaign_phase_wall.campaign_finalization_started_micros)
         .ok_or_else(|| route_message("native tactic campaign finalization clock regressed"))?;
@@ -891,12 +965,19 @@ fn run_native_tactic_route_with_optional_fleet(
                 total
             },
         );
-    let learner_authority = lock_learner_authority(&learner_authority)?;
-    let final_replay = learner_authority.replay().snapshot().map_err(route_error)?;
+    let learner_finalization = if let Some(learner_authority) = &learner_authority {
+        lock_learner_authority(learner_authority)?.finalization_snapshot()?
+    } else {
+        completed_learner_view
+            .as_ref()
+            .ok_or_else(|| route_message("completed learner authority is absent"))?
+            .finalization_snapshot()?
+    };
+    let final_replay = learner_finalization.replay;
     let final_replay_snapshot = final_replay.version;
-    let replay_admission = learner_authority.replay().invocation_metrics();
-    let learner_metrics = learner_authority.invocation_metrics();
-    let learner_updates = learner_authority.total_updates();
+    let replay_admission = learner_finalization.replay_admission;
+    let learner_metrics = learner_finalization.learner_metrics;
+    let learner_updates = learner_finalization.learner_updates;
     let demonstration_execution_micros =
         demonstration.as_ref().map_or(0, |value| value.wall_micros);
     attribute_campaign_timing(
@@ -916,7 +997,6 @@ fn run_native_tactic_route_with_optional_fleet(
             campaign_finalization_wall_micros,
         },
     )?;
-    let latest_learner_snapshot = learner_authority.snapshot();
     let declared_model_snapshots_consumed = seed_results
         .iter()
         .flat_map(|seed| &seed.trace)
@@ -926,10 +1006,10 @@ fn run_native_tactic_route_with_optional_fleet(
         .len() as u64;
     let lane_local_model_updates = seed_results.iter().map(|seed| seed.learner_updates).sum();
     let learner_authority_report = NativeTacticLearnerAuthorityReport {
-        model_snapshots_published: learner_authority.published_snapshot_count(),
-        latest_model_snapshot_sha256: latest_learner_snapshot.sha256,
-        latest_model_revision: latest_learner_snapshot.manifest.model_revision,
-        latest_training_replay_rows: latest_learner_snapshot.manifest.training_replay_rows,
+        model_snapshots_published: learner_finalization.model_snapshots_published,
+        latest_model_snapshot_sha256: learner_finalization.latest_snapshot_sha256,
+        latest_model_revision: learner_finalization.latest_manifest.model_revision,
+        latest_training_replay_rows: learner_finalization.latest_manifest.training_replay_rows,
         declared_model_snapshots_consumed,
         lane_local_model_updates,
     };
@@ -1174,6 +1254,8 @@ use campaign_persistence::{
 };
 mod campaign_completion_recovery;
 use campaign_completion_recovery::recover_completed_campaign;
+mod completed_seed_preflight;
+use completed_seed_preflight::load_completed_seed_preflight;
 mod journal;
 use journal::{
     TacticDecisionJournalAppender, compact_tactic_decision_journal, decision_record,

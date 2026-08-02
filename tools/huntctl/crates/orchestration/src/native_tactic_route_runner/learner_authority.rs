@@ -17,6 +17,76 @@ pub(super) struct CampaignLearnerPublishResult {
     pub(super) update: CampaignLearnerUpdateMetrics,
 }
 
+pub(super) struct CampaignLearnerFinalizationSnapshot {
+    pub(super) replay: TacticReplaySnapshot,
+    pub(super) replay_admission: TacticReplayAdmissionMetrics,
+    pub(super) learner_metrics: CampaignLearnerUpdateMetrics,
+    pub(super) learner_updates: u64,
+    pub(super) model_snapshots_published: u64,
+    pub(super) latest_snapshot_sha256: Digest,
+    pub(super) latest_manifest: TacticQLearnerSnapshot,
+}
+
+/// Read-only durable learner authority used only after every lane and macro
+/// finalization artifact is already committed. It authenticates the replay and
+/// learner head but never fits or publishes a model.
+pub(super) struct CompletedCampaignLearnerView {
+    replay: TacticReplayControlPlane,
+    learner_heads: CampaignLearnerHeadJournal,
+    latest_snapshot_sha256: Digest,
+    latest_manifest: TacticQLearnerSnapshot,
+}
+
+impl CompletedCampaignLearnerView {
+    pub(super) fn open(
+        replay: TacticReplayControlPlane,
+    ) -> Result<Self, NativeTacticRouteRunError> {
+        let learner_heads = CampaignLearnerHeadJournal::open_existing(&replay)?;
+        let latest = learner_heads
+            .latest()
+            .ok_or_else(|| route_message("completed campaign has no learner head"))?;
+        let latest_manifest = replay
+            .learner_snapshot(latest.learner_snapshot_sha256)
+            .map_err(route_error)?;
+        if latest_manifest.training_replay_rows != latest.replay_revision
+            || latest_manifest.model_revision != latest.model_revision
+            || latest.replay_revision > replay.replay_snapshot().revision
+        {
+            return Err(route_message(
+                "completed campaign learner head is detached from replay",
+            ));
+        }
+        Ok(Self {
+            replay,
+            learner_heads,
+            latest_snapshot_sha256: latest.learner_snapshot_sha256,
+            latest_manifest,
+        })
+    }
+
+    pub(super) fn replay_len(&self) -> usize {
+        self.replay.len()
+    }
+
+    pub(super) fn finalization_snapshot(
+        &self,
+    ) -> Result<CampaignLearnerFinalizationSnapshot, NativeTacticRouteRunError> {
+        Ok(CampaignLearnerFinalizationSnapshot {
+            replay: self.replay.snapshot().map_err(route_error)?,
+            replay_admission: self.replay.invocation_metrics(),
+            learner_metrics: CampaignLearnerUpdateMetrics::default(),
+            learner_updates: self.latest_manifest.model_revision,
+            model_snapshots_published: self
+                .learner_heads
+                .snapshot_sha256s()
+                .collect::<BTreeSet<_>>()
+                .len() as u64,
+            latest_snapshot_sha256: self.latest_snapshot_sha256,
+            latest_manifest: self.latest_manifest.clone(),
+        })
+    }
+}
+
 /// The single fitted-policy owner for one native tactic route campaign.
 ///
 /// Native lanes publish authenticated transitions to the replay journal and
@@ -353,6 +423,20 @@ impl CampaignTacticLearnerAuthority {
 
     pub(super) fn published_snapshot_count(&self) -> u64 {
         self.published_snapshot_sha256s.len() as u64
+    }
+
+    pub(super) fn finalization_snapshot(
+        &self,
+    ) -> Result<CampaignLearnerFinalizationSnapshot, NativeTacticRouteRunError> {
+        Ok(CampaignLearnerFinalizationSnapshot {
+            replay: self.replay.snapshot().map_err(route_error)?,
+            replay_admission: self.replay.invocation_metrics(),
+            learner_metrics: self.invocation_metrics(),
+            learner_updates: self.total_updates(),
+            model_snapshots_published: self.published_snapshot_count(),
+            latest_snapshot_sha256: self.latest.sha256,
+            latest_manifest: self.latest.manifest.clone(),
+        })
     }
 
     fn restore_missing_update(
@@ -743,6 +827,25 @@ mod tests {
 
         drop(campaign);
         drop(authority);
+        let replay = TacticReplayControlPlane::open(&journal, &objects, &identity).unwrap();
+        let completed_view = CompletedCampaignLearnerView::open(replay).unwrap();
+        let completed_snapshot = completed_view.finalization_snapshot().unwrap();
+        assert_eq!(
+            completed_snapshot.learner_metrics,
+            CampaignLearnerUpdateMetrics::default()
+        );
+        assert_eq!(completed_snapshot.replay.version.revision, 2);
+        assert_eq!(
+            completed_snapshot.latest_snapshot_sha256,
+            latest_snapshot.sha256
+        );
+        assert_eq!(completed_snapshot.latest_manifest, latest_snapshot.manifest);
+        assert_eq!(
+            completed_snapshot.model_snapshots_published,
+            published_snapshot_count
+        );
+        drop(completed_view);
+
         let replay = TacticReplayControlPlane::open(&journal, &objects, &identity).unwrap();
         let reopened_authority = CampaignTacticLearnerAuthority::new(
             replay,
