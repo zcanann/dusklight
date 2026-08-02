@@ -282,11 +282,7 @@ experience per second; retained save states have measured positive return.
   A singleton that still crashes must be durably charged and reported without
   fabricating a gameplay result or preventing selection of sealed evidence.
 - [ ] Keep models, replay, checkpoints, and manifests compact, bounded, binary,
-  versioned, checksummed, atomic, and migration-tested. The checked-in Windows
-  launch-smoke bundle currently fails even against unmodified `a6893948a9`:
-  checkpoint identity `77589090...a9919` reconstructs as
-  `439e1d73...d70d`. Repair the migration/identity drift or reseal the fixture
-  from authenticated evidence, then restore this check to the framework audit.
+  versioned, checksummed, atomic, and migration-tested.
 - [ ] Refactor oversized and mixed-responsibility code along observation,
   execution, state, replay, learning, tactics, workers, persistence, and
   reporting boundaries; enforce source-size and dependency gates.

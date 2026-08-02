@@ -315,12 +315,20 @@ impl NativeTacticScratchCampaignAudit {
         plan: &NativeTacticExecutionPlan,
     ) -> Result<(), NativeTacticRouteRunError> {
         self.validate()?;
-        if self.route_report_sha256 != route_report_sha256(route)?
-            || self.execution_plan_sha256 != plan.identity()?
-            || self.resources != resource_audit(route, plan)?
-        {
+        if self.route_report_sha256 != route_report_sha256(route)? {
             return Err(route_message(
-                "scratch campaign resource audit is detached from its route",
+                "scratch campaign audit is detached from its route identity",
+            ));
+        }
+        if self.execution_plan_sha256 != plan.identity()? {
+            return Err(route_message(
+                "scratch campaign audit is detached from its execution-plan identity",
+            ));
+        }
+        let expected_resources = resource_audit(route, plan)?;
+        if self.resources != expected_resources {
+            return Err(route_message(
+                "scratch campaign resource fields differ from the route",
             ));
         }
         Ok(())

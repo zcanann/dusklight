@@ -5,7 +5,7 @@
     {
       "consumed_pad_states": null,
       "first_hit_tick": null,
-      "id": "tactic-root-probe",
+      "id": "cd3dc78eafab780d38dcc84ff4bcb068806016b33ccaae0661e42f6b369597c8",
       "predicate_evidence": {
         "boot": {
           "kind": "process"
@@ -34,28 +34,39 @@
           "version": 5
         }
       },
-      "retained_checkpoint": null,
+      "retained_checkpoint": {
+        "capture_micros": 65,
+        "checkpoint_bytes": 0,
+        "host_snapshot_bytes": 312,
+        "host_snapshot_capture_nanos": 65200,
+        "image_digest": null,
+        "machine_capture_micros": 0,
+        "restore_identity": "e09b659aff8e6eaf940dde0fc9a2f722",
+        "route_ticks": 24,
+        "semantic_digest": null,
+        "storage_kind": "live_endpoint"
+      },
       "state_sequence_digest": null,
       "state_tick_digests": null,
       "success": false,
-      "terminal_boundary_fingerprint": "b82b336fd5877b0c42a4e5db1e839472",
+      "terminal_boundary_fingerprint": "b9bba5c701c87a6590e0a17e558068ff",
       "terminal_observation": {
-        "camera_heading_radians": 0.0,
+        "camera_heading_radians": -0.6193447709083557,
         "collision_correction": [
-          0.0,
-          0.0
+          -9.5367431640625e-06,
+          -8.96453857421875e-05
         ],
-        "facing": 0,
-        "forward_speed": 0.0,
-        "mode_flags": 268439941,
+        "facing": 29050,
+        "forward_speed": 23.0,
+        "mode_flags": 268439940,
         "next_point": 1,
         "next_room": 1,
         "next_stage": "F_SP103",
         "point": 1,
         "position": [
-          666.04052734375,
+          565.053466796875,
           800.0,
-          -2306.737548828125
+          -2610.576171875
         ],
         "previous_input": {
           "analog_a": 0,
@@ -63,28 +74,28 @@
           "buttons": 0,
           "connected": true,
           "error": 0,
-          "stick_x": 0,
-          "stick_y": 0,
+          "stick_x": 14,
+          "stick_y": -126,
           "substick_x": 0,
           "substick_y": 0,
           "trigger_left": 0,
           "trigger_right": 0
         },
-        "procedure": 3,
+        "procedure": 4,
         "room": 1,
         "stage": "F_SP103",
         "transition_pending": false,
         "velocity": [
+          8.030160903930664,
           0.0,
-          0.0,
-          0.0
+          -21.552644729614258
         ]
       },
       "terminal_state_entry_digests": null,
-      "ticks_executed": 1
+      "ticks_executed": 24
     }
   ],
-  "capture_micros": 266348,
+  "capture_micros": 220494,
   "checkpoint_bytes": 294721440,
   "checkpoint_cache": {
     "batch_capture_attempts": 0,
@@ -92,17 +103,17 @@
     "batch_capture_successes": 0,
     "batch_live_consumptions": 0,
     "batch_live_invalidations": 0,
-    "batch_live_retention_attempts": 0,
-    "batch_live_retention_nanos": 0,
-    "batch_live_retention_successes": 0,
+    "batch_live_retention_attempts": 1,
+    "batch_live_retention_nanos": 65200,
+    "batch_live_retention_successes": 1,
     "capacity_bytes": 671088640,
     "capacity_entries": 2,
     "evictions": 0,
     "hits": 0,
     "insertions": 0,
     "live_endpoint_capacity_entries": 1,
-    "live_endpoint_resident_entries": 0,
-    "live_endpoint_resident_host_snapshot_bytes": 0,
+    "live_endpoint_resident_entries": 1,
+    "live_endpoint_resident_host_snapshot_bytes": 312,
     "misses": 0,
     "replacements": 0,
     "resident_bytes": 0,
@@ -118,30 +129,29 @@
     "actual_tick_digest": null,
     "expected_tick_digest": null,
     "first_divergence_tick": null,
-    "fresh_sequence_digest": "41250855ec70e1bf2b7ffbe6284769bd",
+    "fresh_sequence_digest": "8e0487c825f5704f616e431f340fcb62",
     "kind": "recorded_replay_window",
-    "restored_sequence_digest": "41250855ec70e1bf2b7ffbe6284769bd",
-    "source_semantic_digest": "6aaeeede7db8b59a59c8873057c1b496",
+    "restored_sequence_digest": "8e0487c825f5704f616e431f340fcb62",
+    "source_semantic_digest": "44e4623ec3cf0047d4d2187563d3d303",
     "ticks": 8,
     "verified": true
   },
   "completed_candidates": 1,
   "episode_shard": {
     "action_schema": "dusklight-raw-pad-action/v2",
-    "compressed_bytes": 4600,
+    "compressed_bytes": 17630,
     "episode_count": 1,
     "observation_schema": "dusklight-learning-observation/v29",
-    "path": "\\\\?\\C:\\Projects\\dusklight\\build\\diagnostics\\current-native\\resource-smoke-v8\\attempts\\attempt-0000\\initial\\result.json.episodes.dseps",
+    "path": "\\\\?\\C:\\Projects\\dusklight\\build\\diagnostics\\launch-smoke-v44-20260802\\seed-000-155921\\native\\decision-000000\\proposal-000\\result.json.episodes.dseps",
     "schema": "dusklight-native-episode-shard/v2",
-    "uncompressed_bytes": 46183
+    "uncompressed_bytes": 1108328
   },
   "error": null,
-  "maximum_ticks": 1,
+  "maximum_ticks": 24,
   "policy_model": null,
-  "restore_identity": "ff3e68617588749271e5baf2fa70bed3",
+  "restore_identity": "1bfb4678da6c1605521bfeb9f78fc6b8",
   "restore_micros": [
-    17550,
-    28645
+    17506
   ],
   "schema": "dusklight-suffix-batch-result/v9",
   "source_boundary": {
@@ -162,8 +172,8 @@
       ],
       "simulation_boundary": "after PADRead through deterministic clock commit"
     },
-    "batch_wall_micros": 4573090,
-    "candidate_ticks": 1,
+    "batch_wall_micros": 327433,
+    "candidate_ticks": 24,
     "headless_audit": {
       "active": true,
       "cpu_renderer_submission": "suppressed_on_candidate_ticks",
@@ -178,46 +188,46 @@
     },
     "phases": {
       "audio_emulation": {
-        "micros": 187,
-        "samples": 1,
+        "micros": 5807,
+        "samples": 24,
         "status": "measured"
       },
       "checkpoint_capture": {
-        "micros": 266348,
-        "session_capture_micros": 266348,
-        "status": "measured"
+        "micros": null,
+        "session_capture_micros": 220494,
+        "status": "reused"
       },
       "checkpoint_restore": {
-        "micros": 46195,
-        "samples": 2,
+        "micros": 17506,
+        "samples": 1,
         "status": "measured"
       },
       "checkpoint_validation": {
-        "micros": 3444333,
+        "micros": null,
         "samples": 16,
-        "session_micros": 3444333,
-        "status": "measured"
+        "session_micros": 3250098,
+        "status": "reused"
       },
       "corpus_encoding": {
-        "compressed_bytes": 4600,
+        "compressed_bytes": 17630,
         "episodes": 1,
-        "micros": 2439,
+        "micros": 29044,
         "status": "measured",
-        "uncompressed_bytes": 46183
+        "uncompressed_bytes": 1108328
       },
       "cpu_draw_traversal": {
-        "micros": 557,
-        "samples": 1,
+        "micros": 14854,
+        "samples": 24,
         "status": "measured"
       },
       "cpu_renderer_submission": {
         "micros": 0,
-        "samples": 1,
+        "samples": 24,
         "status": "measured"
       },
       "game_audio_update": {
-        "micros": 13,
-        "samples": 1,
+        "micros": 363,
+        "samples": 24,
         "status": "measured"
       },
       "gpu_work": {
@@ -225,7 +235,7 @@
         "created_render_pipelines_process_total": 0,
         "created_shader_modules_process_total": 0,
         "direct_queue_writes_process_total": 0,
-        "discarded_frames": 16,
+        "discarded_frames": 24,
         "gpu_code_creation_absent": true,
         "gpu_queue_operations_absent": true,
         "micros": null,
@@ -235,14 +245,14 @@
         "submitted_command_buffers_process_total": 0
       },
       "observation_capture": {
-        "micros": 242,
-        "samples": 2,
+        "micros": 2909,
+        "samples": 48,
         "status": "measured"
       },
       "policy_application": {
-        "micros": 0,
-        "nanoseconds": 500,
-        "samples": 1,
+        "micros": 3,
+        "nanoseconds": 3800,
+        "samples": 24,
         "status": "measured"
       },
       "policy_head_decode": {
@@ -254,8 +264,8 @@
         "status": "not_present"
       },
       "simulation": {
-        "micros": 1397,
-        "samples": 1,
+        "micros": 40599,
+        "samples": 24,
         "status": "measured"
       },
       "state_validation": {

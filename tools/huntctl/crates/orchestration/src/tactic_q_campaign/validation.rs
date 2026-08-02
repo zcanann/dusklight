@@ -73,7 +73,13 @@ fn validate_checkpoint_snapshot_for_runtime(
         ));
     }
     let reconstructed = checkpoint_digest(checkpoint)?;
-    if checkpoint.content_sha256 != reconstructed {
+    let legacy_boundary_identity = (checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V5)
+        .then(|| legacy_v5_checkpoint_boundary_identity(checkpoint))
+        .transpose()?
+        .flatten();
+    if checkpoint.content_sha256 != reconstructed
+        && legacy_boundary_identity != Some(checkpoint.content_sha256)
+    {
         return Err(TacticQCampaignError::CheckpointIdentityMismatch {
             stored: checkpoint.content_sha256,
             reconstructed,
@@ -431,6 +437,71 @@ pub(crate) fn checkpoint_digest(
     let bytes = serde_cbor::to_vec(&canonical)
         .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
     Ok(sha256(&bytes))
+}
+
+/// Reconstruct the pre-V2 intermediate-boundary field spelling used by sealed
+/// V5 checkpoints.
+///
+/// `OptionIntermediateBoundary` later renamed its portable digest from
+/// `episode_shard_sha256` to `evidence_sha256` while retaining a serde alias for
+/// decoding. V5 identity covered the complete CBOR struct, so ordinary decode
+/// and re-encode changes the hash despite preserving the payload. The two text
+/// keys both use CBOR's one-byte short-string header; replace only that exact
+/// encoded key and leave current serialization and checkpoint creation alone.
+fn legacy_v5_checkpoint_boundary_identity(
+    checkpoint: &TacticQCampaignCheckpoint,
+) -> Result<Option<Digest>, TacticQCampaignError> {
+    let mut canonical = checkpoint.clone();
+    canonical.content_sha256 = Digest::ZERO;
+    let bytes = serde_cbor::to_vec(&canonical)
+        .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
+    Ok(legacy_v5_boundary_key_bytes(&bytes).map(|bytes| sha256(&bytes)))
+}
+
+fn legacy_v5_boundary_key_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
+    const CURRENT: &[u8] = b"evidence_sha256";
+    const LEGACY: &[u8] = b"episode_shard_sha256";
+    const SHORT_TEXT: u8 = 0x60;
+    const CURRENT_HEADER: u8 = SHORT_TEXT | CURRENT.len() as u8;
+    const LEGACY_HEADER: u8 = SHORT_TEXT | LEGACY.len() as u8;
+
+    let mut migrated = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    let mut replacements = 0_u64;
+    while index < bytes.len() {
+        let key_end = index.saturating_add(1 + CURRENT.len());
+        if bytes[index] == CURRENT_HEADER
+            && key_end <= bytes.len()
+            && &bytes[index + 1..key_end] == CURRENT
+        {
+            migrated.push(LEGACY_HEADER);
+            migrated.extend_from_slice(LEGACY);
+            index = key_end;
+            replacements = replacements.saturating_add(1);
+        } else {
+            migrated.push(bytes[index]);
+            index += 1;
+        }
+    }
+    (replacements > 0).then_some(migrated)
+}
+
+#[cfg(test)]
+mod legacy_v5_identity_tests {
+    use super::*;
+
+    #[test]
+    fn boundary_key_migration_changes_only_exact_cbor_text_keys() {
+        let mut current = vec![0xa1, 0x6f];
+        current.extend_from_slice(b"evidence_sha256");
+        current.push(0x01);
+        let mut expected = vec![0xa1, 0x74];
+        expected.extend_from_slice(b"episode_shard_sha256");
+        expected.push(0x01);
+
+        assert_eq!(legacy_v5_boundary_key_bytes(&current), Some(expected));
+        assert_eq!(legacy_v5_boundary_key_bytes(b"evidence_sha256"), None);
+    }
 }
 
 #[derive(Serialize)]

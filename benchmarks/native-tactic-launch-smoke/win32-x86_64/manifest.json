@@ -1,6 +1,6 @@
 {
   "schema": "dusklight-native-tactic-launch-smoke-bundle/v1",
-  "content_sha256": "651b486d54d108e3a214bd6da91dcd22bf3094d8aa536dee030f60f49b1c5a9c",
+  "content_sha256": "43596b3daf654b8eed80a4570ea6e69497f4c8dbabc6d87dc8cf229b8344c654",
   "optimization_request": {
     "logical_identity_sha256": "8b6a9ba9bd5e307fb8443fe39f2ea6233bc798b3e5a81abf3824c264d8ac2d9b",
     "blob": {
@@ -24,36 +24,36 @@
     }
   },
   "execution_plan": {
-    "logical_identity_sha256": "73fd2d46ec43c5aed724564803923f999bfdcbd2ad6bd720efb095d3a296c31a",
+    "logical_identity_sha256": "26257ebfd3013f4db15a9868241fb09a55970cedf04bbf1255bb9b6b808b23a9",
     "blob": {
       "schema": "dusklight-content-blob/v1",
       "kind": "dataset_manifest",
-      "sha256": "1a58ccf978389da54b186f2fef830a8ba6c54e3114497d9fe8905a34c13b366c",
+      "sha256": "bb6bdb1b1fed8fc14d664ac7d2007788e93e861f1481332fcdd7b88d36974bff",
       "size": 1004,
       "media_type": "application/vnd.dusklight.dataset-manifest+json",
-      "relative_path": "blobs\\sha256\\1a\\58ccf978389da54b186f2fef830a8ba6c54e3114497d9fe8905a34c13b366c"
+      "relative_path": "blobs\\sha256\\bb\\6bdb1b1fed8fc14d664ac7d2007788e93e861f1481332fcdd7b88d36974bff"
     }
   },
   "route_report": {
-    "logical_identity_sha256": "ec49d2ca46787f89573d49e5c1e6a47eb9cd4e4c2a739b98bbcb0f2017d1d276",
+    "logical_identity_sha256": "6ad41538d5e8fbe0866f28e56146649a58231dab305f92938dcacedf3f16160e",
     "blob": {
       "schema": "dusklight-content-blob/v1",
       "kind": "dataset_manifest",
-      "sha256": "1028023d0c0abe4d83dd6b3851719f2cae7fcf635dd21e841480b3aedae95f96",
-      "size": 385290,
+      "sha256": "9a34f4ab5cbc02c59dee6678b7789bba28912e81cf47e686eeb8fb3e26870152",
+      "size": 226574,
       "media_type": "application/vnd.dusklight.dataset-manifest+json",
-      "relative_path": "blobs\\sha256\\10\\28023d0c0abe4d83dd6b3851719f2cae7fcf635dd21e841480b3aedae95f96"
+      "relative_path": "blobs\\sha256\\9a\\34f4ab5cbc02c59dee6678b7789bba28912e81cf47e686eeb8fb3e26870152"
     }
   },
   "campaign_audit": {
-    "logical_identity_sha256": "37f763c5bce36a5e041802cfc00301060d727f00f74478c8f96f4da101c289c9",
+    "logical_identity_sha256": "7173fab59563216b135f05f0a8bd2cc4be712fdc9042c051a79cacb2a57ebeb6",
     "blob": {
       "schema": "dusklight-content-blob/v1",
       "kind": "dataset_manifest",
-      "sha256": "b9ec733a0585ea0c056f621532ef36908536c75325b30f5760db85261292e277",
-      "size": 392333,
+      "sha256": "7dde90fa69e827c48c0dba2e584d2bf40e974b929ce63f0822bab45c2441372f",
+      "size": 222652,
       "media_type": "application/vnd.dusklight.dataset-manifest+json",
-      "relative_path": "blobs\\sha256\\b9\\ec733a0585ea0c056f621532ef36908536c75325b30f5760db85261292e277"
+      "relative_path": "blobs\\sha256\\7d\\de90fa69e827c48c0dba2e584d2bf40e974b929ce63f0822bab45c2441372f"
     }
   },
   "worker_hello": {
@@ -79,61 +79,61 @@
     }
   },
   "initial_result": {
-    "logical_identity_sha256": "cbaa07e355c342269f75646cee8c77d79ae3726be7800ced0aad5d3cfb742b05",
+    "logical_identity_sha256": "ca9eb4021714d7ae9e6f346bcbb3d8e4507aa360b3a03decbd0063e1bf585c58",
     "blob": {
       "schema": "dusklight-content-blob/v1",
       "kind": "dataset_manifest",
-      "sha256": "cbaa07e355c342269f75646cee8c77d79ae3726be7800ced0aad5d3cfb742b05",
-      "size": 8064,
+      "sha256": "ca9eb4021714d7ae9e6f346bcbb3d8e4507aa360b3a03decbd0063e1bf585c58",
+      "size": 8056,
       "media_type": "application/vnd.dusklight.dataset-manifest+json",
-      "relative_path": "blobs\\sha256\\cb\\aa07e355c342269f75646cee8c77d79ae3726be7800ced0aad5d3cfb742b05"
+      "relative_path": "blobs\\sha256\\ca\\9eb4021714d7ae9e6f346bcbb3d8e4507aa360b3a03decbd0063e1bf585c58"
     }
   },
   "compact_proposal_request": {
-    "logical_identity_sha256": "c25e07976ad063b36155fddc7e18fefde1531b715ac61e3730ab1bf9934b7397",
+    "logical_identity_sha256": "700f6fb39bf7ea33a29e25ad8dc24c04f44ec7f1a02a3b2e5b25dafa2dc8a7e4",
     "blob": {
       "schema": "dusklight-content-blob/v1",
       "kind": "crash_artifact",
-      "sha256": "c25e07976ad063b36155fddc7e18fefde1531b715ac61e3730ab1bf9934b7397",
+      "sha256": "700f6fb39bf7ea33a29e25ad8dc24c04f44ec7f1a02a3b2e5b25dafa2dc8a7e4",
       "size": 234,
       "media_type": "application/octet-stream",
-      "relative_path": "blobs\\sha256\\c2\\5e07976ad063b36155fddc7e18fefde1531b715ac61e3730ab1bf9934b7397"
+      "relative_path": "blobs\\sha256\\70\\0f6fb39bf7ea33a29e25ad8dc24c04f44ec7f1a02a3b2e5b25dafa2dc8a7e4"
     }
   },
   "proposal_result": {
-    "logical_identity_sha256": "f6d7cd903ce1e85eac6d6d1bc1963dd6ae240d5a8c259b95501e8ee3243c84fc",
+    "logical_identity_sha256": "82a1ccdb2bc88f6e40f901915765d404fa98dd9da8dc084b01d2dd4aadf8b508",
     "blob": {
       "schema": "dusklight-content-blob/v1",
       "kind": "dataset_manifest",
-      "sha256": "f6d7cd903ce1e85eac6d6d1bc1963dd6ae240d5a8c259b95501e8ee3243c84fc",
-      "size": 8613,
+      "sha256": "82a1ccdb2bc88f6e40f901915765d404fa98dd9da8dc084b01d2dd4aadf8b508",
+      "size": 8602,
       "media_type": "application/vnd.dusklight.dataset-manifest+json",
-      "relative_path": "blobs\\sha256\\f6\\d7cd903ce1e85eac6d6d1bc1963dd6ae240d5a8c259b95501e8ee3243c84fc"
+      "relative_path": "blobs\\sha256\\82\\a1ccdb2bc88f6e40f901915765d404fa98dd9da8dc084b01d2dd4aadf8b508"
     }
   },
   "lease_journal": {
-    "logical_identity_sha256": "02197ef355eceaf2bc7148e177b8f90b48a973b2c168f4fdb430fd84426ea30b",
+    "logical_identity_sha256": "11d00bb28e5aab9daabccaa36e63f63598b751133d2247a4f161c682ffe6caf5",
     "blob": {
       "schema": "dusklight-content-blob/v1",
       "kind": "crash_artifact",
-      "sha256": "02197ef355eceaf2bc7148e177b8f90b48a973b2c168f4fdb430fd84426ea30b",
+      "sha256": "11d00bb28e5aab9daabccaa36e63f63598b751133d2247a4f161c682ffe6caf5",
       "size": 603,
       "media_type": "application/octet-stream",
-      "relative_path": "blobs\\sha256\\02\\197ef355eceaf2bc7148e177b8f90b48a973b2c168f4fdb430fd84426ea30b"
+      "relative_path": "blobs\\sha256\\11\\d00bb28e5aab9daabccaa36e63f63598b751133d2247a4f161c682ffe6caf5"
     }
   },
   "checkpoint_snapshot": {
-    "logical_identity_sha256": "77589090d60d81c16f13470bb4fab47b8ebb87cad7bb2e4568eff62cd78a9919",
+    "logical_identity_sha256": "a9b11eca59b971346d5802ce37501395c658f643fe90fd8d4e127907bca2e514",
     "blob": {
       "schema": "dusklight-content-blob/v1",
       "kind": "crash_artifact",
-      "sha256": "146d8084eb292c92258e0f51f6e047f660c1c301da6b2185090b20b74e705135",
-      "size": 33068,
+      "sha256": "9b7887457a5aed8eb3a9257d7c354ac9c9072146fe46602718de40b6510a7fca",
+      "size": 34482,
       "media_type": "application/octet-stream",
-      "relative_path": "blobs\\sha256\\14\\6d8084eb292c92258e0f51f6e047f660c1c301da6b2185090b20b74e705135"
+      "relative_path": "blobs\\sha256\\9b\\7887457a5aed8eb3a9257d7c354ac9c9072146fe46602718de40b6510a7fca"
     }
   },
-  "checkpoint_snapshot_uncompressed_bytes": 2954989,
+  "checkpoint_snapshot_uncompressed_bytes": 3654626,
   "execution_identity": {
     "execution_binding_sha256": "a8f410ad3d2269efcc8de5de9937235350daf0dd19dd53caca6ad92a1bf6ab2a",
     "executable_sha256": "f8d6319e3e15269be0f4262d1e19f97a0476eb5bd4810f16138e239c5f0e85fd",
@@ -240,9 +240,9 @@
     "clean_build": true,
     "executable_sha256": "f8d6319e3e15269be0f4262d1e19f97a0476eb5bd4810f16138e239c5f0e85fd",
     "game_data_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814",
-    "root_checkpoint_identity": "ff3e68617588749271e5baf2fa70bed3",
+    "root_checkpoint_identity": "1bfb4678da6c1605521bfeb9f78fc6b8",
     "source_boundary_index": 506,
-    "proposal_ticks": 16,
+    "proposal_ticks": 24,
     "checkpoint_cache_capacity_bytes": 671088640,
     "completed_graph_leases": 1,
     "unresolved_graph_leases": 0,
