@@ -56,9 +56,10 @@ detailed history in commits and sealed campaign artifacts.
 - [ ] Give scratch trajectories enough horizon, restarts, branching, and
   coverage diversity to reach the load zone without a demonstration or authored
   path.
-- [ ] Exercise the cold-replay-backed optimization handoff on each selected
-  zero-shot terminal, minimize the resulting incumbent, and verify the derived
-  request and execution from the named root.
+- [ ] Run residual optimization from each selected zero-shot terminal handoff,
+  minimize the incumbent, and cold-replay every improvement. The portable
+  terminal authority, replay-backed handoff, and derived request/execution
+  validation are complete; the remaining work is actual tick reduction.
 
 Exit: a zero-shot discovery is automatically converted into a selected,
 cold-replayable route, and subsequent candidates can be compared by authenticated
