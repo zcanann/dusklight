@@ -508,6 +508,25 @@ mod tests {
     }
 
     #[test]
+    fn frontier_double_q_is_sealed_as_a_distinct_treatment() {
+        let mut v2 = request();
+        v2.value_treatment = TacticValueTreatment::GoalRelabeledFittedQKnnV2;
+        let mut v3 = v2.clone();
+        v3.value_treatment = TacticValueTreatment::GoalRelabeledFrontierDoubleQV3;
+
+        assert_ne!(
+            NativeTacticExecutionPlan::build(v2)
+                .unwrap()
+                .identity()
+                .unwrap(),
+            NativeTacticExecutionPlan::build(v3)
+                .unwrap()
+                .identity()
+                .unwrap()
+        );
+    }
+
+    #[test]
     fn ranking_treatments_share_one_graph_acquisition_schedule() {
         let plans = [
             TacticProposalPolicy::Learned,

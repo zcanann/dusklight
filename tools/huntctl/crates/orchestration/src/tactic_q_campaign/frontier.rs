@@ -457,7 +457,8 @@ impl TacticQCampaign {
                 TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => {
                     self.generalized_model(goal_distance_feature)?
                 }
-                TacticValueTreatment::GoalRelabeledFittedQKnnV2 => {
+                TacticValueTreatment::GoalRelabeledFittedQKnnV2
+                | TacticValueTreatment::GoalRelabeledFrontierDoubleQV3 => {
                     self.active_goal_relabel_model(goal_distance_feature, terminal_value_supported)?
                 }
                 TacticValueTreatment::ContinuousFittedQForestV1 => None,
@@ -467,6 +468,14 @@ impl TacticQCampaign {
             && self.value_treatment == TacticValueTreatment::ContinuousFittedQForestV1
         {
             self.continuous_model(goal_distance_feature)?
+        } else {
+            None
+        };
+        let terminal_action_model = if !demonstration_curriculum
+            && terminal_value_supported
+            && self.value_treatment.uses_terminal_frontier_action_value()
+        {
+            self.native_terminal_action_model(goal_distance_feature)?
         } else {
             None
         };
@@ -491,11 +500,24 @@ impl TacticQCampaign {
                             "frontier has no applicable executable actions".into(),
                         ));
                     }
-                    if let Some(model) = generalized_model.as_ref() {
+                    if let Some(model) = terminal_action_model.as_ref() {
                         let context = GeneralizedTacticContext::from_facts(&entry.frontier_state)?;
-                        let goal_reachability_supported = self.value_treatment
-                            == TacticValueTreatment::GoalRelabeledFittedQKnnV2
-                            && !terminal_value_supported;
+                        let estimates = model.rank(&features, &context, &applicable)?;
+                        (
+                            estimates.first().map(|value| value.mean_q),
+                            None,
+                            None,
+                            estimates
+                                .iter()
+                                .map(|value| value.ensemble_variance)
+                                .max_by(f64::total_cmp),
+                            None,
+                        )
+                    } else if let Some(model) = generalized_model.as_ref() {
+                        let context = GeneralizedTacticContext::from_facts(&entry.frontier_state)?;
+                        let goal_reachability_supported =
+                            self.value_treatment.uses_goal_relabeling()
+                                && !terminal_value_supported;
                         let estimates = if goal_reachability_supported {
                             model.rank_goal_reachability(&features, &context, &applicable)?
                         } else {
@@ -604,11 +626,11 @@ impl TacticQCampaign {
                     terminal_value_supported,
                     achieved_goal_value_supported: false,
                     goal_reachability_supported: !terminal_value_supported
-                        && self.value_treatment == TacticValueTreatment::GoalRelabeledFittedQKnnV2
+                        && self.value_treatment.uses_goal_relabeling()
                         && generalized_model.is_some()
                         && goal_reachability_deployment_ready,
                     goal_reachability_evidence_available: !terminal_value_supported
-                        && self.value_treatment == TacticValueTreatment::GoalRelabeledFittedQKnnV2
+                        && self.value_treatment.uses_goal_relabeling()
                         && generalized_model.is_some(),
                     reward: entry.transition.value_sample.reward,
                     best_mean_q,

@@ -147,7 +147,17 @@ authenticated terminal in 124 ticks or less.
   native ticks and 457.3 seconds versus 10,618/250.9 frozen and 11,209/267.6
   random. The scheduler repair improves search, but online learning still
   fails the terminal-outcome comparison. Do not extend this exact treatment
-  without changing the learning or selection method.
+  without changing the learning or selection method. Inspection then found
+  that V2's action-conditioned terminal Double-Q model selected actions but
+  never informed frontier scheduling: equal-cost checkpoints on a successful
+  route were ordered only by coverage. The explicit
+  `goal_relabeled_frontier_double_q_v3` treatment now supplies learned
+  state-action opportunity and uncertainty to those equal-cost choices while
+  preserving V2 as a control. Synthetic campaign tests prove that only V3
+  publishes the action-conditioned uncertainty needed to distinguish this
+  estimate from V2's state-only value and that it causally precedes coverage.
+  A matched native V2/V3/control treatment is still required before claiming
+  improved terminal outcomes.
 - [ ] Learn from successful and unsuccessful trajectories using sparse terminal
   value, authenticated tick cost, and generic state deltas.
 - [ ] Support online collection, off-policy replay, prioritized reuse, temporal
@@ -272,7 +282,11 @@ experience per second; retained save states have measured positive return.
   A singleton that still crashes must be durably charged and reported without
   fabricating a gameplay result or preventing selection of sealed evidence.
 - [ ] Keep models, replay, checkpoints, and manifests compact, bounded, binary,
-  versioned, checksummed, atomic, and migration-tested.
+  versioned, checksummed, atomic, and migration-tested. The checked-in Windows
+  launch-smoke bundle currently fails even against unmodified `a6893948a9`:
+  checkpoint identity `77589090...a9919` reconstructs as
+  `439e1d73...d70d`. Repair the migration/identity drift or reseal the fixture
+  from authenticated evidence, then restore this check to the framework audit.
 - [ ] Refactor oversized and mixed-responsibility code along observation,
   execution, state, replay, learning, tactics, workers, persistence, and
   reporting boundaries; enforce source-size and dependency gates.

@@ -28,6 +28,10 @@ pub(super) fn option_f64(value: Option<f64>) -> f64 {
     value.unwrap_or(f64::NEG_INFINITY)
 }
 
+fn has_action_conditioned_frontier_value(acquisition: &TacticFrontierAcquisition) -> bool {
+    acquisition.best_mean_q.is_some() && acquisition.maximum_ensemble_variance.is_some()
+}
+
 pub(super) fn compare_frontier_acquisition(
     left: &TacticFrontierAcquisition,
     right: &TacticFrontierAcquisition,
@@ -108,8 +112,27 @@ pub(super) fn compare_frontier_acquisition(
         right.exact_total_terminal_ticks,
     ) {
         (Some(left_ticks), Some(right_ticks)) => {
+            let left_action_value = has_action_conditioned_frontier_value(left);
+            let right_action_value = has_action_conditioned_frontier_value(right);
             return left_ticks
                 .cmp(&right_ticks)
+                .then_with(|| right_action_value.cmp(&left_action_value))
+                .then_with(|| {
+                    if left_action_value && right_action_value {
+                        option_f64(right.best_mean_q).total_cmp(&option_f64(left.best_mean_q))
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                })
+                .then_with(|| {
+                    if left_action_value && right_action_value {
+                        left.maximum_ensemble_variance
+                            .unwrap_or(f64::INFINITY)
+                            .total_cmp(&right.maximum_ensemble_variance.unwrap_or(f64::INFINITY))
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                })
                 .then_with(|| left.expansion_count.cmp(&right.expansion_count));
         }
         (Some(_), None) => return std::cmp::Ordering::Less,

@@ -94,7 +94,7 @@ impl TacticQLearnerSnapshot {
                 && (!matches!(
                     self.schema.as_str(),
                     TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3 | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4
-                ) || self.value_treatment != TacticValueTreatment::GoalRelabeledFittedQKnnV2))
+                ) || !self.value_treatment.uses_goal_relabeling()))
             || self
                 .goal_reachability_calibration
                 .as_ref()
@@ -195,7 +195,8 @@ impl TacticQImmutableLearnerSnapshot {
                         Err(error) => return Err(error.into()),
                     }
                 }
-                TacticValueTreatment::GoalRelabeledFittedQKnnV2 => Some(Arc::new(
+                TacticValueTreatment::GoalRelabeledFittedQKnnV2
+                | TacticValueTreatment::GoalRelabeledFrontierDoubleQV3 => Some(Arc::new(
                     GeneralizedTacticValueModel::fit_achieved_goal_returns(
                         &corpus.transitions,
                         goal_distance_feature,
@@ -205,7 +206,7 @@ impl TacticQImmutableLearnerSnapshot {
             }
         };
         let native_terminal_model = if corpus.transitions.len() >= 2
-            && value_treatment == TacticValueTreatment::GoalRelabeledFittedQKnnV2
+            && value_treatment.uses_goal_relabeling()
             && corpus
                 .transitions
                 .iter()
@@ -250,29 +251,22 @@ impl TacticQImmutableLearnerSnapshot {
         } else {
             None
         };
-        let has_native_terminal_support = corpus
-            .transitions
-            .iter()
-            .any(|transition| transition.value_sample.terminal);
-        let goal_reachability_calibration = goal_reachability_calibration_prefix_rows(
-            value_treatment,
-            corpus.transitions.len(),
-            has_native_terminal_support,
-        )
-        .map(|calibration_rows| {
-            if let Some(prior) =
-                prior_calibration.filter(|prior| prior.source_transitions == calibration_rows)
-            {
-                Ok(prior.clone())
-            } else {
-                calibrate_goal_reachability(
-                    &corpus.transitions[..calibration_rows],
-                    goal_distance_feature,
-                )
-                .map_err(TacticQCampaignError::from)
-            }
-        })
-        .transpose()?;
+        let goal_reachability_calibration =
+            goal_reachability_calibration_prefix_rows(value_treatment, corpus.transitions.len())
+                .map(|calibration_rows| {
+                    if let Some(prior) = prior_calibration
+                        .filter(|prior| prior.source_transitions == calibration_rows)
+                    {
+                        Ok(prior.clone())
+                    } else {
+                        calibrate_goal_reachability(
+                            &corpus.transitions[..calibration_rows],
+                            goal_distance_feature,
+                        )
+                        .map_err(TacticQCampaignError::from)
+                    }
+                })
+                .transpose()?;
         let model_sha256 = model
             .as_ref()
             .map(|model| {
@@ -330,14 +324,10 @@ fn calibration_prefix_rows(available_rows: usize) -> usize {
 fn goal_reachability_calibration_prefix_rows(
     value_treatment: TacticValueTreatment,
     available_rows: usize,
-    has_native_terminal_support: bool,
 ) -> Option<usize> {
-    match (value_treatment, has_native_terminal_support) {
-        (TacticValueTreatment::GoalRelabeledFittedQKnnV2, false | true) => {
-            Some(calibration_prefix_rows(available_rows))
-        }
-        _ => None,
-    }
+    value_treatment
+        .uses_goal_relabeling()
+        .then(|| calibration_prefix_rows(available_rows))
 }
 
 #[cfg(test)]
@@ -357,12 +347,11 @@ mod tests {
     }
 
     #[test]
-    fn reachability_calibration_survives_native_terminal_support() {
+    fn reachability_calibration_applies_to_both_goal_relabel_treatments() {
         assert_eq!(
             goal_reachability_calibration_prefix_rows(
-                TacticValueTreatment::GoalRelabeledFittedQKnnV2,
+                TacticValueTreatment::GoalRelabeledFrontierDoubleQV3,
                 65,
-                false,
             ),
             Some(64),
         );
@@ -370,7 +359,6 @@ mod tests {
             goal_reachability_calibration_prefix_rows(
                 TacticValueTreatment::GoalRelabeledFittedQKnnV2,
                 65,
-                true,
             ),
             Some(64),
         );
@@ -378,7 +366,6 @@ mod tests {
             goal_reachability_calibration_prefix_rows(
                 TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
                 65,
-                true,
             ),
             None,
         );

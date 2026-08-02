@@ -258,8 +258,7 @@ impl TacticQCampaign {
             // consulting the achieved-goal critic: open exploratory branches
             // are otherwise fitted and immediately ignored merely because a
             // demonstration or earlier route supplied terminal evidence.
-            let goal_reachability_acquisition = self.value_treatment
-                == TacticValueTreatment::GoalRelabeledFittedQKnnV2
+            let goal_reachability_acquisition = self.value_treatment.uses_goal_relabeling()
                 && (!native_terminal_supported || !terminal_support_acquisition);
             let goal_reachability_deployment_ready = goal_reachability_acquisition
                 && self
@@ -291,7 +290,8 @@ impl TacticQCampaign {
                                 .map(|estimate| estimate.descriptor)
                                 .collect::<Vec<_>>()
                         }),
-                    TacticValueTreatment::GoalRelabeledFittedQKnnV2 => {
+                    TacticValueTreatment::GoalRelabeledFittedQKnnV2
+                    | TacticValueTreatment::GoalRelabeledFrontierDoubleQV3 => {
                         if native_terminal_supported && terminal_support_acquisition {
                             self.native_terminal_action_model(goal_distance_feature)?
                                 .map(|model| {
@@ -367,8 +367,7 @@ impl TacticQCampaign {
                     if terminal_support_acquisition
                         && (self.value_treatment
                             == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
-                            || (self.value_treatment
-                                == TacticValueTreatment::GoalRelabeledFittedQKnnV2
+                            || (self.value_treatment.uses_goal_relabeling()
                                 && native_terminal_supported))
                     {
                         ensure_terminal_support_factor_acquisitions(

@@ -115,11 +115,14 @@ fn value_treatment(
         Some("goal_relabeled_fitted_q_knn") => {
             Ok(TacticValueTreatment::GoalRelabeledFittedQKnnV2)
         }
+        Some("goal_relabeled_frontier_double_q") => {
+            Ok(TacticValueTreatment::GoalRelabeledFrontierDoubleQV3)
+        }
         Some("continuous_fitted_q_forest") => {
             Ok(TacticValueTreatment::ContinuousFittedQForestV1)
         }
         Some(value) => Err(format!(
-            "unsupported --value-treatment {value:?}; expected continuous_fitted_q_forest, goal_relabeled_fitted_q_knn, or local_generalized_fitted_q_knn"
+            "unsupported --value-treatment {value:?}; expected continuous_fitted_q_forest, goal_relabeled_fitted_q_knn, goal_relabeled_frontier_double_q, or local_generalized_fitted_q_knn"
         )
         .into()),
     }
@@ -173,6 +176,21 @@ mod tests {
         assert_eq!(
             default_replay_sharing(TacticProposalPolicy::StructuredNonLearning, 4, 2).unwrap(),
             NativeTacticReplaySharingPlan::GenerationBarrier
+        );
+    }
+
+    #[test]
+    fn frontier_double_q_treatment_is_selectable_from_the_cli() {
+        assert_eq!(
+            value_treatment(
+                &[
+                    "--value-treatment".into(),
+                    "goal_relabeled_frontier_double_q".into(),
+                ],
+                TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
+            )
+            .unwrap(),
+            TacticValueTreatment::GoalRelabeledFrontierDoubleQV3,
         );
     }
 

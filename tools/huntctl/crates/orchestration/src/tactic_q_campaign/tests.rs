@@ -284,6 +284,79 @@ fn equal_terminal_cost_prefers_the_less_expanded_frontier() {
 }
 
 #[test]
+fn equal_exact_terminal_cost_uses_action_value_before_coverage_when_estimated() {
+    let high_value = TacticFrontierAcquisition {
+        expansion_count: 4,
+        terminal: false,
+        terminal_value_supported: true,
+        achieved_goal_value_supported: false,
+        goal_reachability_supported: false,
+        goal_reachability_evidence_available: false,
+        reward: -0.4,
+        best_mean_q: Some(-8.0),
+        best_goal_progress_per_tick: None,
+        predicted_terminal_ticks_to_go: None,
+        predicted_total_terminal_ticks: None,
+        exact_terminal_ticks_to_go: Some(152),
+        exact_total_terminal_ticks: Some(192),
+        maximum_ensemble_variance: Some(0.2),
+        generalized_nearest_distance: None,
+        discovery_spatial_novelty: None,
+        novelty_rank: 1,
+        replayed_prefix_ticks: 40,
+    };
+    let fresh_low_value = TacticFrontierAcquisition {
+        expansion_count: 0,
+        best_mean_q: Some(-40.0),
+        exact_terminal_ticks_to_go: Some(32),
+        maximum_ensemble_variance: Some(0.1),
+        replayed_prefix_ticks: 160,
+        ..high_value.clone()
+    };
+
+    assert_eq!(
+        compare_frontier_acquisition(&high_value, &fresh_low_value),
+        std::cmp::Ordering::Less
+    );
+}
+
+#[test]
+fn equal_exact_terminal_cost_keeps_coverage_order_without_action_uncertainty() {
+    let expanded = TacticFrontierAcquisition {
+        expansion_count: 4,
+        terminal: false,
+        terminal_value_supported: true,
+        achieved_goal_value_supported: false,
+        goal_reachability_supported: false,
+        goal_reachability_evidence_available: false,
+        reward: -0.4,
+        best_mean_q: Some(99.0),
+        best_goal_progress_per_tick: None,
+        predicted_terminal_ticks_to_go: None,
+        predicted_total_terminal_ticks: None,
+        exact_terminal_ticks_to_go: Some(152),
+        exact_total_terminal_ticks: Some(192),
+        maximum_ensemble_variance: None,
+        generalized_nearest_distance: None,
+        discovery_spatial_novelty: None,
+        novelty_rank: 1,
+        replayed_prefix_ticks: 40,
+    };
+    let fresh = TacticFrontierAcquisition {
+        expansion_count: 0,
+        best_mean_q: Some(-99.0),
+        exact_terminal_ticks_to_go: Some(32),
+        replayed_prefix_ticks: 160,
+        ..expanded.clone()
+    };
+
+    assert_eq!(
+        compare_frontier_acquisition(&fresh, &expanded),
+        std::cmp::Ordering::Less
+    );
+}
+
+#[test]
 fn goal_reachability_ranks_equally_fresh_cold_start_frontiers() {
     let learned = TacticFrontierAcquisition {
         expansion_count: 0,
@@ -1641,6 +1714,49 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             true,
         )
         .unwrap();
+    let mut frontier_v3 = TacticQCampaign::resume(uninterrupted.checkpoint().unwrap()).unwrap();
+    frontier_v3.value_treatment = TacticValueTreatment::GoalRelabeledFrontierDoubleQV3;
+    frontier_v3.campaign_learner_authority_managed = false;
+    let [_, v3_frontier] = frontier_v3
+        .sample_root_and_ranked_frontier(
+            5,
+            0,
+            &[],
+            usize::MAX,
+            false,
+            0,
+            &encode,
+            &|_: &FactSnapshot| {
+                Ok::<_, &'static str>(catalog.option_descriptors().cloned().collect())
+            },
+        )
+        .unwrap();
+    let v3_acquisition = v3_frontier.acquisition.unwrap();
+    assert!(v3_acquisition.terminal_value_supported);
+    assert!(v3_acquisition.best_mean_q.is_some());
+    assert!(v3_acquisition.maximum_ensemble_variance.is_some());
+
+    let mut frontier_v2 = TacticQCampaign::resume(uninterrupted.checkpoint().unwrap()).unwrap();
+    frontier_v2.value_treatment = TacticValueTreatment::GoalRelabeledFittedQKnnV2;
+    frontier_v2.campaign_learner_authority_managed = false;
+    let [_, v2_frontier] = frontier_v2
+        .sample_root_and_ranked_frontier(
+            5,
+            0,
+            &[],
+            usize::MAX,
+            false,
+            0,
+            &encode,
+            &|_: &FactSnapshot| {
+                Ok::<_, &'static str>(catalog.option_descriptors().cloned().collect())
+            },
+        )
+        .unwrap();
+    let v2_acquisition = v2_frontier.acquisition.unwrap();
+    assert!(v2_acquisition.terminal_value_supported);
+    assert!(v2_acquisition.best_mean_q.is_some());
+    assert!(v2_acquisition.maximum_ensemble_variance.is_none());
     let second_incremental = uninterrupted
         .write_checkpoint_with_content_store(
             &incremental_directory.join("decision-2"),

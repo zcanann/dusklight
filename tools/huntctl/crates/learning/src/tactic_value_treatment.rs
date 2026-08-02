@@ -28,6 +28,22 @@ pub enum TacticValueTreatment {
     LocalGeneralizedFittedQKnnV1,
     GoalRelabeledFittedQKnnV2,
     ContinuousFittedQForestV1,
+    /// Goal-relabeled V2 models plus action-conditioned Double-Q frontier
+    /// opportunity ranking after native terminal support exists.
+    GoalRelabeledFrontierDoubleQV3,
+}
+
+impl TacticValueTreatment {
+    pub const fn uses_goal_relabeling(self) -> bool {
+        matches!(
+            self,
+            Self::GoalRelabeledFittedQKnnV2 | Self::GoalRelabeledFrontierDoubleQV3
+        )
+    }
+
+    pub const fn uses_terminal_frontier_action_value(self) -> bool {
+        matches!(self, Self::GoalRelabeledFrontierDoubleQV3)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -279,5 +295,23 @@ fn continuous_forest_config() -> FqiConfig {
         bootstrap: true,
         seed: CONTINUOUS_FOREST_SEED,
         ..FqiConfig::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frontier_double_q_is_an_explicit_goal_relabel_extension() {
+        assert!(TacticValueTreatment::GoalRelabeledFrontierDoubleQV3.uses_goal_relabeling());
+        assert!(
+            TacticValueTreatment::GoalRelabeledFrontierDoubleQV3
+                .uses_terminal_frontier_action_value()
+        );
+        assert!(TacticValueTreatment::GoalRelabeledFittedQKnnV2.uses_goal_relabeling());
+        assert!(
+            !TacticValueTreatment::GoalRelabeledFittedQKnnV2.uses_terminal_frontier_action_value()
+        );
     }
 }

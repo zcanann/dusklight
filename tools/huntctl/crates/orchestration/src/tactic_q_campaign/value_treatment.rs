@@ -76,7 +76,8 @@ impl TacticQCampaign {
                         Err(error) => return Err(error.into()),
                     }
                 }
-                TacticValueTreatment::GoalRelabeledFittedQKnnV2 => {
+                TacticValueTreatment::GoalRelabeledFittedQKnnV2
+                | TacticValueTreatment::GoalRelabeledFrontierDoubleQV3 => {
                     GeneralizedTacticValueModel::fit_achieved_goal_returns(
                         &self.training_replay,
                         goal_distance_feature,
@@ -109,7 +110,7 @@ impl TacticQCampaign {
         &self,
         goal_distance_feature: usize,
     ) -> Result<Option<Arc<GeneralizedTacticValueModel>>, TacticQCampaignError> {
-        if self.value_treatment != TacticValueTreatment::GoalRelabeledFittedQKnnV2
+        if !self.value_treatment.uses_goal_relabeling()
             || !self
                 .training_replay
                 .iter()
@@ -184,7 +185,7 @@ impl TacticQCampaign {
         &self,
         goal_distance_feature: usize,
     ) -> Result<Option<Arc<ContinuousTacticDoubleQModel>>, TacticQCampaignError> {
-        if self.value_treatment != TacticValueTreatment::GoalRelabeledFittedQKnnV2
+        if !self.value_treatment.uses_goal_relabeling()
             || !self
                 .training_replay
                 .iter()
