@@ -305,6 +305,94 @@ impl ScratchQTable {
         })
     }
 
+    /// Applies an objective-blind exploration return before the first sparse
+    /// terminal has been discovered. A coarse position cell contributes at
+    /// most once per episode, and its value decreases with campaign visits.
+    /// Native tick cost is normalized to one full episode so action-boundary
+    /// frequency cannot manufacture novelty.
+    pub fn update_novelty_episode(
+        &mut self,
+        transitions: &[ScratchTransition],
+        maximum_episode_ticks: u32,
+        position_cell_visits: &mut BTreeMap<[i32; 2], u64>,
+    ) -> Result<ScratchUpdateSummary, ScratchQError> {
+        self.validate()?;
+        if transitions.is_empty()
+            || maximum_episode_ticks == 0
+            || maximum_episode_ticks > MAX_SCRATCH_EPISODE_TICKS
+            || transitions.iter().any(|transition| {
+                transition.action_index >= self.action_count
+                    || transition.realized_ticks == 0
+                    || transition.terminal
+            })
+        {
+            return Err(invalid("scratch novelty episode is invalid"));
+        }
+
+        let touched = transitions
+            .iter()
+            .map(|transition| transition.state.clone())
+            .collect::<BTreeSet<_>>();
+        let all_actions = (0..self.action_count).collect::<Vec<_>>();
+        let before = touched
+            .iter()
+            .map(|state| Ok((state.clone(), self.greedy_action(state, &all_actions)?)))
+            .collect::<Result<BTreeMap<_, _>, ScratchQError>>()?;
+
+        let mut episode_cells = BTreeSet::from([transitions[0].state.position_xz]);
+        increment_cell_visit(position_cell_visits, transitions[0].state.position_xz)?;
+        let mut novelty = Vec::with_capacity(transitions.len());
+        for transition in transitions {
+            let cell = transition.next_state.position_xz;
+            let reward = if episode_cells.insert(cell) {
+                let visits = increment_cell_visit(position_cell_visits, cell)?;
+                1.0 / (visits as f64).sqrt()
+            } else {
+                0.0
+            };
+            novelty.push(reward);
+        }
+
+        let mut return_value = 0.0;
+        let mut updates = 0_u64;
+        for (transition, reward) in transitions.iter().zip(novelty).rev() {
+            return_value += reward;
+            return_value -= f64::from(transition.realized_ticks) / f64::from(maximum_episode_ticks);
+            let value = self
+                .values
+                .entry(ScratchStateAction {
+                    state: transition.state.clone(),
+                    action_index: transition.action_index,
+                })
+                .or_insert(ScratchQValue {
+                    mean_return: 0.0,
+                    visits: 0,
+                });
+            value.visits = value
+                .visits
+                .checked_add(1)
+                .ok_or_else(|| invalid("scratch visit count overflowed"))?;
+            value.mean_return += (return_value - value.mean_return) / value.visits as f64;
+            updates += 1;
+        }
+        let changed_choices = touched
+            .iter()
+            .filter(|state| {
+                self.greedy_action(state, &all_actions)
+                    .is_ok_and(|after| before.get(*state).copied() != Some(after))
+            })
+            .count() as u64;
+        self.validate()?;
+        Ok(ScratchUpdateSummary {
+            updates,
+            changed_choices,
+        })
+    }
+
+    pub fn clear_values(&mut self) {
+        self.values.clear();
+    }
+
     pub fn unique_state_actions(&self) -> usize {
         self.values.len()
     }
@@ -339,6 +427,17 @@ impl ScratchQTable {
             })
             .ok_or_else(|| invalid("scratch action set is empty"))
     }
+}
+
+fn increment_cell_visit(
+    visits: &mut BTreeMap<[i32; 2], u64>,
+    cell: [i32; 2],
+) -> Result<u64, ScratchQError> {
+    let count = visits.entry(cell).or_default();
+    *count = count
+        .checked_add(1)
+        .ok_or_else(|| invalid("scratch position-cell visit count overflowed"))?;
+    Ok(*count)
 }
 
 pub fn transition_sha256(transition: &ScratchTransition) -> Result<Digest, ScratchQError> {
@@ -611,5 +710,60 @@ mod tests {
             .mean_return;
         assert_eq!(first, -900.0);
         assert_eq!(second, -900.0);
+    }
+
+    #[test]
+    fn preterminal_novelty_promotes_an_unseen_branch_and_can_be_discarded() {
+        let mut table = ScratchQTable::new(2).unwrap();
+        let start = state(0);
+        let mut position_visits = BTreeMap::new();
+        table
+            .update_novelty_episode(
+                &[ScratchTransition {
+                    state: start.clone(),
+                    action_index: 0,
+                    realized_ticks: 900,
+                    next_state: start.clone(),
+                    terminal: false,
+                }],
+                900,
+                &mut position_visits,
+            )
+            .unwrap();
+        table
+            .update_novelty_episode(
+                &[ScratchTransition {
+                    state: start.clone(),
+                    action_index: 1,
+                    realized_ticks: 900,
+                    next_state: state(1),
+                    terminal: false,
+                }],
+                900,
+                &mut position_visits,
+            )
+            .unwrap();
+        assert_eq!(table.greedy_action(&start, &[0, 1]).unwrap(), 1);
+        assert_eq!(
+            position_visits.keys().copied().collect::<Vec<_>>(),
+            vec![[0, 0], [1, 0]]
+        );
+
+        table.clear_values();
+        table
+            .update_episode(
+                &[ScratchTransition {
+                    state: start.clone(),
+                    action_index: 0,
+                    realized_ticks: 10,
+                    next_state: state(2),
+                    terminal: true,
+                }],
+                true,
+                900,
+            )
+            .unwrap();
+        assert_eq!(table.greedy_action(&start, &[0, 1]).unwrap(), 0);
+        assert_eq!(table.unique_state_actions(), 1);
     }
 }

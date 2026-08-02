@@ -39,10 +39,10 @@ use std::io::{Cursor, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-pub const NATIVE_SCRATCH_REPORT_SCHEMA_V2: &str = "dusklight-native-scratch-report/v2";
-const NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V2: &str = "dusklight-native-scratch-checkpoint/v2";
+pub const NATIVE_SCRATCH_REPORT_SCHEMA_V3: &str = "dusklight-native-scratch-report/v3";
+const NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V3: &str = "dusklight-native-scratch-checkpoint/v3";
 const CHECKPOINT_MAGIC: &[u8; 8] = b"DSSCRQ01";
-const CHECKPOINT_VERSION: u16 = 2;
+const CHECKPOINT_VERSION: u16 = 3;
 const CHECKPOINT_HEADER_BYTES: usize = 8 + 2 + 2 + 8 + 32;
 const CHECKPOINT_COMPRESSION_LEVEL: i32 = 1;
 const MAX_EPISODES: u64 = 1_000_000;
@@ -84,6 +84,8 @@ pub struct NativeScratchReport {
     pub learner_updates: u64,
     pub changed_choices: u64,
     pub q_state_actions: u64,
+    pub preterminal_position_cells: u64,
+    pub novelty_active: bool,
     pub native_ticks: u64,
     pub native_wall_micros: u64,
     pub wall_micros: u64,
@@ -124,6 +126,8 @@ struct NativeScratchCheckpoint {
     maximum_episode_ticks: u32,
     epsilon_per_million: u32,
     q: ScratchQTable,
+    position_cell_visits: BTreeMap<[i32; 2], u64>,
+    terminal_discovered: bool,
     unique_transitions: BTreeMap<Digest, ScratchTransition>,
     completed_action_sequences: Vec<Vec<usize>>,
     report: NativeScratchReport,
@@ -220,11 +224,27 @@ pub fn run_native_scratch_learner(
                 .or_insert_with(|| transition.clone());
         }
         let unique_transitions_added = checkpoint.unique_transitions.len() - before_unique;
-        let update = if duplicate {
+        let update = if outcome.terminal && !checkpoint.terminal_discovered {
+            checkpoint.q.clear_values();
+            checkpoint.terminal_discovered = true;
+            checkpoint
+                .q
+                .update_episode(&outcome.transitions, true, config.maximum_episode_ticks)
+                .map_err(run_error)?
+        } else if duplicate {
             dusklight_learning::scratch_q::ScratchUpdateSummary {
                 updates: 0,
                 changed_choices: 0,
             }
+        } else if !checkpoint.terminal_discovered {
+            checkpoint
+                .q
+                .update_novelty_episode(
+                    &outcome.transitions,
+                    config.maximum_episode_ticks,
+                    &mut checkpoint.position_cell_visits,
+                )
+                .map_err(run_error)?
         } else {
             checkpoint
                 .q
@@ -304,6 +324,8 @@ pub fn run_native_scratch_learner(
         checkpoint.report.learner_updates += update.updates;
         checkpoint.report.changed_choices += update.changed_choices;
         checkpoint.report.q_state_actions = checkpoint.q.unique_state_actions() as u64;
+        checkpoint.report.preterminal_position_cells = checkpoint.position_cell_visits.len() as u64;
+        checkpoint.report.novelty_active = !checkpoint.terminal_discovered;
         checkpoint.report.native_ticks += outcome.native_ticks;
         checkpoint.report.native_wall_micros += outcome.native_wall_micros;
         checkpoint
@@ -592,7 +614,7 @@ fn fresh_checkpoint(
     action_count: usize,
 ) -> Result<NativeScratchCheckpoint, NativeScratchRunError> {
     Ok(NativeScratchCheckpoint {
-        schema: NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V2.into(),
+        schema: NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V3.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -601,10 +623,12 @@ fn fresh_checkpoint(
         maximum_episode_ticks: config.maximum_episode_ticks,
         epsilon_per_million: config.epsilon_per_million,
         q: ScratchQTable::new(action_count).map_err(run_error)?,
+        position_cell_visits: BTreeMap::new(),
+        terminal_discovered: false,
         unique_transitions: BTreeMap::new(),
         completed_action_sequences: Vec::new(),
         report: NativeScratchReport {
-            schema: NATIVE_SCRATCH_REPORT_SCHEMA_V2.into(),
+            schema: NATIVE_SCRATCH_REPORT_SCHEMA_V3.into(),
             report_sha256: Digest::ZERO,
             optimization_request_sha256: config.optimization.content_sha256,
             execution_binding_sha256: config.execution.content_sha256,
@@ -623,6 +647,8 @@ fn fresh_checkpoint(
             learner_updates: 0,
             changed_choices: 0,
             q_state_actions: 0,
+            preterminal_position_cells: 0,
+            novelty_active: true,
             native_ticks: 0,
             native_wall_micros: 0,
             wall_micros: 0,
@@ -657,7 +683,8 @@ fn validate_checkpoint(
     action_universe_sha256: Digest,
 ) -> Result<(), NativeScratchRunError> {
     checkpoint.q.validate().map_err(run_error)?;
-    if checkpoint.schema != NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V2
+    if checkpoint.schema != NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V3
+        || checkpoint.report.schema != NATIVE_SCRATCH_REPORT_SCHEMA_V3
         || checkpoint.optimization_request_sha256 != config.optimization.content_sha256
         || checkpoint.execution_binding_sha256 != config.execution.content_sha256
         || checkpoint.objective_sha256 != config.optimization.terminal_predicate.definition_sha256
@@ -665,10 +692,26 @@ fn validate_checkpoint(
         || checkpoint.seed != config.seed
         || checkpoint.maximum_episode_ticks != config.maximum_episode_ticks
         || checkpoint.epsilon_per_million != config.epsilon_per_million
+        || checkpoint.report.optimization_request_sha256 != checkpoint.optimization_request_sha256
+        || checkpoint.report.execution_binding_sha256 != checkpoint.execution_binding_sha256
+        || checkpoint.report.objective_sha256 != checkpoint.objective_sha256
+        || checkpoint.report.action_universe_sha256 != checkpoint.action_universe_sha256
+        || checkpoint.report.seed != checkpoint.seed
+        || checkpoint.report.maximum_episode_ticks != checkpoint.maximum_episode_ticks
+        || checkpoint.report.epsilon_per_million != checkpoint.epsilon_per_million
         || checkpoint.report.completed_episodes as usize
             != checkpoint.completed_action_sequences.len()
         || checkpoint.report.episodes.len() != checkpoint.completed_action_sequences.len()
         || checkpoint.report.unique_transitions != checkpoint.unique_transitions.len() as u64
+        || checkpoint.report.q_state_actions != checkpoint.q.unique_state_actions() as u64
+        || checkpoint.report.preterminal_position_cells
+            != checkpoint.position_cell_visits.len() as u64
+        || checkpoint.report.novelty_active == checkpoint.terminal_discovered
+        || checkpoint.terminal_discovered != (checkpoint.report.terminal_episodes > 0)
+        || checkpoint
+            .position_cell_visits
+            .values()
+            .any(|visits| *visits == 0)
         || checkpoint.report.report_sha256 != report_identity(&checkpoint.report)?
         || checkpoint.report.completed_episodes > config.episodes
     {
@@ -846,7 +889,7 @@ mod tests {
     #[test]
     fn binary_checkpoint_round_trips_and_rejects_corruption() {
         let mut report = NativeScratchReport {
-            schema: NATIVE_SCRATCH_REPORT_SCHEMA_V2.into(),
+            schema: NATIVE_SCRATCH_REPORT_SCHEMA_V3.into(),
             report_sha256: Digest::ZERO,
             optimization_request_sha256: Digest([1; 32]),
             execution_binding_sha256: Digest([2; 32]),
@@ -865,6 +908,8 @@ mod tests {
             learner_updates: 0,
             changed_choices: 0,
             q_state_actions: 0,
+            preterminal_position_cells: 0,
+            novelty_active: true,
             native_ticks: 0,
             native_wall_micros: 0,
             wall_micros: 0,
@@ -876,7 +921,7 @@ mod tests {
         };
         seal_report(&mut report).unwrap();
         let checkpoint = NativeScratchCheckpoint {
-            schema: NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V2.into(),
+            schema: NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V3.into(),
             optimization_request_sha256: report.optimization_request_sha256,
             execution_binding_sha256: report.execution_binding_sha256,
             objective_sha256: report.objective_sha256,
@@ -885,6 +930,8 @@ mod tests {
             maximum_episode_ticks: report.maximum_episode_ticks,
             epsilon_per_million: report.epsilon_per_million,
             q: ScratchQTable::new(3).unwrap(),
+            position_cell_visits: BTreeMap::new(),
+            terminal_discovered: false,
             unique_transitions: BTreeMap::new(),
             completed_action_sequences: Vec::new(),
             report,
