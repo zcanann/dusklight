@@ -299,9 +299,18 @@ do not golf isolated subphases without campaign evidence.
   88.8-second path and 39.7 seconds / 37.1% below the original 106.9 seconds.
   Retaining the replay objects decoded during reopen for final snapshot
   projection produced no measurable end-to-end gain (67.22 versus 67.16
-  seconds) and was reverted rather than adding an unbounded cache. The
-  remaining roughly 67-second authority/reporting path and a clean cold
-  measurement keep this task open.
+  seconds) and was reverted rather than adding an unbounded cache. Completed
+  campaigns now also publish a 1.8 KB checksummed learner-completion authority
+  bound to the exact replay journal, learner-head journal, replay identity,
+  snapshot revision, transition counts, and latest model manifest. Legacy
+  campaigns take the ordinary full-validation path once to create it; sealed
+  finalization then avoids decoding the 240-row replay corpus solely to recover
+  report fields. On the same diagnostic campaign, the compatibility pass took
+  67.39 seconds and the subsequent sealed pass took 51.45 seconds with the same
+  24 decisions, 4,346 historical native ticks, and 191-tick terminal and no
+  native launch. Internally attributed campaign setup fell from 36.59 to 27.87
+  seconds. The remaining roughly 51-second authority/reporting path and a clean
+  cold measurement keep this task open.
 - [ ] Cache or share already-validated artifact and graph identities within one
   process; independent reopen validation must remain fail-closed. Completed-seed
   preflight now carries the campaign-wide useful-expansion set directly from

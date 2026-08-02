@@ -37,7 +37,7 @@ use crate::tactic_q_campaign::{
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use crate::tactic_replay_control_plane::{
     TacticReplayAdmissionMetrics, TacticReplayAdmissionOutcome, TacticReplayControlPlane,
-    TacticReplayControlPlaneIdentity, TacticReplaySnapshot,
+    TacticReplayControlPlaneIdentity, TacticReplaySnapshot, TacticReplaySnapshotVersion,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState};
@@ -183,6 +183,11 @@ mod seed_completion;
 use seed_completion::{
     NATIVE_TACTIC_SEED_COMPLETION_FILE, NativeTacticSeedCompletion,
     NativeTacticSeedCompletionProjection, publish_seed_completion,
+};
+mod learner_completion;
+use learner_completion::{
+    NATIVE_TACTIC_LEARNER_COMPLETION_FILE, NativeTacticLearnerCompletion,
+    publish_learner_completion,
 };
 mod exclusive_timing;
 pub use completion_marker::{
@@ -368,7 +373,8 @@ mod learner_head;
 use learner_head::{CampaignLearnerHead, CampaignLearnerHeadJournal};
 mod learner_authority;
 use learner_authority::{
-    CampaignLearnerPublishResult, CampaignTacticLearnerAuthority, CompletedCampaignLearnerView,
+    CampaignLearnerFinalizationSnapshot, CampaignLearnerPublishResult,
+    CampaignLearnerUpdateMetrics, CampaignTacticLearnerAuthority, CompletedCampaignLearnerView,
     SharedTacticLearnerAuthority, lock_learner_authority,
 };
 
@@ -556,27 +562,31 @@ fn run_native_tactic_route_with_optional_fleet(
             "campaign and replay content authorities use different roots",
         ));
     }
-    let replay_control_plane = if replay_control_plane_path.exists() {
-        TacticReplayControlPlane::open_with_content_store(
-            &replay_control_plane_path,
-            campaign_content_store.clone(),
-            &replay_control_plane_identity,
-        )
-        .map_err(route_error)?
-    } else {
-        TacticReplayControlPlane::create_with_content_store(
-            &replay_control_plane_path,
-            campaign_content_store.clone(),
-            replay_control_plane_identity,
-        )
-        .map_err(route_error)?
-    };
     let (learner_authority, completed_learner_view) = if completed_preflight.is_some() {
         (
             None,
-            Some(CompletedCampaignLearnerView::open(replay_control_plane)?),
+            Some(CompletedCampaignLearnerView::open(
+                config.output_root,
+                campaign_content_store.clone(),
+                &replay_control_plane_identity,
+            )?),
         )
     } else {
+        let replay_control_plane = if replay_control_plane_path.exists() {
+            TacticReplayControlPlane::open_with_content_store(
+                &replay_control_plane_path,
+                campaign_content_store.clone(),
+                &replay_control_plane_identity,
+            )
+            .map_err(route_error)?
+        } else {
+            TacticReplayControlPlane::create_with_content_store(
+                &replay_control_plane_path,
+                campaign_content_store.clone(),
+                replay_control_plane_identity.clone(),
+            )
+            .map_err(route_error)?
+        };
         (
             Some(Arc::new(Mutex::new(CampaignTacticLearnerAuthority::new(
                 replay_control_plane,
@@ -962,18 +972,23 @@ fn run_native_tactic_route_with_optional_fleet(
             },
         );
     let learner_finalization = if let Some(learner_authority) = &learner_authority {
-        lock_learner_authority(learner_authority)?.finalization_snapshot()?
+        lock_learner_authority(learner_authority)?
+            .finalization_snapshot(encoder.goal_distance_feature())?
     } else {
         completed_learner_view
             .as_ref()
             .ok_or_else(|| route_message("completed learner authority is absent"))?
-            .finalization_snapshot()?
+            .finalization_snapshot(encoder.goal_distance_feature())?
     };
-    let final_replay = learner_finalization.replay;
-    let final_replay_snapshot = final_replay.version;
+    let final_replay_snapshot = learner_finalization.replay_snapshot;
     let replay_admission = learner_finalization.replay_admission;
     let learner_metrics = learner_finalization.learner_metrics;
     let learner_updates = learner_finalization.learner_updates;
+    publish_learner_completion(
+        config.output_root,
+        &replay_control_plane_identity,
+        &learner_finalization,
+    )?;
     let demonstration_execution_micros =
         demonstration.as_ref().map_or(0, |value| value.wall_micros);
     attribute_campaign_timing(
@@ -1019,9 +1034,8 @@ fn run_native_tactic_route_with_optional_fleet(
             total
         },
     );
-    let useful_training_transitions =
-        useful_training_transitions(&final_replay.corpus, encoder.goal_distance_feature());
-    let censored_training_transitions = censored_training_transitions(&final_replay.corpus);
+    let useful_training_transitions = learner_finalization.useful_training_transitions;
+    let censored_training_transitions = learner_finalization.censored_training_transitions;
     let mut report = NativeTacticRouteReport {
         schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44.into(),
         orchestrator_executable_sha256: Some(orchestrator_executable_sha256),

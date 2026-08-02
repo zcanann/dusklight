@@ -18,7 +18,10 @@ pub(super) struct CampaignLearnerPublishResult {
 }
 
 pub(super) struct CampaignLearnerFinalizationSnapshot {
-    pub(super) replay: TacticReplaySnapshot,
+    pub(super) replay_snapshot: TacticReplaySnapshotVersion,
+    pub(super) replay_rows: u64,
+    pub(super) useful_training_transitions: u64,
+    pub(super) censored_training_transitions: u64,
     pub(super) replay_admission: TacticReplayAdmissionMetrics,
     pub(super) learner_metrics: CampaignLearnerUpdateMetrics,
     pub(super) learner_updates: u64,
@@ -31,6 +34,11 @@ pub(super) struct CampaignLearnerFinalizationSnapshot {
 /// Macro finalization does not mutate learner state, so interrupted macro work
 /// can consume this view without fitting or publishing another model.
 pub(super) struct CompletedCampaignLearnerView {
+    full: Option<CompletedCampaignLearnerFullView>,
+    sealed: Option<NativeTacticLearnerCompletion>,
+}
+
+struct CompletedCampaignLearnerFullView {
     replay: TacticReplayControlPlane,
     learner_heads: CampaignLearnerHeadJournal,
     latest_snapshot_sha256: Digest,
@@ -39,8 +47,31 @@ pub(super) struct CompletedCampaignLearnerView {
 
 impl CompletedCampaignLearnerView {
     pub(super) fn open(
-        replay: TacticReplayControlPlane,
+        output_root: &Path,
+        content_store: TacticQContentStore,
+        identity: &TacticReplayControlPlaneIdentity,
     ) -> Result<Self, NativeTacticRouteRunError> {
+        let completion_path = output_root.join(NATIVE_TACTIC_LEARNER_COMPLETION_FILE);
+        if completion_path.is_file() {
+            return Ok(Self {
+                full: None,
+                sealed: Some(NativeTacticLearnerCompletion::read_and_validate(
+                    &completion_path,
+                    output_root,
+                    identity,
+                )?),
+            });
+        }
+        let replay = TacticReplayControlPlane::open_with_content_store(
+            output_root.join(NATIVE_TACTIC_REPLAY_CONTROL_PLANE_FILE),
+            content_store,
+            identity,
+        )
+        .map_err(route_error)?;
+        Self::from_replay(replay)
+    }
+
+    fn from_replay(replay: TacticReplayControlPlane) -> Result<Self, NativeTacticRouteRunError> {
         let learner_heads = CampaignLearnerHeadJournal::open_existing(&replay)?;
         let latest = learner_heads
             .latest()
@@ -57,32 +88,64 @@ impl CompletedCampaignLearnerView {
             ));
         }
         Ok(Self {
-            replay,
-            learner_heads,
-            latest_snapshot_sha256: latest.learner_snapshot_sha256,
-            latest_manifest,
+            full: Some(CompletedCampaignLearnerFullView {
+                replay,
+                learner_heads,
+                latest_snapshot_sha256: latest.learner_snapshot_sha256,
+                latest_manifest,
+            }),
+            sealed: None,
         })
     }
 
     pub(super) fn replay_len(&self) -> usize {
-        self.replay.len()
+        self.full.as_ref().map_or_else(
+            || {
+                usize::try_from(
+                    self.sealed
+                        .as_ref()
+                        .expect("completed learner view has one authority")
+                        .replay_rows(),
+                )
+                .unwrap_or(usize::MAX)
+            },
+            |full| full.replay.len(),
+        )
     }
 
     pub(super) fn finalization_snapshot(
         &self,
+        goal_distance_feature: usize,
     ) -> Result<CampaignLearnerFinalizationSnapshot, NativeTacticRouteRunError> {
+        if let Some(sealed) = &self.sealed {
+            return Ok(sealed.finalization_snapshot());
+        }
+        let full = self
+            .full
+            .as_ref()
+            .ok_or_else(|| route_message("completed learner view has no authority"))?;
+        let replay = full.replay.snapshot().map_err(route_error)?;
         Ok(CampaignLearnerFinalizationSnapshot {
-            replay: self.replay.snapshot().map_err(route_error)?,
-            replay_admission: self.replay.invocation_metrics(),
+            replay_snapshot: replay.version,
+            replay_rows: replay.corpus.transitions.len() as u64,
+            useful_training_transitions: useful_training_transitions(
+                &replay.corpus,
+                goal_distance_feature,
+            ),
+            censored_training_transitions: censored_training_transitions(&replay.corpus),
+            replay_admission: full.replay.invocation_metrics(),
             learner_metrics: CampaignLearnerUpdateMetrics::default(),
-            learner_updates: self.latest_manifest.model_revision,
+            learner_updates: full.latest_manifest.model_revision,
             model_snapshots_published: self
+                .full
+                .as_ref()
+                .expect("full learner view")
                 .learner_heads
                 .snapshot_sha256s()
                 .collect::<BTreeSet<_>>()
                 .len() as u64,
-            latest_snapshot_sha256: self.latest_snapshot_sha256,
-            latest_manifest: self.latest_manifest.clone(),
+            latest_snapshot_sha256: full.latest_snapshot_sha256,
+            latest_manifest: full.latest_manifest.clone(),
         })
     }
 }
@@ -427,9 +490,17 @@ impl CampaignTacticLearnerAuthority {
 
     pub(super) fn finalization_snapshot(
         &self,
+        goal_distance_feature: usize,
     ) -> Result<CampaignLearnerFinalizationSnapshot, NativeTacticRouteRunError> {
+        let replay = self.replay.snapshot().map_err(route_error)?;
         Ok(CampaignLearnerFinalizationSnapshot {
-            replay: self.replay.snapshot().map_err(route_error)?,
+            replay_snapshot: replay.version,
+            replay_rows: replay.corpus.transitions.len() as u64,
+            useful_training_transitions: useful_training_transitions(
+                &replay.corpus,
+                goal_distance_feature,
+            ),
+            censored_training_transitions: censored_training_transitions(&replay.corpus),
             replay_admission: self.replay.invocation_metrics(),
             learner_metrics: self.invocation_metrics(),
             learner_updates: self.total_updates(),
@@ -828,13 +899,13 @@ mod tests {
         drop(campaign);
         drop(authority);
         let replay = TacticReplayControlPlane::open(&journal, &objects, &identity).unwrap();
-        let completed_view = CompletedCampaignLearnerView::open(replay).unwrap();
-        let completed_snapshot = completed_view.finalization_snapshot().unwrap();
+        let completed_view = CompletedCampaignLearnerView::from_replay(replay).unwrap();
+        let completed_snapshot = completed_view.finalization_snapshot(0).unwrap();
         assert_eq!(
             completed_snapshot.learner_metrics,
             CampaignLearnerUpdateMetrics::default()
         );
-        assert_eq!(completed_snapshot.replay.version.revision, 2);
+        assert_eq!(completed_snapshot.replay_snapshot.revision, 2);
         assert_eq!(
             completed_snapshot.latest_snapshot_sha256,
             latest_snapshot.sha256
