@@ -189,6 +189,10 @@ do not golf isolated subphases without campaign evidence.
   reads now hash the bytes they return once instead of verifying each object
   twice and reading it a third time. On the same checkpoint,
   read/authentication has fallen from 57.6 to 28.2 seconds (51%); completed-seed
+  journals now also compact to a fresh authenticated base after 63 deltas, so
+  new campaigns and any subsequently mutated legacy campaign cannot accumulate
+  unbounded reopen work. Existing sealed deep journals remain compatible and
+  still require a deliberate read-only migration/cache path.
   recovery also derives its corpus from that authenticated payload instead of
   reopening it and fitting an unused lane-local model. The remaining 28.2
   seconds, preflight fleet launch, learner reconstruction, and repeated macro

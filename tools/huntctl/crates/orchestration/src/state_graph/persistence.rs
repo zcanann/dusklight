@@ -13,6 +13,10 @@ use std::sync::Arc;
 
 const STATE_GRAPH_PERSISTENCE_BASE_SCHEMA_V1: &str = "dusklight-state-graph-persistence-base/v1";
 const STATE_GRAPH_PERSISTENCE_DELTA_SCHEMA_V1: &str = "dusklight-state-graph-persistence-delta/v1";
+/// Keep checkpoint reopen proportional to a bounded recent suffix rather than
+/// the campaign's complete checkpoint count. Existing deeper chains remain
+/// readable and compact the next time they acquire durable changes.
+const MAXIMUM_STATE_GRAPH_DELTA_DEPTH: u64 = 63;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -134,6 +138,16 @@ impl StateGraph {
             && self.persistence.added_outgoing_expansions.is_empty()
         {
             return Ok(StateGraphPersistencePlan::Reuse(head));
+        }
+        if head.depth >= MAXIMUM_STATE_GRAPH_DELTA_DEPTH {
+            let record = StateGraphPersistenceRecord::Base {
+                schema: STATE_GRAPH_PERSISTENCE_BASE_SCHEMA_V1.into(),
+                graph: self.clone(),
+            };
+            return Ok(StateGraphPersistencePlan::Store {
+                parent: None,
+                bytes: encode_record(&record)?,
+            });
         }
         let record = StateGraphPersistenceRecord::Delta {
             schema: STATE_GRAPH_PERSISTENCE_DELTA_SCHEMA_V1.into(),

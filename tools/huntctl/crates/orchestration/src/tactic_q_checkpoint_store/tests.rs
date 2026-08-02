@@ -169,6 +169,7 @@ fn state_graph_journal_stores_one_base_then_only_dirty_upserts() {
     let first_delta_len = delta_bytes.len();
 
     let mut maximum_delta_len = first_delta_len;
+    let mut compacted_bases = 0;
     for variant in 1..=128 {
         graph
             .register_action_expansion(
@@ -184,7 +185,11 @@ fn state_graph_journal_stores_one_base_then_only_dirty_upserts() {
             )
             .unwrap();
         let (reference, head) = store.store_state_graph_journal(&graph).unwrap();
-        maximum_delta_len = maximum_delta_len.max(store.read_bytes(reference).unwrap().len());
+        if head.depth == 0 {
+            compacted_bases += 1;
+        } else {
+            maximum_delta_len = maximum_delta_len.max(store.read_bytes(reference).unwrap().len());
+        }
         graph.install_persistence_head(head);
     }
     let final_head = graph.persistence_plan().unwrap();
@@ -193,6 +198,7 @@ fn state_graph_journal_stores_one_base_then_only_dirty_upserts() {
         maximum_delta_len <= first_delta_len + 32,
         "journal records grew from {first_delta_len} to {maximum_delta_len} bytes"
     );
+    assert_eq!(compacted_bases, 2);
     assert!(
         serde_cbor::to_vec(&graph).unwrap().len() > maximum_delta_len * 10,
         "test graph did not grow enough to expose whole-graph persistence"
