@@ -51,11 +51,8 @@ These are the current missing capabilities, in execution order. Keep a thin
 end-to-end campaign runnable, remove completed work from this file, and retain
 detailed history in commits and sealed campaign artifacts.
 
-### 1. Turn scratch terminal discovery into an optimizable route
+### 1. Optimize selected zero-shot terminals
 
-- [ ] Give scratch trajectories enough horizon, restarts, branching, and
-  coverage diversity to reach the load zone without a demonstration or authored
-  path.
 - [ ] Run residual optimization from each selected zero-shot terminal handoff,
   minimize the incumbent, and cold-replay every improvement. The portable
   terminal authority, replay-backed handoff, and derived request/execution
