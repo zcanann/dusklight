@@ -331,7 +331,6 @@ pub(super) fn run_seed(
             let [root, frontier] = if demonstration_coverage_pending
                 && !terminal_restart
                 && !terminal_support_acquisition
-                && config.execution_plan.proposal_policy == TacticProposalPolicy::Learned
             {
                 campaign.sample_root_and_ranked_frontier(
                     seed,
@@ -475,7 +474,9 @@ pub(super) fn run_seed(
                     lane.acquisition.rank(campaign.decision_index),
                     config.execution_plan.proposal_policy,
                     Some(encoder.goal_distance_feature()),
-                    demonstration_intervention_pending,
+                    demonstration_intervention_pending
+                        && config.execution_plan.proposal_policy
+                            != TacticProposalPolicy::RandomValid,
                 )
                 .map_err(route_error)?;
             let selection_micros = elapsed_micros(selection_started.elapsed());
@@ -504,7 +505,9 @@ pub(super) fn run_seed(
                             maximum_proposals: config.execution_plan.proposal_width_per_decision,
                             acquisition_partition: planned_acquisition_rank,
                             proposal_policy: config.execution_plan.proposal_policy,
-                            force_exploration: demonstration_intervention_pending,
+                            force_exploration: demonstration_intervention_pending
+                                && config.execution_plan.proposal_policy
+                                    != TacticProposalPolicy::RandomValid,
                         },
                     )?);
                     consumed_learner_snapshot = snapshot;

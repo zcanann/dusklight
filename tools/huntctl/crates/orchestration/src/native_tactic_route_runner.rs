@@ -589,20 +589,10 @@ fn run_native_tactic_route_with_optional_fleet(
             None,
         )
     };
-    let frozen_policy_snapshot = if learner_authority.is_some()
-        && config.execution_plan.proposal_policy == TacticProposalPolicy::FrozenPolicy
-    {
-        Some(
-            lock_learner_authority(
-                learner_authority
-                    .as_ref()
-                    .ok_or_else(|| route_message("live learner authority is absent"))?,
-            )?
-            .snapshot(),
-        )
-    } else {
-        None
-    };
+    // A frozen control snapshots the policy after the common setup corpus is
+    // fitted below. Capturing here would freeze an empty learner while the
+    // adaptive treatment receives the incumbent/demonstration prior.
+    let mut frozen_policy_snapshot = None;
 
     let pool = if native_fleet_required {
         Some(
@@ -682,10 +672,13 @@ fn run_native_tactic_route_with_optional_fleet(
             let mut learner = lock_learner_authority(&learner_authority)?;
             publish_demonstration_replay(&mut learner, demonstration)?;
         }
+        let learner = lock_learner_authority(&learner_authority)?;
+        if config.execution_plan.proposal_policy == TacticProposalPolicy::FrozenPolicy {
+            frozen_policy_snapshot = Some(learner.snapshot());
+        }
         campaign_phase_wall.campaign_setup_model_update_micros =
-            lock_learner_authority(&learner_authority)?
-                .invocation_metrics()
-                .update_micros;
+            learner.invocation_metrics().update_micros;
+        drop(learner);
         campaign_phase_wall.campaign_setup_micros = elapsed_micros(campaign_started.elapsed());
         for generation in &config.execution_plan.generations {
             let generation_started = Instant::now();

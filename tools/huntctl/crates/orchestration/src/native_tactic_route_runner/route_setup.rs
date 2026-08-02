@@ -251,11 +251,7 @@ pub(super) fn validate_config(
         || config
             .execution_plan
             .demonstration_chunk_ticks
-            .is_some_and(|ticks| {
-                ticks == 0
-                    || ticks > maximum_demonstration_chunk_ticks
-                    || config.execution_plan.proposal_policy != TacticProposalPolicy::Learned
-            })
+            .is_some_and(|ticks| ticks == 0 || ticks > maximum_demonstration_chunk_ticks)
         || !planned_decisions_fit_candidate_budget(
             config.execution_plan.budgets.decisions_per_lane,
             config.execution_plan.seeds.len(),
