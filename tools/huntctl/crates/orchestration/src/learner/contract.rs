@@ -285,7 +285,12 @@ impl GraphLearningBatch {
             graph_sha256: hashed.content_sha256(),
             rows,
         };
-        batch.validate()?;
+        // `hashed` proves the source graph passed its complete invariant check,
+        // and every field above is projected directly from that immutable
+        // graph. Revalidating every cloned fact snapshot and action here made
+        // each live scheduler decision traverse the same authority a second
+        // time. Independently supplied batches still pass through `validate`
+        // in the public learner and replay entry points.
         Ok(batch)
     }
 

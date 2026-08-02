@@ -151,22 +151,54 @@ pub(crate) fn merge_graph_training_projection(
     }
 }
 
-pub(super) fn validate_training_projection(
-    graph: &StateGraph,
+pub(super) fn validate_training_projection_and_keys(
+    validated: ValidatedStateGraph<'_>,
     transitions: &[OptionTransitionSample],
     routes: &[InputTape],
     episode_groups: &[u64],
-) -> Result<(), TacticQCampaignError> {
-    let projection = graph_training_projection(graph)?;
-    if projection.transitions != transitions
-        || projection.routes != routes
-        || projection.episode_groups != episode_groups
-    {
+) -> Result<Vec<(Digest, Digest)>, TacticQCampaignError> {
+    if transitions.len() != routes.len() || transitions.len() != episode_groups.len() {
+        return Err(TacticQCampaignError::InvalidState(
+            "training replay projection shape is invalid",
+        ));
+    }
+    let graph = validated.graph();
+    let mut keys = Vec::with_capacity(transitions.len());
+    let mut index = 0_usize;
+    for expansion in graph.expansions() {
+        let ActionExpansionStatus::Completed {
+            route_checkpoint_sha256,
+            evidence,
+            ..
+        } = &expansion.status
+        else {
+            continue;
+        };
+        let route =
+            graph
+                .route(*route_checkpoint_sha256)
+                .ok_or(TacticQCampaignError::InvalidState(
+                    "completed graph evidence route is absent",
+                ))?;
+        for (evidence_sha256, row) in evidence {
+            if transitions.get(index) != Some(row.transition.as_ref())
+                || routes.get(index) != Some(route)
+                || episode_groups.get(index) != Some(&row.episode_group)
+            {
+                return Err(TacticQCampaignError::InvalidState(
+                    "training replay is not a read-only state graph projection",
+                ));
+            }
+            keys.push((expansion.identity_sha256, *evidence_sha256));
+            index = index.saturating_add(1);
+        }
+    }
+    if index != transitions.len() {
         return Err(TacticQCampaignError::InvalidState(
             "training replay is not a read-only state graph projection",
         ));
     }
-    Ok(())
+    Ok(keys)
 }
 
 pub(super) fn graph_root_branch(
@@ -199,11 +231,11 @@ pub(super) fn graph_root_branch(
     })
 }
 
-pub(super) fn graph_frontier_entries(
-    graph: &StateGraph,
+pub(super) fn graph_frontier_entries_validated(
+    validated: ValidatedStateGraph<'_>,
     maximum_route_frames: usize,
 ) -> Result<Vec<TacticFrontierEntry>, TacticQCampaignError> {
-    graph.validate()?;
+    let graph = validated.graph();
     let mut entries = Vec::new();
     for node in graph.nodes().filter(|node| {
         node.id != graph.root()

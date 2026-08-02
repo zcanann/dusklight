@@ -96,6 +96,27 @@ fn graph_and_transition() -> (StateGraph, OptionTransitionSample, InputTape) {
 }
 
 #[test]
+fn process_validation_token_survives_checked_mutation_and_rejects_identity_drift() {
+    let (mut graph, transition, route) = graph_and_transition();
+    let token = graph.validation_token().unwrap();
+    graph
+        .admit_completed_expansion(
+            transition,
+            route,
+            17,
+            ExpansionEvidenceAuthority::Executable,
+        )
+        .unwrap();
+
+    graph.validated_with_token(&token).unwrap();
+    graph.validate().unwrap();
+
+    let mut detached = graph;
+    detached.identity.objective_sha256 = Digest([9; 32]);
+    assert!(detached.validated_with_token(&token).is_err());
+}
+
+#[test]
 fn combined_route_identity_preserves_both_persisted_digests() {
     let (graph, _, route) = graph_and_transition();
     let (route_sha256, tape_sha256) =

@@ -9,6 +9,32 @@ impl TacticQCampaign {
             ))
     }
 
+    pub(crate) fn validated_state_graph(
+        &self,
+    ) -> Result<ValidatedStateGraph<'_>, TacticQCampaignError> {
+        let graph = self.state_graph()?;
+        let token =
+            self.state_graph_validation
+                .as_ref()
+                .ok_or(TacticQCampaignError::InvalidState(
+                    "campaign graph has no in-process validation authority",
+                ))?;
+        graph.validated_with_token(token).map_err(Into::into)
+    }
+
+    pub(crate) fn validated_graph_mutation<'a>(
+        &self,
+        graph: &'a StateGraph,
+    ) -> Result<ValidatedStateGraph<'a>, TacticQCampaignError> {
+        let token =
+            self.state_graph_validation
+                .as_ref()
+                .ok_or(TacticQCampaignError::InvalidState(
+                    "campaign graph has no in-process validation authority",
+                ))?;
+        graph.validated_with_token(token).map_err(Into::into)
+    }
+
     pub fn visited_state_count(&self) -> usize {
         self.state_graph.as_ref().map_or(0, StateGraph::node_count)
     }
@@ -252,7 +278,8 @@ impl TacticQCampaign {
                 "frontier sampling requires a bound state graph",
             ))?;
         let root = graph_root_branch(graph)?;
-        let choices = graph_frontier_entries(graph, maximum_route_frames)?;
+        let choices =
+            graph_frontier_entries_validated(self.validated_state_graph()?, maximum_route_frames)?;
         if choices.is_empty() {
             return Err(TacticQCampaignError::InvalidState(
                 "state graph has no eligible executable frontier",
@@ -315,13 +342,7 @@ impl TacticQCampaign {
             self.sample_root_and_frontier(seed, round, reference, maximum_route_frames)?;
         let root_frames = root.route_tape.frames.len();
         let archive = self.frontier_archive()?;
-        let graph = self
-            .state_graph
-            .as_ref()
-            .ok_or(TacticQCampaignError::InvalidState(
-                "frontier ranking requires a bound state graph",
-            ))?;
-        let exact_terminal_ticks = graph.exact_terminal_returns()?;
+        let exact_terminal_ticks = self.validated_state_graph()?.exact_terminal_returns()?;
         let terminal_value_supported = !exact_terminal_ticks.is_empty();
         let preferred = if !demonstration_curriculum && !terminal_value_supported {
             archive.select_tactic_reachability_frontier_within_route_frames(
@@ -336,15 +357,16 @@ impl TacticQCampaign {
                 maximum_route_frames,
             )
         };
-        let mut graph_choices = graph_frontier_entries(graph, maximum_route_frames)?
-            .into_iter()
-            .map(|entry| {
-                (
-                    (entry.route_checkpoint_sha256, entry.frontier_state_sha256),
-                    entry,
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
+        let mut graph_choices =
+            graph_frontier_entries_validated(self.validated_state_graph()?, maximum_route_frames)?
+                .into_iter()
+                .map(|entry| {
+                    (
+                        (entry.route_checkpoint_sha256, entry.frontier_state_sha256),
+                        entry,
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
         let mut choices = preferred
             .into_iter()
             .filter_map(|entry| {

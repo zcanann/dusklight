@@ -156,9 +156,19 @@ do not golf isolated subphases without campaign evidence.
   seconds while graph scheduling and leasing took 179.8 seconds, generation
   replay and coordination 150.6 seconds, model updates 135.9 seconds, and
   persistence 148.8 seconds. Two-worker native utilization was only 8.4%.
+  Live graph scheduling now earns one complete validation capability at
+  checkpoint admission and reuses it after checked transactional mutations;
+  graph-derived learning batches and rankings no longer repeat the same full
+  traversal at every decision. External and reopened artifacts still validate
+  fail-closed. The next campaign must measure the end-to-end effect rather than
+  treating the removed traversal as sufficient by itself.
 - [ ] Make completed-seed resume and finalization read-only and cheap: do not
   launch a native fleet or repeat full replay fitting, graph projection, and
   macro evaluation merely to validate and summarize already sealed evidence.
+  A read-only q231 checkpoint measurement still spent 57.6 seconds reading and
+  authenticating 1,401 graph nodes, then 11.7 seconds rebuilding derived
+  in-memory state without fitting a lane-local model; startup remains a primary
+  bottleneck.
 - [ ] Cache or share already-validated artifact and graph identities within one
   process; independent reopen validation must remain fail-closed.
 - [ ] Measure whether retained save-state branching beats replay from its

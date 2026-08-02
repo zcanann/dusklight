@@ -100,6 +100,31 @@ impl GraphReplayPlan {
         })
     }
 
+    /// Prepare replay from a batch projected in-process from an already
+    /// validated graph. External and persisted batches must use `prepare`,
+    /// which performs the complete batch validation first.
+    pub(crate) fn prepare_projected<'a>(
+        contract: &GraphLearnerContract,
+        batch: &'a GraphLearningBatch,
+        policy_relevant_actions: &BTreeSet<Digest>,
+        round: u64,
+    ) -> Result<PreparedGraphReplay<'a>, GraphLearnerError> {
+        contract.validate()?;
+        if batch.rows.is_empty() {
+            return Err(GraphLearnerError::Invalid(
+                "graph replay requires at least one realized edge",
+            ));
+        }
+        let snapshot = ExactGraphTableLearner.fit_validated(contract, batch)?;
+        let plan =
+            Self::build_from_snapshot(contract, batch, policy_relevant_actions, round, &snapshot)?;
+        Ok(PreparedGraphReplay {
+            batch,
+            plan,
+            base_snapshot: snapshot,
+        })
+    }
+
     fn build_from_snapshot(
         contract: &GraphLearnerContract,
         batch: &GraphLearningBatch,

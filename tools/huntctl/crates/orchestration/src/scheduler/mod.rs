@@ -297,13 +297,29 @@ pub fn rank_schedulable_nodes(
     seed: u64,
     generation: u64,
 ) -> Result<Vec<ScheduledNode>, SchedulerError> {
-    graph.validate()?;
+    rank_schedulable_nodes_validated(
+        graph.validated()?,
+        regime,
+        maximum_route_frames,
+        seed,
+        generation,
+    )
+}
+
+pub(crate) fn rank_schedulable_nodes_validated(
+    validated: ValidatedStateGraph<'_>,
+    regime: SearchRegime,
+    maximum_route_frames: u64,
+    seed: u64,
+    generation: u64,
+) -> Result<Vec<ScheduledNode>, SchedulerError> {
+    let graph = validated.graph();
     if regime == SearchRegime::Optimization && graph.best_terminal_path().is_none() {
         return Err(SchedulerError::Invalid(
             "optimization scheduling requires a terminal path",
         ));
     }
-    let exact_terminal_returns = graph.exact_terminal_returns()?;
+    let exact_terminal_returns = validated.exact_terminal_returns()?;
     let relaxed_root_ticks = graph.relaxed_root_ticks()?;
     let canonical_nodes = graph
         .nodes()

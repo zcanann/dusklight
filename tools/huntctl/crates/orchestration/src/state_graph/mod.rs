@@ -69,6 +69,23 @@ pub(crate) struct ValidatedStateGraph<'a> {
     graph: &'a StateGraph,
 }
 
+/// Process-local proof that a graph passed complete validation before entering
+/// the checked mutation surface.
+///
+/// Graph mutations are transactional at their callers and every public
+/// mutation validates the identities and evidence it introduces. This token
+/// lets hot read-only projections reuse the original complete validation while
+/// still binding them to the same immutable graph identity and root. It is
+/// never serialized; reopening a checkpoint must earn a fresh token through a
+/// complete validation.
+#[derive(Clone, Debug)]
+pub(crate) struct StateGraphValidationToken {
+    schema: String,
+    identity: StateGraphIdentity,
+    root: ExactStateId,
+    root_route_frames: u64,
+}
+
 /// Read-only proof that a validated graph's complete content identity was
 /// computed from this exact immutable snapshot.
 #[derive(Clone, Copy)]
@@ -100,6 +117,15 @@ impl<'a> ValidatedStateGraph<'a> {
             content_sha256: self.content_sha256()?,
         })
     }
+
+    pub(crate) fn validation_token(self) -> StateGraphValidationToken {
+        StateGraphValidationToken {
+            schema: self.graph.schema.clone(),
+            identity: self.graph.identity.clone(),
+            root: self.graph.root,
+            root_route_frames: self.graph.root_route_frames,
+        }
+    }
 }
 
 impl<'a> HashedStateGraph<'a> {
@@ -119,6 +145,29 @@ impl<'a> HashedStateGraph<'a> {
 impl StateGraph {
     pub(crate) fn validated(&self) -> Result<ValidatedStateGraph<'_>, StateGraphError> {
         self.validate()?;
+        Ok(ValidatedStateGraph { graph: self })
+    }
+
+    pub(crate) fn validation_token(&self) -> Result<StateGraphValidationToken, StateGraphError> {
+        Ok(self.validated()?.validation_token())
+    }
+
+    /// Reuse a complete in-process validation after only checked graph
+    /// mutations. Persisted or independently supplied graphs must call
+    /// `validation_token` first and therefore still fail closed.
+    pub(crate) fn validated_with_token(
+        &self,
+        token: &StateGraphValidationToken,
+    ) -> Result<ValidatedStateGraph<'_>, StateGraphError> {
+        if self.schema != token.schema
+            || self.identity != token.identity
+            || self.root != token.root
+            || self.root_route_frames != token.root_route_frames
+        {
+            return Err(StateGraphError::Invariant(
+                "state graph changed outside its checked mutation surface",
+            ));
+        }
         Ok(ValidatedStateGraph { graph: self })
     }
 

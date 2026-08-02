@@ -5,7 +5,7 @@ use crate::learner::{
 };
 use crate::scheduler::{
     LearnedExpansionPriority, SearchRegime, rank_schedulable_expansions_validated,
-    rank_schedulable_nodes,
+    rank_schedulable_nodes_validated,
 };
 use std::time::Instant;
 
@@ -243,8 +243,13 @@ impl TacticQCampaign {
         let root = graph_root_branch(graph)?;
         let terminal_supported = graph.best_terminal_path().is_some();
         let (regime, selected_rank) = graph_node_acquisition(terminal_supported, acquisition_rank);
-        let ranked =
-            rank_schedulable_nodes(graph, regime, maximum_route_frames as u64, seed, generation)?;
+        let ranked = rank_schedulable_nodes_validated(
+            self.validated_state_graph()?,
+            regime,
+            maximum_route_frames as u64,
+            seed,
+            generation,
+        )?;
         if ranked.is_empty() {
             return Ok([root.clone(), root]);
         }
@@ -373,7 +378,7 @@ impl TacticQCampaign {
             descriptors.insert(expansion_sha256, descriptor.clone());
         }
         timing.registration_micros = scheduling_lap_micros(&mut timing_boundary);
-        let validated_graph = graph.validated()?;
+        let validated_graph = self.validated_graph_mutation(&graph)?;
         timing.graph_validation_micros = scheduling_lap_micros(&mut timing_boundary);
         let hashed_graph = validated_graph.hashed()?;
         timing.graph_content_hash_micros = scheduling_lap_micros(&mut timing_boundary);
@@ -392,7 +397,7 @@ impl TacticQCampaign {
                         .map_err(TacticQCampaignError::Values)
                 })
                 .collect::<Result<BTreeSet<_>, _>>()?;
-            let replay = GraphReplayPlan::prepare(
+            let replay = GraphReplayPlan::prepare_projected(
                 &learner_contract,
                 &learning_batch,
                 &policy_relevant_actions,

@@ -2,7 +2,7 @@
 //! boundaries.
 
 use self::graph_projection::{
-    graph_frontier_entries, graph_root_branch, validate_training_projection,
+    graph_frontier_entries_validated, graph_root_branch, validate_training_projection_and_keys,
 };
 pub(crate) use self::graph_projection::{
     graph_training_projection, graph_training_projection_rows, merge_graph_training_projection,
@@ -12,7 +12,9 @@ use crate::native_tactic_worker::{
     NativeTacticWorkerError, NativeTacticWorkerOutcome, NativeTacticWorkerPaths,
     PersistentTacticBatchWorker, execute_selected_tactic,
 };
-use crate::state_graph::{StateGraph, StateGraphError, StateGraphIdentity};
+use crate::state_graph::{
+    StateGraph, StateGraphError, StateGraphIdentity, StateGraphValidationToken, ValidatedStateGraph,
+};
 use crate::tactic_q_checkpoint_store;
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
@@ -405,6 +407,9 @@ pub struct TacticQCampaign {
     pub current: LearnerState,
     pub route_tape: InputTape,
     state_graph: Option<StateGraph>,
+    // Process-local only. Checkpoint load earns a fresh token through complete
+    // graph validation; checked transactional mutations preserve it.
+    state_graph_validation: Option<crate::state_graph::StateGraphValidationToken>,
     // The currently retained cursor lineage, kept for final-route export.
     // It is not consulted to decide which exact states or terminal paths exist.
     replay: Vec<OptionTransitionSample>,
@@ -569,6 +574,7 @@ impl TacticQCampaign {
             current,
             route_tape,
             state_graph: None,
+            state_graph_validation: None,
             replay: Vec::new(),
             replay_routes: Vec::new(),
             episode_groups: Vec::new(),
@@ -740,7 +746,7 @@ impl TacticQCampaign {
             ));
         }
         self.execution_authority_sha256 = execution_authority_sha256;
-        self.state_graph = Some(StateGraph::new(
+        let state_graph = StateGraph::new(
             StateGraphIdentity {
                 execution_authority_sha256,
                 future_equivalence_validator_sha256: execution_authority_sha256,
@@ -750,7 +756,9 @@ impl TacticQCampaign {
             },
             self.current.snapshot.clone(),
             self.route_tape.clone(),
-        )?);
+        )?;
+        self.state_graph_validation = Some(state_graph.validation_token()?);
+        self.state_graph = Some(state_graph);
         Ok(())
     }
 

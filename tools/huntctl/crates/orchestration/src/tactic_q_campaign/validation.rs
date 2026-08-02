@@ -1,15 +1,26 @@
 use super::*;
 
+pub(crate) struct TacticQCheckpointRuntimeValidation {
+    pub(crate) state_graph: StateGraphValidationToken,
+    pub(crate) training_projection_keys: Vec<(Digest, Digest)>,
+}
+
 pub(crate) fn validate_checkpoint(
     checkpoint: &TacticQCampaignCheckpoint,
 ) -> Result<(), TacticQCampaignError> {
-    validate_checkpoint_snapshot(checkpoint)?;
+    validate_checkpoint_for_resume(checkpoint).map(drop)
+}
+
+pub(crate) fn validate_checkpoint_for_resume(
+    checkpoint: &TacticQCampaignCheckpoint,
+) -> Result<TacticQCheckpointRuntimeValidation, TacticQCampaignError> {
+    let validation = validate_checkpoint_snapshot_for_runtime(checkpoint)?;
     if checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V6 && !checkpoint.persistence_validated {
         return Err(TacticQCampaignError::InvalidState(
             "campaign checkpoint persistence was not authenticated",
         ));
     }
-    Ok(())
+    Ok(validation)
 }
 
 /// Validates the complete inline checkpoint payload and its content identity.
@@ -21,6 +32,12 @@ pub(crate) fn validate_checkpoint(
 pub(crate) fn validate_checkpoint_snapshot(
     checkpoint: &TacticQCampaignCheckpoint,
 ) -> Result<(), TacticQCampaignError> {
+    validate_checkpoint_snapshot_for_runtime(checkpoint).map(drop)
+}
+
+fn validate_checkpoint_snapshot_for_runtime(
+    checkpoint: &TacticQCampaignCheckpoint,
+) -> Result<TacticQCheckpointRuntimeValidation, TacticQCampaignError> {
     if checkpoint.content_sha256 == Digest::ZERO {
         return Err(TacticQCampaignError::InvalidState(
             "campaign checkpoint content identity is invalid",
@@ -33,12 +50,18 @@ pub(crate) fn validate_checkpoint_snapshot(
             reconstructed,
         });
     }
-    validate_checkpoint_payload(checkpoint)
+    validate_checkpoint_payload_for_runtime(checkpoint)
 }
 
 pub(crate) fn validate_checkpoint_payload(
     checkpoint: &TacticQCampaignCheckpoint,
 ) -> Result<(), TacticQCampaignError> {
+    validate_checkpoint_payload_for_runtime(checkpoint).map(drop)
+}
+
+fn validate_checkpoint_payload_for_runtime(
+    checkpoint: &TacticQCampaignCheckpoint,
+) -> Result<TacticQCheckpointRuntimeValidation, TacticQCampaignError> {
     checkpoint.current.validate()?;
     checkpoint
         .route_tape
@@ -46,7 +69,7 @@ pub(crate) fn validate_checkpoint_payload(
         .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
     let legacy = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V5;
     let current = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V6;
-    checkpoint.state_graph.validate()?;
+    let validated_graph = checkpoint.state_graph.validated()?;
     let graph_identity = &checkpoint.state_graph.identity;
     let persistence_valid = match (&checkpoint.persistence, legacy, current) {
         (None, true, false) => true,
@@ -168,8 +191,8 @@ pub(crate) fn validate_checkpoint_payload(
             "retained replay is absent from training replay",
         ));
     }
-    validate_training_projection(
-        &checkpoint.state_graph,
+    let training_projection_keys = validate_training_projection_and_keys(
+        validated_graph,
         &checkpoint.training_replay,
         &checkpoint.training_replay_routes,
         &checkpoint.training_episode_groups,
@@ -188,7 +211,10 @@ pub(crate) fn validate_checkpoint_payload(
             "campaign current boundary is absent from the state graph",
         ));
     }
-    Ok(())
+    Ok(TacticQCheckpointRuntimeValidation {
+        state_graph: validated_graph.validation_token(),
+        training_projection_keys,
+    })
 }
 
 pub(crate) fn validate_training_corpus(
