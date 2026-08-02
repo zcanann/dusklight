@@ -732,17 +732,38 @@ fn run_native_tactic_route_with_optional_fleet(
             campaign_phase_wall.campaign_finalization_started_micros =
                 elapsed_micros(campaign_started.elapsed());
             let completion = (|| {
+                if config
+                    .output_root
+                    .join(NATIVE_TACTIC_MACRO_DISCOVERY_FILE)
+                    .is_file()
+                {
+                    return read_macro_discovery_report(
+                        config.output_root,
+                        execution_plan_sha256,
+                        config.optimization.terminal_predicate.definition_sha256,
+                        encoder.schema_sha256,
+                        root_checkpoint_sha256,
+                    );
+                }
                 let mined = mine_and_store_tactic_macros(
                     config.output_root,
                     &config.execution_plan.seeds,
                     &encoder,
                 )?;
-                validate_and_store_tactic_macros(
+                let report = validate_and_store_tactic_macros(
                     config,
                     &pool,
                     &encoder,
                     root_checkpoint_sha256,
                     mined,
+                )?;
+                write_macro_discovery_report(
+                    config.output_root,
+                    execution_plan_sha256,
+                    config.optimization.terminal_predicate.definition_sha256,
+                    encoder.schema_sha256,
+                    root_checkpoint_sha256,
+                    report,
                 )
             })()?;
             let shared_training_replay_rows =
@@ -1092,6 +1113,10 @@ fn current_executable_sha256() -> Result<Digest, NativeTacticRouteRunError> {
 
 mod macro_discovery;
 use macro_discovery::{mine_and_store_tactic_macros, validate_and_store_tactic_macros};
+mod macro_discovery_report_store;
+use macro_discovery_report_store::{
+    NATIVE_TACTIC_MACRO_DISCOVERY_FILE, read_macro_discovery_report, write_macro_discovery_report,
+};
 mod macro_import;
 pub use macro_import::tactic_macro_registry_identity;
 use macro_import::{

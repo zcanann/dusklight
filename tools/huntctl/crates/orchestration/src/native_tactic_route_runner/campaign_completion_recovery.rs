@@ -43,7 +43,7 @@ pub(super) fn recover_completed_campaign(
         }
         let first_checkpoint = validate_report_seed_authority(config, &report)?;
         validate_report_control_plane(config, &report, &first_checkpoint)?;
-        validate_report_macro_authority(config, &report)?;
+        validate_report_macro_authority(config, &report, &first_checkpoint)?;
 
         let report_build_micros = report.timing.reporting_micros;
         let observed_wall_micros = report
@@ -201,6 +201,7 @@ fn validate_report_control_plane(
 fn validate_report_macro_authority(
     config: &NativeTacticRouteRunConfig<'_>,
     report: &NativeTacticRouteReport,
+    checkpoint: &TacticQCampaignCheckpoint,
 ) -> Result<(), NativeTacticRouteRunError> {
     let macro_report = &report.tactic_macro_discovery;
     let registry_path = Path::new(&macro_report.registry_path);
@@ -218,6 +219,20 @@ fn validate_report_macro_authority(
     if registry.content_sha256 != macro_report.registry_sha256 {
         return Err(route_message(
             "completed tactic campaign macro registry identity is detached",
+        ));
+    }
+    let durable_report_path = config.output_root.join(NATIVE_TACTIC_MACRO_DISCOVERY_FILE);
+    if durable_report_path.is_file()
+        && read_macro_discovery_report(
+            config.output_root,
+            report.execution_plan_sha256,
+            checkpoint.objective_sha256,
+            checkpoint.feature_schema_sha256,
+            checkpoint.root_checkpoint_sha256,
+        )? != *macro_report
+    {
+        return Err(route_message(
+            "completed tactic campaign macro report differs from durable authority",
         ));
     }
     Ok(())

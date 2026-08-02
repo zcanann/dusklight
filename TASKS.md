@@ -185,7 +185,11 @@ do not golf isolated subphases without campaign evidence.
   artifacts but before the binary completion marker reattaches them to every
   seed checkpoint, the replay and learner heads, the macro registry, and the
   sealed plan without launching a fleet. All-seed-complete recovery before
-  those final artifacts exist still needs the same read-only treatment.
+  those final artifacts exist still needs the same read-only treatment. Macro
+  mining, held-out native comparisons, promotion accounting, and reuse evidence
+  now publish one checksummed binary authority immediately after validation;
+  resume reuses it instead of repeating macro evaluation, and any later report
+  must match it exactly.
 - [ ] Cache or share already-validated artifact and graph identities within one
   process; independent reopen validation must remain fail-closed.
 - [ ] Measure whether retained save-state branching beats replay from its
