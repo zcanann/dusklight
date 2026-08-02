@@ -199,20 +199,20 @@ do not golf isolated subphases without campaign evidence.
   continuity, endpoint, and exact tape execution once. V6 training rows are
   constructed directly from that validated graph and carry their projection
   keys into checkpoint admission instead of rehashing every route again; the
-  same checkpoint now reads in 22.7 seconds (61% below the original);
-  completed-seed
-  journals now also compact to a fresh authenticated base after 63 deltas, so
+  same checkpoint now reads in 22.7 seconds (61% below the original). New
+  campaign journals also compact to a fresh authenticated base after 63 deltas,
+  so
   new campaigns and any subsequently mutated legacy campaign cannot accumulate
   unbounded reopen work. Existing sealed deep journals remain compatible and
   still require a deliberate read-only migration/cache path.
-  recovery also derives its corpus from that authenticated payload instead of
-  reopening it and fitting an unused lane-local model. The remaining 28.2
-  seconds, preflight fleet launch, learner reconstruction, and repeated macro
-  finalization keep this task open. A sealed campaign resume now returns its
-  validated report idempotently, and a crash after publishing both final JSON
-  artifacts but before the binary completion marker reattaches them to every
-  seed checkpoint, the replay and learner heads, the macro registry, and the
-  sealed plan without launching a fleet. All-seed-complete recovery before
+  Completed-seed recovery derives its corpus from that authenticated payload
+  instead of reopening it and fitting an unused lane-local model. The remaining
+  22.7-second cold authentication cost, end-to-end finalization timing, and
+  demonstration-treatment recovery keep this task open. A sealed campaign
+  resume now returns its validated report idempotently, and a crash after
+  publishing both final JSON artifacts but before the binary completion marker
+  reattaches them to every seed checkpoint, the replay and learner heads, the
+  macro registry, and the sealed plan without launching a fleet. All-seed-complete recovery before
   those final artifacts exist still needs the same read-only treatment. Macro
   mining, held-out native comparisons, promotion accounting, and reuse evidence
   now publish one checksummed binary authority immediately after validation;
