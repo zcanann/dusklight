@@ -199,10 +199,7 @@ impl TacticQCampaign {
             .map(|transition| transition.value_sample.action.option_id.as_str())
             .collect::<BTreeSet<_>>();
         let state_untried = applicable_untried_descriptors(&ranking.choices, &tried_here);
-        let native_terminal_supported = self
-            .training_replay
-            .iter()
-            .any(|transition| transition.value_sample.terminal);
+        let native_terminal_supported = self.native_terminal_supported();
         // Partition zero is the terminal-support acquisition only after the
         // graph has terminal evidence. Before that, every lane belongs to the
         // discovery regime and must retain its configured epsilon.

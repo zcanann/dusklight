@@ -1688,6 +1688,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         _ => false,
     });
     assert_eq!(frozen.training_replay_len(), 2);
+    assert!(frozen.native_terminal_supported());
     let uninterrupted_step = uninterrupted
         .retain_and_refit_rewarded(
             uninterrupted_decision,
@@ -1714,6 +1715,8 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             true,
         )
         .unwrap();
+    assert!(uninterrupted.native_terminal_supported());
+    assert!(resumed.native_terminal_supported());
     let mut frontier_v3 = TacticQCampaign::resume(uninterrupted.checkpoint().unwrap()).unwrap();
     frontier_v3.value_treatment = TacticValueTreatment::GoalRelabeledFrontierDoubleQV3;
     frontier_v3.campaign_learner_authority_managed = false;

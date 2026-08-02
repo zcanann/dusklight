@@ -310,10 +310,8 @@ pub(super) fn run_seed(
         }
         let next_branch_acquisition_rank = next_branch_acquisition_rank(lane.acquisition, episode)
             .ok_or_else(|| route_message("episode counter overflowed"))?;
-        let terminal_support_acquisition = campaign
-            .graph_terminal_path_available()
-            .map_err(route_error)?
-            && next_branch_acquisition_rank == 0;
+        let terminal_support_acquisition =
+            campaign.native_terminal_supported() && next_branch_acquisition_rank == 0;
         let demonstration_coverage_pending = demonstration_curriculum
             && covered_demonstration_frontiers.len() < demonstration_frontier_states.len();
         let scheduled_branch = should_schedule_branch(

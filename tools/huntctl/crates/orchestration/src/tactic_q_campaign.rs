@@ -767,6 +767,18 @@ impl TacticQCampaign {
         self.training_replay.len()
     }
 
+    /// Whether authenticated replay contains native terminal supervision.
+    ///
+    /// Terminal learning authority is durable even when the current graph has
+    /// no process-local terminal restoration handle. Policy partitioning and
+    /// frontier scheduling must therefore consult replay, not transient graph
+    /// restorability.
+    pub fn native_terminal_supported(&self) -> bool {
+        self.training_replay
+            .iter()
+            .any(|transition| transition.value_sample.terminal)
+    }
+
     pub(crate) fn replay(&self) -> &[OptionTransitionSample] {
         &self.replay
     }

@@ -174,8 +174,15 @@ authenticated terminal in 124 ticks or less.
   for every ordinary branch, so V3/V4 frontier ranking had no production
   authority. Rank-zero terminal optimization now uses the live learned
   frontier scorer for V3/V4 while nonzero ranks retain broad graph discovery.
-  Re-run the matched V4 arm before judging this treatment; do not interpret the
-  bypassed 190-tick result as evidence for or against its frontier policy.
+  The first authority-enabled rerun retained 190 ticks with 50 useful
+  decisions, 10,792 native ticks, 129.2 seconds of model work, and 396.6
+  seconds wall time. It proved live frontier authority on decisions 16 and 20,
+  but the remaining rank-zero slots reverted to root refreshes: branch gating
+  consulted transient process-local terminal restorability while action
+  selection consulted durable authenticated terminal replay. Frontier
+  scheduling now uses that same durable native-terminal support. Re-run V4
+  once under this corrected gate before accepting or rejecting the treatment;
+  neither partially-authorized 190-tick result is a valid quality verdict.
 - [ ] Learn from successful and unsuccessful trajectories using sparse terminal
   value, authenticated tick cost, and generic state deltas.
 - [ ] Support online collection, off-policy replay, prioritized reuse, temporal
