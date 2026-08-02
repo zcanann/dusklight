@@ -210,6 +210,19 @@ pub(crate) fn validate_exact_replay_attempt_artifacts(
         .iter()
         .find(|candidate| candidate.id == attempt.wire_candidate_id)
         .ok_or_else(|| native_message("exact replay candidate is absent from its batch"))?;
+    if actual.actions != expected_actions {
+        let first_difference = actual
+            .actions
+            .iter()
+            .zip(&expected_actions)
+            .position(|(actual, expected)| actual != expected)
+            .unwrap_or_else(|| actual.actions.len().min(expected_actions.len()));
+        return Err(native_message(format!(
+            "exact replay actions differ from the expected residual tape at action {first_difference} (actual {}, expected {})",
+            actual.actions.len(),
+            expected_actions.len()
+        )));
+    }
     if batch.source_frame
         != usize::try_from(optimization.route.source_boundary_index).map_err(native_error)?
         || batch.source_boundary_fingerprint
@@ -221,7 +234,6 @@ pub(crate) fn validate_exact_replay_attempt_artifacts(
             != usize::try_from(optimization.budgets.exploration_horizon_ticks)
                 .map_err(native_error)?
         || batch.verify_state_hashes != execution.verify_state_hashes
-        || actual.actions != expected_actions
     {
         return Err(native_message(
             "exact replay attempt differs from its expected residual tape or execution boundary",
