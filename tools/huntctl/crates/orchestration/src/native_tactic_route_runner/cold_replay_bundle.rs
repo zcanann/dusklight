@@ -1,6 +1,6 @@
 //! Portable evidence bundle for an exact tactic-route cold replay.
 
-use super::cold_replay::validate_native_tactic_cold_replay_artifacts;
+use super::cold_replay::{read_proof_artifact, validate_native_tactic_cold_replay_artifacts};
 use super::scratch_discovery::route_report_sha256;
 use super::scratch_evidence_bundle::{blob_path, read_blob, read_json_blob};
 use super::*;
@@ -31,6 +31,51 @@ pub struct NativeTacticColdReplayEvidenceBundle {
     pub first_hit_tick: u64,
     pub repetitions: u32,
     pub passed: bool,
+}
+
+/// Fully validated route authority retained by a portable cold-replay bundle.
+///
+/// The manifest remains compact, while this view exposes the exact proof and
+/// controller tape needed to derive another authenticated campaign.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeTacticColdReplayAuthority {
+    pub manifest: NativeTacticColdReplayEvidenceBundle,
+    pub proof: NativeTacticColdReplayProof,
+    pub controller_tape: InputTape,
+}
+
+impl NativeTacticColdReplayAuthority {
+    /// Extract the exact source-boundary-to-terminal tape used as a residual
+    /// optimization incumbent. Cold replay retains the complete named-root
+    /// tape, while residual execution restores the authenticated source
+    /// boundary before applying this local input program.
+    pub fn incumbent_tape(&self) -> Result<InputTape, NativeTacticRouteRunError> {
+        let start = usize::try_from(self.proof.source_boundary_index).map_err(route_error)?;
+        let local_frames = usize::try_from(self.proof.first_hit_tick)
+            .map_err(route_error)?
+            .checked_add(1)
+            .ok_or_else(|| route_message("optimization authority route length overflowed"))?;
+        let end = start
+            .checked_add(local_frames)
+            .ok_or_else(|| route_message("optimization authority route length overflowed"))?;
+        let frames = self
+            .controller_tape
+            .frames
+            .get(start..end)
+            .ok_or_else(|| route_message("optimization authority tape is shorter than its proof"))?
+            .to_vec();
+        if end != self.controller_tape.frames.len() {
+            return Err(route_message(
+                "optimization authority tape extends beyond its first terminal boundary",
+            ));
+        }
+        Ok(InputTape {
+            boot: self.controller_tape.boot.clone(),
+            tick_rate_numerator: self.controller_tape.tick_rate_numerator,
+            tick_rate_denominator: self.controller_tape.tick_rate_denominator,
+            frames,
+        })
+    }
 }
 
 impl NativeTacticColdReplayEvidenceBundle {
@@ -90,6 +135,12 @@ impl NativeTacticColdReplayEvidenceBundle {
     }
 
     pub fn read_and_validate(bundle_root: &Path) -> Result<Self, NativeTacticRouteRunError> {
+        Ok(Self::read_authority(bundle_root)?.manifest)
+    }
+
+    pub fn read_authority(
+        bundle_root: &Path,
+    ) -> Result<NativeTacticColdReplayAuthority, NativeTacticRouteRunError> {
         let bundle: Self =
             read_bounded_json(&bundle_root.join(NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_MANIFEST))?;
         bundle.validate_shape()?;
@@ -110,7 +161,18 @@ impl NativeTacticColdReplayEvidenceBundle {
                 "cold replay evidence bundle is detached from its retained campaign or proof",
             ));
         }
-        Ok(bundle)
+        let controller_tape_bytes = read_proof_artifact(
+            &bundle_root.join(COLD_REPLAY_DIRECTORY),
+            &proof.controller_tape,
+        )?;
+        let controller_tape = InputTape::decode(&controller_tape_bytes)
+            .map_err(route_error)?
+            .tape;
+        Ok(NativeTacticColdReplayAuthority {
+            manifest: bundle,
+            proof,
+            controller_tape,
+        })
     }
 
     fn validate_shape(&self) -> Result<(), NativeTacticRouteRunError> {
@@ -227,6 +289,7 @@ fn validate_pair(
         || proof.terminal_program_sha256 != request.terminal_predicate.program_sha256
         || proof.terminal_definition_sha256 != request.terminal_predicate.definition_sha256
         || proof.first_hit_tick != bundled_seed.best_authenticated_tick.unwrap_or(u64::MAX)
+        || proof.first_hit_tick >= request.budgets.exploration_horizon_ticks
         || proof.first_hit_tick != route.best_authenticated_tick.unwrap_or(u64::MAX)
         || proof.first_hit_tick != reported_seed.best_authenticated_tick.unwrap_or(u64::MAX)
         || proof.controller_tape.sha256 != result.route_tape_sha256
@@ -420,5 +483,30 @@ mod tests {
         let mut detached = original.clone();
         detached.cold_replay_proof_sha256 = Digest([9; 32]);
         assert_ne!(original.content_sha256, detached.identity().unwrap());
+    }
+
+    #[test]
+    fn optimization_incumbent_is_the_exact_source_to_first_terminal_suffix() {
+        let proof = super::cold_replay::tests::proof();
+        let mut frames = vec![InputFrame::default(); proof.controller_tape_frames as usize];
+        for (index, frame) in frames.iter_mut().enumerate() {
+            frame.pads[0].stick_x = index as i8;
+        }
+        let mut authority = NativeTacticColdReplayAuthority {
+            manifest: manifest(),
+            proof,
+            controller_tape: InputTape {
+                frames,
+                ..InputTape::default()
+            },
+        };
+
+        let incumbent = authority.incumbent_tape().unwrap();
+        assert_eq!(incumbent.frames.len(), 3);
+        assert_eq!(incumbent.frames[0].pads[0].stick_x, 10);
+        assert_eq!(incumbent.frames[2].pads[0].stick_x, 12);
+
+        authority.controller_tape.frames.push(InputFrame::default());
+        assert!(authority.incumbent_tape().is_err());
     }
 }

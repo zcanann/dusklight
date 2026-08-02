@@ -9,7 +9,8 @@ use super::{
     NativeTacticCampaignSummary, NativeTacticColdReplayConfig,
     NativeTacticColdReplayEvidenceBundle, NativeTacticDemonstrationReport,
     NativeTacticExecutionPlan, NativeTacticFaultInjector, NativeTacticFaultRecoveryEvidenceBundle,
-    NativeTacticLaunchSmokeBundle, NativeTacticObservationAudit, NativeTacticPolicyRunConfig,
+    NativeTacticLaunchSmokeBundle, NativeTacticObservationAudit,
+    NativeTacticOptimizationHandoffConfig, NativeTacticPolicyRunConfig,
     NativeTacticPostTerminalControlReport, NativeTacticRestoreLocalityConfig,
     NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport, NativeTacticRouteReport,
     NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
@@ -18,9 +19,9 @@ use super::{
     NativeTacticThroughputCurveRun, NativeTacticThroughputEvidenceBundle,
     NativeTacticThroughputTreatmentBundle, OptimizationRequest, Sha256, TacticFrozenPolicy,
     TacticProposalPolicy, TacticQCampaign, TacticQFinalResult, TacticQTrainingCorpus,
-    audit_native_tactic_fault_recovery, cli, command_conservative_q, flag,
-    native_frozen_policy_probe_model, native_tactic_execution_plan, option,
-    prove_generalized_tactic_held_out_value, read_and_validate_native_tactic_cold_replay,
+    audit_native_tactic_fault_recovery, build_native_tactic_optimization_handoff, cli,
+    command_conservative_q, flag, native_frozen_policy_probe_model, native_tactic_execution_plan,
+    option, prove_generalized_tactic_held_out_value, read_and_validate_native_tactic_cold_replay,
     realize_native_frozen_policy_tape, repeated_option, required_path,
     run_native_tactic_cold_replay, run_native_tactic_policy, run_native_tactic_restore_locality,
     run_native_tactic_route, run_native_tactic_throughput_curve_controlled,
@@ -787,7 +788,11 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 execution_plan: &execution_plan,
                 route_report: &route,
                 seed,
-                maximum_first_hit_tick: u64_option(learn_args, "--maximum-first-hit-tick", 123)?,
+                maximum_first_hit_tick: u64_option(
+                    learn_args,
+                    "--maximum-first-hit-tick",
+                    request.budgets.exploration_horizon_ticks.saturating_sub(1),
+                )?,
                 repetitions,
                 timeout: Duration::from_secs(timeout_seconds),
                 output_root: &output,
@@ -852,6 +857,53 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 "--bundle",
             )?)?;
             println!("{}", serde_json::to_string_pretty(&bundle)?);
+            Ok(())
+        }
+        Some("promote-tactic-terminal-for-optimization") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let request: OptimizationRequest =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--request")?)?)?;
+            let execution: NativeResidualExecutionBinding =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--execution")?)?)?;
+            let bundle_argument = required_path(learn_args, "--bundle")?;
+            let bundle = if bundle_argument.is_absolute() {
+                bundle_argument
+            } else {
+                repository_root.join(bundle_argument)
+            };
+            let output_argument = required_path(learn_args, "--output")?;
+            let output = if output_argument.is_absolute() {
+                output_argument
+            } else {
+                repository_root.join(output_argument)
+            };
+            let request_id = option(learn_args, "--id");
+            let handoff =
+                build_native_tactic_optimization_handoff(&NativeTacticOptimizationHandoffConfig {
+                    repository_root: &repository_root,
+                    source_optimization: &request,
+                    source_execution: &execution,
+                    cold_replay_bundle_root: &bundle,
+                    output_root: &output,
+                    request_id: request_id.as_deref(),
+                })?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": handoff.schema,
+                    "content_sha256": handoff.content_sha256,
+                    "manifest": output.join("handoff.json"),
+                    "optimization_request": handoff.optimization_request.path,
+                    "execution_binding": handoff.execution_binding.path,
+                    "incumbent_tape": handoff.incumbent_tape.path,
+                    "first_hit_tick": handoff.first_hit_tick,
+                }))?
+            );
             Ok(())
         }
         Some("run-tactic-launch-smoke") => {

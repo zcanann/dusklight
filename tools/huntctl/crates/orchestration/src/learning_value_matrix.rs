@@ -322,6 +322,7 @@ pub fn materialize_learning_refinement_request(
     request.incumbent = Some(OptimizationIncumbent {
         tape: incumbent.tape.clone(),
         first_hit_tick: incumbent.first_hit_tick,
+        authority: Default::default(),
     });
     request.budgets.promotion_before_tick = incumbent.first_hit_tick;
     request.budgets.candidate_budget = optimizer_candidates(&optimizer)?;

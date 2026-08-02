@@ -51,7 +51,7 @@ fn attempt(repetition: u32) -> NativeTacticColdReplayAttempt {
     }
 }
 
-fn proof() -> NativeTacticColdReplayProof {
+pub(crate) fn proof() -> NativeTacticColdReplayProof {
     let mut proof = NativeTacticColdReplayProof {
         schema: NATIVE_TACTIC_COLD_REPLAY_PROOF_SCHEMA_V1.into(),
         content_sha256: Digest::ZERO,

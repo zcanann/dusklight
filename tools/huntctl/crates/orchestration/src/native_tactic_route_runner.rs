@@ -239,7 +239,14 @@ pub use cold_replay::{
 mod cold_replay_bundle;
 pub use cold_replay_bundle::{
     NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_BUNDLE_SCHEMA_V1,
-    NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_MANIFEST, NativeTacticColdReplayEvidenceBundle,
+    NATIVE_TACTIC_COLD_REPLAY_EVIDENCE_MANIFEST, NativeTacticColdReplayAuthority,
+    NativeTacticColdReplayEvidenceBundle,
+};
+mod optimization_handoff;
+pub use optimization_handoff::{
+    NATIVE_TACTIC_OPTIMIZATION_HANDOFF_MANIFEST, NATIVE_TACTIC_OPTIMIZATION_HANDOFF_SCHEMA_V1,
+    NativeTacticOptimizationHandoff, NativeTacticOptimizationHandoffConfig,
+    build_native_tactic_optimization_handoff,
 };
 
 mod execution_plan;

@@ -838,7 +838,7 @@ fn artifact_reference(path: &str, bytes: &[u8]) -> NativeTacticColdReplayArtifac
     }
 }
 
-fn read_proof_artifact(
+pub(super) fn read_proof_artifact(
     proof_root: &Path,
     artifact: &NativeTacticColdReplayArtifact,
 ) -> Result<Vec<u8>, NativeTacticRouteRunError> {
@@ -898,4 +898,4 @@ fn exact_boundary_fingerprint(fingerprint: &BoundaryFingerprint) -> bool {
 
 #[cfg(test)]
 #[path = "cold_replay_tests.rs"]
-mod tests;
+pub(crate) mod tests;

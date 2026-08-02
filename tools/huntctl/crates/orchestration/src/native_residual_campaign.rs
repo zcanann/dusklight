@@ -1,13 +1,14 @@
 //! Sealed execution and evidence artifacts for persistent native residual campaigns.
 
 use crate::native_suffix_result::NativeTerminalBinding;
-use crate::optimization_request::OptimizationRequest;
+use crate::optimization_request::{OptimizationIncumbentAuthority, OptimizationRequest};
 use crate::residual_campaign::ResidualReplayCheckpoint;
 use crate::residual_campaign::{ResidualCampaignCandidate, ResidualCampaignError};
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{
     InputFrame, InputTape, RawPadState, TapeBoot, WaitCondition,
 };
+use dusklight_control::tape_chain::{ChainSegment, concatenate};
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
 use dusklight_harness_contracts::run_contract::sha256_artifact_file;
 use dusklight_routes::timeline::Timeline;
@@ -479,8 +480,63 @@ fn materialized_route_authority(
         .ok_or_else(|| native_message("optimization timeline has no artifact root"))?;
     let parent =
         materialize_segment_chain(&timeline, artifact_root, parent_id).map_err(native_error)?;
-    let full = materialize_segment_chain(&timeline, artifact_root, &optimization.route.segment)
-        .map_err(native_error)?;
+    let full = match optimization
+        .incumbent
+        .as_ref()
+        .map(|value| &value.authority)
+    {
+        Some(OptimizationIncumbentAuthority::TacticColdReplay { .. }) => {
+            let incumbent = optimization
+                .incumbent
+                .as_ref()
+                .expect("authority came from an incumbent");
+            let path = root
+                .join(&incumbent.tape.path)
+                .canonicalize()
+                .map_err(native_error)?;
+            if !path.starts_with(root) || !path.is_file() {
+                return Err(native_message(
+                    "cold-replay incumbent tape is outside the repository",
+                ));
+            }
+            let tape = InputTape::decode(&fs::read(path).map_err(native_error)?)
+                .map_err(native_error)?
+                .tape;
+            concatenate(vec![
+                ChainSegment::all(parent.tape.clone()).named(parent_id),
+                ChainSegment::all(tape).named(&optimization.route.segment),
+            ])
+            .map_err(native_error)?
+        }
+        _ => {
+            let materialized =
+                materialize_segment_chain(&timeline, artifact_root, &optimization.route.segment)
+                    .map_err(native_error)?;
+            return validate_materialized_route_authority(optimization, parent, materialized);
+        }
+    };
+    let materialized = dusklight_routes::timeline_materialization::MaterializedSegmentChain {
+        tape: full.tape,
+        steps: full
+            .segments
+            .into_iter()
+            .map(
+                |step| dusklight_routes::timeline_materialization::MaterializedSegmentStep {
+                    segment: step.segment_name.unwrap_or_default(),
+                    chain_start_frame: step.chain_start_tick,
+                    chain_end_frame: step.chain_end_tick,
+                },
+            )
+            .collect(),
+    };
+    validate_materialized_route_authority(optimization, parent, materialized)
+}
+
+fn validate_materialized_route_authority(
+    optimization: &OptimizationRequest,
+    parent: dusklight_routes::timeline_materialization::MaterializedSegmentChain,
+    full: dusklight_routes::timeline_materialization::MaterializedSegmentChain,
+) -> Result<MaterializedRouteAuthority, NativeResidualCampaignError> {
     let source_frame = u64::try_from(parent.tape.frames.len()).map_err(native_error)?;
     let selected_start = full
         .steps
@@ -1296,5 +1352,37 @@ mod tests {
         optimization.refresh_content_sha256().unwrap();
         assert!(optimization.validate_files(&root).is_err());
         assert!(materialize_native_residual_process_tape(&root, &optimization).is_err());
+    }
+
+    #[test]
+    fn cold_replay_incumbent_replaces_only_the_selected_timeline_segment() {
+        let (root, artifacts, mut optimization, ..) = fixture();
+        let authored = materialized_route_authority(&root, &optimization)
+            .unwrap()
+            .tape;
+        let incumbent = optimization.incumbent.as_mut().unwrap();
+        let original_path = root.join(&incumbent.tape.path);
+        let mut replacement = InputTape::decode(&fs::read(original_path).unwrap())
+            .unwrap()
+            .tape;
+        replacement.frames[0].pads[0].stick_x =
+            replacement.frames[0].pads[0].stick_x.wrapping_add(1);
+        let replacement_path = artifacts.0.join("discovered-incumbent.tape");
+        fs::write(&replacement_path, replacement.encode().unwrap()).unwrap();
+        incumbent.tape = artifact_reference(&root, &replacement_path, false).unwrap();
+        incumbent.authority = OptimizationIncumbentAuthority::TacticColdReplay {
+            bundle_manifest: ArtifactReference {
+                path: "build/not-read-by-materialization/manifest.json".into(),
+                sha256: Digest([9; 32]),
+            },
+        };
+
+        let derived = materialized_route_authority(&root, &optimization)
+            .unwrap()
+            .tape;
+        let boundary = optimization.route.source_boundary_index as usize;
+        assert_eq!(derived.frames[..boundary], authored.frames[..boundary]);
+        assert_eq!(derived.frames[boundary..], replacement.frames);
+        assert_ne!(derived, authored);
     }
 }

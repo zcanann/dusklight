@@ -100,14 +100,15 @@ use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticColdReplayEvidenceBundle, NativeTacticDemonstrationReport,
     NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest, NativeTacticFaultInjector,
     NativeTacticFaultRecoveryEvidenceBundle, NativeTacticLaunchSmokeBundle,
-    NativeTacticObservationAudit, NativeTacticPlanBudgets, NativeTacticPostTerminalControlReport,
-    NativeTacticResourceLimit, NativeTacticRestoreLocalityConfig,
-    NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport, NativeTacticRouteReport,
-    NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
-    NativeTacticScratchComparisonReport, NativeTacticScratchDiscoveryReport,
-    NativeTacticScratchEvidenceBundle, NativeTacticThroughputCurveConfig,
-    NativeTacticThroughputCurveRun, NativeTacticThroughputEvidenceBundle,
-    NativeTacticThroughputTreatmentBundle, audit_native_tactic_fault_recovery,
+    NativeTacticObservationAudit, NativeTacticOptimizationHandoffConfig, NativeTacticPlanBudgets,
+    NativeTacticPostTerminalControlReport, NativeTacticResourceLimit,
+    NativeTacticRestoreLocalityConfig, NativeTacticRestoreLocalityReport,
+    NativeTacticRouteDiagnosisReport, NativeTacticRouteReport, NativeTacticRouteRunConfig,
+    NativeTacticScratchCampaignAudit, NativeTacticScratchComparisonReport,
+    NativeTacticScratchDiscoveryReport, NativeTacticScratchEvidenceBundle,
+    NativeTacticThroughputCurveConfig, NativeTacticThroughputCurveRun,
+    NativeTacticThroughputEvidenceBundle, NativeTacticThroughputTreatmentBundle,
+    audit_native_tactic_fault_recovery, build_native_tactic_optimization_handoff,
     read_and_validate_native_tactic_cold_replay, run_native_tactic_cold_replay,
     run_native_tactic_restore_locality, run_native_tactic_route,
     run_native_tactic_throughput_curve_controlled, tactic_macro_registry_identity,
@@ -432,6 +433,7 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "validate-tactic-route-cold-replay"
             | "seal-tactic-cold-replay-bundle"
             | "validate-tactic-cold-replay-bundle"
+            | "promote-tactic-terminal-for-optimization"
             | "run-tactic-launch-smoke"
             | "seal-tactic-launch-smoke"
             | "validate-tactic-launch-smoke"
@@ -525,6 +527,7 @@ mod tests {
             "validate-tactic-route-cold-replay",
             "seal-tactic-cold-replay-bundle",
             "validate-tactic-cold-replay-bundle",
+            "promote-tactic-terminal-for-optimization",
             "run-tactic-launch-smoke",
             "seal-tactic-launch-smoke",
             "validate-tactic-launch-smoke",

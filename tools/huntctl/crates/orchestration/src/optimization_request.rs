@@ -1,5 +1,6 @@
 //! Sealed request boundary for resumable route optimization campaigns.
 
+use crate::native_tactic_route_runner::NativeTacticColdReplayEvidenceBundle;
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_harness_contracts::objective_suite::{
@@ -91,6 +92,27 @@ pub struct TerminalPredicateBinding {
 pub struct OptimizationIncumbent {
     pub tape: ArtifactReference,
     pub first_hit_tick: u64,
+    #[serde(
+        default,
+        skip_serializing_if = "OptimizationIncumbentAuthority::is_timeline_proof"
+    )]
+    pub authority: OptimizationIncumbentAuthority,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum OptimizationIncumbentAuthority {
+    #[default]
+    TimelineProof,
+    TacticColdReplay {
+        bundle_manifest: ArtifactReference,
+    },
+}
+
+impl OptimizationIncumbentAuthority {
+    fn is_timeline_proof(&self) -> bool {
+        matches!(self, Self::TimelineProof)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -276,6 +298,11 @@ impl OptimizationRequest {
         validate_artifact_shape("terminal predicate", &self.terminal_predicate.source)?;
         if let Some(incumbent) = &self.incumbent {
             validate_artifact_shape("incumbent tape", &incumbent.tape)?;
+            if let OptimizationIncumbentAuthority::TacticColdReplay { bundle_manifest } =
+                &incumbent.authority
+            {
+                validate_artifact_shape("incumbent cold-replay bundle", bundle_manifest)?;
+            }
             if incumbent.first_hit_tick == 0 {
                 return Err(request_error("incumbent first-hit tick must be positive"));
             }
@@ -681,42 +708,120 @@ impl OptimizationRequest {
                     "terminal predicate identities differ from the timeline proof",
                 ));
             }
-        } else if self.campaign_class != CampaignClass::FromScratchDiscovery {
+        } else if self.campaign_class != CampaignClass::FromScratchDiscovery
+            && self.incumbent.as_ref().is_none_or(|incumbent| {
+                matches!(
+                    incumbent.authority,
+                    OptimizationIncumbentAuthority::TimelineProof
+                )
+            })
+        {
             return Err(request_error(
                 "non-discovery segment lacks the selected terminal proof",
             ));
         }
 
         if let Some(incumbent) = &self.incumbent {
-            let proof = proof.ok_or_else(|| {
-                request_error("incumbent segment lacks the selected terminal proof")
-            })?;
             let incumbent_path = validate_artifact_file(&root, "incumbent tape", &incumbent.tape)?;
-            let ArtifactSource::Tape(segment_tape) = &segment.artifact else {
-                return Err(request_error(
-                    "supplied incumbent requires a tape-backed timeline segment",
-                ));
-            };
-            let expected_tape = timeline_path
-                .parent()
-                .unwrap_or(&root)
-                .join(segment_tape)
-                .canonicalize()
-                .map_err(|source| {
-                    request_error(format!("cannot resolve segment tape: {source}"))
-                })?;
-            if incumbent_path != expected_tape
-                || proof.first_hit_tick != Some(incumbent.first_hit_tick)
-            {
-                return Err(request_error(
-                    "incumbent tape or first-hit tick differs from the timeline proof",
-                ));
-            }
             let incumbent_bytes = fs::read(&incumbent_path)
                 .map_err(|source| request_error(format!("cannot read incumbent tape: {source}")))?;
             let incumbent_tape = InputTape::decode(&incumbent_bytes)
                 .map_err(|source| request_error(format!("cannot decode incumbent tape: {source}")))?
                 .tape;
+            match &incumbent.authority {
+                OptimizationIncumbentAuthority::TimelineProof => {
+                    let proof = proof.ok_or_else(|| {
+                        request_error("incumbent segment lacks the selected terminal proof")
+                    })?;
+                    let ArtifactSource::Tape(segment_tape) = &segment.artifact else {
+                        return Err(request_error(
+                            "timeline-proof incumbent requires a tape-backed timeline segment",
+                        ));
+                    };
+                    let expected_tape = timeline_path
+                        .parent()
+                        .unwrap_or(&root)
+                        .join(segment_tape)
+                        .canonicalize()
+                        .map_err(|source| {
+                            request_error(format!("cannot resolve segment tape: {source}"))
+                        })?;
+                    if incumbent_path != expected_tape
+                        || proof.first_hit_tick != Some(incumbent.first_hit_tick)
+                    {
+                        return Err(request_error(
+                            "incumbent tape or first-hit tick differs from the timeline proof",
+                        ));
+                    }
+                }
+                OptimizationIncumbentAuthority::TacticColdReplay { bundle_manifest } => {
+                    let manifest_path = validate_artifact_file(
+                        &root,
+                        "incumbent cold-replay bundle",
+                        bundle_manifest,
+                    )?;
+                    if manifest_path.file_name().and_then(|name| name.to_str())
+                        != Some("manifest.json")
+                    {
+                        return Err(request_error(
+                            "incumbent cold-replay authority must reference its manifest.json",
+                        ));
+                    }
+                    let bundle_root = manifest_path.parent().ok_or_else(|| {
+                        request_error("incumbent cold-replay manifest has no bundle root")
+                    })?;
+                    let authority =
+                        NativeTacticColdReplayEvidenceBundle::read_authority(bundle_root)
+                            .map_err(|source| request_error(source.to_string()))?;
+                    let proof = &authority.proof;
+                    let source_boundary = usize::try_from(self.route.source_boundary_index)
+                        .map_err(|source| request_error(source.to_string()))?;
+                    let expected_frames = self
+                        .route
+                        .source_boundary_index
+                        .checked_add(incumbent.first_hit_tick)
+                        .and_then(|value| value.checked_add(1))
+                        .ok_or_else(|| request_error("cold-replay incumbent length overflowed"))?;
+                    let artifact_root = timeline_path.parent().ok_or_else(|| {
+                        request_error("optimization timeline has no artifact root")
+                    })?;
+                    let parent_id = segment.parent.as_deref().ok_or_else(|| {
+                        request_error("cold-replay incumbent segment has no parent boundary")
+                    })?;
+                    let parent = materialize_segment_chain(&timeline, artifact_root, parent_id)
+                        .map_err(|source| request_error(source.to_string()))?;
+                    let expected_incumbent = authority
+                        .incumbent_tape()
+                        .map_err(|source| request_error(source.to_string()))?;
+                    if authority.manifest.content_sha256 == Digest::ZERO
+                        || authority.manifest.first_hit_tick != incumbent.first_hit_tick
+                        || proof.source_boundary_index != self.route.source_boundary_index
+                        || proof.source_boundary_fingerprint
+                            != self.route.source_boundary_fingerprint
+                        || proof.native_source_boundary_fingerprint
+                            != self.route.native_source_boundary_fingerprint
+                        || proof.goal != self.terminal_predicate.goal
+                        || proof.terminal_program_sha256 != self.terminal_predicate.program_sha256
+                        || proof.terminal_definition_sha256
+                            != self.terminal_predicate.definition_sha256
+                        || proof.first_hit_tick != incumbent.first_hit_tick
+                        || proof.controller_tape_frames != expected_frames
+                        || authority.controller_tape.frames.len() as u64 != expected_frames
+                        || parent.tape.frames.len() != source_boundary
+                        || authority.controller_tape.frames.get(..source_boundary)
+                            != Some(parent.tape.frames.as_slice())
+                    {
+                        return Err(request_error(
+                            "cold-replay incumbent differs from its route, terminal, or parent authority",
+                        ));
+                    }
+                    if incumbent_tape != expected_incumbent {
+                        return Err(request_error(
+                            "incumbent tape is not the exact source-boundary suffix of the cold-replayed route",
+                        ));
+                    }
+                }
+            }
             self.proposal
                 .search_space
                 .validate_parent(&incumbent_tape)
