@@ -333,6 +333,29 @@ fn crash_recovery_never_reuses_a_partial_native_result_path() {
 }
 
 #[test]
+fn crash_recovery_replaces_only_an_uncommitted_native_request() {
+    let root = repository();
+    let nonce = NEXT_TEST_ROOT.fetch_add(1, Ordering::Relaxed);
+    let batch_root = root.join("build").join(format!(
+        "native-residual-uncommitted-request-test-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&batch_root).unwrap();
+    let request_path = batch_root.join("request.json");
+    fs::write(&request_path, b"old request").unwrap();
+
+    write_uncommitted_native_request(&batch_root, &request_path, b"new request").unwrap();
+    assert_eq!(fs::read(&request_path).unwrap(), b"new request");
+
+    fs::write(batch_root.join("result-try001.json"), b"attached result").unwrap();
+    let error =
+        write_uncommitted_native_request(&batch_root, &request_path, b"third request").unwrap_err();
+    assert!(error.to_string().contains("acquired artifacts"));
+    assert_eq!(fs::read(&request_path).unwrap(), b"new request");
+    fs::remove_dir_all(batch_root).unwrap();
+}
+
+#[test]
 fn pre_cancelled_campaign_returns_a_typed_outcome_without_launching_workers() {
     let root = repository();
     let optimization = optimization(&root);

@@ -754,6 +754,33 @@ fn load_incumbent_demonstration(
     Ok(demonstration)
 }
 
+fn write_uncommitted_native_request(
+    batch_root: &Path,
+    request_path: &Path,
+    bytes: &[u8],
+) -> Result<(), NativeResidualCampaignRunnerError> {
+    if !request_path.exists() || fs::read(request_path).map_err(native_error)? == bytes {
+        return write_exact_or_new(request_path, bytes).map_err(native_error);
+    }
+    let entries = fs::read_dir(batch_root)
+        .map_err(native_error)?
+        .map(|entry| entry.map(|entry| entry.path()).map_err(native_error))
+        .collect::<Result<Vec<_>, _>>()?;
+    if entries.len() != 1 || entries[0] != request_path {
+        return Err(native_message(format!(
+            "existing native request differs after its attempt acquired artifacts: {}",
+            request_path.display()
+        )));
+    }
+
+    // A request with no result, episode, or other sibling artifact has not been
+    // executed or admitted. It is safe to discard after an interrupted startup
+    // changed the derived wire schema; the exact replacement remains governed
+    // by write_exact_or_new on every subsequent resume.
+    fs::remove_file(request_path).map_err(native_error)?;
+    write_exact_or_new(request_path, bytes).map_err(native_error)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn ensure_incumbent_demonstration(
     root: &Path,
@@ -779,8 +806,11 @@ fn ensure_incumbent_demonstration(
     let batch_root = campaign.join("demonstration").join("native");
     fs::create_dir_all(&batch_root).map_err(native_error)?;
     let request_path = batch_root.join("request.json");
-    write_exact_or_new(&request_path, &pretty_json(&batch).map_err(native_error)?)
-        .map_err(native_error)?;
+    write_uncommitted_native_request(
+        &batch_root,
+        &request_path,
+        &pretty_json(&batch).map_err(native_error)?,
+    )?;
     let (result_path, adopted) = select_result_path(&batch_root, &batch, &pool.terminal)?;
     let output = if let Some(validated) = adopted {
         BatchOutput {
