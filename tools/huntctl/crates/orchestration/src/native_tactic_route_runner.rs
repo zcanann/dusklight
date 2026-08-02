@@ -428,9 +428,15 @@ fn run_native_tactic_route_with_optional_fleet(
     external_fleet: Option<&NativeTacticWorkerFleet>,
 ) -> Result<NativeTacticRouteReport, NativeTacticRouteRunError> {
     let campaign_started = Instant::now();
-    let orchestrator_executable_sha256 = current_executable_sha256()?;
     validate_config(config)?;
     let imported_promoted_tactics = load_imported_promoted_tactics(config)?;
+    // A completed campaign is an immutable artifact chain. Returning it must
+    // not depend on re-authenticating native runtime files that cannot change
+    // the already sealed report and are not part of its recovery decision.
+    if let Some(report) = recover_completed_campaign(config, imported_promoted_tactics.as_ref())? {
+        return Ok(report);
+    }
+    let orchestrator_executable_sha256 = current_executable_sha256()?;
     let root = config.repository_root.canonicalize().map_err(route_error)?;
     config
         .execution
@@ -447,9 +453,6 @@ fn run_native_tactic_route_with_optional_fleet(
             "tactic route output does not exist to resume: {}",
             config.output_root.display()
         )));
-    }
-    if let Some(report) = recover_completed_campaign(config, imported_promoted_tactics.as_ref())? {
-        return Ok(report);
     }
     let (report_path, summary_path, completion_path) =
         prepare_campaign_completion(config.output_root, config.resume)?;

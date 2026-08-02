@@ -309,8 +309,14 @@ do not golf isolated subphases without campaign evidence.
   67.39 seconds and the subsequent sealed pass took 51.45 seconds with the same
   24 decisions, 4,346 historical native ticks, and 191-tick terminal and no
   native launch. Internally attributed campaign setup fell from 36.59 to 27.87
-  seconds. The remaining roughly 51-second authority/reporting path and a clean
-  cold measurement keep this task open.
+  seconds. A fully sealed resume was nevertheless taking the same 51.06
+  seconds because it authenticated the current orchestrator and native runtime
+  files before consulting the immutable campaign-completion chain, even though
+  those reads could not change or reject the returned report. Completed-report
+  recovery now precedes runtime validation and returns the same 191-tick report
+  in 1.58 seconds with no native launch. Interrupted final-report reconstruction
+  still takes roughly 51 seconds, and a clean cold measurement keeps this task
+  open.
 - [ ] Cache or share already-validated artifact and graph identities within one
   process; independent reopen validation must remain fail-closed. Completed-seed
   preflight now carries the campaign-wide useful-expansion set directly from
