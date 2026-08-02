@@ -53,7 +53,7 @@ detailed history in commits and sealed campaign artifacts.
 
 ### 1. Optimize selected zero-shot terminals
 
-- [ ] Improve the retained 193-tick zero-shot route to 124 ticks or less using
+- [ ] Improve the retained 191-tick zero-shot route to 124 ticks or less using
   generic optimization. The automatic selector first converted the 231-tick
   archive winner into a minimized, twice-cold-replayed refinement incumbent.
   A bounded two-worker campaign against that promoted parent admitted 448
@@ -73,7 +73,13 @@ detailed history in commits and sealed campaign artifacts.
   message-font crash, but the sealed checkpoint finalizer selected, minimized,
   and reproduced the retained 193-tick route from two fresh process boots with
   identical tape and terminal boundary fingerprint. The winner therefore does
-  not depend on completing or replaying the crashed generation.
+  not depend on completing or replaying the crashed generation. A fifth
+  promoted campaign admitted 576 candidates before its simulated-tick budget,
+  found four valid 191-tick committed-load candidates, and automatically
+  minimized and reproduced the selected 191-tick route from two fresh process
+  boots with identical tape and terminal boundary fingerprint. An apparent
+  185-tick replay entry reached only the separate exit-approach predicate; the
+  primary committed-load attempt missed, and selection correctly excluded it.
   The 213-tick intermediate changed only 32 stick-X frames and retained the
   same three roll presses, so these gains remain local residual progress rather
   than learned efficient movement; the route is still far from competitive.
@@ -223,12 +229,12 @@ experience per second; retained save states have measured positive return.
 - [ ] Make fresh and resumed concurrent campaigns logically reproducible, with
   exact ownership for sampling, updates, model publication, checkpoints, and
   accepted experience.
-- [ ] Make legal-action native crashes bounded and auditable. The 199-tick
-  refinement campaign deterministically reached a null message-font
-  dereference from a legal headless proposal. Residual batches now replace only
-  their owned sessions and bisect failed work down to an exact candidate, but
-  the headless font defect and an explicit singleton-crash/censored-evidence
-  contract remain to be completed.
+- [ ] Make unrecoverable singleton native crashes explicit, bounded censored
+  evidence. Residual batches now replace only their owned sessions and bisect
+  failed work down to an exact candidate, and the legal proposal that exposed
+  the headless message-font defect now completes under the repaired runtime.
+  A singleton that still crashes must be durably charged and reported without
+  fabricating a gameplay result or preventing selection of sealed evidence.
 - [ ] Keep models, replay, checkpoints, and manifests compact, bounded, binary,
   versioned, checksummed, atomic, and migration-tested.
 - [ ] Refactor oversized and mixed-responsibility code along observation,
