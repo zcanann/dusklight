@@ -1,6 +1,7 @@
 use super::fault_recovery_audit::{
     build_native_tactic_fault_recovery_audit, read_fault_marker_source,
 };
+use super::scratch_campaign_audit::supports_retained_evidence_route_report_schema;
 use super::throughput_evidence_bundle::{bundle_compressed, read_compressed};
 use super::*;
 use crate::native_residual_campaign::NativeResidualExecutionBinding;
@@ -255,10 +256,26 @@ impl NativeTacticFaultRecoveryEvidenceBundle {
         execution.validate_seal(&request).map_err(route_error)?;
         marker.validate()?;
         audit.validate()?;
-        control_resource.validate()?;
-        recovered_resource.validate()?;
-        control_resource.validate_resource_binding(&control, &plan)?;
-        recovered_resource.validate_resource_binding(&recovered, &plan)?;
+        if control.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37 {
+            control_resource.validate_historical_resource_binding(
+                &control_resource_bytes,
+                &control_bytes,
+                &control,
+                &plan,
+            )?;
+        } else {
+            control_resource.validate_resource_binding(&control, &plan)?;
+        }
+        if recovered.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37 {
+            recovered_resource.validate_historical_resource_binding(
+                &recovered_resource_bytes,
+                &recovered_bytes,
+                &recovered,
+                &plan,
+            )?;
+        } else {
+            recovered_resource.validate_resource_binding(&recovered, &plan)?;
+        }
         validate_route_authorities(&request, &execution, &control, &recovered)?;
         let recomputed =
             build_native_tactic_fault_recovery_audit(&control_bytes, &recovered_bytes, marker)?;
@@ -301,8 +318,8 @@ fn validate_route_authorities(
     control: &NativeTacticRouteReport,
     recovered: &NativeTacticRouteReport,
 ) -> Result<(), NativeTacticRouteRunError> {
-    if !supports_current_route_report_schema(&control.schema)
-        || !supports_current_route_report_schema(&recovered.schema)
+    if !supports_retained_evidence_route_report_schema(&control.schema)
+        || !supports_retained_evidence_route_report_schema(&recovered.schema)
         || control.optimization_request_sha256 != request.content_sha256
         || recovered.optimization_request_sha256 != request.content_sha256
         || control.execution_binding_sha256 != execution.content_sha256

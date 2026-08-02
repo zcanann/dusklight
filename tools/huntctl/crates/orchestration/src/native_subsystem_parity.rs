@@ -30,8 +30,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const NATIVE_SUBSYSTEM_PARITY_SCHEMA_V2: &str = "dusklight-native-subsystem-parity/v2";
 pub const NATIVE_SUBSYSTEM_PARITY_SCHEMA: &str = "dusklight-native-subsystem-parity/v3";
 mod evidence_bundle;
+mod legacy_v2;
 pub use evidence_bundle::{
     NATIVE_SUBSYSTEM_PARITY_EVIDENCE_BUNDLE_SCHEMA_V1, NATIVE_SUBSYSTEM_PARITY_EVIDENCE_MANIFEST,
     NativeSubsystemParityBundleArtifact, NativeSubsystemParityConditionEvidence,
@@ -142,6 +144,9 @@ impl NativeSubsystemParityReport {
     }
 
     pub fn validate(&self) -> Result<(), Box<dyn Error>> {
+        if self.schema == NATIVE_SUBSYSTEM_PARITY_SCHEMA_V2 {
+            return legacy_v2::validate(self);
+        }
         let expected_names = condition_definitions()
             .into_iter()
             .map(|definition| definition.name)
@@ -585,6 +590,22 @@ fn evidence_projection_with_context(
     raw: &NativeSuffixBatchResult,
     shard: &NativeEpisodeShard,
 ) -> Result<NativeSubsystemEvidenceProjection, Box<dyn Error>> {
+    let action_surface =
+        native_tactic_applicable_action_surface_identity(applicable_action_surface_context, shard)?;
+    evidence_projection_with_action_surface(
+        applicable_action_surface_context,
+        action_surface,
+        raw,
+        shard,
+    )
+}
+
+fn evidence_projection_with_action_surface(
+    applicable_action_surface_context: &NativeTacticActionSurfaceAuditContext,
+    action_surface: (Digest, u64, u64),
+    raw: &NativeSuffixBatchResult,
+    shard: &NativeEpisodeShard,
+) -> Result<NativeSubsystemEvidenceProjection, Box<dyn Error>> {
     if raw.source_frame != shard.source_frame
         || raw.maximum_ticks != u64::from(shard.maximum_ticks)
         || raw.episode_shard.observation_schema != shard.metadata.observation_schema
@@ -616,7 +637,7 @@ fn evidence_projection_with_context(
         applicable_action_surface_sha256,
         applicable_action_surface_boundaries,
         applicable_action_descriptors,
-    ) = native_tactic_applicable_action_surface_identity(applicable_action_surface_context, shard)?;
+    ) = action_surface;
     let process_local_state_proof_sha256 = raw
         .verify_state_hashes
         .then(|| {

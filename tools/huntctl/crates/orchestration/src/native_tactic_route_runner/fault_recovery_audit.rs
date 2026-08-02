@@ -105,8 +105,11 @@ pub(super) fn build_native_tactic_fault_recovery_audit(
         serde_json::from_slice(control_bytes).map_err(route_error)?;
     let recovered: NativeTacticRouteReport =
         serde_json::from_slice(recovered_bytes).map_err(route_error)?;
-    if !supports_current_route_report_schema(&control.schema)
-        || !supports_current_route_report_schema(&recovered.schema)
+    let historical_v37 = control.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
+        && recovered.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37;
+    if !(historical_v37
+        || (supports_current_route_report_schema(&control.schema)
+            && supports_current_route_report_schema(&recovered.schema)))
         || control.seeds.len() != 1
         || recovered.seeds.len() != 1
     {
@@ -124,8 +127,16 @@ pub(super) fn build_native_tactic_fault_recovery_audit(
             "native tactic fault marker is detached from its matched reports",
         ));
     }
-    let control_trace_sha256 = semantic_trace_sha256_v2(&control_seed.trace)?;
-    let recovered_trace_sha256 = semantic_trace_sha256_v2(&recovered_seed.trace)?;
+    let control_trace_sha256 = if historical_v37 {
+        legacy_v37_semantic_trace_sha256_v2(&control_seed.trace)?
+    } else {
+        semantic_trace_sha256_v2(&control_seed.trace)?
+    };
+    let recovered_trace_sha256 = if historical_v37 {
+        legacy_v37_semantic_trace_sha256_v2(&recovered_seed.trace)?
+    } else {
+        semantic_trace_sha256_v2(&recovered_seed.trace)?
+    };
     let semantic_trace_equal = control_trace_sha256 == recovered_trace_sha256;
     let useful_expansion_set_equal = control_seed.useful_graph_expansion_set_sha256
         == recovered_seed.useful_graph_expansion_set_sha256;
@@ -294,6 +305,31 @@ pub(super) fn semantic_trace_sha256_v2(
     trace: &[NativeTacticDecisionTrace],
 ) -> Result<Digest, NativeTacticRouteRunError> {
     semantic_trace_value_sha256(serde_json::to_value(trace).map_err(route_error)?)
+}
+
+pub(super) fn legacy_v37_semantic_trace_sha256_v2(
+    trace: &[NativeTacticDecisionTrace],
+) -> Result<Digest, NativeTacticRouteRunError> {
+    let mut trace = serde_json::to_value(trace).map_err(route_error)?;
+    let decisions = trace
+        .as_array_mut()
+        .ok_or_else(|| route_message("native tactic semantic trace is not an array"))?;
+    for decision in decisions {
+        let decision = decision
+            .as_object_mut()
+            .ok_or_else(|| route_message("native tactic semantic decision is not an object"))?;
+        // These default-valued fields were added after the retained V37
+        // throughput treatments were sealed. Reconstruct that exact typed
+        // projection without relaxing the current semantic-trace contract.
+        decision.remove("policy_update_probes");
+        if let Some(acquisition) = decision
+            .get_mut("branch_acquisition")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            acquisition.remove("goal_reachability_evidence_available");
+        }
+    }
+    semantic_trace_value_sha256(trace)
 }
 
 fn semantic_trace_value_sha256(

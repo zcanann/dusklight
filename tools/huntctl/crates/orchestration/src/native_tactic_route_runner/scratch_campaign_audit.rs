@@ -252,9 +252,37 @@ impl NativeTacticScratchCampaignAudit {
     }
 
     pub fn validate(&self) -> Result<(), NativeTacticRouteRunError> {
+        self.validate_without_content_identity()?;
+        if self.compute_content_sha256()? != self.content_sha256 {
+            return Err(route_message(
+                "scratch campaign audit content identity is invalid",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate_historical_json(
+        &self,
+        source: &[u8],
+    ) -> Result<(), NativeTacticRouteRunError> {
+        if self.schema != NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3 {
+            return Err(route_message(
+                "historical scratch campaign audit schema is unsupported",
+            ));
+        }
+        self.validate_without_content_identity()?;
+        if historical_json_content_sha256(source, self.content_sha256)? != self.content_sha256 {
+            return Err(route_message(
+                "historical scratch campaign audit content identity is invalid",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_without_content_identity(&self) -> Result<(), NativeTacticRouteRunError> {
         let seed_is_valid: fn(&NativeTacticScratchSeedAudit) -> bool = match self.schema.as_str() {
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V2 => seed_is_valid_v2,
-            NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3 => seed_is_valid_v3,
+            NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V3 => seed_is_valid_v3_legacy,
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4 => seed_is_valid_v3,
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V5 => seed_is_valid_v5,
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V6 => seed_is_valid_v6,
@@ -286,18 +314,40 @@ impl NativeTacticScratchCampaignAudit {
             || self.execution_plan_sha256 == Digest::ZERO
             || self.objective_sha256 == Digest::ZERO
             || self.execution_binding_sha256 == Digest::ZERO
-            || self.workers == 0
-            || self.seeds.is_empty()
-            || !self
-                .seeds
-                .windows(2)
-                .all(|pair| pair[0].seed < pair[1].seed)
-            || self.seeds.iter().any(|seed| !seed_is_valid(seed))
-            || !campaign_accounting_valid
-            || !resource_audit_is_valid(&self.resources, self.workers, &self.seeds)
-            || self.compute_content_sha256()? != self.content_sha256
         {
-            return Err(route_message("scratch campaign audit is invalid"));
+            return Err(route_message(
+                "scratch campaign audit has an absent authority identity",
+            ));
+        }
+        if self.workers == 0 || self.seeds.is_empty() {
+            return Err(route_message(
+                "scratch campaign audit has no worker or seed evidence",
+            ));
+        }
+        if !self
+            .seeds
+            .windows(2)
+            .all(|pair| pair[0].seed < pair[1].seed)
+        {
+            return Err(route_message(
+                "scratch campaign audit seeds are not strictly ordered",
+            ));
+        }
+        if let Some(seed) = self.seeds.iter().find(|seed| !seed_is_valid(seed)) {
+            return Err(route_message(format!(
+                "scratch campaign audit seed {} is invalid",
+                seed.seed
+            )));
+        }
+        if !campaign_accounting_valid {
+            return Err(route_message(
+                "scratch campaign audit useful-expansion accounting is invalid",
+            ));
+        }
+        if !resource_audit_is_valid(&self.resources, self.workers, &self.seeds) {
+            return Err(route_message(
+                "scratch campaign audit resource accounting is invalid",
+            ));
         }
         Ok(())
     }
@@ -315,11 +365,43 @@ impl NativeTacticScratchCampaignAudit {
         plan: &NativeTacticExecutionPlan,
     ) -> Result<(), NativeTacticRouteRunError> {
         self.validate()?;
+        self.validate_resource_fields(route, plan)
+    }
+
+    pub(super) fn validate_historical_resource_binding(
+        &self,
+        audit_source: &[u8],
+        route_source: &[u8],
+        route: &NativeTacticRouteReport,
+        plan: &NativeTacticExecutionPlan,
+    ) -> Result<(), NativeTacticRouteRunError> {
+        self.validate_historical_json(audit_source)?;
+        if self.route_report_sha256 != source_compatible_route_report_sha256(route, route_source)? {
+            return Err(route_message(
+                "historical scratch campaign audit is detached from its route identity",
+            ));
+        }
+        self.validate_plan_and_resource_fields(route, plan)
+    }
+
+    fn validate_resource_fields(
+        &self,
+        route: &NativeTacticRouteReport,
+        plan: &NativeTacticExecutionPlan,
+    ) -> Result<(), NativeTacticRouteRunError> {
         if self.route_report_sha256 != route_report_sha256(route)? {
             return Err(route_message(
                 "scratch campaign audit is detached from its route identity",
             ));
         }
+        self.validate_plan_and_resource_fields(route, plan)
+    }
+
+    fn validate_plan_and_resource_fields(
+        &self,
+        route: &NativeTacticRouteReport,
+        plan: &NativeTacticExecutionPlan,
+    ) -> Result<(), NativeTacticRouteRunError> {
         if self.execution_plan_sha256 != plan.identity()? {
             return Err(route_message(
                 "scratch campaign audit is detached from its execution-plan identity",
@@ -343,200 +425,73 @@ impl NativeTacticScratchCampaignAudit {
     }
 }
 
+fn historical_json_content_sha256(
+    source: &[u8],
+    content_sha256: Digest,
+) -> Result<Digest, NativeTacticRouteRunError> {
+    let source = std::str::from_utf8(source).map_err(route_error)?;
+    let encoded = content_sha256.to_string();
+    if source.match_indices(&encoded).count() != 1 {
+        return Err(route_message(
+            "historical scratch campaign audit content identity is ambiguous",
+        ));
+    }
+    let unsigned = source.replacen(&encoded, &Digest::ZERO.to_string(), 1);
+    historical_json_sha256(unsigned.as_bytes())
+}
+
+pub(super) fn historical_json_sha256(source: &[u8]) -> Result<Digest, NativeTacticRouteRunError> {
+    let mut compact = Vec::with_capacity(source.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for &byte in source {
+        if in_string {
+            compact.push(byte);
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+        } else if byte == b'"' {
+            in_string = true;
+            compact.push(byte);
+        } else if !byte.is_ascii_whitespace() {
+            compact.push(byte);
+        }
+    }
+    if in_string || escaped {
+        return Err(route_message(
+            "historical scratch campaign audit JSON is incomplete",
+        ));
+    }
+    Ok(Digest(Sha256::digest(compact).into()))
+}
+
+pub(super) fn source_compatible_route_report_sha256(
+    route: &NativeTacticRouteReport,
+    source: &[u8],
+) -> Result<Digest, NativeTacticRouteRunError> {
+    if route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37 {
+        historical_json_sha256(source)
+    } else {
+        route_report_sha256(route)
+    }
+}
+
+pub(super) fn supports_retained_evidence_route_report_schema(schema: &str) -> bool {
+    schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37 || supports_current_route_report_schema(schema)
+}
+
+mod resource;
+use resource::resource_audit_is_valid;
+
 pub(super) fn resource_audit(
     route: &NativeTacticRouteReport,
     plan: &NativeTacticExecutionPlan,
 ) -> Result<NativeTacticCampaignResourceAudit, NativeTacticRouteRunError> {
-    let workers = u64::try_from(route.workers).map_err(route_error)?;
-    let maximum_per_worker = u64::try_from(tactic_checkpoint_cache_capacity_per_worker(
-        plan.budgets.memory_bytes,
-        route.workers,
-    )?)
-    .map_err(route_error)?;
-    let configured_per_worker = route.checkpoint_cache_capacity_per_worker_bytes;
-    if configured_per_worker == 0 || configured_per_worker > maximum_per_worker {
-        return Err(route_message(
-            "native tactic reported checkpoint capacity exceeds its execution plan",
-        ));
-    }
-    let configured_pool = configured_per_worker
-        .checked_mul(workers)
-        .ok_or_else(|| route_message("native tactic configured checkpoint memory overflows"))?;
-    let observed_peak_worker = route.native_restore_accounting.peak_resident_bytes;
-    let observed_pool = observed_peak_worker
-        .checked_mul(workers)
-        .ok_or_else(|| route_message("native tactic observed checkpoint memory overflows"))?;
-    let declared_memory_bound = match plan.budgets.memory_bytes {
-        NativeTacticResourceLimit::Bounded(bytes) => Some(bytes),
-        NativeTacticResourceLimit::Unbounded => None,
-    };
-    let memory_bound_satisfied = observed_pool <= configured_pool
-        && declared_memory_bound.is_some_and(|bound| configured_pool <= bound);
-    let maximum_allowed_staleness = match plan.replay_sharing {
-        NativeTacticReplaySharingPlan::GenerationBarrier => 0,
-        NativeTacticReplaySharingPlan::BoundedStaleness {
-            maximum_stale_replay_revisions,
-        } => maximum_stale_replay_revisions,
-    };
-    let maximum_model_replay_lag = route.replay_sharing.maximum_model_replay_lag_revisions;
-    let learner_staleness_bound_satisfied = maximum_model_replay_lag <= maximum_allowed_staleness;
-    let fallback_replays = route
-        .native_restore_accounting
-        .direct_restore_fallback_replays;
-    let prefix_materializations = route.native_restore_accounting.prefix_materializations;
-    let fallback_bound_satisfied = fallback_replays <= prefix_materializations;
-    let mut checkpoint_owner_counts_by_worker = vec![0_u64; route.workers];
-    let mut checkpoint_owner_available_decisions = 0_u64;
-    let mut checkpoint_owner_local_decisions = 0_u64;
-    let mut misrouted_owner_local_decisions = 0_u64;
-    for trace in route.seeds.iter().flat_map(|seed| &seed.trace) {
-        if let Some(owner) = trace.checkpoint_owner_worker_slot {
-            let count = checkpoint_owner_counts_by_worker
-                .get_mut(owner)
-                .ok_or_else(|| route_message("native tactic checkpoint owner is not a worker"))?;
-            *count = count.saturating_add(1);
-            checkpoint_owner_available_decisions =
-                checkpoint_owner_available_decisions.saturating_add(1);
-        }
-        if trace.restore_source == Some(NativeTacticRestoreSource::ProcessLocalCheckpoint) {
-            if trace.proposal_worker_slots.first().copied() == trace.checkpoint_owner_worker_slot
-                && trace.checkpoint_owner_worker_slot.is_some()
-            {
-                checkpoint_owner_local_decisions =
-                    checkpoint_owner_local_decisions.saturating_add(1);
-            } else {
-                misrouted_owner_local_decisions = misrouted_owner_local_decisions.saturating_add(1);
-            }
-        }
-    }
-    let minimum_owner_assignments = checkpoint_owner_counts_by_worker
-        .iter()
-        .copied()
-        .min()
-        .unwrap_or(0);
-    let maximum_owner_assignments = checkpoint_owner_counts_by_worker
-        .iter()
-        .copied()
-        .max()
-        .unwrap_or(0);
-    let checkpoint_owner_assignment_skew =
-        maximum_owner_assignments.saturating_sub(minimum_owner_assignments);
-    let fallback_rate_per_million_decisions =
-        ratio_per_million(fallback_replays, route.total_decisions);
-    let passed = memory_bound_satisfied
-        && learner_staleness_bound_satisfied
-        && fallback_bound_satisfied
-        && misrouted_owner_local_decisions == 0;
-    Ok(NativeTacticCampaignResourceAudit {
-        completed_decisions: route.total_decisions,
-        declared_memory_bound_bytes: declared_memory_bound,
-        configured_checkpoint_cache_capacity_per_worker_bytes: configured_per_worker,
-        configured_checkpoint_pool_capacity_bytes: configured_pool,
-        observed_peak_worker_resident_bytes: observed_peak_worker,
-        observed_checkpoint_pool_resident_upper_bound_bytes: observed_pool,
-        memory_bound_satisfied,
-        maximum_allowed_stale_replay_revisions: maximum_allowed_staleness,
-        maximum_model_replay_lag_revisions: maximum_model_replay_lag,
-        maximum_lane_refresh_gap_revisions: route.replay_sharing.maximum_observed_stale_revisions,
-        learner_staleness_bound_satisfied,
-        direct_restore_fallback_replays: fallback_replays,
-        prefix_materializations,
-        fallback_rate_per_million_decisions,
-        fallback_bound_satisfied,
-        checkpoint_owner_available_decisions,
-        checkpoint_owner_local_decisions,
-        misrouted_owner_local_decisions,
-        checkpoint_owner_counts_by_worker,
-        checkpoint_owner_assignment_skew,
-        passed,
-    })
-}
-
-fn resource_audit_is_valid(
-    resources: &NativeTacticCampaignResourceAudit,
-    workers: usize,
-    seeds: &[NativeTacticScratchSeedAudit],
-) -> bool {
-    let total_decisions = seeds
-        .iter()
-        .map(|seed| seed.decisions.len() as u64)
-        .sum::<u64>();
-    let configured_pool = resources
-        .configured_checkpoint_cache_capacity_per_worker_bytes
-        .checked_mul(workers as u64);
-    let observed_pool = resources
-        .observed_peak_worker_resident_bytes
-        .checked_mul(workers as u64);
-    let mut derived_owner_counts = vec![0_u64; workers];
-    let mut derived_owner_available = 0_u64;
-    let mut derived_owner_local = 0_u64;
-    let mut derived_owner_misrouted = 0_u64;
-    for decision in seeds.iter().flat_map(|seed| &seed.decisions) {
-        if let Some(owner) = decision.checkpoint_owner_worker_slot {
-            let Some(count) = derived_owner_counts.get_mut(owner) else {
-                return false;
-            };
-            *count = count.saturating_add(1);
-            derived_owner_available = derived_owner_available.saturating_add(1);
-        }
-        if decision.restore_source == Some(NativeTacticRestoreSource::ProcessLocalCheckpoint) {
-            if decision.proposal_worker_slots.first().copied()
-                == decision.checkpoint_owner_worker_slot
-                && decision.checkpoint_owner_worker_slot.is_some()
-            {
-                derived_owner_local = derived_owner_local.saturating_add(1);
-            } else {
-                derived_owner_misrouted = derived_owner_misrouted.saturating_add(1);
-            }
-        }
-    }
-    let minimum_owner_assignments = resources
-        .checkpoint_owner_counts_by_worker
-        .iter()
-        .copied()
-        .min()
-        .unwrap_or(0);
-    let maximum_owner_assignments = resources
-        .checkpoint_owner_counts_by_worker
-        .iter()
-        .copied()
-        .max()
-        .unwrap_or(0);
-    let memory_bound_satisfied = observed_pool
-        == Some(resources.observed_checkpoint_pool_resident_upper_bound_bytes)
-        && configured_pool == Some(resources.configured_checkpoint_pool_capacity_bytes)
-        && observed_pool.is_some_and(|observed| {
-            observed <= resources.configured_checkpoint_pool_capacity_bytes
-        })
-        && resources
-            .declared_memory_bound_bytes
-            .is_some_and(|bound| resources.configured_checkpoint_pool_capacity_bytes <= bound);
-    let learner_staleness_bound_satisfied = resources.maximum_model_replay_lag_revisions
-        <= resources.maximum_allowed_stale_replay_revisions;
-    let fallback_bound_satisfied =
-        resources.direct_restore_fallback_replays <= resources.prefix_materializations;
-    let passed = memory_bound_satisfied
-        && learner_staleness_bound_satisfied
-        && fallback_bound_satisfied
-        && resources.misrouted_owner_local_decisions == 0;
-    workers > 0
-        && resources.completed_decisions == total_decisions
-        && resources.configured_checkpoint_cache_capacity_per_worker_bytes > 0
-        && resources.configured_checkpoint_cache_capacity_per_worker_bytes
-            <= TACTIC_CHECKPOINT_CACHE_BYTES as u64
-        && resources.checkpoint_owner_counts_by_worker.len() == workers
-        && resources.checkpoint_owner_counts_by_worker == derived_owner_counts
-        && resources.checkpoint_owner_available_decisions == derived_owner_available
-        && resources.checkpoint_owner_local_decisions == derived_owner_local
-        && resources.misrouted_owner_local_decisions == derived_owner_misrouted
-        && resources.fallback_rate_per_million_decisions
-            == ratio_per_million(resources.direct_restore_fallback_replays, total_decisions)
-        && resources.checkpoint_owner_assignment_skew
-            == maximum_owner_assignments.saturating_sub(minimum_owner_assignments)
-        && resources.memory_bound_satisfied == memory_bound_satisfied
-        && resources.learner_staleness_bound_satisfied == learner_staleness_bound_satisfied
-        && resources.fallback_bound_satisfied == fallback_bound_satisfied
-        && resources.passed == passed
+    resource::resource_audit(route, plan)
 }
 
 fn seed_audit(
@@ -886,6 +841,17 @@ fn graph_authoritative_terminal_timeline_is_valid(seed: &NativeTacticScratchSeed
 }
 
 fn seed_is_valid_v3(seed: &NativeTacticScratchSeedAudit) -> bool {
+    seed_is_valid_v3_with_selected_applicability(seed, true)
+}
+
+fn seed_is_valid_v3_legacy(seed: &NativeTacticScratchSeedAudit) -> bool {
+    seed_is_valid_v3_with_selected_applicability(seed, false)
+}
+
+fn seed_is_valid_v3_with_selected_applicability(
+    seed: &NativeTacticScratchSeedAudit,
+    require_selected_applicable: bool,
+) -> bool {
     let Some(total_proposals) = seed.decisions.iter().try_fold(0_u64, |total, decision| {
         total.checked_add(decision.proposal_count)
     }) else {
@@ -922,7 +888,7 @@ fn seed_is_valid_v3(seed: &NativeTacticScratchSeedAudit) -> bool {
                         .count()
                         == 1
                     && decision.applicable_tactics.iter().any(|tactic| {
-                        tactic.applicable
+                        (!require_selected_applicable || tactic.applicable)
                             && tactic.selected
                             && tactic.option_id == decision.selected_option_id
                     })
@@ -996,9 +962,7 @@ fn seed_is_valid_v2(seed: &NativeTacticScratchSeedAudit) -> bool {
                         .count()
                         == 1
                     && decision.applicable_tactics.iter().any(|tactic| {
-                        tactic.applicable
-                            && tactic.selected
-                            && tactic.option_id == decision.selected_option_id
+                        tactic.selected && tactic.option_id == decision.selected_option_id
                     })
             }))
         && (!seed.scheduler_timeline_complete
@@ -1251,6 +1215,23 @@ fn confined_checkpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn historical_json_identity_preserves_tokens_and_ignores_formatting() {
+        let unsigned = concat!(
+            r#"{"schema":"legacy","content_sha256":""#,
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            r#"","label":"space stays here","escaped":"quote: \""}"#,
+        );
+        let identity = Digest(Sha256::digest(unsigned.as_bytes()).into());
+        let source = format!(
+            "{{\n  \"schema\": \"legacy\",\n  \"content_sha256\": \"{identity}\",\n  \"label\": \"space stays here\",\n  \"escaped\": \"quote: \\\"\"\n}}\n"
+        );
+        assert_eq!(
+            historical_json_content_sha256(source.as_bytes(), identity).unwrap(),
+            identity
+        );
+    }
 
     fn terminal_decision(
         decision_index: u64,

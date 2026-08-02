@@ -1,4 +1,6 @@
-use super::scratch_discovery::route_report_sha256;
+use super::scratch_campaign_audit::{
+    source_compatible_route_report_sha256, supports_retained_evidence_route_report_schema,
+};
 use super::throughput_evidence_bundle::{bundle_compressed, read_compressed};
 use super::*;
 use crate::native_residual_campaign::NativeResidualExecutionBinding;
@@ -246,26 +248,59 @@ impl NativeTacticThroughputTreatmentBundle {
             serde_json::from_slice(&treatment_audit_bytes).map_err(route_error)?;
         validate_route_authorities(&control_route, &request, &execution, &plan)?;
         validate_route_authorities(&treatment_route, &request, &execution, &plan)?;
-        control_audit.validate()?;
-        treatment_audit.validate()?;
-        control_audit.validate_resource_binding(&control_route, &plan)?;
-        treatment_audit.validate_resource_binding(&treatment_route, &plan)?;
+        if control_route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37 {
+            control_audit.validate_historical_resource_binding(
+                &control_audit_bytes,
+                &control_route_bytes,
+                &control_route,
+                &plan,
+            )?;
+        } else {
+            control_audit.validate_resource_binding(&control_route, &plan)?;
+        }
+        if treatment_route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37 {
+            treatment_audit.validate_historical_resource_binding(
+                &treatment_audit_bytes,
+                &treatment_route_bytes,
+                &treatment_route,
+                &plan,
+            )?;
+        } else {
+            treatment_audit.validate_resource_binding(&treatment_route, &plan)?;
+        }
         let recomputed = NativeTacticThroughputTreatmentAudit::build(
             &control_route_bytes,
             &treatment_route_bytes,
         )?;
-        if recomputed != self.audit
-            || self.control.route_report.logical_identity_sha256 != self.audit.control_report_sha256
+        if recomputed != self.audit {
+            return Err(route_message(format!(
+                "native tactic throughput treatment recomputation differs at {}",
+                first_treatment_audit_difference(&recomputed, &self.audit),
+            )));
+        }
+        if self.control.route_report.logical_identity_sha256 != self.audit.control_report_sha256
             || self.treatment.route_report.logical_identity_sha256
                 != self.audit.treatment_report_sha256
-            || self.control.campaign_audit.logical_identity_sha256 != control_audit.content_sha256
-            || self.treatment.campaign_audit.logical_identity_sha256
-                != treatment_audit.content_sha256
-            || control_audit.route_report_sha256 != route_report_sha256(&control_route)?
-            || treatment_audit.route_report_sha256 != route_report_sha256(&treatment_route)?
         {
             return Err(route_message(
-                "native tactic throughput treatment evidence is detached",
+                "native tactic throughput treatment report bytes differ from its audit",
+            ));
+        }
+        if self.control.campaign_audit.logical_identity_sha256 != control_audit.content_sha256
+            || self.treatment.campaign_audit.logical_identity_sha256
+                != treatment_audit.content_sha256
+        {
+            return Err(route_message(
+                "native tactic throughput treatment campaign audit identity differs",
+            ));
+        }
+        if control_audit.route_report_sha256
+            != source_compatible_route_report_sha256(&control_route, &control_route_bytes)?
+            || treatment_audit.route_report_sha256
+                != source_compatible_route_report_sha256(&treatment_route, &treatment_route_bytes)?
+        {
+            return Err(route_message(
+                "native tactic throughput treatment campaign audit route binding differs",
             ));
         }
         Ok(())
@@ -280,13 +315,43 @@ impl NativeTacticThroughputTreatmentBundle {
     }
 }
 
+fn first_treatment_audit_difference(
+    recomputed: &NativeTacticThroughputTreatmentAudit,
+    retained: &NativeTacticThroughputTreatmentAudit,
+) -> &'static str {
+    if recomputed.schema != retained.schema {
+        "schema"
+    } else if recomputed.control_report_sha256 != retained.control_report_sha256 {
+        "control_report_sha256"
+    } else if recomputed.treatment_report_sha256 != retained.treatment_report_sha256 {
+        "treatment_report_sha256"
+    } else if recomputed.execution_plan_sha256 != retained.execution_plan_sha256 {
+        "execution_plan_sha256"
+    } else if recomputed.platform_os != retained.platform_os {
+        "platform_os"
+    } else if recomputed.platform_arch != retained.platform_arch {
+        "platform_arch"
+    } else if recomputed.control_semantic_trace_sha256 != retained.control_semantic_trace_sha256 {
+        "control_semantic_trace_sha256"
+    } else if recomputed.treatment_semantic_trace_sha256 != retained.treatment_semantic_trace_sha256
+    {
+        "treatment_semantic_trace_sha256"
+    } else if recomputed.metrics != retained.metrics {
+        "metrics"
+    } else if recomputed.content_sha256 != retained.content_sha256 {
+        "content_sha256"
+    } else {
+        "treatment conclusion fields"
+    }
+}
+
 fn validate_route_authorities(
     route: &NativeTacticRouteReport,
     request: &OptimizationRequest,
     execution: &NativeResidualExecutionBinding,
     plan: &NativeTacticExecutionPlan,
 ) -> Result<(), NativeTacticRouteRunError> {
-    if !supports_current_route_report_schema(&route.schema)
+    if !supports_retained_evidence_route_report_schema(&route.schema)
         || route.optimization_request_sha256 != request.content_sha256
         || route.execution_binding_sha256 != execution.content_sha256
         || route.execution_plan_sha256 != plan.identity()?

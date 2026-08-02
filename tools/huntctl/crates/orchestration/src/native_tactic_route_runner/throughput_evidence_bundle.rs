@@ -1,4 +1,6 @@
-use super::scratch_discovery::route_report_sha256;
+use super::scratch_campaign_audit::{
+    source_compatible_route_report_sha256, supports_retained_evidence_route_report_schema,
+};
 use super::throughput_curve::sample_from_route_report;
 use super::*;
 use crate::native_residual_campaign::NativeResidualExecutionBinding;
@@ -261,14 +263,24 @@ impl NativeTacticThroughputEvidenceBundle {
             let audit: NativeTacticScratchCampaignAudit =
                 serde_json::from_slice(&audit_bytes).map_err(route_error)?;
             validate_route_binding(&curve, expected, &route, &route_bytes)?;
-            audit.validate()?;
-            audit.validate_resource_binding(&route, &plan)?;
+            if route.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37 {
+                audit.validate_historical_resource_binding(
+                    &audit_bytes,
+                    &route_bytes,
+                    &route,
+                    &plan,
+                )?;
+            } else {
+                audit.validate_resource_binding(&route, &plan)?;
+            }
+            let route_logical_identity =
+                source_compatible_route_report_sha256(&route, &route_bytes)?;
             if evidence.ordinal != expected.ordinal
                 || evidence.repetition != expected.repetition
                 || evidence.workers != expected.workers
                 || evidence.route_report.logical_identity_sha256 != expected.route_report_sha256
                 || evidence.campaign_audit.logical_identity_sha256 != audit.content_sha256
-                || audit.route_report_sha256 != route_report_sha256(&route)?
+                || audit.route_report_sha256 != route_logical_identity
             {
                 return Err(route_message(
                     "native tactic throughput sample evidence is detached",
@@ -302,16 +314,37 @@ fn validate_route_binding(
         route_sha256,
         route,
     );
-    if !supports_current_route_report_schema(&route.schema)
-        || route.optimization_request_sha256 != curve.optimization_request_sha256
+    // The retained Windows fixed-work curve predates reachability-policy
+    // authority. That authority is required for current learning claims, but
+    // it does not contribute to this bundle's authenticated throughput
+    // projection. Keep the exception local to historical throughput evidence;
+    // scratch, terminal, and current campaign validators remain on v39+.
+    if !supports_retained_evidence_route_report_schema(&route.schema) {
+        return Err(route_message(
+            "native tactic throughput route report schema is unsupported",
+        ));
+    }
+    if route.optimization_request_sha256 != curve.optimization_request_sha256
         || route.execution_binding_sha256 != curve.execution_binding_sha256
         || route.execution_plan_sha256 != curve.execution_plan_sha256
-        || route.workers != expected.workers
-        || route_sha256 != expected.route_report_sha256
-        || derived != *expected
     {
         return Err(route_message(
-            "native tactic throughput route report differs from its aggregate sample",
+            "native tactic throughput route report authority differs from its curve",
+        ));
+    }
+    if route.workers != expected.workers {
+        return Err(route_message(
+            "native tactic throughput route report worker count differs from its sample",
+        ));
+    }
+    if route_sha256 != expected.route_report_sha256 {
+        return Err(route_message(
+            "native tactic throughput route report bytes differ from its sample identity",
+        ));
+    }
+    if derived != *expected {
+        return Err(route_message(
+            "native tactic throughput route report projection differs from its aggregate sample",
         ));
     }
     Ok(())
@@ -554,6 +587,22 @@ mod tests {
             NATIVE_TACTIC_THROUGHPUT_EVIDENCE_BUNDLE_SCHEMA_V1,
             NATIVE_TACTIC_SCRATCH_EVIDENCE_BUNDLE_SCHEMA_V2
         );
+    }
+
+    #[test]
+    fn historical_throughput_schema_exception_is_not_global() {
+        assert!(supports_retained_evidence_route_report_schema(
+            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
+        ));
+        assert!(!supports_retained_evidence_route_report_schema(
+            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V36
+        ));
+        assert!(!supports_current_route_report_schema(
+            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
+        ));
+        assert!(supports_current_route_report_schema(
+            NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39
+        ));
     }
 
     #[test]

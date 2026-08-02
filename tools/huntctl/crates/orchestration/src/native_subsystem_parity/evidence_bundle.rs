@@ -239,7 +239,12 @@ impl NativeSubsystemParityEvidenceBundle {
             let raw: NativeSuffixBatchResult = serde_json::from_slice(&result_bytes)?;
             raw.validate_against(&request, &terminal)?;
             let shard = NativeEpisodeShard::read(&bundle_root.join(&condition.episode_shard.path))?;
-            validate_condition_source(measurement, &raw, &shard)?;
+            validate_condition_source(
+                measurement,
+                &raw,
+                &shard,
+                report.schema == NATIVE_SUBSYSTEM_PARITY_SCHEMA_V2,
+            )?;
         }
         let actual_paths = bundle_files(bundle_root)?;
         if actual_paths != expected_paths {
@@ -259,6 +264,7 @@ fn validate_condition_source(
     measurement: &NativeSubsystemConditionMeasurement,
     raw: &NativeSuffixBatchResult,
     shard: &NativeEpisodeShard,
+    legacy_v2: bool,
 ) -> Result<(), Box<dyn Error>> {
     let phases = raw
         .timing
@@ -276,20 +282,45 @@ fn validate_condition_source(
     let state_validation = phases
         .get("state_validation")
         .ok_or("native subsystem state validation is missing")?;
-    let evidence = evidence_projection_with_context(
-        &measurement.evidence.applicable_action_surface_context,
-        raw,
-        shard,
-    )?;
-    let configuration_verified = validate_configuration_projection(
-        measurement.comparators,
-        measurement.verify_state_hashes,
-        raw.timing.candidate_ticks,
-        &raw.timing.headless_audit,
-        cpu_renderer_submission_micros,
-        gpu_work,
-        state_validation,
-    );
+    let evidence = if legacy_v2 {
+        evidence_projection_with_action_surface(
+            &measurement.evidence.applicable_action_surface_context,
+            (
+                measurement.evidence.applicable_action_surface_sha256,
+                measurement.evidence.applicable_action_surface_boundaries,
+                measurement.evidence.applicable_action_descriptors,
+            ),
+            raw,
+            shard,
+        )?
+    } else {
+        evidence_projection_with_context(
+            &measurement.evidence.applicable_action_surface_context,
+            raw,
+            shard,
+        )?
+    };
+    let configuration_verified = if legacy_v2 {
+        legacy_v2::validate_configuration_projection(
+            measurement.comparators,
+            measurement.verify_state_hashes,
+            raw.timing.candidate_ticks,
+            &raw.timing.headless_audit,
+            cpu_renderer_submission_micros,
+            gpu_work,
+            state_validation,
+        )
+    } else {
+        validate_configuration_projection(
+            measurement.comparators,
+            measurement.verify_state_hashes,
+            raw.timing.candidate_ticks,
+            &raw.timing.headless_audit,
+            cpu_renderer_submission_micros,
+            gpu_work,
+            state_validation,
+        )
+    };
     if raw.verify_state_hashes != measurement.verify_state_hashes
         || raw.timing.batch_wall_micros != measurement.batch_wall_micros
         || phase_micros(raw, "simulation")? != measurement.simulation_micros

@@ -1,4 +1,5 @@
-use super::fault_recovery_audit::semantic_trace_sha256_v2;
+use super::fault_recovery_audit::{legacy_v37_semantic_trace_sha256_v2, semantic_trace_sha256_v2};
+use super::scratch_campaign_audit::supports_retained_evidence_route_report_schema;
 use super::*;
 
 pub const NATIVE_TACTIC_THROUGHPUT_TREATMENT_AUDIT_SCHEMA_V1: &str =
@@ -56,8 +57,8 @@ impl NativeTacticThroughputTreatmentAudit {
             serde_json::from_slice(control_bytes).map_err(route_error)?;
         let treatment: NativeTacticRouteReport =
             serde_json::from_slice(treatment_bytes).map_err(route_error)?;
-        if !supports_current_route_report_schema(&control.schema)
-            || !supports_current_route_report_schema(&treatment.schema)
+        if !supports_retained_evidence_route_report_schema(&control.schema)
+            || !supports_retained_evidence_route_report_schema(&treatment.schema)
             || control.seeds.len() != 1
             || treatment.seeds.len() != 1
             || control.seeds[0].seed != treatment.seeds[0].seed
@@ -71,8 +72,18 @@ impl NativeTacticThroughputTreatmentAudit {
 
         let control_seed = &control.seeds[0];
         let treatment_seed = &treatment.seeds[0];
-        let control_semantic_trace_sha256 = semantic_trace_sha256_v2(&control_seed.trace)?;
-        let treatment_semantic_trace_sha256 = semantic_trace_sha256_v2(&treatment_seed.trace)?;
+        let historical_v37 = control.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37
+            && treatment.schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V37;
+        let control_semantic_trace_sha256 = if historical_v37 {
+            legacy_v37_semantic_trace_sha256_v2(&control_seed.trace)?
+        } else {
+            semantic_trace_sha256_v2(&control_seed.trace)?
+        };
+        let treatment_semantic_trace_sha256 = if historical_v37 {
+            legacy_v37_semantic_trace_sha256_v2(&treatment_seed.trace)?
+        } else {
+            semantic_trace_sha256_v2(&treatment_seed.trace)?
+        };
         let semantic_trace_equal = control_semantic_trace_sha256 == treatment_semantic_trace_sha256;
         let campaign_identity_equal = campaign_identity_equal(&control, &treatment);
         // Attempts and duplicates are invocation telemetry, not replay

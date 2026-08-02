@@ -138,8 +138,8 @@ def tracked_evidence_bundles() -> tuple[
 def main() -> int:
     run([sys.executable, "ci/source_quality/check_rust_file_sizes.py"], REPOSITORY_ROOT)
     run(["cargo", "fmt", "--all", "--", "--check"], HUNTCTL_ROOT)
-    run(["cargo", "check", "--workspace"], HUNTCTL_ROOT)
-    run(["cargo", "test", "-p", "dusklight-orchestration"], HUNTCTL_ROOT)
+    run(["cargo", "check", "-j", "2", "--workspace"], HUNTCTL_ROOT)
+    run(["cargo", "test", "-j", "2", "-p", "dusklight-orchestration"], HUNTCTL_ROOT)
 
     (
         bundles,
@@ -155,6 +155,8 @@ def main() -> int:
             [
                 "cargo",
                 "run",
+                "-j",
+                "2",
                 "--quiet",
                 "--",
                 "learn",
@@ -169,6 +171,8 @@ def main() -> int:
             [
                 "cargo",
                 "run",
+                "-j",
+                "2",
                 "--quiet",
                 "--",
                 "learn",
@@ -183,6 +187,8 @@ def main() -> int:
             [
                 "cargo",
                 "run",
+                "-j",
+                "2",
                 "--quiet",
                 "--",
                 "learn",
@@ -197,6 +203,8 @@ def main() -> int:
             [
                 "cargo",
                 "run",
+                "-j",
+                "2",
                 "--quiet",
                 "--",
                 "learn",
@@ -211,6 +219,8 @@ def main() -> int:
             [
                 "cargo",
                 "run",
+                "-j",
+                "2",
                 "--quiet",
                 "--",
                 "learn",
@@ -225,6 +235,8 @@ def main() -> int:
             [
                 "cargo",
                 "run",
+                "-j",
+                "2",
                 "--quiet",
                 "--",
                 "learn",
@@ -239,6 +251,8 @@ def main() -> int:
             [
                 "cargo",
                 "run",
+                "-j",
+                "2",
                 "--quiet",
                 "--",
                 "benchmark",
