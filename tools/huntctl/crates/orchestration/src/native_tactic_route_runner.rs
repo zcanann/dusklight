@@ -25,7 +25,7 @@ use crate::tactic_macro_store::{
 };
 use crate::tactic_q_campaign::{
     EvaluatedRewardedTacticOutcome, TACTIC_Q_CHECKPOINT_EXTENSION,
-    TACTIC_Q_DEMONSTRATION_EPISODE_GROUP, TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3,
+    TACTIC_Q_DEMONSTRATION_EPISODE_GROUP, TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4,
     TacticCampaignDiagnostics, TacticCampaignGraphProjection, TacticCampaignGraphProjectionEdge,
     TacticCampaignGraphProjectionNode, TacticExpansionLease, TacticFrontierAcquisition,
     TacticGraphSchedulingTiming, TacticQCampaign, TacticQCampaignCheckpoint, TacticQCampaignError,

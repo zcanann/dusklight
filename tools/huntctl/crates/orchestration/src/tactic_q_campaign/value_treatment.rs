@@ -8,8 +8,9 @@ enum GoalRelabeledCriticAuthority {
 
 fn goal_relabel_critic_authority(
     has_native_terminal_support: bool,
+    terminal_support_acquisition: bool,
 ) -> GoalRelabeledCriticAuthority {
-    if has_native_terminal_support {
+    if has_native_terminal_support && terminal_support_acquisition {
         GoalRelabeledCriticAuthority::NativeTerminal
     } else {
         GoalRelabeledCriticAuthority::AchievedGoal
@@ -162,11 +163,13 @@ impl TacticQCampaign {
     pub(super) fn active_goal_relabel_model(
         &self,
         goal_distance_feature: usize,
+        terminal_support_acquisition: bool,
     ) -> Result<Option<Arc<GeneralizedTacticValueModel>>, TacticQCampaignError> {
         match goal_relabel_critic_authority(
             self.training_replay
                 .iter()
                 .any(|transition| transition.value_sample.terminal),
+            terminal_support_acquisition,
         ) {
             GoalRelabeledCriticAuthority::AchievedGoal => {
                 self.generalized_model(goal_distance_feature)
@@ -290,12 +293,17 @@ mod tests {
     #[test]
     fn native_terminal_support_hands_off_from_achieved_goal_authority() {
         assert_eq!(
-            goal_relabel_critic_authority(false),
+            goal_relabel_critic_authority(false, false),
             GoalRelabeledCriticAuthority::AchievedGoal
         );
         assert_eq!(
-            goal_relabel_critic_authority(true),
+            goal_relabel_critic_authority(true, true),
             GoalRelabeledCriticAuthority::NativeTerminal
+        );
+        assert_eq!(
+            goal_relabel_critic_authority(true, false),
+            GoalRelabeledCriticAuthority::AchievedGoal,
+            "terminal support must not disable the all-experience exploration critic",
         );
     }
 }

@@ -103,7 +103,16 @@ authenticated terminal in 124 ticks or less.
   all 11 valid same-state selected actions unchanged. It retained 191 ticks and
   spent 459.2 seconds fitting models, 3.4x the prior local-Q treatment's 135.9
   seconds. At this sample scale it is slower and still has no causal policy
-  effect, so increasing its mining budget is not the next experiment.
+  effect, so increasing its mining budget is not the next experiment. That
+  campaign exposed a concrete policy-path defect: once any terminal evidence
+  existed, the selector used only terminal-connected replay and stopped
+  consulting the achieved-goal critic even though every open branch was still
+  fitted into it. The terminal objective critic now owns only its dedicated
+  exploitation partition; other partitions continue using the all-experience
+  reachability critic, whose held-out calibration persists after terminal
+  discovery. This policy-semantic change has a versioned learner snapshot and
+  migrates older heads explicitly. A bounded follow-up must now show a
+  calibrated same-state action change before any larger mining run.
 - [ ] Learn from successful and unsuccessful trajectories using sparse terminal
   value, authenticated tick cost, and generic state deltas.
 - [ ] Support online collection, off-policy replay, prioritized reuse, temporal

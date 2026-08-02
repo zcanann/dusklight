@@ -47,7 +47,7 @@ impl TacticQLearnerSnapshot {
     ) -> Result<Self, TacticQCampaignError> {
         validate_training_corpus(corpus)?;
         let snapshot = Self {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4.into(),
             kind: TacticQLearnerSnapshotKind::Demonstration,
             value_treatment,
             execution_authority_sha256: corpus.execution_authority_sha256,
@@ -79,7 +79,8 @@ impl TacticQLearnerSnapshot {
         let legacy = self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1
             && self.value_treatment == TacticValueTreatment::LocalGeneralizedFittedQKnnV1;
         let current = self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V2
-            || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3;
+            || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3
+            || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4;
         if (!legacy && !current)
             || self.execution_authority_sha256 == Digest::ZERO
             || self.feature_schema_sha256 == Digest::ZERO
@@ -90,8 +91,10 @@ impl TacticQLearnerSnapshot {
                 && (self.model_revision != 0 || self.model_sha256.is_some()))
             || self.model_sha256 == Some(Digest::ZERO)
             || (self.goal_reachability_calibration.is_some()
-                && (self.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3
-                    || self.value_treatment != TacticValueTreatment::GoalRelabeledFittedQKnnV2))
+                && (!matches!(
+                    self.schema.as_str(),
+                    TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3 | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4
+                ) || self.value_treatment != TacticValueTreatment::GoalRelabeledFittedQKnnV2))
             || self
                 .goal_reachability_calibration
                 .as_ref()
@@ -247,27 +250,29 @@ impl TacticQImmutableLearnerSnapshot {
         } else {
             None
         };
-        let goal_reachability_calibration = if value_treatment
-            == TacticValueTreatment::GoalRelabeledFittedQKnnV2
-            && !corpus
-                .transitions
-                .iter()
-                .any(|transition| transition.value_sample.terminal)
-        {
-            let calibration_rows = calibration_prefix_rows(corpus.transitions.len());
+        let has_native_terminal_support = corpus
+            .transitions
+            .iter()
+            .any(|transition| transition.value_sample.terminal);
+        let goal_reachability_calibration = goal_reachability_calibration_prefix_rows(
+            value_treatment,
+            corpus.transitions.len(),
+            has_native_terminal_support,
+        )
+        .map(|calibration_rows| {
             if let Some(prior) =
                 prior_calibration.filter(|prior| prior.source_transitions == calibration_rows)
             {
-                Some(prior.clone())
+                Ok(prior.clone())
             } else {
-                Some(calibrate_goal_reachability(
+                calibrate_goal_reachability(
                     &corpus.transitions[..calibration_rows],
                     goal_distance_feature,
-                )?)
+                )
+                .map_err(TacticQCampaignError::from)
             }
-        } else {
-            None
-        };
+        })
+        .transpose()?;
         let model_sha256 = model
             .as_ref()
             .map(|model| {
@@ -277,7 +282,7 @@ impl TacticQImmutableLearnerSnapshot {
             })
             .transpose()?;
         let manifest = TacticQLearnerSnapshot {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4.into(),
             kind: TacticQLearnerSnapshotKind::Learned,
             value_treatment,
             execution_authority_sha256: corpus.execution_authority_sha256,
@@ -322,6 +327,19 @@ fn calibration_prefix_rows(available_rows: usize) -> usize {
     }
 }
 
+fn goal_reachability_calibration_prefix_rows(
+    value_treatment: TacticValueTreatment,
+    available_rows: usize,
+    has_native_terminal_support: bool,
+) -> Option<usize> {
+    match (value_treatment, has_native_terminal_support) {
+        (TacticValueTreatment::GoalRelabeledFittedQKnnV2, false | true) => {
+            Some(calibration_prefix_rows(available_rows))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,6 +354,34 @@ mod tests {
         assert_eq!(calibration_prefix_rows(16), 16);
         assert_eq!(calibration_prefix_rows(31), 16);
         assert_eq!(calibration_prefix_rows(32), 32);
+    }
+
+    #[test]
+    fn reachability_calibration_survives_native_terminal_support() {
+        assert_eq!(
+            goal_reachability_calibration_prefix_rows(
+                TacticValueTreatment::GoalRelabeledFittedQKnnV2,
+                65,
+                false,
+            ),
+            Some(64),
+        );
+        assert_eq!(
+            goal_reachability_calibration_prefix_rows(
+                TacticValueTreatment::GoalRelabeledFittedQKnnV2,
+                65,
+                true,
+            ),
+            Some(64),
+        );
+        assert_eq!(
+            goal_reachability_calibration_prefix_rows(
+                TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
+                65,
+                true,
+            ),
+            None,
+        );
     }
 
     #[test]

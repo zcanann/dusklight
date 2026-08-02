@@ -253,15 +253,14 @@ impl TacticQCampaign {
                 .filter(|choice| choice.applicable)
                 .map(|choice| choice.descriptor.clone())
                 .collect::<Vec<_>>();
-            // Partition zero is the dedicated terminal-support policy lane.
-            // A one-seed plan cycles acquisition ranks to retain parallel-lane
-            // coverage, so an authenticated demonstration-frontier
-            // intervention must also select terminal support explicitly rather
-            // than silently becoming an ordinary rank-N acquisition. Remaining
-            // boundaries stay Q-ranked, preserving independent improvement.
+            // Partition zero is the dedicated terminal-support policy lane
+            // once a native terminal exists. Other partitions must continue
+            // consulting the achieved-goal critic: open exploratory branches
+            // are otherwise fitted and immediately ignored merely because a
+            // demonstration or earlier route supplied terminal evidence.
             let goal_reachability_acquisition = self.value_treatment
                 == TacticValueTreatment::GoalRelabeledFittedQKnnV2
-                && !native_terminal_supported;
+                && (!native_terminal_supported || !terminal_support_acquisition);
             let goal_reachability_deployment_ready = goal_reachability_acquisition
                 && self
                     .goal_reachability_calibration
@@ -293,7 +292,7 @@ impl TacticQCampaign {
                                 .collect::<Vec<_>>()
                         }),
                     TacticValueTreatment::GoalRelabeledFittedQKnnV2 => {
-                        if native_terminal_supported {
+                        if native_terminal_supported && terminal_support_acquisition {
                             self.native_terminal_action_model(goal_distance_feature)?
                                 .map(|model| {
                                     model.rank(&features, &context, &applicable_descriptors)
@@ -306,31 +305,34 @@ impl TacticQCampaign {
                                         .collect::<Vec<_>>()
                                 })
                         } else {
-                            self.active_goal_relabel_model(goal_distance_feature)?
-                                .map(|model| {
-                                    model.rank_goal_reachability(
-                                        &features,
-                                        &context,
-                                        &applicable_descriptors,
-                                    )
-                                })
-                                .transpose()?
-                                .map(|estimates| {
-                                    goal_reachability_estimates = estimates
-                                        .iter()
-                                        .map(|estimate| TacticQGoalReachabilityEstimate {
-                                            descriptor: estimate.descriptor.clone(),
-                                            predicted_goal_progress_per_tick: estimate
-                                                .outcome
-                                                .goal_progress_per_tick,
-                                            nearest_distance: estimate.nearest_distance,
-                                        })
-                                        .collect();
-                                    estimates
-                                        .into_iter()
-                                        .map(|estimate| estimate.descriptor)
-                                        .collect::<Vec<_>>()
-                                })
+                            self.active_goal_relabel_model(
+                                goal_distance_feature,
+                                terminal_support_acquisition,
+                            )?
+                            .map(|model| {
+                                model.rank_goal_reachability(
+                                    &features,
+                                    &context,
+                                    &applicable_descriptors,
+                                )
+                            })
+                            .transpose()?
+                            .map(|estimates| {
+                                goal_reachability_estimates = estimates
+                                    .iter()
+                                    .map(|estimate| TacticQGoalReachabilityEstimate {
+                                        descriptor: estimate.descriptor.clone(),
+                                        predicted_goal_progress_per_tick: estimate
+                                            .outcome
+                                            .goal_progress_per_tick,
+                                        nearest_distance: estimate.nearest_distance,
+                                    })
+                                    .collect();
+                                estimates
+                                    .into_iter()
+                                    .map(|estimate| estimate.descriptor)
+                                    .collect::<Vec<_>>()
+                            })
                         }
                     }
                     TacticValueTreatment::ContinuousFittedQForestV1 => self

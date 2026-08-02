@@ -195,7 +195,7 @@ impl CampaignTacticLearnerAuthority {
                         manifest.goal_reachability_calibration.as_ref(),
                     )
                     .map_err(route_error)?;
-                let migrated = manifest.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3;
+                let migrated = manifest.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4;
                 if migrated {
                     let stored_sha256 = replay
                         .publish_learner_snapshot(&snapshot.manifest)
