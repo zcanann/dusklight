@@ -198,7 +198,16 @@ pub fn build_native_tactic_optimization_handoff(
                 "terminal optimization worker override must be positive",
             ));
         }
+        if usize::from(workers) > optimization.execution.deterministic_seeds.len() {
+            return Err(route_message(
+                "terminal optimization worker override exceeds the source seed set",
+            ));
+        }
         optimization.execution.workers = workers;
+        optimization
+            .execution
+            .deterministic_seeds
+            .truncate(usize::from(workers));
     }
     optimization.incumbent = Some(OptimizationIncumbent {
         tape: incumbent_reference.clone(),
