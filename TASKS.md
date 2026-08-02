@@ -34,30 +34,38 @@ It is not an input to the scored campaign.
 
 ### 1. Run one plain scratch learner
 
-- [ ] Add a thin scratch mode that reuses the existing native worker, terminal
+- [x] Add a thin scratch mode that reuses the existing native worker, terminal
   predicate, observation capture, action execution, and exact replay, while
   bypassing demonstrations, inherited routes/policies, graph scheduling,
   frontier critics, calibration, save-state branching, and tactic mining.
-- [ ] Give it one small generic option set alongside raw controller input:
+- [x] Give it one small generic option set alongside raw controller input:
   move along a chosen heading, roll along a chosen heading, camera-align plus
   movement, and camera-align plus roll. Options are bounded and interruptible;
   heading and duration are parameters.
-- [ ] Represent state with coarse generic motion cells: position, velocity,
+- [x] Represent state with coarse generic motion cells: position, velocity,
   facing, camera orientation, prompted-action availability, and a short recent
   input/motion history.
-- [ ] Implement one semi-Markov Q-style loop:
+- [x] Implement one semi-Markov Q-style loop:
   epsilon-greedy option selection, native tick cost on every transition, the
   authenticated terminal as success, a single small value table/approximator,
   and one backward return pass through completed episodes. Do not add another
   model, policy partition, or shaped reward.
-- [ ] Start every episode from the authenticated root and allow at least 900
+- [x] Start every episode from the authenticated root and allow at least 900
   ticks. Retain all unique transitions and the fastest successful tape. Avoid
   exact duplicate episodes; add no novelty objective yet.
-- [ ] Make each learner update affect the next eligible action choice. Report
+- [x] Make each learner update affect the next eligible action choice. Report
   completed episodes, unique transitions, terminal episodes, fastest selected
   ticks, updates, changed choices, native time, wall time, and time to first
   terminal.
-- [ ] Automatically cold-replay every strict winner twice.
+- [x] Automatically cold-replay every strict winner twice.
+
+Implementation checkpoint (2026-08-02): `huntctl learn scratch-route` owns one
+native child per cold-root episode, uses a fixed 256-action route-agnostic
+catalog and one coarse tabular learner, and persists a checksummed binary
+checkpoint. A one-episode Windows smoke executed 900 logical native
+ticks through 103 decisions in 36.5 seconds wall / 14.6 seconds native, retained
+90 unique transitions, and changed 59 greedy choices. It found no terminal;
+this is execution evidence, not the intermediate gate.
 
 Intermediate gate: reach the real load zone from scratch in minutes, not hours.
 If five fixed ten-minute seeds produce fewer than three terminals, stop and
