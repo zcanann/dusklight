@@ -55,14 +55,12 @@ detailed history in commits and sealed campaign artifacts.
 
 - [ ] Improve the retained 231-tick zero-shot route to 124 ticks or less using
   generic optimization. The first bounded two-worker residual campaign reduced
-  its 239-tick handoff to 231; deterministic minimization reduced input
-  complexity from 194 to 192, and two separately backed exact native replays
-  reproduced the load-zone terminal at tick 231. This proves the handoff,
-  reduction, and proof path works, but is not competitive route quality.
-- [ ] Whenever optimization admits a strict incumbent improvement, trigger
-  bounded minimization, splice the minimized suffix into the complete route,
-  and cold-replay that route twice from the named root. A lucky discovery, an
-  operator-run reducer, or checkpoint-local suffix proof is not a scored route.
+  its 239-tick handoff to 231. The automatic selector chose the archive-ranked
+  winner, minimized it, spliced it onto the authenticated 506-frame prefix, and
+  reproduced the load-zone terminal from two fresh process boots at full-route
+  frame 737 with identical boundary evidence. The selected suffix is now a
+  validated 231-tick refinement incumbent, not an operator-picked discovery,
+  but its route quality remains far from competitive.
 
 Exit: each strict zero-shot improvement is automatically converted into a
 selected, independently replayable route, and the retained route reaches the
@@ -134,14 +132,16 @@ composition exceeds the trajectories from which it was learned.
 
 ### 5. Scale throughput only when the learning experiment demands it
 
-The present campaign speed is sufficient to expose the missing learning and
-terminal-optimization behavior. Do not continue golfing infrastructure merely
-because a measurable subphase is nonzero.
+Optimize only costs demonstrated by the end-to-end learning and selection path;
+do not golf isolated subphases without campaign evidence.
 
-- [ ] Re-profile only after terminal-aware rollouts are working, using existing
-  raw evidence before launching another campaign.
-- [ ] Optimize the largest measured cost only when it prevents useful learning
-  iterations or pushes a standard two-worker campaign beyond ten minutes.
+- [ ] Re-measure the combined campaign and automatic-selection path after the
+  producer-side duplicate validation removal. The first selection on an already
+  completed campaign took 12m06s, and independent reopen validation still takes
+  about 2m15s because it traverses the multi-megabyte minimization lineage.
+- [ ] Cache or share already-validated artifact identities within one process
+  when profiling confirms repeated lineage traversal remains the largest cost;
+  independent reopen validation must remain fail-closed.
 - [ ] Measure whether retained save-state branching beats replay from its
   authority point; simplify or remove it where it does not.
 - [ ] Revisit deterministic generation-barrier or other concurrent learning
