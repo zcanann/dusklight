@@ -312,7 +312,10 @@ option IDs rather than sorted catalog positions, supports an authenticated
 and versions invalid v1 frontiers out of resume. Focused tests prove exact
 family-preserving neighbors, lossless coarse-to-fine mapping, deterministic
 resume, and corruption rejection. The full framework audit passed 437
-orchestration tests and the 589-file source-size gate.
+orchestration tests and the 589-file source-size gate. A corrected seed-155921
+native smoke resumed from attempt one to two, reduced the remaining frontier
+from 87 to 86 without a duplicate, and preserved the 360-tick incumbent across
+two non-winning terminal candidates.
 
 Invalidated adjacent-heading result (2026-08-02): the 274-candidate run reached
 a real, twice-replayed 299-tick route, but a focused coarse-to-fine catalog test
