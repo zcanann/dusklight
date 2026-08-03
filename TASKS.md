@@ -194,7 +194,7 @@ budget. Remove it if it does not.
 - [x] Diagnose the retained 360-tick winner before spending more mining time.
   Distinguish missing control expressivity from an incumbent that deletion
   alone cannot repair.
-- [ ] Add exactly one next local edit family over the learner's own incumbent:
+- [x] Add exactly one next local edit family over the learner's own incumbent:
   replace one option's heading with either adjacent heading already present in
   the fixed 16-heading catalog while preserving its family and duration.
   Enumerate candidates once, persist progress, cold-root evaluate, and accept
@@ -289,6 +289,18 @@ input on 112 of 127 frame boundaries, while the scratch route changes on only
 99 of 360. Deletion can remove a whole bad option but cannot correct its
 heading. First measure adjacent substitutions already available in the fixed
 catalog; only a failure there justifies finer headings or a parameter learner.
+
+Adjacent-heading checkpoint (2026-08-02): `huntctl learn
+refine-scratch-headings` reads the authenticated binary scratch checkpoint and
+enumerates both neighboring headings for every incumbent option while retaining
+its exact family and duration. Its separate checksummed, compressed binary
+checkpoint binds the source checkpoint, request, execution, action universe,
+seed, incumbent, attempts, and sealed report. Failed candidates never touch Q;
+strict winners must cold-replay twice before resetting enumeration around the
+new incumbent. A native seed-155921 smoke resumed from attempt one to two with
+87 then 86 candidates remaining and no false terminal. The full framework audit
+passed 436 orchestration tests, and the CLI was split to remain below the
+1,500-line source-size gate.
 
 ### 4. Prove learning value only after the route works
 
