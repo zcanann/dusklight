@@ -119,21 +119,22 @@ in the current full state is not an intervention: the plain learner already
 prefers its unvisited zero-valued actions over negatively valued failures.
 
 Intervention result (2026-08-02): **passed, 5/5 successful seeds** under the
-same 36 x 900-tick budget. The v3 binary checkpoint persists coarse cell counts;
+same ten-minute wall budget. The v3 binary checkpoint persists coarse cell counts;
 the first authenticated terminal clears the temporary values and permanently
 returns selection to the terminal/tick learner.
 
 | Seed | Control terminals | Treatment terminals | Treatment best | First terminal |
 | ---: | ---: | ---: | ---: | ---: |
-| 104729 | 0 | 3 | 540 | 76.2 s |
-| 130363 | 2 | 2 | 481 | 263.9 s |
-| 155921 | 0 | 1 | 441 | 516.6 s |
-| 181081 | 2 | 2 | 561 | 35.8 s |
-| 208609 | 0 | 8 | 488 | 49.4 s |
+| 104729 | 0 | 3 | 540 | 76.7 s |
+| 130363 | 2 | 2 | 481 | 266.9 s |
+| 155921 | 0 | 3 | 368 | 516.0 s |
+| 181081 | 2 | 2 | 561 | 35.5 s |
+| 208609 | 0 | 8 | 488 | 50.2 s |
 
-The treatment produced 16 terminal episodes versus 4 in control. Its median
-per-seed best was 488 ticks and its best was 441. Ten strict improvements each
-cold-replayed twice. Seed 181081 reached the terminal on episode zero with the
+The treatment produced 18 terminal episodes versus 4 in control across 208
+cold-root episodes and 13,671 unique transitions. Its median per-seed best was
+488 ticks and its best was 368. Eleven strict winners each cold-replayed twice.
+Seed 181081 reached the terminal on episode zero with the
 same action-sequence digest as control, retained zero novelty cells, and then
 reproduced the same 561-tick best; this proves the exploration rule does not
 leak past immediate discovery. Retain the intervention.
