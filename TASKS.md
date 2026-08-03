@@ -221,9 +221,17 @@ budget. Remove it if it does not.
   the next shorter duration or recovery parameter already in the catalog.
   Enumerate once, resume deterministically, and require two exact cold replays;
   failed candidates make no Q update.
-- [ ] Run the bounded duration pass to exhaustion. Retain it only if it improves
+- [x] Run the bounded duration pass to exhaustion. Retain it only if it improves
   the real terminal tick; diagnose its result before permitting cross-family
   roll/raw substitution or a multi-option edit.
+- [ ] Add one roll-promotion edit family over the 333-tick incumbent: replace a
+  single non-roll movement option with the shortest roll at the same semantic
+  heading. Do not change the option boundary or angle in the same candidate.
+  Persist deterministic progress and require two exact cold replays for a
+  strict terminal-tick improvement.
+- [ ] Run the bounded roll-promotion pass to exhaustion. Retain it only if it
+  improves the real terminal tick; diagnose it before permitting non-local
+  headings, raw substitutions, or multi-option edits.
 - [ ] Reproduce 124 ticks or less, then continue the unchanged generic process
   to 123 ticks and 120 ticks or less.
 - [ ] Verify that ordinary seed ordering and update cadence do not erase the
@@ -392,6 +400,16 @@ small frontier. Focused tests cover semantic shortening, duplicate-free resume,
 binary round trip, and corruption rejection. The full framework audit passed
 440 orchestration tests and the 590-file source-size gate; the new module is
 834 lines.
+
+Duration-refinement result (2026-08-03): rejected and exhausted. All four
+same-family shortening candidates reached the real load-zone terminal, at 334,
+342, 333, and 343 ticks, but none strictly improved the 333-tick incumbent.
+The pass consumed 1,356 native ticks over 99 seconds and stopped with zero
+candidates remaining. The equal 333-tick camera-roll shortening remains
+rejected under the strict speed criterion. Shorter option duration is not the
+active bottleneck. The real 299-tick artifact has two more rolls than the valid
+incumbent, so isolate same-heading roll promotion next rather than combining
+family and heading changes.
 
 ### 4. Prove learning value only after the route works
 
