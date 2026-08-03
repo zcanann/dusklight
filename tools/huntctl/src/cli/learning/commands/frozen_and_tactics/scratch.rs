@@ -1,6 +1,7 @@
 use super::*;
 use huntctl::search_evaluator::native_scratch_heading::{
-    NativeScratchHeadingRunConfig, run_native_scratch_heading_refinement,
+    NativeScratchHeadingRunConfig, inspect_native_scratch_heading_checkpoint,
+    run_native_scratch_heading_refinement,
 };
 use huntctl::search_evaluator::native_scratch_learner::{
     NativeScratchRunConfig, run_native_scratch_learner,
@@ -12,6 +13,14 @@ pub(super) fn command(command: &str, learn_args: &[String]) -> Result<(), Box<dy
             .map(PathBuf::from)
             .unwrap_or(std::env::current_dir()?),
     )?;
+    if command == "inspect-scratch-headings" {
+        let input = resolve_path(learn_args, "--input", &repository_root)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&inspect_native_scratch_heading_checkpoint(&input)?)?
+        );
+        return Ok(());
+    }
     let request: OptimizationRequest =
         serde_json::from_slice(&fs::read(required_path(learn_args, "--request")?)?)?;
     let execution: NativeResidualExecutionBinding =

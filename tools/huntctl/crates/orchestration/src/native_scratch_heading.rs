@@ -11,7 +11,7 @@ use dusklight_learning::scratch_q::ScratchQTable;
 use dusklight_learning::tactic_asset::TacticAssetCatalog;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -30,6 +30,7 @@ use crate::native_tactic_route_runner::{
 
 const MAX_INCUMBENT_ACTIONS: usize = 100_000;
 const REPORT_SCHEMA: &str = "dusklight-native-scratch-heading-report/v1";
+const INSPECTION_SCHEMA: &str = "dusklight-native-scratch-heading-inspection/v1";
 const CHECKPOINT_SCHEMA: &str = "dusklight-native-scratch-heading-checkpoint/v2";
 const CHECKPOINT_MAGIC: &[u8; 8] = b"DSSHDR01";
 const CHECKPOINT_VERSION: u16 = 2;
@@ -86,6 +87,23 @@ pub struct NativeScratchHeadingAttempt {
     pub native_wall_micros: u64,
     pub tape_sha256: Digest,
     pub cold_replay_attempts: Vec<NativeTacticColdReplayAttempt>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeScratchHeadingInspection {
+    pub schema: String,
+    pub checkpoint_sha256: Digest,
+    pub checkpoint_schema: String,
+    pub source_checkpoint_sha256: Digest,
+    pub action_universe_sha256: Digest,
+    pub heading_count: u64,
+    pub incumbent_ticks: u64,
+    pub incumbent_action_sequence_sha256: Digest,
+    pub incumbent_action_count: u64,
+    pub nominal_duration_ticks: u64,
+    pub family_counts: BTreeMap<String, u64>,
+    pub incumbent_options: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -694,9 +712,13 @@ fn encode_heading_checkpoint(
 fn decode_heading_checkpoint(
     bytes: &[u8],
 ) -> Result<NativeScratchHeadingCheckpoint, NativeScratchHeadingError> {
+    let version = bytes
+        .get(8..10)
+        .and_then(|value| value.try_into().ok())
+        .map(u16::from_le_bytes);
     if bytes.len() <= CHECKPOINT_HEADER_BYTES
         || &bytes[..8] != CHECKPOINT_MAGIC
-        || u16::from_le_bytes(bytes[8..10].try_into().unwrap()) != CHECKPOINT_VERSION
+        || !matches!(version, Some(1 | CHECKPOINT_VERSION))
         || bytes[10..12] != [0, 0]
     {
         return Err(heading_error(
@@ -712,6 +734,88 @@ fn decode_heading_checkpoint(
         ));
     }
     serde_cbor::from_slice(&raw).map_err(heading_display)
+}
+
+pub fn inspect_native_scratch_heading_checkpoint(
+    input: &Path,
+) -> Result<NativeScratchHeadingInspection, NativeScratchHeadingError> {
+    let checkpoint_path = if input.is_dir() {
+        input.join("checkpoint.dssh")
+    } else {
+        input.to_path_buf()
+    };
+    let bytes = fs::read(&checkpoint_path).map_err(heading_display)?;
+    let checkpoint = decode_heading_checkpoint(&bytes)?;
+    let catalog = scratch_action_catalog_with_heading_count(checkpoint.search.heading_count)
+        .map_err(heading_display)?;
+    let rebuilt = ScratchHeadingSearch::with_heading_count(
+        checkpoint.search.incumbent_action_sequence.clone(),
+        checkpoint.search.heading_count,
+    )
+    .map_err(heading_error)?;
+    if !matches!(
+        checkpoint.schema.as_str(),
+        "dusklight-native-scratch-heading-checkpoint/v1" | CHECKPOINT_SCHEMA
+    ) || checkpoint.report.schema != REPORT_SCHEMA
+        || checkpoint.search.incumbent_sha256 != rebuilt.incumbent_sha256
+        || checkpoint.action_universe_sha256 != catalog.action_schema_sha256()
+        || checkpoint.report.source_checkpoint_sha256 != checkpoint.source_checkpoint_sha256
+        || checkpoint.report.action_universe_sha256 != checkpoint.action_universe_sha256
+        || checkpoint.report.seed != checkpoint.seed
+        || checkpoint.report.attempted_candidates as usize != checkpoint.report.attempts.len()
+        || checkpoint.report.report_sha256 != heading_report_identity(&checkpoint.report)?
+    {
+        return Err(heading_error(
+            "scratch heading checkpoint cannot be inspected safely",
+        ));
+    }
+    let incumbent_options = checkpoint
+        .search
+        .incumbent_action_sequence
+        .iter()
+        .map(|action| {
+            catalog
+                .entries()
+                .get(*action)
+                .map(|entry| entry.option_id().to_owned())
+                .ok_or_else(|| heading_error("scratch incumbent action is invalid"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut family_counts = BTreeMap::new();
+    for option in &incumbent_options {
+        let family = option
+            .strip_prefix("scratch.")
+            .and_then(|value| value.split(".h").next())
+            .ok_or_else(|| heading_error("scratch option family is malformed"))?;
+        *family_counts.entry(family.to_owned()).or_default() += 1;
+    }
+    let nominal_duration_ticks = checkpoint
+        .search
+        .incumbent_action_sequence
+        .iter()
+        .map(|action| {
+            u64::from(
+                catalog.entries()[*action]
+                    .description()
+                    .duration
+                    .maximum_ticks,
+            )
+        })
+        .sum();
+    Ok(NativeScratchHeadingInspection {
+        schema: INSPECTION_SCHEMA.into(),
+        checkpoint_sha256: sha256(&bytes),
+        checkpoint_schema: checkpoint.schema,
+        source_checkpoint_sha256: checkpoint.source_checkpoint_sha256,
+        action_universe_sha256: checkpoint.action_universe_sha256,
+        heading_count: checkpoint.search.heading_count as u64,
+        incumbent_ticks: checkpoint.report.fastest_selected_ticks,
+        incumbent_action_sequence_sha256: checkpoint.search.incumbent_sha256,
+        incumbent_action_count: incumbent_options.len() as u64,
+        nominal_duration_ticks,
+        family_counts,
+        incumbent_options,
+    })
 }
 
 fn write_heading_report(
@@ -959,6 +1063,12 @@ mod tests {
         };
         let encoded = encode_heading_checkpoint(&checkpoint).unwrap();
         assert_eq!(decode_heading_checkpoint(&encoded).unwrap(), checkpoint);
+        let mut legacy_header = encoded.clone();
+        legacy_header[8..10].copy_from_slice(&1_u16.to_le_bytes());
+        assert_eq!(
+            decode_heading_checkpoint(&legacy_header).unwrap(),
+            checkpoint
+        );
         let mut corrupted = encoded;
         let last = corrupted.len() - 1;
         corrupted[last] ^= 0x80;

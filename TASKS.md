@@ -212,6 +212,18 @@ budget. Remove it if it does not.
 - [x] Run the bounded 32-heading pass to exhaustion. Retain it only if it
   improves the real terminal tick; otherwise reject it before adding a
   duration, boundary, or multi-option edit family.
+- [x] Add read-only incumbent introspection and compare the corrected 333-tick
+  sequence with the real but mischaracterized 299-tick sequence. Select the
+  next single edit family from observed family, duration, and boundary changes,
+  not from another undirected mining run.
+- [ ] Add one duration-shortening edit family over the 333-tick incumbent.
+  Preserve heading, tactic family, and lock/roll timing while moving only to
+  the next shorter duration or recovery parameter already in the catalog.
+  Enumerate once, resume deterministically, and require two exact cold replays;
+  failed candidates make no Q update.
+- [ ] Run the bounded duration pass to exhaustion. Retain it only if it improves
+  the real terminal tick; diagnose its result before permitting cross-family
+  roll/raw substitution or a multi-option edit.
 - [ ] Reproduce 124 ticks or less, then continue the unchanged generic process
   to 123 ticks and 120 ticks or less.
 - [ ] Verify that ordinary seed ordering and update cadence do not erase the
@@ -356,6 +368,18 @@ ticks over 928 seconds of wall time. Angular resolution is not the active local
 bottleneck. Diagnose the retained option sequence against the real 299-tick
 artifact before choosing the next single edit family; do not add more headings
 or resume either exhausted frontier.
+
+Incumbent diagnosis (2026-08-03): the checksummed read-only inspector accepts
+v1 checkpoints for diagnosis but execution still rejects them. The valid
+333-tick and legacy 299-tick routes both contain 44 options, with nominal
+durations of 368 and 345 ticks. Seventeen options differ. Four structural
+changes explain the full 23-tick nominal reduction: two 8-tick camera moves
+became rolls, one 8-tick move became a 1-tick raw input, and one 16-tick camera
+roll became an 8-tick camera roll; the other thirteen are heading changes. The
+valid incumbent has only four same-family shortening opportunities: one
+16-tick camera move, two 16-tick camera rolls, and one 8-tick move. Measure
+those duration parameters first. Cross-family roll/raw substitutions and
+non-local heading changes remain separate hypotheses.
 
 ### 4. Prove learning value only after the route works
 
