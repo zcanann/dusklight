@@ -222,7 +222,7 @@ pub fn run_native_scratch_learner(
                 .report
                 .episodes
                 .last()
-                .map(|episode| episode.mode),
+                .map(|episode| (episode.mode, episode.strict_winner)),
         ) {
             checkpoint
                 .deletion_search
@@ -423,8 +423,8 @@ pub fn run_native_scratch_learner(
     Ok(checkpoint.report)
 }
 
-fn deletion_slot_is_due(previous_mode: Option<ScratchEpisodeMode>) -> bool {
-    previous_mode != Some(ScratchEpisodeMode::DeleteOption)
+fn deletion_slot_is_due(previous_episode: Option<(ScratchEpisodeMode, bool)>) -> bool {
+    previous_episode == Some((ScratchEpisodeMode::Learning, true))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1063,28 +1063,24 @@ mod tests {
     }
 
     #[test]
-    fn deletion_slots_alternate_from_the_last_persisted_episode_mode() {
-        assert!(deletion_slot_is_due(None));
-        assert!(deletion_slot_is_due(Some(ScratchEpisodeMode::Learning)));
-        assert!(!deletion_slot_is_due(Some(
-            ScratchEpisodeMode::DeleteOption
-        )));
-
-        let resumed_modes = [
+    fn deletion_slot_follows_only_a_strict_persisted_learning_winner() {
+        assert!(!deletion_slot_is_due(None));
+        assert!(!deletion_slot_is_due(Some((
             ScratchEpisodeMode::Learning,
-            ScratchEpisodeMode::DeleteOption,
+            false
+        ))));
+        assert!(deletion_slot_is_due(Some((
             ScratchEpisodeMode::Learning,
+            true
+        ))));
+        assert!(!deletion_slot_is_due(Some((
             ScratchEpisodeMode::DeleteOption,
-        ];
-        for pair in resumed_modes.windows(2) {
-            let deletion_available = deletion_slot_is_due(Some(pair[0]));
-            let resumed_mode = if deletion_available {
-                ScratchEpisodeMode::DeleteOption
-            } else {
-                ScratchEpisodeMode::Learning
-            };
-            assert_eq!(resumed_mode, pair[1]);
-        }
+            false
+        ))));
+        assert!(!deletion_slot_is_due(Some((
+            ScratchEpisodeMode::DeleteOption,
+            true
+        ))));
     }
 
     #[test]
