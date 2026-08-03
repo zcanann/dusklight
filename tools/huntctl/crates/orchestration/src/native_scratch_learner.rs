@@ -239,6 +239,13 @@ pub fn run_native_scratch_learner(
         } else {
             ScratchEpisodeMode::Learning
         };
+        let learning_episode_ordinal = next_learning_episode_ordinal(
+            checkpoint
+                .report
+                .episodes
+                .iter()
+                .map(|episode| episode.mode),
+        );
         let outcome = run_episode(
             &root,
             config,
@@ -250,7 +257,7 @@ pub fn run_native_scratch_learner(
             deletion_candidate
                 .as_ref()
                 .map(|candidate| candidate.action_sequence.as_slice()),
-            episode_index,
+            learning_episode_ordinal,
             &episode_root,
         )?;
         let action_sequence_sha256 =
@@ -427,6 +434,12 @@ fn deletion_slot_is_due(previous_episode: Option<(ScratchEpisodeMode, bool)>) ->
     previous_episode == Some((ScratchEpisodeMode::Learning, true))
 }
 
+fn next_learning_episode_ordinal(modes: impl Iterator<Item = ScratchEpisodeMode>) -> u64 {
+    modes
+        .filter(|mode| *mode == ScratchEpisodeMode::Learning)
+        .count() as u64
+}
+
 #[allow(clippy::too_many_arguments)]
 fn apply_episode_update(
     q: &mut ScratchQTable,
@@ -482,7 +495,7 @@ fn run_episode(
     q: &ScratchQTable,
     completed_sequences: &[Vec<usize>],
     forced_action_sequence: Option<&[usize]>,
-    episode_index: u64,
+    learning_episode_ordinal: u64,
     episode_root: &Path,
 ) -> Result<EpisodeOutcome, NativeScratchRunError> {
     fs::create_dir_all(episode_root).map_err(run_error)?;
@@ -599,7 +612,7 @@ fn run_episode(
                             &state,
                             &eligible,
                             config.seed,
-                            episode_index,
+                            learning_episode_ordinal,
                             sequence.len() as u64,
                             config.epsilon_per_million,
                         )
@@ -1081,6 +1094,26 @@ mod tests {
             ScratchEpisodeMode::DeleteOption,
             true
         ))));
+    }
+
+    #[test]
+    fn deletion_episodes_do_not_consume_the_persisted_q_ordinal() {
+        let modes = [
+            ScratchEpisodeMode::Learning,
+            ScratchEpisodeMode::DeleteOption,
+            ScratchEpisodeMode::Learning,
+            ScratchEpisodeMode::DeleteOption,
+        ];
+        assert_eq!(next_learning_episode_ordinal(modes.into_iter()), 2);
+        assert_eq!(
+            next_learning_episode_ordinal(
+                modes
+                    .into_iter()
+                    .filter(|mode| *mode == ScratchEpisodeMode::Learning)
+            ),
+            2
+        );
+        assert_eq!(next_learning_episode_ordinal(modes[..2].iter().copied()), 1);
     }
 
     #[test]
