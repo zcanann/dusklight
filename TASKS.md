@@ -229,9 +229,17 @@ budget. Remove it if it does not.
   heading. Do not change the option boundary or angle in the same candidate.
   Persist deterministic progress and require two exact cold replays for a
   strict terminal-tick improvement.
-- [ ] Run the bounded roll-promotion pass to exhaustion. Retain it only if it
+- [x] Run the bounded roll-promotion pass to exhaustion. Retain it only if it
   improves the real terminal tick; diagnose it before permitting non-local
   headings, raw substitutions, or multi-option edits.
+- [ ] Make authenticated refinement outputs composable. A strict winner from a
+  heading or local-option pass must expose one common incumbent contract that
+  another existing edit family can consume by exact checkpoint hash, without a
+  manual tape/action migration or weakening v1 diagnostic-only rejection.
+- [ ] From the retained 242-tick roll incumbent, run the existing coarse-heading,
+  duration, and roll families as deterministic coordinate descent. Exhaust each
+  frontier, accept only twice-replayed strict terminal improvements, and stop
+  when a complete cycle makes no improvement before adding a new edit family.
 - [ ] Reproduce 124 ticks or less, then continue the unchanged generic process
   to 123 ticks and 120 ticks or less.
 - [ ] Verify that ordinary seed ordering and update cadence do not erase the
@@ -418,6 +426,17 @@ candidates replace one non-roll option with `r03` at the same parsed semantic
 heading and change no other boundary or angle. Focused tests cover mapping,
 edit-kind persistence, resume, and corruption rejection. The full framework
 audit passed 441 orchestration tests and the 590-file source-size gate.
+
+Roll-refinement result (2026-08-03): retained and exhausted. The same-heading
+pass evaluated 82 candidates; 29 reached the real load-zone terminal and six
+strict winners each cold-replayed twice. The accepted camera-move-to-`r03`
+promotions improved the route through 326, 302, 287, 258, 246, and finally 242
+ticks, then the frontier stopped with zero candidates remaining. It consumed
+14,982 native ticks over 696 seconds. The selected route now has seven rolls,
+243 route frames, 22 distinct inputs, and 71 input changes. Roll availability
+was a major local bottleneck, but 242 remains 118 ticks above 124. Compose the
+already implemented edit families around this incumbent before inventing raw,
+non-local-heading, or multi-option treatments.
 
 ### 4. Prove learning value only after the route works
 
