@@ -474,6 +474,13 @@ the edit families interact and that a one-pass-per-family conclusion was
 premature. Continue cycle one from this exact heading checkpoint with duration
 and roll refinement.
 
+Coordinate-descent duration result (2026-08-03): retained and exhausted. The
+duration pass consumed the exact 237-tick heading checkpoint, evaluated all
+five same-family shortening candidates, and every candidate reached the real
+terminal. Two strict improvements cold-replayed twice and reduced the incumbent
+to 231 ticks; zero duration candidates remain. Continue cycle one with roll
+promotion from this exact option checkpoint.
+
 ### 4. Prove learning value only after the route works
 
 - [ ] Compare adaptive, frozen, and random-valid selection over the same seeds,
