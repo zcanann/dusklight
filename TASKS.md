@@ -191,6 +191,18 @@ budget. Remove it if it does not.
 - [x] Complete the isolated five-seed distribution by rerunning 104729, 130363,
   and 155921. Retain sparse deletion only if the full result preserves the
   broad Q gains and supplies useful accepted local improvements.
+- [x] Diagnose the retained 360-tick winner before spending more mining time.
+  Distinguish missing control expressivity from an incumbent that deletion
+  alone cannot repair.
+- [ ] Add exactly one next local edit family over the learner's own incumbent:
+  replace one option's heading with either adjacent heading already present in
+  the fixed 16-heading catalog while preserving its family and duration.
+  Enumerate candidates once, persist progress, cold-root evaluate, and accept
+  only a strict twice-replayed terminal improvement. Failed candidates make no
+  Q update. Do not add fine headings or another global action yet.
+- [ ] Run the bounded adjacent-heading pass on the 360-tick incumbent. Retain
+  the edit only if it improves the real terminal tick; exhaust or reject it
+  before considering finer heading parameters.
 - [ ] Reproduce 124 ticks or less, then continue the unchanged generic process
   to 123 ticks and 120 ticks or less.
 - [ ] Verify that ordinary seed ordering and update cadence do not erase the
@@ -267,6 +279,16 @@ exactly preserved its novelty-only Q best; seed 155921 additionally improved
 the distribution, deletion consumed only 11 episodes instead of 82 under fixed
 alternation. This is the final measured scheduler treatment; move to closing
 the 360-to-124 route-quality gap rather than tuning cadence again.
+
+Route-quality diagnosis (2026-08-02): the 360-tick winner contains 44 options
+and 23 distinct frame inputs. It holds camera-relative forward for 299 of 361
+route frames and presses a button for 43 frames, so the generic camera-lock and
+roll actions are present and selected; basic expressivity is not missing. A
+retained 128-frame fast-route artifact uses 81 distinct inputs and changes
+input on 112 of 127 frame boundaries, while the scratch route changes on only
+99 of 360. Deletion can remove a whole bad option but cannot correct its
+heading. First measure adjacent substitutions already available in the fixed
+catalog; only a failure there justifies finer headings or a parameter learner.
 
 ### 4. Prove learning value only after the route works
 
