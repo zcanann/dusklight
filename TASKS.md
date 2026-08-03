@@ -118,6 +118,26 @@ model, or retained trajectory input. Merely choosing the least-visited action
 in the current full state is not an intervention: the plain learner already
 prefers its unvisited zero-valued actions over negatively valued failures.
 
+Intervention result (2026-08-02): **passed, 5/5 successful seeds** under the
+same 36 x 900-tick budget. The v3 binary checkpoint persists coarse cell counts;
+the first authenticated terminal clears the temporary values and permanently
+returns selection to the terminal/tick learner.
+
+| Seed | Control terminals | Treatment terminals | Treatment best | First terminal |
+| ---: | ---: | ---: | ---: | ---: |
+| 104729 | 0 | 3 | 540 | 76.2 s |
+| 130363 | 2 | 2 | 481 | 263.9 s |
+| 155921 | 0 | 1 | 441 | 516.6 s |
+| 181081 | 2 | 2 | 561 | 35.8 s |
+| 208609 | 0 | 8 | 488 | 49.4 s |
+
+The treatment produced 16 terminal episodes versus 4 in control. Its median
+per-seed best was 488 ticks and its best was 441. Ten strict improvements each
+cold-replayed twice. Seed 181081 reached the terminal on episode zero with the
+same action-sequence digest as control, retained zero novelty cells, and then
+reproduced the same 561-tick best; this proves the exploration rule does not
+leak past immediate discovery. Retain the intervention.
+
 Conditional interventions:
 
 - **Action expressivity:** add only the missing generic option or parameter and
@@ -138,6 +158,14 @@ budget. Remove it if it does not.
 
 ### 3. Establish the benchmark result
 
+- [ ] Add one deterministic post-success mutation loop over the fastest
+  successful action sequence: delete one option, cold-root evaluate the
+  candidate, and accept it only when the real terminal still fires at a strict
+  lower tick. Enumerate each deletion once before repeating any; failed
+  mutations cannot alter the incumbent or Q table. Do not add another edit
+  family until deletion is measured.
+- [ ] Prove with a focused deterministic test that deletion candidates are
+  complete, non-duplicated, resumable, and terminal failures are rejected.
 - [ ] Re-run five fixed zero-shot seeds with the final minimal mechanism set and
   retain the full result distribution, not only the luckiest seed.
 - [ ] Reproduce 124 ticks or less, then continue the unchanged generic process
