@@ -450,6 +450,20 @@ for execution. The CLI accepts an exhausted option checkpoint directly via
 coarse-heading pass without tape migration. The full framework audit passed
 442 orchestration tests and the 591-file source-size gate.
 
+Incumbent-migration checkpoint (2026-08-03): the retained 242-tick option
+checkpoint preserved only the optimization-request digest; its exact request
+file was not retained, so it cannot honestly enter another authenticated run
+under the old execution binding. `huntctl learn migrate-scratch-option-incumbent`
+now provides the bounded playback-and-record migration needed for that case. It
+loads the exhausted semantic option sequence without accepting it as current
+authority, executes it against a retained sealed request/execution, requires
+the same real terminal tick, requires two exact cold replays, and only then
+writes a checksummed compressed binary incumbent checkpoint containing the
+tape and replay evidence. All refinement families accept that checkpoint by
+its exact hash. Corruption coverage and the full 443-test orchestration audit
+pass, as does the 591-file source-size gate. The native 242-tick migration must
+still succeed before coordinate descent begins.
+
 ### 4. Prove learning value only after the route works
 
 - [ ] Compare adaptive, frozen, and random-valid selection over the same seeds,

@@ -142,6 +142,7 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
         }
         Some(
             command @ ("scratch-route"
+            | "migrate-scratch-option-incumbent"
             | "refine-scratch-headings"
             | "refine-scratch-fine-headings"
             | "refine-scratch-durations"

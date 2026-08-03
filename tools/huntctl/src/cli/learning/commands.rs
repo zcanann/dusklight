@@ -424,6 +424,7 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "freeze-tactic-policy"
             | "execute-tactic-policy"
             | "scratch-route"
+            | "migrate-scratch-option-incumbent"
             | "refine-scratch-headings"
             | "refine-scratch-fine-headings"
             | "refine-scratch-durations"
@@ -518,6 +519,7 @@ mod tests {
     fn retained_tactic_audits_are_reachable_from_the_learn_dispatcher() {
         for command in [
             "scratch-route",
+            "migrate-scratch-option-incumbent",
             "refine-scratch-headings",
             "refine-scratch-fine-headings",
             "refine-scratch-durations",

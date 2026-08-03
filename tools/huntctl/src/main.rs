@@ -241,16 +241,19 @@ fn print_usage() {
         "  huntctl learn scratch-route --request OPTIMIZATION.json --execution EXECUTION.json --output build/DIR [--seed N] [--episodes N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--wall-time-seconds N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
     );
     eprintln!(
-        "  huntctl learn refine-scratch-headings --request OPTIMIZATION.json --execution EXECUTION.json (--source build/SCRATCH | --scratch-source build/SCRATCH --option-source build/OPTION) --output build/DIR --seed N [--candidate-limit N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--wall-time-seconds N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
+        "  huntctl learn migrate-scratch-option-incumbent --request OPTIMIZATION.json --execution EXECUTION.json --source build/OPTION --output build/DIR --seed N [--maximum-episode-ticks N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
     );
     eprintln!(
-        "  huntctl learn refine-scratch-fine-headings --request OPTIMIZATION.json --execution EXECUTION.json --scratch-source build/SCRATCH (--source build/HEADING | --option-source build/OPTION) --output build/DIR --seed N [--candidate-limit N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--wall-time-seconds N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
+        "  huntctl learn refine-scratch-headings --request OPTIMIZATION.json --execution EXECUTION.json (--source build/SCRATCH | --scratch-source build/SCRATCH (--option-source build/OPTION | --incumbent-source build/INCUMBENT)) --output build/DIR --seed N [--candidate-limit N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--wall-time-seconds N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
     );
     eprintln!(
-        "  huntctl learn refine-scratch-durations --request OPTIMIZATION.json --execution EXECUTION.json --scratch-source build/SCRATCH (--source build/HEADING | --option-source build/OPTION) --output build/DIR --seed N [--candidate-limit N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--wall-time-seconds N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
+        "  huntctl learn refine-scratch-fine-headings --request OPTIMIZATION.json --execution EXECUTION.json --scratch-source build/SCRATCH (--source build/HEADING | --option-source build/OPTION | --incumbent-source build/INCUMBENT) --output build/DIR --seed N [--candidate-limit N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--wall-time-seconds N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
     );
     eprintln!(
-        "  huntctl learn refine-scratch-rolls --request OPTIMIZATION.json --execution EXECUTION.json --scratch-source build/SCRATCH (--source build/HEADING | --option-source build/OPTION) --output build/DIR --seed N [--candidate-limit N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--wall-time-seconds N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
+        "  huntctl learn refine-scratch-durations --request OPTIMIZATION.json --execution EXECUTION.json --scratch-source build/SCRATCH (--source build/HEADING | --option-source build/OPTION | --incumbent-source build/INCUMBENT) --output build/DIR --seed N [--candidate-limit N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--wall-time-seconds N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
+    );
+    eprintln!(
+        "  huntctl learn refine-scratch-rolls --request OPTIMIZATION.json --execution EXECUTION.json --scratch-source build/SCRATCH (--source build/HEADING | --option-source build/OPTION | --incumbent-source build/INCUMBENT) --output build/DIR --seed N [--candidate-limit N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--wall-time-seconds N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
     );
     eprintln!("  huntctl learn inspect-scratch-headings --input build/HEADING");
     eprintln!(

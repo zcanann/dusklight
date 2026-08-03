@@ -40,10 +40,7 @@ const CHECKPOINT_COMPRESSION_LEVEL: i32 = 1;
 
 pub struct NativeScratchHeadingRunConfig<'a> {
     pub scratch: NativeScratchRunConfig<'a>,
-    /// An exhausted heading-refinement checkpoint to refine further. When
-    /// absent, the authenticated scratch learner checkpoint is the source.
-    pub source_heading_root: Option<&'a Path>,
-    pub source_option_root: Option<&'a Path>,
+    pub source: ScratchIncumbentSource<'a>,
     pub heading_count: usize,
     pub output_root: &'a Path,
     pub candidate_limit: u64,
@@ -317,16 +314,8 @@ pub fn run_native_scratch_heading_refinement(
         return Err(heading_error("scratch heading configuration is invalid"));
     }
     let started = Instant::now();
-    let source_kind = match (config.source_heading_root, config.source_option_root) {
-        (None, None) => ScratchIncumbentSource::Scratch,
-        (Some(path), None) => ScratchIncumbentSource::Heading(path),
-        (None, Some(path)) => ScratchIncumbentSource::Option(path),
-        (Some(_), Some(_)) => {
-            return Err(heading_error("scratch heading source is ambiguous"));
-        }
-    };
     let source =
-        load_authenticated_scratch_incumbent(&config.scratch, source_kind, config.heading_count)
+        load_authenticated_scratch_incumbent(&config.scratch, config.source, config.heading_count)
             .map_err(heading_display)?;
     let root = config
         .scratch
