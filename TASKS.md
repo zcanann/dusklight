@@ -169,7 +169,7 @@ budget. Remove it if it does not.
   complete, non-duplicated, resumable, and terminal failures are rejected.
 - [x] Re-run five fixed zero-shot seeds with deletion enabled and retain the
   full result distribution, not only the luckiest seed.
-- [ ] Correct the measured scheduler failure without adding an edit family:
+- [x] Correct the measured scheduler failure without adding an edit family:
   after the first terminal, alternate one ordinary Q episode with one pending
   deletion candidate. A new strict Q winner resets deletion enumeration to the
   better incumbent. Failed deletion candidates still make zero Q updates.
@@ -203,6 +203,14 @@ new overall best by 8 ticks and helped two seeds, but regressed three seeds and
 worsened the median from 488 to 567 because it monopolized every post-terminal
 episode. The smallest correction is deterministic Q/deletion alternation; do
 not add shortening, heading, roll-timing, another model, or more wall time yet.
+
+Alternation checkpoint (2026-08-02): cadence is derived from the last persisted
+episode mode, so checkpoint resume needs no mutable scheduler field. A fresh
+four-episode seed-181081 native smoke ran learning, deletion, learning,
+deletion. The accepted deletion improved 876 to 868 ticks and cold-replayed;
+the intervening learning episode made 112 Q updates, while the failed final
+deletion made zero. The full learning-framework audit passed 431 orchestration
+tests before the native smoke.
 
 ### 4. Prove learning value only after the route works
 
