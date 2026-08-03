@@ -200,9 +200,18 @@ budget. Remove it if it does not.
   Enumerate candidates once, persist progress, cold-root evaluate, and accept
   only a strict twice-replayed terminal improvement. Failed candidates make no
   Q update. Do not add fine headings or another global action yet.
-- [x] Run the bounded adjacent-heading pass on the 360-tick incumbent. Retain
+- [ ] Run the bounded adjacent-heading pass on the 360-tick incumbent. Retain
   the edit only if it improves the real terminal tick; exhaust or reject it
   before considering finer heading parameters.
+- [ ] Add one finer local parameter treatment over the correctly exhausted
+  adjacent-heading incumbent: map the 16-heading sequence losslessly into a
+  32-heading catalog and propose only each option's two 11.25-degree neighbors.
+  Preserve family and duration, keep the global learner at 16 headings, bind
+  the source checkpoint, resume deterministically, and require two exact cold
+  replays.
+- [ ] Run the bounded 32-heading pass to exhaustion. Retain it only if it
+  improves the real terminal tick; otherwise reject it before adding a
+  duration, boundary, or multi-option edit family.
 - [ ] Reproduce 124 ticks or less, then continue the unchanged generic process
   to 123 ticks and 120 ticks or less.
 - [ ] Verify that ordinary seed ordering and update cadence do not erase the
@@ -297,21 +306,24 @@ its exact family and duration. Its separate checksummed, compressed binary
 checkpoint binds the source checkpoint, request, execution, action universe,
 seed, incumbent, attempts, and sealed report. Failed candidates never touch Q;
 strict winners must cold-replay twice before resetting enumeration around the
-new incumbent. A native seed-155921 smoke resumed from attempt one to two with
-87 then 86 candidates remaining and no false terminal. The full framework audit
-passed 436 orchestration tests, and the CLI was split to remain below the
-1,500-line source-size gate.
+new incumbent. The corrected implementation addresses headings through stable
+option IDs rather than sorted catalog positions, supports an authenticated
+16-to-32-heading refinement chain without enlarging the learner's action space,
+and versions invalid v1 frontiers out of resume. Focused tests prove exact
+family-preserving neighbors, lossless coarse-to-fine mapping, deterministic
+resume, and corruption rejection. The full framework audit passed 437
+orchestration tests and the 589-file source-size gate.
 
-Adjacent-heading result (2026-08-02): retained and exhausted. The resumable
-seed-155921 pass evaluated 274 candidates; 141 reached the real load-zone
-terminal, and 11 strict improvements each cold-replayed twice before replacing
-the incumbent. It reduced the selected route from 360 to 299 ticks, then
-stopped with zero candidates remaining. The sealed run consumed 74,712 native
-ticks over 2,328 seconds of total wall time. This proves that deterministic
-local heading repair is useful, but the remaining 175-tick gap to 124 also
-rejects coarse adjacent substitutions as a sufficient optimizer. Preserve the
-operator and evidence; measure finer heading parameters next rather than spend
-more episodes on the exhausted frontier.
+Invalidated adjacent-heading result (2026-08-02): the 274-candidate run reached
+a real, twice-replayed 299-tick route, but a focused coarse-to-fine catalog test
+exposed that `TacticAssetCatalog` sorts entries by option ID. The original edit
+decoded sorted action indexes with division and modulo as though catalog
+insertion order were preserved, so it did not reliably retain family or
+duration and is not evidence for heading-only refinement. Do not use its
+checkpoint as the fine-heading source. Semantic option-ID addressing replaces
+the invalid index geometry, the checkpoint format advances to v2 so the old
+frontier cannot resume under new semantics, and the bounded adjacent pass is
+reopened from the authenticated 360-tick scratch incumbent.
 
 ### 4. Prove learning value only after the route works
 

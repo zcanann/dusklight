@@ -140,9 +140,10 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
-        Some(command @ ("scratch-route" | "refine-scratch-headings")) => {
-            scratch::command(command, &args[1..])
-        }
+        Some(
+            command
+            @ ("scratch-route" | "refine-scratch-headings" | "refine-scratch-fine-headings"),
+        ) => scratch::command(command, &args[1..]),
         Some("prove-generalized-tactics") => {
             let learn_args = &args[1..];
             let direct_inputs = repeated_option(learn_args, "--input")

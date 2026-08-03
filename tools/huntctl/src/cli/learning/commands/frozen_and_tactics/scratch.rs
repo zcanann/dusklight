@@ -19,7 +19,10 @@ pub(super) fn command(command: &str, learn_args: &[String]) -> Result<(), Box<dy
     match command {
         "scratch-route" => run_route(learn_args, &repository_root, &request, &execution),
         "refine-scratch-headings" => {
-            refine_headings(learn_args, &repository_root, &request, &execution)
+            refine_headings(learn_args, &repository_root, &request, &execution, false)
+        }
+        "refine-scratch-fine-headings" => {
+            refine_headings(learn_args, &repository_root, &request, &execution, true)
         }
         _ => usage_error(),
     }
@@ -78,14 +81,20 @@ fn refine_headings(
     repository_root: &Path,
     request: &OptimizationRequest,
     execution: &NativeResidualExecutionBinding,
+    fine: bool,
 ) -> Result<(), Box<dyn Error>> {
     let source = resolve_path(args, "--source", repository_root)?;
+    let scratch_source = if fine {
+        resolve_path(args, "--scratch-source", repository_root)?
+    } else {
+        source.clone()
+    };
     let output = resolve_path(args, "--output", repository_root)?;
     let scratch = NativeScratchRunConfig {
         repository_root,
         optimization: request,
         execution,
-        output_root: &source,
+        output_root: &scratch_source,
         seed: u64_option(args, "--seed", 0)?,
         episodes: 1_000_000,
         maximum_episode_ticks: u32::try_from(u64_option(args, "--maximum-episode-ticks", 900)?)?,
@@ -99,6 +108,8 @@ fn refine_headings(
     };
     let report = run_native_scratch_heading_refinement(&NativeScratchHeadingRunConfig {
         scratch,
+        source_heading_root: fine.then_some(source.as_path()),
+        heading_count: if fine { 32 } else { 16 },
         output_root: &output,
         candidate_limit: u64_option(args, "--candidate-limit", 1_000)?,
         maximum_wall_time: Duration::from_secs(u64_option(args, "--wall-time-seconds", 600)?),

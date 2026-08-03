@@ -11,13 +11,30 @@ use std::f32::consts::{PI, TAU};
 pub const SCRATCH_HEADING_COUNT: usize = 16;
 pub const SCRATCH_ACTIONS_PER_HEADING: usize = 16;
 pub const SCRATCH_ACTION_COUNT: usize = SCRATCH_HEADING_COUNT * SCRATCH_ACTIONS_PER_HEADING;
+pub const MAX_SCRATCH_REFINEMENT_HEADINGS: usize = 32;
 
 /// Builds one fixed action universe without goals, coordinates, demonstrations,
 /// route fragments, or state-conditioned proposal rules.
 pub fn scratch_action_catalog() -> Result<TacticAssetCatalog, TacticAssetError> {
-    let mut entries = Vec::with_capacity(SCRATCH_ACTION_COUNT);
-    for heading_index in 0..SCRATCH_HEADING_COUNT {
-        let heading = TAU * heading_index as f32 / SCRATCH_HEADING_COUNT as f32;
+    scratch_action_catalog_with_heading_count(SCRATCH_HEADING_COUNT)
+}
+
+/// Builds the same route-agnostic action families at a finer angular resolution
+/// for local incumbent refinement. Cold-start learning keeps the fixed 16-bin
+/// catalog so this does not multiply its exploration surface.
+pub fn scratch_action_catalog_with_heading_count(
+    heading_count: usize,
+) -> Result<TacticAssetCatalog, TacticAssetError> {
+    if !(SCRATCH_HEADING_COUNT..=MAX_SCRATCH_REFINEMENT_HEADINGS).contains(&heading_count)
+        || !heading_count.is_power_of_two()
+    {
+        return Err(TacticAssetError::InvalidAsset(
+            "scratch heading count must be a power of two from 16 through 32".into(),
+        ));
+    }
+    let mut entries = Vec::with_capacity(heading_count * SCRATCH_ACTIONS_PER_HEADING);
+    for heading_index in 0..heading_count {
+        let heading = TAU * heading_index as f32 / heading_count as f32;
         let direction_degrees = (-heading * 180.0 / PI).round() as i16;
         let direction_degrees = if direction_degrees < -180 {
             direction_degrees + 360
@@ -62,8 +79,75 @@ pub fn scratch_action_catalog() -> Result<TacticAssetCatalog, TacticAssetError> 
             }
         }
     }
-    debug_assert_eq!(entries.len(), SCRATCH_ACTION_COUNT);
+    debug_assert_eq!(entries.len(), heading_count * SCRATCH_ACTIONS_PER_HEADING);
     TacticAssetCatalog::new(entries)
+}
+
+pub fn scratch_action_heading_index(
+    catalog: &TacticAssetCatalog,
+    action_index: usize,
+) -> Result<usize, TacticAssetError> {
+    let entry = catalog
+        .entries()
+        .get(action_index)
+        .ok_or_else(|| TacticAssetError::InvalidAsset("scratch action index is invalid".into()))?;
+    let (_, heading, _) = split_heading(entry.option_id())?;
+    Ok(heading)
+}
+
+pub fn scratch_action_index_with_heading(
+    catalog: &TacticAssetCatalog,
+    action_index: usize,
+    replacement_heading_index: usize,
+) -> Result<usize, TacticAssetError> {
+    let entry = catalog
+        .entries()
+        .get(action_index)
+        .ok_or_else(|| TacticAssetError::InvalidAsset("scratch action index is invalid".into()))?;
+    let (prefix, _, suffix) = split_heading(entry.option_id())?;
+    let replacement = format!("{prefix}{replacement_heading_index:02}{suffix}");
+    catalog
+        .entries()
+        .binary_search_by_key(&replacement.as_str(), |entry| entry.option_id())
+        .map_err(|_| {
+            TacticAssetError::InvalidAsset("scratch replacement heading is invalid".into())
+        })
+}
+
+pub fn map_scratch_action_to_finer_catalog(
+    source: &TacticAssetCatalog,
+    target: &TacticAssetCatalog,
+    action_index: usize,
+) -> Result<usize, TacticAssetError> {
+    let entry = source
+        .entries()
+        .get(action_index)
+        .ok_or_else(|| TacticAssetError::InvalidAsset("scratch action index is invalid".into()))?;
+    let (prefix, heading, suffix) = split_heading(entry.option_id())?;
+    let replacement = format!("{prefix}{:02}{suffix}", heading.saturating_mul(2));
+    target
+        .entries()
+        .binary_search_by_key(&replacement.as_str(), |entry| entry.option_id())
+        .map_err(|_| TacticAssetError::InvalidAsset("finer scratch action is missing".into()))
+}
+
+fn split_heading(option_id: &str) -> Result<(&str, usize, &str), TacticAssetError> {
+    let marker = option_id
+        .rfind(".h")
+        .ok_or_else(|| TacticAssetError::InvalidAsset("scratch action has no heading".into()))?;
+    let digits_start = marker + 2;
+    let digits_end = option_id[digits_start..]
+        .find('.')
+        .map(|offset| digits_start + offset)
+        .ok_or_else(|| TacticAssetError::InvalidAsset("scratch heading is malformed".into()))?;
+    let heading = option_id[digits_start..digits_end]
+        .parse()
+        .map_err(|_| TacticAssetError::InvalidAsset("scratch heading is malformed".into()))?;
+    Ok((
+        &option_id[..digits_start],
+        heading,
+        &option_id[digits_end..],
+    ))
 }
 
 fn push_raw(
@@ -193,6 +277,42 @@ mod tests {
         assert!(first.entries().iter().all(|entry| {
             !entry.option_id().contains("seek") && !entry.option_id().contains("target")
         }));
+    }
+
+    #[test]
+    fn refinement_catalog_preserves_variants_and_inserts_exact_midpoints() {
+        let coarse = scratch_action_catalog().unwrap();
+        let fine = scratch_action_catalog_with_heading_count(32).unwrap();
+        assert_eq!(fine.entries().len(), 2 * coarse.entries().len());
+        for action_index in 0..coarse.entries().len() {
+            let coarse_entry = &coarse.entries()[action_index];
+            let fine_index =
+                map_scratch_action_to_finer_catalog(&coarse, &fine, action_index).unwrap();
+            let fine_entry = &fine.entries()[fine_index];
+            assert_eq!(
+                scratch_action_heading_index(&fine, fine_index).unwrap(),
+                2 * scratch_action_heading_index(&coarse, action_index).unwrap()
+            );
+            assert_eq!(
+                coarse_entry.description().content_sha256,
+                fine_entry.description().content_sha256
+            );
+            assert_eq!(
+                coarse_entry.description().option.parameters,
+                fine_entry.description().option.parameters
+            );
+            assert_eq!(
+                coarse_entry.description().duration,
+                fine_entry.description().duration
+            );
+            assert_eq!(
+                coarse_entry.description().executor,
+                fine_entry.description().executor
+            );
+        }
+        assert!(scratch_action_catalog_with_heading_count(24).is_err());
+        assert!(scratch_action_catalog_with_heading_count(64).is_err());
+        assert!(scratch_action_catalog_with_heading_count(512).is_err());
     }
 
     #[test]
