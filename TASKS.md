@@ -240,7 +240,7 @@ budget. Remove it if it does not.
   duration, and roll families as deterministic coordinate descent. Exhaust each
   frontier, accept only twice-replayed strict terminal improvements, and stop
   when a complete cycle makes no improvement before adding a new edit family.
-- [ ] Run standalone single-option deletion from the authenticated 229-tick
+- [x] Run standalone single-option deletion from the authenticated 229-tick
   fixed point. Retain only twice-replayed strict terminal improvements; if it
   changes the incumbent, recompute heading, duration, roll, and deletion to a
   new full-cycle fixed point before selecting another family.
@@ -518,6 +518,16 @@ Focused coverage proves duplicate collapse and one-option scope. The full 444-
 test orchestration audit and 591-file source-size gate pass. Run it from the
 authenticated 229-tick fixed point before considering the much larger
 non-local-heading frontier.
+
+Standalone-deletion result (2026-08-03): retained and exhausted. The pass
+evaluated all 58 unique one-option removals; 40 still reached the real terminal
+and two strict improvements cold-replayed twice. Removing action 29 improved
+229 to 223 ticks, then removing action 27 improved 223 to 222 ticks. The final
+selected tape hash is
+`81c10aaa47f04740bc0413bc1934ab23e003a0863e5f37aef9224e61fd259685`.
+Because structure changed the incumbent, recompute heading, duration, roll,
+and deletion from the authenticated 222-tick checkpoint until a complete cycle
+makes no improvement.
 
 ### 4. Prove learning value only after the route works
 
