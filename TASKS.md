@@ -200,7 +200,7 @@ budget. Remove it if it does not.
   Enumerate candidates once, persist progress, cold-root evaluate, and accept
   only a strict twice-replayed terminal improvement. Failed candidates make no
   Q update. Do not add fine headings or another global action yet.
-- [ ] Run the bounded adjacent-heading pass on the 360-tick incumbent. Retain
+- [x] Run the bounded adjacent-heading pass on the 360-tick incumbent. Retain
   the edit only if it improves the real terminal tick; exhaust or reject it
   before considering finer heading parameters.
 - [ ] Reproduce 124 ticks or less, then continue the unchanged generic process
@@ -301,6 +301,17 @@ new incumbent. A native seed-155921 smoke resumed from attempt one to two with
 87 then 86 candidates remaining and no false terminal. The full framework audit
 passed 436 orchestration tests, and the CLI was split to remain below the
 1,500-line source-size gate.
+
+Adjacent-heading result (2026-08-02): retained and exhausted. The resumable
+seed-155921 pass evaluated 274 candidates; 141 reached the real load-zone
+terminal, and 11 strict improvements each cold-replayed twice before replacing
+the incumbent. It reduced the selected route from 360 to 299 ticks, then
+stopped with zero candidates remaining. The sealed run consumed 74,712 native
+ticks over 2,328 seconds of total wall time. This proves that deterministic
+local heading repair is useful, but the remaining 175-tick gap to 124 also
+rejects coarse adjacent substitutions as a sufficient optimizer. Preserve the
+operator and evidence; measure finer heading parameters next rather than spend
+more episodes on the exhausted frontier.
 
 ### 4. Prove learning value only after the route works
 
