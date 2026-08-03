@@ -9,7 +9,8 @@ use dusklight_control::roll_option::RollOptionPlan;
 use std::f32::consts::{PI, TAU};
 
 pub const SCRATCH_HEADING_COUNT: usize = 16;
-pub const SCRATCH_ACTION_COUNT: usize = SCRATCH_HEADING_COUNT * 16;
+pub const SCRATCH_ACTIONS_PER_HEADING: usize = 16;
+pub const SCRATCH_ACTION_COUNT: usize = SCRATCH_HEADING_COUNT * SCRATCH_ACTIONS_PER_HEADING;
 
 /// Builds one fixed action universe without goals, coordinates, demonstrations,
 /// route fragments, or state-conditioned proposal rules.

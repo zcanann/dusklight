@@ -106,6 +106,10 @@ impl ScratchDeletionSearch {
             .count())
     }
 
+    pub fn incumbent_action_sequence(&self) -> &[usize] {
+        &self.incumbent_action_sequence
+    }
+
     fn candidates(&self, seed: u64) -> Result<Vec<ScratchDeletionCandidate>, String> {
         let mut unique_sequences = BTreeSet::new();
         let mut ranked = Vec::new();

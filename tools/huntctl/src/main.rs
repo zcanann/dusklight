@@ -241,6 +241,9 @@ fn print_usage() {
         "  huntctl learn scratch-route --request OPTIMIZATION.json --execution EXECUTION.json --output build/DIR [--seed N] [--episodes N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--wall-time-seconds N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
     );
     eprintln!(
+        "  huntctl learn refine-scratch-headings --request OPTIMIZATION.json --execution EXECUTION.json --source build/SCRATCH --output build/DIR --seed N [--candidate-limit N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--wall-time-seconds N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
+    );
+    eprintln!(
         "  huntctl learn prove-generalized-tactics (--campaign-root DIR | --input CORPUS.dtqc [--input MORE.dtqc]) --output REPORT.json [--goal-distance-feature N]"
     );
     eprintln!(

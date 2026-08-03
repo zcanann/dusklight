@@ -150,13 +150,49 @@ struct NativeScratchCheckpoint {
     report: NativeScratchReport,
 }
 
-struct EpisodeOutcome {
-    transitions: Vec<ScratchTransition>,
-    action_sequence: Vec<usize>,
-    native_ticks: u64,
-    terminal: bool,
-    tape: InputTape,
-    native_wall_micros: u64,
+pub(crate) struct EpisodeOutcome {
+    pub transitions: Vec<ScratchTransition>,
+    pub action_sequence: Vec<usize>,
+    pub native_ticks: u64,
+    pub terminal: bool,
+    pub tape: InputTape,
+    pub native_wall_micros: u64,
+}
+
+pub(crate) struct ScratchRefinementSource {
+    pub checkpoint_sha256: Digest,
+    pub seed: u64,
+    pub incumbent_action_sequence: Vec<usize>,
+    pub incumbent_ticks: u64,
+}
+
+pub(crate) fn load_scratch_refinement_source(
+    config: &NativeScratchRunConfig<'_>,
+) -> Result<ScratchRefinementSource, NativeScratchRunError> {
+    validate_config(config)?;
+    let root = config.repository_root.canonicalize().map_err(run_error)?;
+    config
+        .execution
+        .validate_files(&root, config.optimization)
+        .map_err(run_error)?;
+    let checkpoint_path = config.output_root.join("checkpoint.dssq");
+    let checkpoint_bytes = fs::read(&checkpoint_path).map_err(run_error)?;
+    let checkpoint = decode_checkpoint(&checkpoint_bytes)?;
+    let catalog = scratch_action_catalog().map_err(run_error)?;
+    validate_checkpoint(&checkpoint, config, catalog.action_schema_sha256())?;
+    let search = checkpoint
+        .deletion_search
+        .as_ref()
+        .ok_or_else(|| run_message("scratch source has no authenticated incumbent"))?;
+    Ok(ScratchRefinementSource {
+        checkpoint_sha256: sha256(&checkpoint_bytes),
+        seed: checkpoint.seed,
+        incumbent_action_sequence: search.incumbent_action_sequence().to_vec(),
+        incumbent_ticks: checkpoint
+            .report
+            .fastest_selected_ticks
+            .ok_or_else(|| run_message("scratch source has no terminal incumbent"))?,
+    })
 }
 
 pub fn run_native_scratch_learner(
@@ -486,7 +522,7 @@ fn apply_episode_update(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_episode(
+pub(crate) fn run_episode(
     root: &Path,
     config: &NativeScratchRunConfig<'_>,
     process_tape: &InputTape,

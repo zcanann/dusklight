@@ -424,6 +424,7 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "freeze-tactic-policy"
             | "execute-tactic-policy"
             | "scratch-route"
+            | "refine-scratch-headings"
             | "prove-generalized-tactics"
             | "tactic-route"
             | "validate-tactic-campaign-completion"
@@ -513,6 +514,7 @@ mod tests {
     fn retained_tactic_audits_are_reachable_from_the_learn_dispatcher() {
         for command in [
             "scratch-route",
+            "refine-scratch-headings",
             "audit-tactic-fault-recovery",
             "seal-tactic-fault-recovery",
             "validate-tactic-fault-recovery-bundle",
