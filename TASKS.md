@@ -549,6 +549,10 @@ beat 221 ticks. Because heading improved during this cycle, run one more full
 heading, duration, roll, and deletion cycle from this exact checkpoint to prove
 the new fixed point.
 
+Fixed-point confirmation, heading result (2026-08-03): exhausted with no
+improvement. Seventy-five of 84 candidates reached the real terminal and none
+beat 221 ticks. Continue the confirmation cycle with duration.
+
 ### 4. Prove learning value only after the route works
 
 - [ ] Compare adaptive, frozen, and random-valid selection over the same seeds,
