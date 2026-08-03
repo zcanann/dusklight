@@ -183,12 +183,14 @@ budget. Remove it if it does not.
   seeds but exposed that deletion episodes consume global episode ordinals and
   therefore perturb every later seeded Q selection; do not treat it as an
   isolated scheduler result.
-- [ ] Give Q selection a learning-only episode ordinal derived from persisted
+- [x] Give Q selection a learning-only episode ordinal derived from persisted
   episode modes. A deletion episode must not consume or renumber Q's seeded
   exploration stream; prove this across resume without adding checkpoint state.
-- [ ] Re-run affected seeds 181081 and 208609 first. Require them to recover at
-  least their 561- and 488-tick novelty-only results; if either still regresses,
-  remove deletion from the shared-budget learner. Only then re-run all five.
+- [x] Re-run affected seeds 181081 and 208609 first. Both exactly recovered
+  their 561- and 488-tick novelty-only results.
+- [ ] Complete the isolated five-seed distribution by rerunning 104729, 130363,
+  and 155921. Retain sparse deletion only if the full result preserves the
+  broad Q gains and supplies useful accepted local improvements.
 - [ ] Reproduce 124 ticks or less, then continue the unchanged generic process
   to 123 ticks and 120 ticks or less.
 - [ ] Verify that ordinary seed ordering and update cadence do not erase the
@@ -249,6 +251,14 @@ regressed by 307 and 234 ticks. Inspection found that the global episode index
 seeds Q selection, so inserting even one forced deletion changes the random
 stream of every subsequent Q episode. Separate the learning ordinal before
 drawing any conclusion about the sparse scheduler.
+
+Q-ordinal isolation checkpoint (2026-08-02): Q selection now derives its
+episode ordinal by counting persisted learning modes, so deletion does not
+consume an exploration seed and resume needs no added checkpoint state. The
+previously regressed seeds 181081 and 208609 exactly recovered their
+novelty-only bests of 561 and 488 ticks. They spent only 2 and 3 episodes on
+deletion; seed 181081 accepted one local winner, while seed 208609 accepted
+none. The full audit passed 432 orchestration tests before the native runs.
 
 ### 4. Prove learning value only after the route works
 
