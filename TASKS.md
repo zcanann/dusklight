@@ -175,7 +175,7 @@ budget. Remove it if it does not.
   better incumbent. Failed deletion candidates still make zero Q updates.
 - [x] Re-run the same fixed five seeds with alternation. It did not improve on
   the 360-tick best and again regressed three seeds, so reject the fixed cadence.
-- [ ] Replace fixed cadence with one event-driven deletion attempt immediately
+- [x] Replace fixed cadence with one event-driven deletion attempt immediately
   after each strict Q winner. A deletion winner cannot schedule another
   deletion; prove the persisted last episode makes this resumable and keeps Q
   dominant without changing the operator or Q updates.
@@ -226,6 +226,14 @@ seeds against both prior treatments. Alternation spent 82 of 224 episodes on
 deletion even though Q produced only one or two strict winners per seed. The
 next bounded treatment schedules exactly one deletion candidate after a strict
 Q winner; it does not let deletion success chain or add another edit family.
+
+Event-driven checkpoint (2026-08-02): a fresh three-episode seed-181081 native
+smoke ran learning, deletion, learning. The initial Q winner reached 876 ticks;
+its single deletion improved to 868 and cold-replayed twice; the next episode
+returned to ordinary Q and made 112 learner updates. Unit coverage proves that
+only a persisted strict learning winner opens a deletion slot, including after
+resume; deletion success, deletion failure, and non-winning learning all return
+to Q. The full 431-test framework audit passed.
 
 ### 4. Prove learning value only after the route works
 
