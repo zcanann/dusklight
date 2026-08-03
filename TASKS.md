@@ -543,6 +543,12 @@ Post-deletion coordinate cycle, roll result (2026-08-03): exhausted with no
 improvement. Nine of 35 candidates reached the real terminal and none beat 221
 ticks. Continue with deletion from the exact roll checkpoint.
 
+Post-deletion coordinate cycle, deletion result (2026-08-03): exhausted with
+no improvement. Twenty-two of 33 candidates reached the real terminal and none
+beat 221 ticks. Because heading improved during this cycle, run one more full
+heading, duration, roll, and deletion cycle from this exact checkpoint to prove
+the new fixed point.
+
 ### 4. Prove learning value only after the route works
 
 - [ ] Compare adaptive, frozen, and random-valid selection over the same seeds,
