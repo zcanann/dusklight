@@ -209,7 +209,7 @@ budget. Remove it if it does not.
   Preserve family and duration, keep the global learner at 16 headings, bind
   the source checkpoint, resume deterministically, and require two exact cold
   replays.
-- [ ] Run the bounded 32-heading pass to exhaustion. Retain it only if it
+- [x] Run the bounded 32-heading pass to exhaustion. Retain it only if it
   improves the real terminal tick; otherwise reject it before adding a
   duration, boundary, or multi-option edit family.
 - [ ] Reproduce 124 ticks or less, then continue the unchanged generic process
@@ -347,6 +347,15 @@ neighbors. The learner's catalog remains unchanged. A native seed-155921 smoke
 resumed from attempt one to two, reduced the frontier from 87 to 86 without a
 duplicate, reached the real terminal twice, and preserved the 333-tick
 incumbent.
+
+Fine-heading result (2026-08-03): rejected and exhausted. The 32-heading pass
+evaluated all 88 midpoint candidates from the corrected 333-tick incumbent;
+84 reached the real load-zone terminal, none was a strict improvement, and the
+frontier stopped with zero candidates remaining. It consumed 29,765 native
+ticks over 928 seconds of wall time. Angular resolution is not the active local
+bottleneck. Diagnose the retained option sequence against the real 299-tick
+artifact before choosing the next single edit family; do not add more headings
+or resume either exhausted frontier.
 
 ### 4. Prove learning value only after the route works
 
