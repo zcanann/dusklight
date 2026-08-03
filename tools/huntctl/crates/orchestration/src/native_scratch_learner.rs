@@ -1,6 +1,7 @@
 //! Cold-root native episodes driven by the minimal route-agnostic scratch Q loop.
 
 use crate::native_residual_campaign::NativeResidualExecutionBinding;
+use crate::native_scratch_deletion::{ScratchDeletionSearch, action_sequence_sha256};
 use crate::native_suffix_result::NativeTerminalBinding;
 use crate::native_suffix_worker::{
     NativeSuffixPrevalidatedFileIdentities, NativeSuffixWorkerLaunch, NativeSuffixWorkerSession,
@@ -24,7 +25,7 @@ use dusklight_learning::learner_state::LearnerState;
 use dusklight_learning::scratch_action_catalog::scratch_action_catalog;
 use dusklight_learning::scratch_q::{
     EPSILON_SCALE, MAX_SCRATCH_EPISODE_TICKS, ScratchQTable, ScratchSelectionReason,
-    ScratchStateKey, ScratchTransition, transition_sha256,
+    ScratchStateKey, ScratchTransition, ScratchUpdateSummary, transition_sha256,
 };
 use dusklight_learning::tactic_exploration::{
     SelectedTactic, TACTIC_EXPLORATION_SCHEMA_V1, TacticSelectionReason,
@@ -39,10 +40,10 @@ use std::io::{Cursor, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-pub const NATIVE_SCRATCH_REPORT_SCHEMA_V3: &str = "dusklight-native-scratch-report/v3";
-const NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V3: &str = "dusklight-native-scratch-checkpoint/v3";
+pub const NATIVE_SCRATCH_REPORT_SCHEMA_V4: &str = "dusklight-native-scratch-report/v4";
+const NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V4: &str = "dusklight-native-scratch-checkpoint/v4";
 const CHECKPOINT_MAGIC: &[u8; 8] = b"DSSCRQ01";
-const CHECKPOINT_VERSION: u16 = 3;
+const CHECKPOINT_VERSION: u16 = 4;
 const CHECKPOINT_HEADER_BYTES: usize = 8 + 2 + 2 + 8 + 32;
 const CHECKPOINT_COMPRESSION_LEVEL: i32 = 1;
 const MAX_EPISODES: u64 = 1_000_000;
@@ -86,6 +87,10 @@ pub struct NativeScratchReport {
     pub q_state_actions: u64,
     pub preterminal_position_cells: u64,
     pub novelty_active: bool,
+    pub deletion_attempts: u64,
+    pub deletion_terminal_attempts: u64,
+    pub deletion_strict_winners: u64,
+    pub deletion_candidates_remaining: Option<u64>,
     pub native_ticks: u64,
     pub native_wall_micros: u64,
     pub wall_micros: u64,
@@ -100,7 +105,11 @@ pub struct NativeScratchReport {
 #[serde(deny_unknown_fields)]
 pub struct NativeScratchEpisodeReport {
     pub episode_index: u64,
+    pub mode: ScratchEpisodeMode,
     pub action_sequence_sha256: Digest,
+    pub deletion_candidate_sha256: Option<Digest>,
+    pub deleted_action_index: Option<u64>,
+    pub mutation_accepted: bool,
     pub decisions: u64,
     pub native_ticks: u64,
     pub terminal: bool,
@@ -112,6 +121,13 @@ pub struct NativeScratchEpisodeReport {
     pub tape_sha256: Digest,
     pub strict_winner: bool,
     pub cold_replay_attempts: Vec<NativeTacticColdReplayAttempt>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScratchEpisodeMode {
+    Learning,
+    DeleteOption,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -128,6 +144,7 @@ struct NativeScratchCheckpoint {
     q: ScratchQTable,
     position_cell_visits: BTreeMap<[i32; 2], u64>,
     terminal_discovered: bool,
+    deletion_search: Option<ScratchDeletionSearch>,
     unique_transitions: BTreeMap<Digest, ScratchTransition>,
     completed_action_sequences: Vec<Vec<usize>>,
     report: NativeScratchReport,
@@ -200,6 +217,18 @@ pub fn run_native_scratch_learner(
             .output_root
             .join("episodes")
             .join(format!("episode-{episode_index:06}"));
+        let deletion_candidate = checkpoint
+            .deletion_search
+            .as_ref()
+            .map(|search| search.next_candidate(config.seed))
+            .transpose()
+            .map_err(run_message)?
+            .flatten();
+        let episode_mode = if deletion_candidate.is_some() {
+            ScratchEpisodeMode::DeleteOption
+        } else {
+            ScratchEpisodeMode::Learning
+        };
         let outcome = run_episode(
             &root,
             config,
@@ -208,10 +237,14 @@ pub fn run_native_scratch_learner(
             &catalog,
             &checkpoint.q,
             &checkpoint.completed_action_sequences,
+            deletion_candidate
+                .as_ref()
+                .map(|candidate| candidate.action_sequence.as_slice()),
             episode_index,
             &episode_root,
         )?;
-        let action_sequence_sha256 = sequence_sha256(&outcome.action_sequence)?;
+        let action_sequence_sha256 =
+            action_sequence_sha256(&outcome.action_sequence).map_err(run_message)?;
         let duplicate = checkpoint
             .completed_action_sequences
             .iter()
@@ -224,37 +257,6 @@ pub fn run_native_scratch_learner(
                 .or_insert_with(|| transition.clone());
         }
         let unique_transitions_added = checkpoint.unique_transitions.len() - before_unique;
-        let update = if outcome.terminal && !checkpoint.terminal_discovered {
-            checkpoint.q.clear_values();
-            checkpoint.terminal_discovered = true;
-            checkpoint
-                .q
-                .update_episode(&outcome.transitions, true, config.maximum_episode_ticks)
-                .map_err(run_error)?
-        } else if duplicate {
-            dusklight_learning::scratch_q::ScratchUpdateSummary {
-                updates: 0,
-                changed_choices: 0,
-            }
-        } else if !checkpoint.terminal_discovered {
-            checkpoint
-                .q
-                .update_novelty_episode(
-                    &outcome.transitions,
-                    config.maximum_episode_ticks,
-                    &mut checkpoint.position_cell_visits,
-                )
-                .map_err(run_error)?
-        } else {
-            checkpoint
-                .q
-                .update_episode(
-                    &outcome.transitions,
-                    outcome.terminal,
-                    config.maximum_episode_ticks,
-                )
-                .map_err(run_error)?
-        };
         let tape_bytes = outcome.tape.encode().map_err(run_error)?;
         let tape_sha256 = sha256(&tape_bytes);
         let selected_ticks = outcome.terminal.then(|| {
@@ -269,6 +271,17 @@ pub fn run_native_scratch_learner(
                 .fastest_selected_ticks
                 .is_none_or(|fastest| ticks < fastest)
         });
+        let update = apply_episode_update(
+            &mut checkpoint.q,
+            &mut checkpoint.position_cell_visits,
+            &mut checkpoint.terminal_discovered,
+            episode_mode,
+            duplicate,
+            &outcome.transitions,
+            outcome.terminal,
+            strict_winner,
+            config.maximum_episode_ticks,
+        )?;
         if checkpoint.report.first_terminal_wall_micros.is_none() && outcome.terminal {
             checkpoint.report.first_terminal_wall_micros =
                 Some(prior_wall_micros.saturating_add(elapsed_micros(started.elapsed())));
@@ -316,6 +329,32 @@ pub fn run_native_scratch_learner(
             checkpoint.report.fastest_tape_sha256 = Some(tape_sha256);
             checkpoint.report.strict_winners_cold_replayed += 1;
         }
+        if let Some(candidate) = deletion_candidate.as_ref() {
+            checkpoint.report.deletion_attempts += 1;
+            checkpoint.report.deletion_terminal_attempts += u64::from(outcome.terminal);
+            checkpoint.report.deletion_strict_winners += u64::from(strict_winner);
+            checkpoint
+                .deletion_search
+                .as_mut()
+                .ok_or_else(|| run_message("scratch deletion search disappeared"))?
+                .finish_attempt(
+                    config.seed,
+                    candidate,
+                    strict_winner.then(|| outcome.action_sequence.clone()),
+                )
+                .map_err(run_message)?;
+        } else if strict_winner {
+            checkpoint.deletion_search = Some(
+                ScratchDeletionSearch::new(outcome.action_sequence.clone()).map_err(run_message)?,
+            );
+        }
+        checkpoint.report.deletion_candidates_remaining = checkpoint
+            .deletion_search
+            .as_ref()
+            .map(|search| search.remaining_candidates(config.seed))
+            .transpose()
+            .map_err(run_message)?
+            .map(|remaining| remaining as u64);
         checkpoint.report.completed_episodes += 1;
         checkpoint.report.distinct_episode_tapes += u64::from(!duplicate);
         checkpoint.report.duplicate_episode_tapes += u64::from(duplicate);
@@ -333,7 +372,15 @@ pub fn run_native_scratch_learner(
             .push(outcome.action_sequence);
         checkpoint.report.episodes.push(NativeScratchEpisodeReport {
             episode_index,
+            mode: episode_mode,
             action_sequence_sha256,
+            deletion_candidate_sha256: deletion_candidate
+                .as_ref()
+                .map(|candidate| candidate.action_sequence_sha256),
+            deleted_action_index: deletion_candidate
+                .as_ref()
+                .map(|candidate| candidate.removed_action_index as u64),
+            mutation_accepted: deletion_candidate.is_some() && strict_winner,
             decisions: outcome.transitions.len() as u64,
             native_ticks: outcome.native_ticks,
             terminal: outcome.terminal,
@@ -367,6 +414,51 @@ pub fn run_native_scratch_learner(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn apply_episode_update(
+    q: &mut ScratchQTable,
+    position_cell_visits: &mut BTreeMap<[i32; 2], u64>,
+    terminal_discovered: &mut bool,
+    mode: ScratchEpisodeMode,
+    duplicate: bool,
+    transitions: &[ScratchTransition],
+    terminal: bool,
+    strict_winner: bool,
+    maximum_episode_ticks: u32,
+) -> Result<ScratchUpdateSummary, NativeScratchRunError> {
+    if strict_winner && !terminal {
+        return Err(run_message("scratch strict winner is not terminal"));
+    }
+    if mode == ScratchEpisodeMode::DeleteOption {
+        return if strict_winner {
+            q.update_episode(transitions, true, maximum_episode_ticks)
+                .map_err(run_error)
+        } else {
+            Ok(ScratchUpdateSummary {
+                updates: 0,
+                changed_choices: 0,
+            })
+        };
+    }
+    if terminal && !*terminal_discovered {
+        q.clear_values();
+        *terminal_discovered = true;
+        q.update_episode(transitions, true, maximum_episode_ticks)
+            .map_err(run_error)
+    } else if duplicate {
+        Ok(ScratchUpdateSummary {
+            updates: 0,
+            changed_choices: 0,
+        })
+    } else if !*terminal_discovered {
+        q.update_novelty_episode(transitions, maximum_episode_ticks, position_cell_visits)
+            .map_err(run_error)
+    } else {
+        q.update_episode(transitions, terminal, maximum_episode_ticks)
+            .map_err(run_error)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_episode(
     root: &Path,
     config: &NativeScratchRunConfig<'_>,
@@ -375,6 +467,7 @@ fn run_episode(
     catalog: &dusklight_learning::tactic_asset::TacticAssetCatalog,
     q: &ScratchQTable,
     completed_sequences: &[Vec<usize>],
+    forced_action_sequence: Option<&[usize]>,
     episode_index: u64,
     episode_root: &Path,
 ) -> Result<EpisodeOutcome, NativeScratchRunError> {
@@ -445,6 +538,9 @@ fn run_episode(
         while facts.terminal.reached != Some(true)
             && native_ticks < u64::from(config.maximum_episode_ticks)
         {
+            if forced_action_sequence.is_some_and(|forced| sequence.len() >= forced.len()) {
+                break;
+            }
             let learner_state =
                 LearnerState::build(facts.clone(), &registry, catalog, &[], |_| true)
                     .map_err(run_error)?;
@@ -468,34 +564,49 @@ fn run_episode(
                 })
                 .map(|(index, _)| index)
                 .collect::<Vec<_>>();
-            exclude_completed_duplicate(&sequence, completed_sequences, &mut eligible);
-            if eligible.is_empty() {
-                break;
-            }
-            let selection = q
-                .select(
-                    &state,
-                    &eligible,
-                    config.seed,
-                    episode_index,
-                    sequence.len() as u64,
-                    config.epsilon_per_million,
-                )
-                .map_err(run_error)?;
+            let (action_index, selection_reason, exploration_draw) =
+                if let Some(forced) = forced_action_sequence {
+                    let action_index = forced[sequence.len()];
+                    if !eligible.contains(&action_index) {
+                        break;
+                    }
+                    (
+                        action_index,
+                        TacticSelectionReason::TerminalCostRefinement,
+                        0,
+                    )
+                } else {
+                    exclude_completed_duplicate(&sequence, completed_sequences, &mut eligible);
+                    if eligible.is_empty() {
+                        break;
+                    }
+                    let selection = q
+                        .select(
+                            &state,
+                            &eligible,
+                            config.seed,
+                            episode_index,
+                            sequence.len() as u64,
+                            config.epsilon_per_million,
+                        )
+                        .map_err(run_error)?;
+                    let reason = match selection.reason {
+                        ScratchSelectionReason::Greedy => TacticSelectionReason::Greedy,
+                        ScratchSelectionReason::Epsilon => TacticSelectionReason::Epsilon,
+                    };
+                    (selection.action_index, reason, selection.draw)
+                };
             let action = learner_state
                 .action_mask
-                .get(selection.action_index)
+                .get(action_index)
                 .ok_or_else(|| run_message("scratch selected action is absent"))?;
             let selected = SelectedTactic {
                 schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
                 learner_snapshot_sha256: learner_state.snapshot_sha256,
                 decision_index: sequence.len() as u64,
                 descriptor: action.descriptor.clone(),
-                reason: match selection.reason {
-                    ScratchSelectionReason::Greedy => TacticSelectionReason::Greedy,
-                    ScratchSelectionReason::Epsilon => TacticSelectionReason::Epsilon,
-                },
-                exploration_draw: selection.draw,
+                reason: selection_reason,
+                exploration_draw,
             };
             let decision_root = episode_root
                 .join("native")
@@ -525,12 +636,12 @@ fn run_episode(
                 ScratchStateKey::from_snapshot(&outcome.next_facts).map_err(run_error)?;
             transitions.push(ScratchTransition {
                 state,
-                action_index: selection.action_index,
+                action_index,
                 realized_ticks,
                 next_state,
                 terminal: outcome.terminal,
             });
-            sequence.push(selection.action_index);
+            sequence.push(action_index);
             let next_checkpoint_source = if outcome.terminal {
                 None
             } else {
@@ -543,7 +654,7 @@ fn run_episode(
             facts = outcome.next_facts;
             checkpoint_source = next_checkpoint_source;
         }
-        if transitions.is_empty() {
+        if transitions.is_empty() && forced_action_sequence.is_none() {
             return Err(run_message("scratch episode executed no action"));
         }
         Ok(EpisodeOutcome {
@@ -614,7 +725,7 @@ fn fresh_checkpoint(
     action_count: usize,
 ) -> Result<NativeScratchCheckpoint, NativeScratchRunError> {
     Ok(NativeScratchCheckpoint {
-        schema: NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V3.into(),
+        schema: NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V4.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -625,10 +736,11 @@ fn fresh_checkpoint(
         q: ScratchQTable::new(action_count).map_err(run_error)?,
         position_cell_visits: BTreeMap::new(),
         terminal_discovered: false,
+        deletion_search: None,
         unique_transitions: BTreeMap::new(),
         completed_action_sequences: Vec::new(),
         report: NativeScratchReport {
-            schema: NATIVE_SCRATCH_REPORT_SCHEMA_V3.into(),
+            schema: NATIVE_SCRATCH_REPORT_SCHEMA_V4.into(),
             report_sha256: Digest::ZERO,
             optimization_request_sha256: config.optimization.content_sha256,
             execution_binding_sha256: config.execution.content_sha256,
@@ -649,6 +761,10 @@ fn fresh_checkpoint(
             q_state_actions: 0,
             preterminal_position_cells: 0,
             novelty_active: true,
+            deletion_attempts: 0,
+            deletion_terminal_attempts: 0,
+            deletion_strict_winners: 0,
+            deletion_candidates_remaining: None,
             native_ticks: 0,
             native_wall_micros: 0,
             wall_micros: 0,
@@ -683,8 +799,56 @@ fn validate_checkpoint(
     action_universe_sha256: Digest,
 ) -> Result<(), NativeScratchRunError> {
     checkpoint.q.validate().map_err(run_error)?;
-    if checkpoint.schema != NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V3
-        || checkpoint.report.schema != NATIVE_SCRATCH_REPORT_SCHEMA_V3
+    let deletion_search_valid = match checkpoint.deletion_search.as_ref() {
+        Some(search) => {
+            search
+                .validate(config.seed, checkpoint.q.action_count)
+                .map_err(run_message)?;
+            checkpoint.report.deletion_candidates_remaining
+                == Some(
+                    search
+                        .remaining_candidates(config.seed)
+                        .map_err(run_message)? as u64,
+                )
+        }
+        None => checkpoint.report.deletion_candidates_remaining.is_none(),
+    };
+    let deletion_episodes = checkpoint
+        .report
+        .episodes
+        .iter()
+        .filter(|episode| episode.mode == ScratchEpisodeMode::DeleteOption)
+        .collect::<Vec<_>>();
+    let deletion_reports_valid = checkpoint.report.deletion_attempts
+        == deletion_episodes.len() as u64
+        && checkpoint.report.deletion_terminal_attempts
+            == deletion_episodes
+                .iter()
+                .filter(|episode| episode.terminal)
+                .count() as u64
+        && checkpoint.report.deletion_strict_winners
+            == deletion_episodes
+                .iter()
+                .filter(|episode| episode.strict_winner)
+                .count() as u64
+        && checkpoint
+            .report
+            .episodes
+            .iter()
+            .all(|episode| match episode.mode {
+                ScratchEpisodeMode::Learning => {
+                    episode.deletion_candidate_sha256.is_none()
+                        && episode.deleted_action_index.is_none()
+                        && !episode.mutation_accepted
+                }
+                ScratchEpisodeMode::DeleteOption => {
+                    episode.deletion_candidate_sha256.is_some()
+                        && episode.deleted_action_index.is_some()
+                        && episode.mutation_accepted == episode.strict_winner
+                }
+            });
+    if checkpoint.schema != NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V4
+        || checkpoint.report.schema != NATIVE_SCRATCH_REPORT_SCHEMA_V4
         || checkpoint.optimization_request_sha256 != config.optimization.content_sha256
         || checkpoint.execution_binding_sha256 != config.execution.content_sha256
         || checkpoint.objective_sha256 != config.optimization.terminal_predicate.definition_sha256
@@ -708,6 +872,9 @@ fn validate_checkpoint(
             != checkpoint.position_cell_visits.len() as u64
         || checkpoint.report.novelty_active == checkpoint.terminal_discovered
         || checkpoint.terminal_discovered != (checkpoint.report.terminal_episodes > 0)
+        || checkpoint.deletion_search.is_some() != checkpoint.terminal_discovered
+        || !deletion_search_valid
+        || !deletion_reports_valid
         || checkpoint
             .position_cell_visits
             .values()
@@ -821,12 +988,6 @@ fn report_identity(report: &NativeScratchReport) -> Result<Digest, NativeScratch
     Ok(sha256(&serde_json::to_vec(&canonical).map_err(run_error)?))
 }
 
-fn sequence_sha256(sequence: &[usize]) -> Result<Digest, NativeScratchRunError> {
-    Ok(sha256(
-        &serde_cbor::to_vec(&sequence.to_vec()).map_err(run_error)?,
-    ))
-}
-
 fn sha256(bytes: &[u8]) -> Digest {
     Digest(Sha256::digest(bytes).into())
 }
@@ -862,6 +1023,18 @@ fn run_error(error: impl fmt::Display) -> NativeScratchRunError {
 mod tests {
     use super::*;
 
+    fn scratch_state(position: i32) -> ScratchStateKey {
+        ScratchStateKey {
+            position_xz: [position, 0],
+            velocity_xz: [0, 0],
+            facing: 0,
+            camera: 0,
+            prompted_action_status: 0,
+            recent_input_headings: [-1; 2],
+            recent_motion_headings: [-1; 2],
+        }
+    }
+
     #[test]
     fn completed_episode_prefix_prevents_an_exact_duplicate() {
         let completed = vec![vec![2, 4, 6]];
@@ -887,9 +1060,44 @@ mod tests {
     }
 
     #[test]
+    fn failed_deletion_cannot_change_q_or_the_incumbent_phase() {
+        let transition = ScratchTransition {
+            state: scratch_state(0),
+            action_index: 0,
+            realized_ticks: 8,
+            next_state: scratch_state(1),
+            terminal: false,
+        };
+        let mut q = ScratchQTable::new(2).unwrap();
+        q.update_episode(&[transition.clone()], false, 900)
+            .unwrap();
+        let before = q.clone();
+        let mut position_cell_visits = BTreeMap::from([([0, 0], 3)]);
+        let visits_before = position_cell_visits.clone();
+        let mut terminal_discovered = true;
+        let update = apply_episode_update(
+            &mut q,
+            &mut position_cell_visits,
+            &mut terminal_discovered,
+            ScratchEpisodeMode::DeleteOption,
+            false,
+            &[transition],
+            false,
+            false,
+            900,
+        )
+        .unwrap();
+        assert_eq!(update.updates, 0);
+        assert_eq!(update.changed_choices, 0);
+        assert_eq!(q, before);
+        assert_eq!(position_cell_visits, visits_before);
+        assert!(terminal_discovered);
+    }
+
+    #[test]
     fn binary_checkpoint_round_trips_and_rejects_corruption() {
         let mut report = NativeScratchReport {
-            schema: NATIVE_SCRATCH_REPORT_SCHEMA_V3.into(),
+            schema: NATIVE_SCRATCH_REPORT_SCHEMA_V4.into(),
             report_sha256: Digest::ZERO,
             optimization_request_sha256: Digest([1; 32]),
             execution_binding_sha256: Digest([2; 32]),
@@ -910,6 +1118,10 @@ mod tests {
             q_state_actions: 0,
             preterminal_position_cells: 0,
             novelty_active: true,
+            deletion_attempts: 0,
+            deletion_terminal_attempts: 0,
+            deletion_strict_winners: 0,
+            deletion_candidates_remaining: None,
             native_ticks: 0,
             native_wall_micros: 0,
             wall_micros: 0,
@@ -921,7 +1133,7 @@ mod tests {
         };
         seal_report(&mut report).unwrap();
         let checkpoint = NativeScratchCheckpoint {
-            schema: NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V3.into(),
+            schema: NATIVE_SCRATCH_CHECKPOINT_SCHEMA_V4.into(),
             optimization_request_sha256: report.optimization_request_sha256,
             execution_binding_sha256: report.execution_binding_sha256,
             objective_sha256: report.objective_sha256,
@@ -932,6 +1144,7 @@ mod tests {
             q: ScratchQTable::new(3).unwrap(),
             position_cell_visits: BTreeMap::new(),
             terminal_discovered: false,
+            deletion_search: None,
             unique_transitions: BTreeMap::new(),
             completed_action_sequences: Vec::new(),
             report,
