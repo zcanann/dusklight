@@ -464,6 +464,16 @@ its exact hash. Corruption coverage and the full 443-test orchestration audit
 pass, as does the 591-file source-size gate. The native 242-tick migration must
 still succeed before coordinate descent begins.
 
+Coordinate-descent heading result (2026-08-03): retained and exhausted. After
+the 242-tick option route migrated by one exact terminal execution and two cold
+replays, the first recomposed 16-heading pass evaluated 263 candidates; 247
+reached the real load-zone terminal and four strict improvements each
+cold-replayed twice. The incumbent improved through 240, 239, and finally 237
+ticks, then stopped with zero heading candidates remaining. This confirms that
+the edit families interact and that a one-pass-per-family conclusion was
+premature. Continue cycle one from this exact heading checkpoint with duration
+and roll refinement.
+
 ### 4. Prove learning value only after the route works
 
 - [ ] Compare adaptive, frozen, and random-valid selection over the same seeds,
