@@ -140,9 +140,12 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
+        Some("scratch-route") => Err(
+            "learn scratch-route is retired: use tactic-route with --proposal-policy learned and no --demonstration-chunk-ticks for the canonical zero-shot state-graph learner"
+                .into(),
+        ),
         Some(
-            command @ ("scratch-route"
-            | "migrate-scratch-option-incumbent"
+            command @ ("migrate-scratch-option-incumbent"
             | "refine-scratch-headings"
             | "refine-scratch-fine-headings"
             | "refine-scratch-durations"

@@ -25,6 +25,19 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
+fn cold_root_scratch_route_is_retired_in_favor_of_the_state_graph_learner() {
+    let output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["learn", "scratch-route"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("scratch-route is retired"), "{stderr}");
+    assert!(stderr.contains("tactic-route"), "{stderr}");
+    assert!(stderr.contains("--proposal-policy learned"), "{stderr}");
+}
+
+#[test]
 fn native_corpus_inspection_reports_complete_cpp_shard() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/automation/native_episode_v25.dseps");

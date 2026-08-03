@@ -238,9 +238,6 @@ fn print_usage() {
         "  huntctl learn execute-tactic-policy --request OPTIMIZATION.json --execution EXECUTION.json --policy POLICY.json --output build/DIR [--maximum-decisions N] [--repository-root DIR]"
     );
     eprintln!(
-        "  huntctl learn scratch-route --request OPTIMIZATION.json --execution EXECUTION.json --output build/DIR [--seed N] [--episodes N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--wall-time-seconds N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
-    );
-    eprintln!(
         "  huntctl learn migrate-scratch-option-incumbent --request OPTIMIZATION.json --execution EXECUTION.json --source build/OPTION --output build/DIR --seed N [--maximum-episode-ticks N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
     );
     eprintln!(

@@ -74,28 +74,46 @@ and move the learning path onto the existing save-state branch architecture.
 
 ## P0: reconnect learning to save-state branching
 
-- [ ] Map the existing save-state, branch scheduler, tactic-route, and scratch
+- [x] Map the existing save-state, branch scheduler, tactic-route, and scratch
   learner boundaries. Identify the exact bypass that forces scratch episodes
   and refinement candidates through cold-root execution. Record which existing
   components can be reused and which duplicate path should be retired.
-- [ ] Make an authenticated save state a first-class learner node. Each node
+- [x] Make an authenticated save state a first-class learner node. Each node
   must bind the native state fingerprint, best known root cost, observation,
   parent transition, and checkpoint identity.
-- [ ] Run alternative actions and short action sequences by restoring the
-  selected node, not replaying its prefix. Continue to use cold-root execution
-  only for initial discovery, periodic end-to-end validation, and winner proof.
+- [x] Run alternative actions and short action sequences from the selected
+  graph node. If no live handle survives, materialize that historical node once
+  by authenticated prefix replay; sibling alternatives must restore the
+  process-local checkpoint rather than replaying the prefix independently.
 - [ ] Prove deterministic restore semantics: identical state fingerprint,
   observation, action availability, continuation outcome, and terminal timing
   after repeated restores. Reject contaminated or process-local checkpoints.
-- [ ] Preserve every branch transition in the learning corpus, including
+- [x] Preserve every branch transition in the learning corpus, including
   collisions, stalls, reversals, nonterminal branches, and failed suffixes.
   Deduplicate by authenticated source state, action sequence, and successor.
-- [ ] Reconstruct any selected route through its parent transitions and cold
+- [x] Reconstruct any selected route through its parent transitions and cold
   replay it twice before promotion. Branch-local success is not final evidence.
 
 Exit: one campaign explores a persistent graph of restored states and can
 assemble and replay a terminal route without evaluating every proposal from
 the root.
+
+Architecture audit (2026-08-03):
+`docs/route-learning-integration-audit.md` establishes `tactic-route` as the
+canonical zero-shot learner and retires the separate cold-root `scratch-route`
+entry point. The canonical path already owns the state graph, learned frontier
+selection, sibling branching, transition admission, persistent worker fleet,
+route reconstruction, and tactic mining. The measured implementation gap is
+checkpoint locality for historical graph nodes: only the latest selected
+endpoint has a coordinator-held process-local handle.
+
+Existing graph verification (2026-08-03): 32 focused state-graph tests prove
+exact authenticated nodes, root costs, parent expansions, terminal returns,
+route reconstruction, counterfactual interior states, persistence, and
+deduplication. Twelve worker-pool tests prove that an uncached historical node
+is materialized before its action, sibling alternatives restore that source,
+and the selected endpoint remains directly restorable. These are retained
+canonical-runner capabilities, not new scratch-loop implementations.
 
 ## P0: make branching fast enough to learn
 

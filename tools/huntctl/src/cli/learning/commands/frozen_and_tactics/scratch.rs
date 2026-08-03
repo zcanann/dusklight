@@ -7,9 +7,7 @@ use huntctl::search_evaluator::native_scratch_incumbent::{
     NativeScratchIncumbentMigrationConfig, ScratchIncumbentSource,
     migrate_native_scratch_option_incumbent,
 };
-use huntctl::search_evaluator::native_scratch_learner::{
-    NativeScratchRunConfig, run_native_scratch_learner,
-};
+use huntctl::search_evaluator::native_scratch_learner::NativeScratchRunConfig;
 use huntctl::search_evaluator::native_scratch_option_refinement::{
     NativeScratchOptionRunConfig, ScratchOptionEditKind, run_native_scratch_option_refinement,
 };
@@ -33,7 +31,6 @@ pub(super) fn command(command: &str, learn_args: &[String]) -> Result<(), Box<dy
     let execution: NativeResidualExecutionBinding =
         serde_json::from_slice(&fs::read(required_path(learn_args, "--execution")?)?)?;
     match command {
-        "scratch-route" => run_route(learn_args, &repository_root, &request, &execution),
         "migrate-scratch-option-incumbent" => {
             migrate_incumbent(learn_args, &repository_root, &request, &execution)
         }
@@ -170,54 +167,6 @@ fn refine_options(
             "native_ticks": report.native_ticks,
             "native_wall_micros": report.native_wall_micros,
             "wall_micros": report.wall_micros,
-        }))?
-    );
-    Ok(())
-}
-
-fn run_route(
-    args: &[String],
-    repository_root: &Path,
-    request: &OptimizationRequest,
-    execution: &NativeResidualExecutionBinding,
-) -> Result<(), Box<dyn Error>> {
-    let output = resolve_path(args, "--output", repository_root)?;
-    let report = run_native_scratch_learner(&NativeScratchRunConfig {
-        repository_root,
-        optimization: request,
-        execution,
-        output_root: &output,
-        seed: u64_option(args, "--seed", 0)?,
-        episodes: u64_option(args, "--episodes", 100)?,
-        maximum_episode_ticks: u32::try_from(u64_option(args, "--maximum-episode-ticks", 900)?)?,
-        epsilon_per_million: u32::try_from(u64_option(args, "--epsilon-per-million", 200_000)?)?,
-        maximum_wall_time: Duration::from_secs(u64_option(args, "--wall-time-seconds", 600)?),
-        cold_replay_timeout: Duration::from_secs(u64_option(
-            args,
-            "--cold-replay-timeout-seconds",
-            120,
-        )?),
-    })?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "schema": report.schema,
-            "report": output.join("report.json"),
-            "completed_episodes": report.completed_episodes,
-            "stop_reason": report.stop_reason,
-            "unique_transitions": report.unique_transitions,
-            "terminal_episodes": report.terminal_episodes,
-            "fastest_selected_ticks": report.fastest_selected_ticks,
-            "learner_updates": report.learner_updates,
-            "changed_choices": report.changed_choices,
-            "deletion_attempts": report.deletion_attempts,
-            "deletion_terminal_attempts": report.deletion_terminal_attempts,
-            "deletion_strict_winners": report.deletion_strict_winners,
-            "deletion_candidates_remaining": report.deletion_candidates_remaining,
-            "native_ticks": report.native_ticks,
-            "native_wall_micros": report.native_wall_micros,
-            "wall_micros": report.wall_micros,
-            "first_terminal_wall_micros": report.first_terminal_wall_micros,
         }))?
     );
     Ok(())
