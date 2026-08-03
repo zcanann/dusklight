@@ -167,8 +167,15 @@ budget. Remove it if it does not.
   family until deletion is measured.
 - [x] Prove with a focused deterministic test that deletion candidates are
   complete, non-duplicated, resumable, and terminal failures are rejected.
-- [ ] Re-run five fixed zero-shot seeds with the final minimal mechanism set and
-  retain the full result distribution, not only the luckiest seed.
+- [x] Re-run five fixed zero-shot seeds with deletion enabled and retain the
+  full result distribution, not only the luckiest seed.
+- [ ] Correct the measured scheduler failure without adding an edit family:
+  after the first terminal, alternate one ordinary Q episode with one pending
+  deletion candidate. A new strict Q winner resets deletion enumeration to the
+  better incumbent. Failed deletion candidates still make zero Q updates.
+- [ ] Re-run the same fixed five seeds with alternation. Retain it only if it
+  improves on the 360-tick best without the broad per-seed regression caused by
+  exclusive deletion.
 - [ ] Reproduce 124 ticks or less, then continue the unchanged generic process
   to 123 ticks and 120 ticks or less.
 - [ ] Verify that ordinary seed ordering and update cadence do not erase the
@@ -186,6 +193,16 @@ the first removed option 9, reached the real terminal, cold-replayed twice, and
 improved 876 to 868 ticks; the next two failed candidates made zero learner
 updates. Focused tests cover complete deterministic enumeration, duplicate-free
 resume, failure rejection, and incumbent reset after acceptance.
+
+Exclusive-deletion result (2026-08-02): measured and rejected as a scheduler,
+not as an operator. Across the five fixed ten-minute seeds it attempted 159
+deletions, 33 still reached the terminal, and 30 were strict cold-replayed
+winners. Per-seed best ticks were 567, 589, 360, 852, and 391, compared with
+540, 481, 368, 561, and 488 for continued Q learning. Deletion established a
+new overall best by 8 ticks and helped two seeds, but regressed three seeds and
+worsened the median from 488 to 567 because it monopolized every post-terminal
+episode. The smallest correction is deterministic Q/deletion alternation; do
+not add shortening, heading, roll-timing, another model, or more wall time yet.
 
 ### 4. Prove learning value only after the route works
 
