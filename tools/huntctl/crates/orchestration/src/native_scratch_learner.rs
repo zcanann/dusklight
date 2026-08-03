@@ -217,13 +217,23 @@ pub fn run_native_scratch_learner(
             .output_root
             .join("episodes")
             .join(format!("episode-{episode_index:06}"));
-        let deletion_candidate = checkpoint
-            .deletion_search
-            .as_ref()
-            .map(|search| search.next_candidate(config.seed))
-            .transpose()
-            .map_err(run_message)?
-            .flatten();
+        let deletion_candidate = if deletion_slot_is_due(
+            checkpoint
+                .report
+                .episodes
+                .last()
+                .map(|episode| episode.mode),
+        ) {
+            checkpoint
+                .deletion_search
+                .as_ref()
+                .map(|search| search.next_candidate(config.seed))
+                .transpose()
+                .map_err(run_message)?
+                .flatten()
+        } else {
+            None
+        };
         let episode_mode = if deletion_candidate.is_some() {
             ScratchEpisodeMode::DeleteOption
         } else {
@@ -411,6 +421,10 @@ pub fn run_native_scratch_learner(
     write_checkpoint_atomic(&checkpoint_path, &checkpoint)?;
     write_report_atomic(&config.output_root.join("report.json"), &checkpoint.report)?;
     Ok(checkpoint.report)
+}
+
+fn deletion_slot_is_due(previous_mode: Option<ScratchEpisodeMode>) -> bool {
+    previous_mode != Some(ScratchEpisodeMode::DeleteOption)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1046,6 +1060,31 @@ mod tests {
         let mut eligible = vec![5, 6, 7];
         exclude_completed_duplicate(&[2, 4], &completed, &mut eligible);
         assert_eq!(eligible, vec![5, 7]);
+    }
+
+    #[test]
+    fn deletion_slots_alternate_from_the_last_persisted_episode_mode() {
+        assert!(deletion_slot_is_due(None));
+        assert!(deletion_slot_is_due(Some(ScratchEpisodeMode::Learning)));
+        assert!(!deletion_slot_is_due(Some(
+            ScratchEpisodeMode::DeleteOption
+        )));
+
+        let resumed_modes = [
+            ScratchEpisodeMode::Learning,
+            ScratchEpisodeMode::DeleteOption,
+            ScratchEpisodeMode::Learning,
+            ScratchEpisodeMode::DeleteOption,
+        ];
+        for pair in resumed_modes.windows(2) {
+            let deletion_available = deletion_slot_is_due(Some(pair[0]));
+            let resumed_mode = if deletion_available {
+                ScratchEpisodeMode::DeleteOption
+            } else {
+                ScratchEpisodeMode::Learning
+            };
+            assert_eq!(resumed_mode, pair[1]);
+        }
     }
 
     #[test]
