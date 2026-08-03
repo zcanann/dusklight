@@ -489,6 +489,13 @@ remains 231 ticks. Across the full cycle, recomposed headings improved 242 to
 improvements, begin another heading-duration-roll cycle from the exact
 exhausted roll checkpoint; fixed point has not yet been established.
 
+Coordinate-descent cycle-two result (2026-08-03): retained. The heading pass
+evaluated 94 candidates, reached the real terminal on 86, and accepted one
+twice-replayed improvement from 231 to 229 ticks before exhausting. Duration
+then exhausted two terminal candidates without a winner, and roll exhausted 37
+candidates, 11 terminal, without a winner. Because the cycle still improved,
+run a third complete cycle from the exact exhausted roll checkpoint.
+
 ### 4. Prove learning value only after the route works
 
 - [ ] Compare adaptive, frozen, and random-valid selection over the same seeds,
