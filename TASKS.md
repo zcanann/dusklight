@@ -529,6 +529,12 @@ Because structure changed the incumbent, recompute heading, duration, roll,
 and deletion from the authenticated 222-tick checkpoint until a complete cycle
 makes no improvement.
 
+Post-deletion coordinate cycle, heading result (2026-08-03): retained and
+exhausted. The regenerated coarse-heading frontier evaluated 101 candidates;
+88 reached the real terminal and one strict winner cold-replayed twice,
+improving 222 to 221 ticks. Continue this cycle with duration from the exact
+heading checkpoint.
+
 ### 4. Prove learning value only after the route works
 
 - [ ] Compare adaptive, frozen, and random-valid selection over the same seeds,
