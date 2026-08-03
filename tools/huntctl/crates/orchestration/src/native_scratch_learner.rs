@@ -1069,8 +1069,7 @@ mod tests {
             terminal: false,
         };
         let mut q = ScratchQTable::new(2).unwrap();
-        q.update_episode(&[transition.clone()], false, 900)
-            .unwrap();
+        q.update_episode(&[transition.clone()], false, 900).unwrap();
         let before = q.clone();
         let mut position_cell_visits = BTreeMap::from([([0, 0], 3)]);
         let visits_before = position_cell_visits.clone();
