@@ -236,7 +236,7 @@ budget. Remove it if it does not.
   heading or local-option pass must expose one common incumbent contract that
   another existing edit family can consume by exact checkpoint hash, without a
   manual tape/action migration or weakening v1 diagnostic-only rejection.
-- [ ] From the retained 242-tick roll incumbent, run the existing coarse-heading,
+- [x] From the retained 242-tick roll incumbent, run the existing coarse-heading,
   duration, and roll families as deterministic coordinate descent. Exhaust each
   frontier, accept only twice-replayed strict terminal improvements, and stop
   when a complete cycle makes no improvement before adding a new edit family.
@@ -495,6 +495,15 @@ twice-replayed improvement from 231 to 229 ticks before exhausting. Duration
 then exhausted two terminal candidates without a winner, and roll exhausted 37
 candidates, 11 terminal, without a winner. Because the cycle still improved,
 run a third complete cycle from the exact exhausted roll checkpoint.
+
+Coordinate-descent fixed-point result (2026-08-03): retained and complete at
+229 ticks. Cycle three exhausted 88 heading candidates (81 terminal), two
+duration candidates (both terminal), and 37 roll candidates (11 terminal)
+without a strict winner. Every existing single-option family therefore reached
+a full-cycle fixed point. Across the composed treatment the authenticated
+incumbent improved from 242 to 229, but remains 105 ticks above 124. Diagnose
+the exact 229-tick sequence before selecting one new generic edit family; do
+not spend more samples on these exhausted frontiers.
 
 ### 4. Prove learning value only after the route works
 
