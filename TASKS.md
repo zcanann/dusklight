@@ -200,7 +200,7 @@ budget. Remove it if it does not.
   Enumerate candidates once, persist progress, cold-root evaluate, and accept
   only a strict twice-replayed terminal improvement. Failed candidates make no
   Q update. Do not add fine headings or another global action yet.
-- [ ] Run the bounded adjacent-heading pass on the 360-tick incumbent. Retain
+- [x] Run the bounded adjacent-heading pass on the 360-tick incumbent. Retain
   the edit only if it improves the real terminal tick; exhaust or reject it
   before considering finer heading parameters.
 - [ ] Add one finer local parameter treatment over the correctly exhausted
@@ -327,6 +327,17 @@ checkpoint as the fine-heading source. Semantic option-ID addressing replaces
 the invalid index geometry, the checkpoint format advances to v2 so the old
 frontier cannot resume under new semantics, and the bounded adjacent pass is
 reopened from the authenticated 360-tick scratch incumbent.
+
+Corrected adjacent-heading result (2026-08-03): retained and exhausted. The
+semantic seed-155921 pass evaluated 438 family-and-duration-preserving
+candidates; 418 reached the real load-zone terminal and 16 strict improvements
+each cold-replayed twice. It reduced the authenticated scratch incumbent from
+360 to 333 ticks and stopped with zero candidates remaining. The run consumed
+152,125 native ticks. A host suspension inflated one slice's native and total
+wall clocks, so this artifact is valid route-quality evidence but must not be
+used as throughput evidence. Coarse heading repair is useful but supplies only
+27 of the 236 ticks needed to reach 124; proceed to the already bounded
+32-heading midpoint treatment rather than mining the exhausted frontier.
 
 ### 4. Prove learning value only after the route works
 
