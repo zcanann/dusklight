@@ -240,6 +240,10 @@ budget. Remove it if it does not.
   duration, and roll families as deterministic coordinate descent. Exhaust each
   frontier, accept only twice-replayed strict terminal improvements, and stop
   when a complete cycle makes no improvement before adding a new edit family.
+- [ ] Run standalone single-option deletion from the authenticated 229-tick
+  fixed point. Retain only twice-replayed strict terminal improvements; if it
+  changes the incumbent, recompute heading, duration, roll, and deletion to a
+  new full-cycle fixed point before selecting another family.
 - [ ] Reproduce 124 ticks or less, then continue the unchanged generic process
   to 123 ticks and 120 ticks or less.
 - [ ] Verify that ordinary seed ordering and update cadence do not erase the
@@ -504,6 +508,16 @@ a full-cycle fixed point. Across the composed treatment the authenticated
 incumbent improved from 242 to 229, but remains 105 ticks above 124. Diagnose
 the exact 229-tick sequence before selecting one new generic edit family; do
 not spend more samples on these exhausted frontiers.
+
+Standalone-deletion checkpoint (2026-08-03): the shared local-option engine now
+supports an exact one-option deletion mode in addition to duration and roll
+replacement. It enumerates unique shortened sequences, persists the edit kind
+and deterministic frontier in the existing compressed binary checkpoint, and
+requires the same strict real-terminal improvement plus two exact cold replays.
+Focused coverage proves duplicate collapse and one-option scope. The full 444-
+test orchestration audit and 591-file source-size gate pass. Run it from the
+authenticated 229-tick fixed point before considering the much larger
+non-local-heading frontier.
 
 ### 4. Prove learning value only after the route works
 

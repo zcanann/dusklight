@@ -255,6 +255,9 @@ fn print_usage() {
     eprintln!(
         "  huntctl learn refine-scratch-rolls --request OPTIMIZATION.json --execution EXECUTION.json --scratch-source build/SCRATCH (--source build/HEADING | --option-source build/OPTION | --incumbent-source build/INCUMBENT) --output build/DIR --seed N [--candidate-limit N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--wall-time-seconds N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
     );
+    eprintln!(
+        "  huntctl learn refine-scratch-deletions --request OPTIMIZATION.json --execution EXECUTION.json --scratch-source build/SCRATCH (--source build/HEADING | --option-source build/OPTION | --incumbent-source build/INCUMBENT) --output build/DIR --seed N [--candidate-limit N] [--maximum-episode-ticks N] [--epsilon-per-million N] [--wall-time-seconds N] [--cold-replay-timeout-seconds N] [--repository-root DIR]"
+    );
     eprintln!("  huntctl learn inspect-scratch-headings --input build/HEADING");
     eprintln!(
         "  huntctl learn prove-generalized-tactics (--campaign-root DIR | --input CORPUS.dtqc [--input MORE.dtqc]) --output REPORT.json [--goal-distance-feature N]"

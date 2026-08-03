@@ -38,6 +38,7 @@ const CHECKPOINT_HEADER_BYTES: usize = 8 + 2 + 2 + 8 + 32;
 pub enum ScratchOptionEditKind {
     ShortenDuration,
     PromoteRoll,
+    DeleteOption,
 }
 
 pub struct NativeScratchOptionRunConfig<'a> {
@@ -253,15 +254,27 @@ impl ScratchOptionSearch {
             self.incumbent_action_sequence.iter().copied().enumerate()
         {
             let previous = catalog.entries()[action].option_id();
-            let Some(replacement_option_id) = replacement_option(action, catalog, edit_kind) else {
-                continue;
-            };
-            let replacement_action = catalog
-                .entries()
-                .binary_search_by_key(&replacement_option_id.as_str(), |entry| entry.option_id())
-                .map_err(|_| "shorter scratch option is missing".to_owned())?;
             let mut action_sequence = self.incumbent_action_sequence.clone();
-            action_sequence[changed_action_index] = replacement_action;
+            let replacement_option_id = if edit_kind == ScratchOptionEditKind::DeleteOption {
+                if action_sequence.len() == 1 {
+                    continue;
+                }
+                action_sequence.remove(changed_action_index);
+                "<deleted>".to_owned()
+            } else {
+                let Some(replacement_option_id) = replacement_option(action, catalog, edit_kind)
+                else {
+                    continue;
+                };
+                let replacement_action = catalog
+                    .entries()
+                    .binary_search_by_key(&replacement_option_id.as_str(), |entry| {
+                        entry.option_id()
+                    })
+                    .map_err(|_| "replacement scratch option is missing".to_owned())?;
+                action_sequence[changed_action_index] = replacement_action;
+                replacement_option_id
+            };
             if !unique.insert(action_sequence.clone()) {
                 continue;
             }
@@ -299,6 +312,9 @@ fn replacement_option(
     catalog: &TacticAssetCatalog,
     edit_kind: ScratchOptionEditKind,
 ) -> Option<String> {
+    if edit_kind == ScratchOptionEditKind::DeleteOption {
+        return None;
+    }
     let option_id = catalog.entries().get(action)?.option_id();
     if edit_kind == ScratchOptionEditKind::PromoteRoll {
         if option_id.starts_with("scratch.roll.") {
@@ -942,6 +958,28 @@ mod tests {
         let encoded = serde_cbor::to_vec(&search).unwrap();
         let resumed: ScratchOptionSearch = serde_cbor::from_slice(&encoded).unwrap();
         assert_eq!(resumed.remaining(7, &catalog, kind).unwrap(), 1);
+    }
+
+    #[test]
+    fn deletion_candidates_remove_exactly_one_option_and_are_unique() {
+        let catalog = scratch_action_catalog().unwrap();
+        let first = action(&catalog, "scratch.camera_move.h03.t08.l1");
+        let second = action(&catalog, "scratch.move.h09.t08");
+        let search = ScratchOptionSearch::new(vec![first, first, second], &catalog).unwrap();
+        let candidates = search
+            .candidates(11, &catalog, ScratchOptionEditKind::DeleteOption)
+            .unwrap();
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates.iter().all(|candidate| {
+            candidate.action_sequence.len() == 2 && candidate.replacement_option_id == "<deleted>"
+        }));
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.action_sequence.clone())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([vec![first, first], vec![first, second]])
+        );
     }
 
     #[test]

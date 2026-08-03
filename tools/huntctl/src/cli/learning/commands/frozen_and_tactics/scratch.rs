@@ -57,6 +57,13 @@ pub(super) fn command(command: &str, learn_args: &[String]) -> Result<(), Box<dy
             &execution,
             ScratchOptionEditKind::PromoteRoll,
         ),
+        "refine-scratch-deletions" => refine_options(
+            learn_args,
+            &repository_root,
+            &request,
+            &execution,
+            ScratchOptionEditKind::DeleteOption,
+        ),
         _ => usage_error(),
     }
 }
