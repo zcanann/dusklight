@@ -1,10 +1,10 @@
 //! Deterministic single-option refinement of an authenticated scratch-route incumbent.
 
 use crate::native_residual_campaign::ValidatedNativeResidualExecution;
-use crate::native_scratch_heading::inspect_native_scratch_heading_checkpoint;
-use crate::native_scratch_learner::{
-    NativeScratchRunConfig, load_scratch_refinement_source, run_episode,
+use crate::native_scratch_incumbent::{
+    AuthenticatedScratchIncumbent, ScratchIncumbentSource, load_authenticated_scratch_incumbent,
 };
+use crate::native_scratch_learner::{NativeScratchRunConfig, run_episode};
 use crate::native_tactic_route_runner::{
     NativeTacticColdReplayAttempt, NativeTapeColdReplayConfig, exact_cold_replay_attempts,
     run_native_tape_cold_replay_after_execution_validation,
@@ -27,6 +27,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 const REPORT_SCHEMA: &str = "dusklight-native-scratch-option-refinement-report/v1";
+const INSPECTION_SCHEMA: &str = "dusklight-native-scratch-option-refinement-inspection/v1";
 const CHECKPOINT_SCHEMA: &str = "dusklight-native-scratch-option-refinement-checkpoint/v1";
 const CHECKPOINT_MAGIC: &[u8; 8] = b"DSSOPT01";
 const CHECKPOINT_VERSION: u16 = 1;
@@ -41,7 +42,7 @@ pub enum ScratchOptionEditKind {
 
 pub struct NativeScratchOptionRunConfig<'a> {
     pub scratch: NativeScratchRunConfig<'a>,
-    pub source_heading_root: &'a Path,
+    pub source: ScratchIncumbentSource<'a>,
     pub edit_kind: ScratchOptionEditKind,
     pub output_root: &'a Path,
     pub candidate_limit: u64,
@@ -88,6 +89,25 @@ pub struct NativeScratchOptionAttempt {
     pub native_wall_micros: u64,
     pub tape_sha256: Digest,
     pub cold_replay_attempts: Vec<NativeTacticColdReplayAttempt>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeScratchOptionInspection {
+    pub schema: String,
+    pub checkpoint_sha256: Digest,
+    pub checkpoint_schema: String,
+    pub source_checkpoint_sha256: Digest,
+    pub optimization_request_sha256: Digest,
+    pub execution_binding_sha256: Digest,
+    pub action_universe_sha256: Digest,
+    pub seed: u64,
+    pub edit_kind: ScratchOptionEditKind,
+    pub stop_reason: String,
+    pub candidates_remaining: u64,
+    pub incumbent_ticks: u64,
+    pub incumbent_action_sequence_sha256: Digest,
+    pub incumbent_options: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -309,9 +329,9 @@ pub fn run_native_scratch_option_refinement(
         return Err(option_error("scratch option configuration is invalid"));
     }
     let started = Instant::now();
-    let scratch_source = load_scratch_refinement_source(&config.scratch).map_err(option_display)?;
-    let source = inspect_native_scratch_heading_checkpoint(config.source_heading_root)
-        .map_err(option_display)?;
+    let source =
+        load_authenticated_scratch_incumbent(&config.scratch, config.source, SCRATCH_HEADING_COUNT)
+            .map_err(option_display)?;
     let root = config
         .scratch
         .repository_root
@@ -338,34 +358,10 @@ pub fn run_native_scratch_option_refinement(
         .to_vec();
     let catalog = scratch_action_catalog().map_err(option_display)?;
     let action_universe_sha256 = catalog.action_schema_sha256();
-    if source.schema != "dusklight-native-scratch-heading-inspection/v2"
-        || source.checkpoint_schema != "dusklight-native-scratch-heading-checkpoint/v2"
-        || source.stop_reason != "candidate_exhaustion"
-        || source.candidates_remaining != 0
-        || source.heading_count != SCRATCH_HEADING_COUNT as u64
-        || source.source_checkpoint_sha256 != scratch_source.checkpoint_sha256
-        || source.optimization_request_sha256 != config.scratch.optimization.content_sha256
-        || source.execution_binding_sha256 != config.scratch.execution.content_sha256
-        || source.action_universe_sha256 != action_universe_sha256
-    {
+    if source.heading_count != SCRATCH_HEADING_COUNT {
         return Err(option_error(
-            "scratch option source is not an exhausted authenticated heading checkpoint",
+            "scratch option source heading count is unsupported",
         ));
-    }
-    let source_actions = source
-        .incumbent_options
-        .iter()
-        .map(|option| {
-            catalog
-                .entries()
-                .binary_search_by_key(&option.as_str(), |entry| entry.option_id())
-                .map_err(|_| option_error("scratch option source option is missing"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    if action_sequence_sha256(&source_actions).map_err(option_error)?
-        != source.incumbent_action_sequence_sha256
-    {
-        return Err(option_error("scratch option source sequence is detached"));
     }
     let q = ScratchQTable::new(catalog.entries().len()).map_err(option_display)?;
     let checkpoint_path = config.output_root.join("checkpoint.dsso");
@@ -383,7 +379,8 @@ pub fn run_native_scratch_option_refinement(
             ));
         }
         fs::create_dir_all(config.output_root).map_err(option_display)?;
-        let search = ScratchOptionSearch::new(source_actions, &catalog).map_err(option_error)?;
+        let search = ScratchOptionSearch::new(source.incumbent_action_sequence.clone(), &catalog)
+            .map_err(option_error)?;
         let mut report = NativeScratchOptionReport {
             schema: REPORT_SCHEMA.into(),
             report_sha256: Digest::ZERO,
@@ -391,14 +388,14 @@ pub fn run_native_scratch_option_refinement(
             optimization_request_sha256: config.scratch.optimization.content_sha256,
             execution_binding_sha256: config.scratch.execution.content_sha256,
             action_universe_sha256,
-            seed: scratch_source.seed,
+            seed: source.seed,
             edit_kind: config.edit_kind,
             stop_reason: "not_started".into(),
             attempted_candidates: 0,
             terminal_candidates: 0,
             strict_winners: 0,
             candidates_remaining: search
-                .remaining(scratch_source.seed, &catalog, config.edit_kind)
+                .remaining(source.seed, &catalog, config.edit_kind)
                 .map_err(option_error)? as u64,
             fastest_selected_ticks: source.incumbent_ticks,
             fastest_tape: None,
@@ -415,7 +412,7 @@ pub fn run_native_scratch_option_refinement(
             optimization_request_sha256: config.scratch.optimization.content_sha256,
             execution_binding_sha256: config.scratch.execution.content_sha256,
             action_universe_sha256,
-            seed: scratch_source.seed,
+            seed: source.seed,
             edit_kind: config.edit_kind,
             search,
             report,
@@ -559,7 +556,7 @@ pub fn run_native_scratch_option_refinement(
 fn validate_checkpoint(
     checkpoint: &NativeScratchOptionCheckpoint,
     config: &NativeScratchOptionRunConfig<'_>,
-    source: &crate::native_scratch_heading::NativeScratchHeadingInspection,
+    source: &AuthenticatedScratchIncumbent,
     catalog: &TacticAssetCatalog,
 ) -> Result<(), NativeScratchOptionError> {
     checkpoint
@@ -688,6 +685,72 @@ fn decode_checkpoint(
         ));
     }
     serde_cbor::from_slice(&raw).map_err(option_display)
+}
+
+pub fn inspect_native_scratch_option_checkpoint(
+    input: &Path,
+) -> Result<NativeScratchOptionInspection, NativeScratchOptionError> {
+    let checkpoint_path = if input.is_dir() {
+        input.join("checkpoint.dsso")
+    } else {
+        input.to_path_buf()
+    };
+    let bytes = fs::read(&checkpoint_path).map_err(option_display)?;
+    let checkpoint = decode_checkpoint(&bytes)?;
+    let catalog = scratch_action_catalog().map_err(option_display)?;
+    checkpoint
+        .search
+        .validate(checkpoint.seed, &catalog, checkpoint.edit_kind)
+        .map_err(option_error)?;
+    let remaining = checkpoint
+        .search
+        .remaining(checkpoint.seed, &catalog, checkpoint.edit_kind)
+        .map_err(option_error)? as u64;
+    if checkpoint.schema != CHECKPOINT_SCHEMA
+        || checkpoint.report.schema != REPORT_SCHEMA
+        || checkpoint.action_universe_sha256 != catalog.action_schema_sha256()
+        || checkpoint.report.source_checkpoint_sha256 != checkpoint.source_checkpoint_sha256
+        || checkpoint.report.optimization_request_sha256 != checkpoint.optimization_request_sha256
+        || checkpoint.report.execution_binding_sha256 != checkpoint.execution_binding_sha256
+        || checkpoint.report.action_universe_sha256 != checkpoint.action_universe_sha256
+        || checkpoint.report.seed != checkpoint.seed
+        || checkpoint.report.edit_kind != checkpoint.edit_kind
+        || checkpoint.report.attempted_candidates as usize != checkpoint.report.attempts.len()
+        || checkpoint.report.candidates_remaining != remaining
+        || checkpoint.report.report_sha256 != report_identity(&checkpoint.report)?
+    {
+        return Err(option_error(
+            "scratch option checkpoint cannot be inspected safely",
+        ));
+    }
+    let incumbent_options = checkpoint
+        .search
+        .incumbent_action_sequence
+        .iter()
+        .map(|action| {
+            catalog
+                .entries()
+                .get(*action)
+                .map(|entry| entry.option_id().to_owned())
+                .ok_or_else(|| option_error("scratch option incumbent action is invalid"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(NativeScratchOptionInspection {
+        schema: INSPECTION_SCHEMA.into(),
+        checkpoint_sha256: sha256(&bytes),
+        checkpoint_schema: checkpoint.schema,
+        source_checkpoint_sha256: checkpoint.source_checkpoint_sha256,
+        optimization_request_sha256: checkpoint.optimization_request_sha256,
+        execution_binding_sha256: checkpoint.execution_binding_sha256,
+        action_universe_sha256: checkpoint.action_universe_sha256,
+        seed: checkpoint.seed,
+        edit_kind: checkpoint.edit_kind,
+        stop_reason: checkpoint.report.stop_reason,
+        candidates_remaining: checkpoint.report.candidates_remaining,
+        incumbent_ticks: checkpoint.report.fastest_selected_ticks,
+        incumbent_action_sequence_sha256: checkpoint.search.incumbent_sha256,
+        incumbent_options,
+    })
 }
 
 fn write_report(

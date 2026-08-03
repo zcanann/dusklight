@@ -232,7 +232,7 @@ budget. Remove it if it does not.
 - [x] Run the bounded roll-promotion pass to exhaustion. Retain it only if it
   improves the real terminal tick; diagnose it before permitting non-local
   headings, raw substitutions, or multi-option edits.
-- [ ] Make authenticated refinement outputs composable. A strict winner from a
+- [x] Make authenticated refinement outputs composable. A strict winner from a
   heading or local-option pass must expose one common incumbent contract that
   another existing edit family can consume by exact checkpoint hash, without a
   manual tape/action migration or weakening v1 diagnostic-only rejection.
@@ -437,6 +437,18 @@ ticks, then the frontier stopped with zero candidates remaining. It consumed
 was a major local bottleneck, but 242 remains 118 ticks above 124. Compose the
 already implemented edit families around this incumbent before inventing raw,
 non-local-heading, or multi-option treatments.
+
+Composable-incumbent checkpoint (2026-08-03): scratch, semantic-heading, and
+local-option checkpoints now enter heading, duration, and roll refinement
+through one authenticated incumbent contract. The contract verifies the exact
+checkpoint hash, request, execution, seed, action universe, exhaustion state,
+and semantic option sequence; downstream checkpoints bind that exact source
+hash. Stable option IDs preserve same-resolution composition and the existing
+16-to-32 mapping, while diagnostic-only v1 heading checkpoints remain rejected
+for execution. The CLI accepts an exhausted option checkpoint directly via
+`--option-source`, so the retained 242-tick roll result can enter the next
+coarse-heading pass without tape migration. The full framework audit passed
+442 orchestration tests and the 591-file source-size gate.
 
 ### 4. Prove learning value only after the route works
 

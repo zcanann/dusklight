@@ -4,8 +4,8 @@ use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_learning::scratch_action_catalog::{
     MAX_SCRATCH_REFINEMENT_HEADINGS, SCRATCH_ACTIONS_PER_HEADING, SCRATCH_HEADING_COUNT,
-    map_scratch_action_to_finer_catalog, scratch_action_catalog_with_heading_count,
-    scratch_action_heading_index, scratch_action_index_with_heading,
+    scratch_action_catalog_with_heading_count, scratch_action_heading_index,
+    scratch_action_index_with_heading,
 };
 use dusklight_learning::scratch_q::ScratchQTable;
 use dusklight_learning::tactic_asset::TacticAssetCatalog;
@@ -20,9 +20,10 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::native_residual_campaign::ValidatedNativeResidualExecution;
-use crate::native_scratch_learner::{
-    NativeScratchRunConfig, load_scratch_refinement_source, run_episode,
+use crate::native_scratch_incumbent::{
+    AuthenticatedScratchIncumbent, ScratchIncumbentSource, load_authenticated_scratch_incumbent,
 };
+use crate::native_scratch_learner::{NativeScratchRunConfig, run_episode};
 use crate::native_tactic_route_runner::{
     NativeTacticColdReplayAttempt, NativeTapeColdReplayConfig, exact_cold_replay_attempts,
     run_native_tape_cold_replay_after_execution_validation,
@@ -42,6 +43,7 @@ pub struct NativeScratchHeadingRunConfig<'a> {
     /// An exhausted heading-refinement checkpoint to refine further. When
     /// absent, the authenticated scratch learner checkpoint is the source.
     pub source_heading_root: Option<&'a Path>,
+    pub source_option_root: Option<&'a Path>,
     pub heading_count: usize,
     pub output_root: &'a Path,
     pub candidate_limit: u64,
@@ -99,6 +101,7 @@ pub struct NativeScratchHeadingInspection {
     pub optimization_request_sha256: Digest,
     pub execution_binding_sha256: Digest,
     pub action_universe_sha256: Digest,
+    pub seed: u64,
     pub heading_count: u64,
     pub stop_reason: String,
     pub candidates_remaining: u64,
@@ -302,64 +305,6 @@ fn default_heading_count() -> usize {
     SCRATCH_HEADING_COUNT
 }
 
-fn load_refinement_source(
-    config: &NativeScratchHeadingRunConfig<'_>,
-) -> Result<crate::native_scratch_learner::ScratchRefinementSource, NativeScratchHeadingError> {
-    let scratch_source =
-        load_scratch_refinement_source(&config.scratch).map_err(heading_display)?;
-    let Some(source_root) = config.source_heading_root else {
-        if config.heading_count != SCRATCH_HEADING_COUNT {
-            return Err(heading_error(
-                "finer headings require an exhausted heading-refinement source",
-            ));
-        }
-        return Ok(scratch_source);
-    };
-    let checkpoint_path = source_root.join("checkpoint.dssh");
-    let checkpoint_bytes = fs::read(&checkpoint_path).map_err(heading_display)?;
-    let checkpoint = decode_heading_checkpoint(&checkpoint_bytes)?;
-    let source_catalog = scratch_action_catalog_with_heading_count(checkpoint.search.heading_count)
-        .map_err(heading_display)?;
-    validate_heading_checkpoint(&checkpoint, config, &scratch_source, &source_catalog, false)?;
-    if checkpoint.report.stop_reason != "candidate_exhaustion"
-        || checkpoint.report.candidates_remaining != 0
-    {
-        return Err(heading_error(
-            "finer-heading source has not exhausted its current frontier",
-        ));
-    }
-    let incumbent_action_sequence = promote_heading_resolution(
-        &checkpoint.search.incumbent_action_sequence,
-        &source_catalog,
-        &scratch_action_catalog_with_heading_count(config.heading_count)
-            .map_err(heading_display)?,
-    )
-    .map_err(heading_error)?;
-    Ok(crate::native_scratch_learner::ScratchRefinementSource {
-        checkpoint_sha256: sha256(&checkpoint_bytes),
-        seed: checkpoint.seed,
-        incumbent_action_sequence,
-        incumbent_ticks: checkpoint.report.fastest_selected_ticks,
-    })
-}
-
-fn promote_heading_resolution(
-    action_sequence: &[usize],
-    source_catalog: &TacticAssetCatalog,
-    target_catalog: &TacticAssetCatalog,
-) -> Result<Vec<usize>, String> {
-    if target_catalog.entries().len() != source_catalog.entries().len().saturating_mul(2) {
-        return Err("finer-heading resolution must exactly double its valid source".into());
-    }
-    action_sequence
-        .iter()
-        .map(|action| {
-            map_scratch_action_to_finer_catalog(source_catalog, target_catalog, *action)
-                .map_err(|error| error.to_string())
-        })
-        .collect()
-}
-
 pub fn run_native_scratch_heading_refinement(
     config: &NativeScratchHeadingRunConfig<'_>,
 ) -> Result<NativeScratchHeadingReport, NativeScratchHeadingError> {
@@ -372,7 +317,17 @@ pub fn run_native_scratch_heading_refinement(
         return Err(heading_error("scratch heading configuration is invalid"));
     }
     let started = Instant::now();
-    let source = load_refinement_source(config)?;
+    let source_kind = match (config.source_heading_root, config.source_option_root) {
+        (None, None) => ScratchIncumbentSource::Scratch,
+        (Some(path), None) => ScratchIncumbentSource::Heading(path),
+        (None, Some(path)) => ScratchIncumbentSource::Option(path),
+        (Some(_), Some(_)) => {
+            return Err(heading_error("scratch heading source is ambiguous"));
+        }
+    };
+    let source =
+        load_authenticated_scratch_incumbent(&config.scratch, source_kind, config.heading_count)
+            .map_err(heading_display)?;
     let root = config
         .scratch
         .repository_root
@@ -600,7 +555,7 @@ pub fn run_native_scratch_heading_refinement(
 fn validate_heading_checkpoint(
     checkpoint: &NativeScratchHeadingCheckpoint,
     config: &NativeScratchHeadingRunConfig<'_>,
-    source: &crate::native_scratch_learner::ScratchRefinementSource,
+    source: &AuthenticatedScratchIncumbent,
     catalog: &TacticAssetCatalog,
     enforce_candidate_limit: bool,
 ) -> Result<(), NativeScratchHeadingError> {
@@ -816,6 +771,7 @@ pub fn inspect_native_scratch_heading_checkpoint(
         optimization_request_sha256: checkpoint.optimization_request_sha256,
         execution_binding_sha256: checkpoint.execution_binding_sha256,
         action_universe_sha256: checkpoint.action_universe_sha256,
+        seed: checkpoint.seed,
         heading_count: checkpoint.search.heading_count as u64,
         stop_reason: checkpoint.report.stop_reason,
         candidates_remaining: checkpoint.report.candidates_remaining,
@@ -983,7 +939,17 @@ mod tests {
         let coarse_catalog = scratch_action_catalog_with_heading_count(16).unwrap();
         let fine_catalog = scratch_action_catalog_with_heading_count(32).unwrap();
         let coarse = vec![action(&coarse_catalog, "scratch.camera_roll.h03.t08.s1")];
-        let promoted = promote_heading_resolution(&coarse, &coarse_catalog, &fine_catalog).unwrap();
+        let promoted = coarse
+            .iter()
+            .map(|action| {
+                dusklight_learning::scratch_action_catalog::map_scratch_action_to_finer_catalog(
+                    &coarse_catalog,
+                    &fine_catalog,
+                    *action,
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
         assert_eq!(
             fine_catalog.entries()[promoted[0]].option_id(),
             "scratch.camera_roll.h06.t08.s1"
@@ -1005,7 +971,6 @@ mod tests {
             .contains(&fine_catalog.entries()[candidate.action_sequence[0]].option_id())
                 && candidate.previous_heading_index == 6
         }));
-        assert!(promote_heading_resolution(&coarse, &coarse_catalog, &coarse_catalog).is_err());
     }
 
     #[test]

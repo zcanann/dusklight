@@ -23,6 +23,7 @@ pub mod native_residual_winner_promotion;
 pub mod native_residual_winner_selection;
 mod native_scratch_deletion;
 pub mod native_scratch_heading;
+pub mod native_scratch_incumbent;
 pub mod native_scratch_learner;
 pub mod native_scratch_option_refinement;
 pub mod native_subsystem_parity;

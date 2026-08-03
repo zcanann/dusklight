@@ -3,6 +3,7 @@ use huntctl::search_evaluator::native_scratch_heading::{
     NativeScratchHeadingRunConfig, inspect_native_scratch_heading_checkpoint,
     run_native_scratch_heading_refinement,
 };
+use huntctl::search_evaluator::native_scratch_incumbent::ScratchIncumbentSource;
 use huntctl::search_evaluator::native_scratch_learner::{
     NativeScratchRunConfig, run_native_scratch_learner,
 };
@@ -62,7 +63,17 @@ fn refine_options(
     edit_kind: ScratchOptionEditKind,
 ) -> Result<(), Box<dyn Error>> {
     let scratch_source = resolve_path(args, "--scratch-source", repository_root)?;
-    let source = resolve_path(args, "--source", repository_root)?;
+    let heading_source = resolve_optional_path(args, "--source", repository_root);
+    let option_source = resolve_optional_path(args, "--option-source", repository_root);
+    let source = match (heading_source.as_deref(), option_source.as_deref()) {
+        (Some(path), None) => ScratchIncumbentSource::Heading(path),
+        (None, Some(path)) => ScratchIncumbentSource::Option(path),
+        _ => {
+            return Err(
+                "exactly one of --source or --option-source must identify the incumbent".into(),
+            );
+        }
+    };
     let output = resolve_path(args, "--output", repository_root)?;
     let scratch = NativeScratchRunConfig {
         repository_root,
@@ -82,7 +93,7 @@ fn refine_options(
     };
     let report = run_native_scratch_option_refinement(&NativeScratchOptionRunConfig {
         scratch,
-        source_heading_root: &source,
+        source,
         edit_kind,
         output_root: &output,
         candidate_limit: u64_option(args, "--candidate-limit", 1_000)?,
@@ -163,12 +174,27 @@ fn refine_headings(
     execution: &NativeResidualExecutionBinding,
     fine: bool,
 ) -> Result<(), Box<dyn Error>> {
-    let source = resolve_path(args, "--source", repository_root)?;
-    let scratch_source = if fine {
-        resolve_path(args, "--scratch-source", repository_root)?
-    } else {
-        source.clone()
-    };
+    let heading_source = resolve_optional_path(args, "--source", repository_root);
+    let option_source = resolve_optional_path(args, "--option-source", repository_root);
+    let (scratch_source, source_heading_root, source_option_root) =
+        match (heading_source.as_ref(), option_source.as_ref()) {
+            (Some(source), None) if fine => (
+                resolve_path(args, "--scratch-source", repository_root)?,
+                Some(source.as_path()),
+                None,
+            ),
+            (Some(source), None) => (source.clone(), None, None),
+            (None, Some(source)) => (
+                resolve_path(args, "--scratch-source", repository_root)?,
+                None,
+                Some(source.as_path()),
+            ),
+            _ => {
+                return Err(
+                    "exactly one of --source or --option-source must identify the incumbent".into(),
+                );
+            }
+        };
     let output = resolve_path(args, "--output", repository_root)?;
     let scratch = NativeScratchRunConfig {
         repository_root,
@@ -188,7 +214,8 @@ fn refine_headings(
     };
     let report = run_native_scratch_heading_refinement(&NativeScratchHeadingRunConfig {
         scratch,
-        source_heading_root: fine.then_some(source.as_path()),
+        source_heading_root,
+        source_option_root,
         heading_count: if fine { 32 } else { 16 },
         output_root: &output,
         candidate_limit: u64_option(args, "--candidate-limit", 1_000)?,
@@ -223,5 +250,19 @@ fn resolve_path(
         path
     } else {
         repository_root.join(path)
+    })
+}
+
+fn resolve_optional_path(
+    args: &[String],
+    argument: &str,
+    repository_root: &Path,
+) -> Option<PathBuf> {
+    option(args, argument).map(PathBuf::from).map(|path| {
+        if path.is_absolute() {
+            path
+        } else {
+            repository_root.join(path)
+        }
     })
 }
