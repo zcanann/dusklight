@@ -203,7 +203,7 @@ budget. Remove it if it does not.
 - [x] Run the bounded adjacent-heading pass on the 360-tick incumbent. Retain
   the edit only if it improves the real terminal tick; exhaust or reject it
   before considering finer heading parameters.
-- [ ] Add one finer local parameter treatment over the correctly exhausted
+- [x] Add one finer local parameter treatment over the correctly exhausted
   adjacent-heading incumbent: map the 16-heading sequence losslessly into a
   32-heading catalog and propose only each option's two 11.25-degree neighbors.
   Preserve family and duration, keep the global learner at 16 headings, bind
@@ -338,6 +338,15 @@ wall clocks, so this artifact is valid route-quality evidence but must not be
 used as throughput evidence. Coarse heading repair is useful but supplies only
 27 of the 236 ticks needed to reach 124; proceed to the already bounded
 32-heading midpoint treatment rather than mining the exhausted frontier.
+
+Fine-heading checkpoint (2026-08-03): `huntctl learn
+refine-scratch-fine-headings` authenticates both the original scratch source and
+the exhausted semantic-heading checkpoint, maps every retained 16-bin action to
+its identical even 32-bin action, and proposes only the two 11.25-degree
+neighbors. The learner's catalog remains unchanged. A native seed-155921 smoke
+resumed from attempt one to two, reduced the frontier from 87 to 86 without a
+duplicate, reached the real terminal twice, and preserved the 333-tick
+incumbent.
 
 ### 4. Prove learning value only after the route works
 
