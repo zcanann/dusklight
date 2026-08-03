@@ -481,6 +481,14 @@ terminal. Two strict improvements cold-replayed twice and reduced the incumbent
 to 231 ticks; zero duration candidates remain. Continue cycle one with roll
 promotion from this exact option checkpoint.
 
+Coordinate-descent cycle-one result (2026-08-03): retained. Roll promotion
+consumed the exact 231-tick duration checkpoint and exhausted all 37 candidates;
+11 reached the real terminal and none improved, so the cycle-one incumbent
+remains 231 ticks. Across the full cycle, recomposed headings improved 242 to
+237 and duration improved 237 to 231. Because the cycle produced strict
+improvements, begin another heading-duration-roll cycle from the exact
+exhausted roll checkpoint; fixed point has not yet been established.
+
 ### 4. Prove learning value only after the route works
 
 - [ ] Compare adaptive, frozen, and random-valid selection over the same seeds,
