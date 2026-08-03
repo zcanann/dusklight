@@ -144,6 +144,7 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             command @ ("scratch-route"
             | "refine-scratch-headings"
             | "refine-scratch-fine-headings"
+            | "refine-scratch-durations"
             | "inspect-scratch-headings"),
         ) => scratch::command(command, &args[1..]),
         Some("prove-generalized-tactics") => {

@@ -30,7 +30,7 @@ use crate::native_tactic_route_runner::{
 
 const MAX_INCUMBENT_ACTIONS: usize = 100_000;
 const REPORT_SCHEMA: &str = "dusklight-native-scratch-heading-report/v1";
-const INSPECTION_SCHEMA: &str = "dusklight-native-scratch-heading-inspection/v1";
+const INSPECTION_SCHEMA: &str = "dusklight-native-scratch-heading-inspection/v2";
 const CHECKPOINT_SCHEMA: &str = "dusklight-native-scratch-heading-checkpoint/v2";
 const CHECKPOINT_MAGIC: &[u8; 8] = b"DSSHDR01";
 const CHECKPOINT_VERSION: u16 = 2;
@@ -96,8 +96,12 @@ pub struct NativeScratchHeadingInspection {
     pub checkpoint_sha256: Digest,
     pub checkpoint_schema: String,
     pub source_checkpoint_sha256: Digest,
+    pub optimization_request_sha256: Digest,
+    pub execution_binding_sha256: Digest,
     pub action_universe_sha256: Digest,
     pub heading_count: u64,
+    pub stop_reason: String,
+    pub candidates_remaining: u64,
     pub incumbent_ticks: u64,
     pub incumbent_action_sequence_sha256: Digest,
     pub incumbent_action_count: u64,
@@ -619,6 +623,8 @@ fn validate_heading_checkpoint(
         || checkpoint.report.source_checkpoint_sha256 != checkpoint.source_checkpoint_sha256
         || checkpoint.report.optimization_request_sha256 != checkpoint.optimization_request_sha256
         || checkpoint.report.execution_binding_sha256 != checkpoint.execution_binding_sha256
+        || checkpoint.report.optimization_request_sha256 != checkpoint.optimization_request_sha256
+        || checkpoint.report.execution_binding_sha256 != checkpoint.execution_binding_sha256
         || checkpoint.report.action_universe_sha256 != checkpoint.action_universe_sha256
         || checkpoint.report.seed != checkpoint.seed
         || checkpoint.report.attempted_candidates as usize != checkpoint.report.attempts.len()
@@ -807,8 +813,12 @@ pub fn inspect_native_scratch_heading_checkpoint(
         checkpoint_sha256: sha256(&bytes),
         checkpoint_schema: checkpoint.schema,
         source_checkpoint_sha256: checkpoint.source_checkpoint_sha256,
+        optimization_request_sha256: checkpoint.optimization_request_sha256,
+        execution_binding_sha256: checkpoint.execution_binding_sha256,
         action_universe_sha256: checkpoint.action_universe_sha256,
         heading_count: checkpoint.search.heading_count as u64,
+        stop_reason: checkpoint.report.stop_reason,
+        candidates_remaining: checkpoint.report.candidates_remaining,
         incumbent_ticks: checkpoint.report.fastest_selected_ticks,
         incumbent_action_sequence_sha256: checkpoint.search.incumbent_sha256,
         incumbent_action_count: incumbent_options.len() as u64,

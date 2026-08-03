@@ -216,7 +216,7 @@ budget. Remove it if it does not.
   sequence with the real but mischaracterized 299-tick sequence. Select the
   next single edit family from observed family, duration, and boundary changes,
   not from another undirected mining run.
-- [ ] Add one duration-shortening edit family over the 333-tick incumbent.
+- [x] Add one duration-shortening edit family over the 333-tick incumbent.
   Preserve heading, tactic family, and lock/roll timing while moving only to
   the next shorter duration or recovery parameter already in the catalog.
   Enumerate once, resume deterministically, and require two exact cold replays;
@@ -380,6 +380,18 @@ valid incumbent has only four same-family shortening opportunities: one
 16-tick camera move, two 16-tick camera rolls, and one 8-tick move. Measure
 those duration parameters first. Cross-family roll/raw substitutions and
 non-local heading changes remain separate hypotheses.
+
+Duration-refinement checkpoint (2026-08-03): `huntctl learn
+refine-scratch-durations` accepts only an exhausted authenticated v2 heading
+source and enumerates the next shorter same-family catalog parameter while
+preserving heading and lock/roll schedule. Its separate compressed,
+checksummed, atomic binary checkpoint binds the source, request, execution,
+action universe, incumbent, attempts, and sealed report. Failed candidates do
+not update Q, and strict winners must replay exactly twice before resetting the
+small frontier. Focused tests cover semantic shortening, duplicate-free resume,
+binary round trip, and corruption rejection. The full framework audit passed
+440 orchestration tests and the 590-file source-size gate; the new module is
+834 lines.
 
 ### 4. Prove learning value only after the route works
 

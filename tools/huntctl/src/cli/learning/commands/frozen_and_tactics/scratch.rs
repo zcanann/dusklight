@@ -1,4 +1,7 @@
 use super::*;
+use huntctl::search_evaluator::native_scratch_duration::{
+    NativeScratchDurationRunConfig, run_native_scratch_duration_refinement,
+};
 use huntctl::search_evaluator::native_scratch_heading::{
     NativeScratchHeadingRunConfig, inspect_native_scratch_heading_checkpoint,
     run_native_scratch_heading_refinement,
@@ -33,8 +36,62 @@ pub(super) fn command(command: &str, learn_args: &[String]) -> Result<(), Box<dy
         "refine-scratch-fine-headings" => {
             refine_headings(learn_args, &repository_root, &request, &execution, true)
         }
+        "refine-scratch-durations" => {
+            refine_durations(learn_args, &repository_root, &request, &execution)
+        }
         _ => usage_error(),
     }
+}
+
+fn refine_durations(
+    args: &[String],
+    repository_root: &Path,
+    request: &OptimizationRequest,
+    execution: &NativeResidualExecutionBinding,
+) -> Result<(), Box<dyn Error>> {
+    let scratch_source = resolve_path(args, "--scratch-source", repository_root)?;
+    let source = resolve_path(args, "--source", repository_root)?;
+    let output = resolve_path(args, "--output", repository_root)?;
+    let scratch = NativeScratchRunConfig {
+        repository_root,
+        optimization: request,
+        execution,
+        output_root: &scratch_source,
+        seed: u64_option(args, "--seed", 0)?,
+        episodes: 1_000_000,
+        maximum_episode_ticks: u32::try_from(u64_option(args, "--maximum-episode-ticks", 900)?)?,
+        epsilon_per_million: u32::try_from(u64_option(args, "--epsilon-per-million", 200_000)?)?,
+        maximum_wall_time: Duration::from_secs(1),
+        cold_replay_timeout: Duration::from_secs(u64_option(
+            args,
+            "--cold-replay-timeout-seconds",
+            120,
+        )?),
+    };
+    let report = run_native_scratch_duration_refinement(&NativeScratchDurationRunConfig {
+        scratch,
+        source_heading_root: &source,
+        output_root: &output,
+        candidate_limit: u64_option(args, "--candidate-limit", 1_000)?,
+        maximum_wall_time: Duration::from_secs(u64_option(args, "--wall-time-seconds", 600)?),
+    })?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": report.schema,
+            "report": output.join("report.json"),
+            "stop_reason": report.stop_reason,
+            "attempted_candidates": report.attempted_candidates,
+            "terminal_candidates": report.terminal_candidates,
+            "strict_winners": report.strict_winners,
+            "candidates_remaining": report.candidates_remaining,
+            "fastest_selected_ticks": report.fastest_selected_ticks,
+            "native_ticks": report.native_ticks,
+            "native_wall_micros": report.native_wall_micros,
+            "wall_micros": report.wall_micros,
+        }))?
+    );
+    Ok(())
 }
 
 fn run_route(
