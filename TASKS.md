@@ -159,13 +159,13 @@ budget. Remove it if it does not.
 
 ### 3. Establish the benchmark result
 
-- [ ] Add one deterministic post-success mutation loop over the fastest
+- [x] Add one deterministic post-success mutation loop over the fastest
   successful action sequence: delete one option, cold-root evaluate the
   candidate, and accept it only when the real terminal still fires at a strict
   lower tick. Enumerate each deletion once before repeating any; failed
   mutations cannot alter the incumbent or Q table. Do not add another edit
   family until deletion is measured.
-- [ ] Prove with a focused deterministic test that deletion candidates are
+- [x] Prove with a focused deterministic test that deletion candidates are
   complete, non-duplicated, resumable, and terminal failures are rejected.
 - [ ] Re-run five fixed zero-shot seeds with the final minimal mechanism set and
   retain the full result distribution, not only the luckiest seed.
@@ -176,6 +176,16 @@ budget. Remove it if it does not.
 
 Exit: a zero-shot route reaches 120 ticks or less and cold-replays twice with
 identical evidence.
+
+Deletion checkpoint (2026-08-02): the v4 learner persists a deterministic set
+of unique single-option deletions for the current fastest authenticated action
+sequence. Each candidate runs from the cold root; failed or non-improving
+candidates make zero Q updates and cannot replace the incumbent. A four-episode
+seed-181081 native smoke handed off from learning to three deletion attempts:
+the first removed option 9, reached the real terminal, cold-replayed twice, and
+improved 876 to 868 ticks; the next two failed candidates made zero learner
+updates. Focused tests cover complete deterministic enumeration, duplicate-free
+resume, failure rejection, and incumbent reset after acceptance.
 
 ### 4. Prove learning value only after the route works
 
