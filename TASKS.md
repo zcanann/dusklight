@@ -173,9 +173,15 @@ budget. Remove it if it does not.
   after the first terminal, alternate one ordinary Q episode with one pending
   deletion candidate. A new strict Q winner resets deletion enumeration to the
   better incumbent. Failed deletion candidates still make zero Q updates.
-- [ ] Re-run the same fixed five seeds with alternation. Retain it only if it
-  improves on the 360-tick best without the broad per-seed regression caused by
-  exclusive deletion.
+- [x] Re-run the same fixed five seeds with alternation. It did not improve on
+  the 360-tick best and again regressed three seeds, so reject the fixed cadence.
+- [ ] Replace fixed cadence with one event-driven deletion attempt immediately
+  after each strict Q winner. A deletion winner cannot schedule another
+  deletion; prove the persisted last episode makes this resumable and keeps Q
+  dominant without changing the operator or Q updates.
+- [ ] Re-run the same five seeds with event-driven deletion. Retain it only if
+  it preserves the broad novelty-only Q gains while producing useful local
+  improvement; otherwise remove deletion from the shared-budget learner.
 - [ ] Reproduce 124 ticks or less, then continue the unchanged generic process
   to 123 ticks and 120 ticks or less.
 - [ ] Verify that ordinary seed ordering and update cadence do not erase the
@@ -211,6 +217,15 @@ deletion. The accepted deletion improved 876 to 868 ticks and cold-replayed;
 the intervening learning episode made 112 Q updates, while the failed final
 deletion made zero. The full learning-framework audit passed 431 orchestration
 tests before the native smoke.
+
+Fixed-alternation result (2026-08-02): measured and rejected. The same five
+ten-minute seeds produced best ticks of 391, 614, 377, 868, and 383 (median
+391). This improved the deletion-only median of 567 and novelty-only median of
+488, but did not beat the 360 deletion-only best and regressed three of five
+seeds against both prior treatments. Alternation spent 82 of 224 episodes on
+deletion even though Q produced only one or two strict winners per seed. The
+next bounded treatment schedules exactly one deletion candidate after a strict
+Q winner; it does not let deletion success chain or add another edit family.
 
 ### 4. Prove learning value only after the route works
 
