@@ -188,7 +188,7 @@ budget. Remove it if it does not.
   exploration stream; prove this across resume without adding checkpoint state.
 - [x] Re-run affected seeds 181081 and 208609 first. Both exactly recovered
   their 561- and 488-tick novelty-only results.
-- [ ] Complete the isolated five-seed distribution by rerunning 104729, 130363,
+- [x] Complete the isolated five-seed distribution by rerunning 104729, 130363,
   and 155921. Retain sparse deletion only if the full result preserves the
   broad Q gains and supplies useful accepted local improvements.
 - [ ] Reproduce 124 ticks or less, then continue the unchanged generic process
@@ -259,6 +259,14 @@ previously regressed seeds 181081 and 208609 exactly recovered their
 novelty-only bests of 561 and 488 ticks. They spent only 2 and 3 episodes on
 deletion; seed 181081 accepted one local winner, while seed 208609 accepted
 none. The full audit passed 432 orchestration tests before the native runs.
+
+Isolated sparse-deletion result (2026-08-02): retained. The five fixed seeds
+produced best ticks of 540, 481, 360, 561, and 488 (median 488). Every seed
+exactly preserved its novelty-only Q best; seed 155921 additionally improved
+368 to 360 through two accepted deletions that each cold-replayed twice. Across
+the distribution, deletion consumed only 11 episodes instead of 82 under fixed
+alternation. This is the final measured scheduler treatment; move to closing
+the 360-to-124 route-quality gap rather than tuning cadence again.
 
 ### 4. Prove learning value only after the route works
 
