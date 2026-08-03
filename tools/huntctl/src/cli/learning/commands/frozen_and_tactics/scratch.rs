@@ -1,13 +1,13 @@
 use super::*;
-use huntctl::search_evaluator::native_scratch_duration::{
-    NativeScratchDurationRunConfig, run_native_scratch_duration_refinement,
-};
 use huntctl::search_evaluator::native_scratch_heading::{
     NativeScratchHeadingRunConfig, inspect_native_scratch_heading_checkpoint,
     run_native_scratch_heading_refinement,
 };
 use huntctl::search_evaluator::native_scratch_learner::{
     NativeScratchRunConfig, run_native_scratch_learner,
+};
+use huntctl::search_evaluator::native_scratch_option_refinement::{
+    NativeScratchOptionRunConfig, ScratchOptionEditKind, run_native_scratch_option_refinement,
 };
 
 pub(super) fn command(command: &str, learn_args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -36,18 +36,30 @@ pub(super) fn command(command: &str, learn_args: &[String]) -> Result<(), Box<dy
         "refine-scratch-fine-headings" => {
             refine_headings(learn_args, &repository_root, &request, &execution, true)
         }
-        "refine-scratch-durations" => {
-            refine_durations(learn_args, &repository_root, &request, &execution)
-        }
+        "refine-scratch-durations" => refine_options(
+            learn_args,
+            &repository_root,
+            &request,
+            &execution,
+            ScratchOptionEditKind::ShortenDuration,
+        ),
+        "refine-scratch-rolls" => refine_options(
+            learn_args,
+            &repository_root,
+            &request,
+            &execution,
+            ScratchOptionEditKind::PromoteRoll,
+        ),
         _ => usage_error(),
     }
 }
 
-fn refine_durations(
+fn refine_options(
     args: &[String],
     repository_root: &Path,
     request: &OptimizationRequest,
     execution: &NativeResidualExecutionBinding,
+    edit_kind: ScratchOptionEditKind,
 ) -> Result<(), Box<dyn Error>> {
     let scratch_source = resolve_path(args, "--scratch-source", repository_root)?;
     let source = resolve_path(args, "--source", repository_root)?;
@@ -68,9 +80,10 @@ fn refine_durations(
             120,
         )?),
     };
-    let report = run_native_scratch_duration_refinement(&NativeScratchDurationRunConfig {
+    let report = run_native_scratch_option_refinement(&NativeScratchOptionRunConfig {
         scratch,
         source_heading_root: &source,
+        edit_kind,
         output_root: &output,
         candidate_limit: u64_option(args, "--candidate-limit", 1_000)?,
         maximum_wall_time: Duration::from_secs(u64_option(args, "--wall-time-seconds", 600)?),
@@ -79,6 +92,7 @@ fn refine_durations(
         "{}",
         serde_json::to_string_pretty(&json!({
             "schema": report.schema,
+            "edit_kind": report.edit_kind,
             "report": output.join("report.json"),
             "stop_reason": report.stop_reason,
             "attempted_candidates": report.attempted_candidates,

@@ -427,6 +427,7 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "refine-scratch-headings"
             | "refine-scratch-fine-headings"
             | "refine-scratch-durations"
+            | "refine-scratch-rolls"
             | "inspect-scratch-headings"
             | "prove-generalized-tactics"
             | "tactic-route"
@@ -520,6 +521,7 @@ mod tests {
             "refine-scratch-headings",
             "refine-scratch-fine-headings",
             "refine-scratch-durations",
+            "refine-scratch-rolls",
             "inspect-scratch-headings",
             "audit-tactic-fault-recovery",
             "seal-tactic-fault-recovery",

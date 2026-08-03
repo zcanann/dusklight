@@ -1,4 +1,4 @@
-//! Deterministic duration shortening of an authenticated scratch-route incumbent.
+//! Deterministic single-option refinement of an authenticated scratch-route incumbent.
 
 use crate::native_residual_campaign::ValidatedNativeResidualExecution;
 use crate::native_scratch_heading::inspect_native_scratch_heading_checkpoint;
@@ -11,7 +11,9 @@ use crate::native_tactic_route_runner::{
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
-use dusklight_learning::scratch_action_catalog::{SCRATCH_HEADING_COUNT, scratch_action_catalog};
+use dusklight_learning::scratch_action_catalog::{
+    SCRATCH_HEADING_COUNT, scratch_action_catalog, scratch_action_heading_index,
+};
 use dusklight_learning::scratch_q::ScratchQTable;
 use dusklight_learning::tactic_asset::TacticAssetCatalog;
 use serde::{Deserialize, Serialize};
@@ -24,15 +26,23 @@ use std::io::{Cursor, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-const REPORT_SCHEMA: &str = "dusklight-native-scratch-duration-report/v1";
-const CHECKPOINT_SCHEMA: &str = "dusklight-native-scratch-duration-checkpoint/v1";
-const CHECKPOINT_MAGIC: &[u8; 8] = b"DSSDUR01";
+const REPORT_SCHEMA: &str = "dusklight-native-scratch-option-refinement-report/v1";
+const CHECKPOINT_SCHEMA: &str = "dusklight-native-scratch-option-refinement-checkpoint/v1";
+const CHECKPOINT_MAGIC: &[u8; 8] = b"DSSOPT01";
 const CHECKPOINT_VERSION: u16 = 1;
 const CHECKPOINT_HEADER_BYTES: usize = 8 + 2 + 2 + 8 + 32;
 
-pub struct NativeScratchDurationRunConfig<'a> {
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScratchOptionEditKind {
+    ShortenDuration,
+    PromoteRoll,
+}
+
+pub struct NativeScratchOptionRunConfig<'a> {
     pub scratch: NativeScratchRunConfig<'a>,
     pub source_heading_root: &'a Path,
+    pub edit_kind: ScratchOptionEditKind,
     pub output_root: &'a Path,
     pub candidate_limit: u64,
     pub maximum_wall_time: Duration,
@@ -40,7 +50,7 @@ pub struct NativeScratchDurationRunConfig<'a> {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct NativeScratchDurationReport {
+pub struct NativeScratchOptionReport {
     pub schema: String,
     pub report_sha256: Digest,
     pub source_checkpoint_sha256: Digest,
@@ -48,6 +58,7 @@ pub struct NativeScratchDurationReport {
     pub execution_binding_sha256: Digest,
     pub action_universe_sha256: Digest,
     pub seed: u64,
+    pub edit_kind: ScratchOptionEditKind,
     pub stop_reason: String,
     pub attempted_candidates: u64,
     pub terminal_candidates: u64,
@@ -59,12 +70,12 @@ pub struct NativeScratchDurationReport {
     pub native_ticks: u64,
     pub native_wall_micros: u64,
     pub wall_micros: u64,
-    pub attempts: Vec<NativeScratchDurationAttempt>,
+    pub attempts: Vec<NativeScratchOptionAttempt>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct NativeScratchDurationAttempt {
+pub struct NativeScratchOptionAttempt {
     pub attempt_index: u64,
     pub candidate_sha256: Digest,
     pub changed_action_index: u64,
@@ -81,27 +92,28 @@ pub struct NativeScratchDurationAttempt {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-struct NativeScratchDurationCheckpoint {
+struct NativeScratchOptionCheckpoint {
     schema: String,
     source_checkpoint_sha256: Digest,
     optimization_request_sha256: Digest,
     execution_binding_sha256: Digest,
     action_universe_sha256: Digest,
     seed: u64,
-    search: ScratchDurationSearch,
-    report: NativeScratchDurationReport,
+    edit_kind: ScratchOptionEditKind,
+    search: ScratchOptionSearch,
+    report: NativeScratchOptionReport,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-struct ScratchDurationSearch {
+struct ScratchOptionSearch {
     incumbent_action_sequence: Vec<usize>,
     incumbent_sha256: Digest,
     attempted_candidate_sha256s: BTreeSet<Digest>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ScratchDurationCandidate {
+struct ScratchOptionCandidate {
     changed_action_index: usize,
     previous_option_id: String,
     replacement_option_id: String,
@@ -109,7 +121,7 @@ struct ScratchDurationCandidate {
     action_sequence_sha256: Digest,
 }
 
-impl ScratchDurationSearch {
+impl ScratchOptionSearch {
     fn new(
         incumbent_action_sequence: Vec<usize>,
         catalog: &TacticAssetCatalog,
@@ -119,7 +131,7 @@ impl ScratchDurationSearch {
                 .iter()
                 .any(|action| *action >= catalog.entries().len())
         {
-            return Err("scratch duration incumbent is invalid".into());
+            return Err("scratch option incumbent is invalid".into());
         }
         Ok(Self {
             incumbent_sha256: action_sequence_sha256(&incumbent_action_sequence)?,
@@ -128,18 +140,23 @@ impl ScratchDurationSearch {
         })
     }
 
-    fn validate(&self, seed: u64, catalog: &TacticAssetCatalog) -> Result<(), String> {
+    fn validate(
+        &self,
+        seed: u64,
+        catalog: &TacticAssetCatalog,
+        edit_kind: ScratchOptionEditKind,
+    ) -> Result<(), String> {
         let rebuilt = Self::new(self.incumbent_action_sequence.clone(), catalog)?;
         if rebuilt.incumbent_sha256 != self.incumbent_sha256 {
-            return Err("scratch duration incumbent identity is invalid".into());
+            return Err("scratch option incumbent identity is invalid".into());
         }
         let candidates = self
-            .candidates(seed, catalog)?
+            .candidates(seed, catalog, edit_kind)?
             .into_iter()
             .map(|candidate| candidate.action_sequence_sha256)
             .collect::<BTreeSet<_>>();
         if !self.attempted_candidate_sha256s.is_subset(&candidates) {
-            return Err("scratch duration attempts are detached from the incumbent".into());
+            return Err("scratch option attempts are detached from the incumbent".into());
         }
         Ok(())
     }
@@ -148,9 +165,10 @@ impl ScratchDurationSearch {
         &self,
         seed: u64,
         catalog: &TacticAssetCatalog,
-    ) -> Result<Option<ScratchDurationCandidate>, String> {
+        edit_kind: ScratchOptionEditKind,
+    ) -> Result<Option<ScratchOptionCandidate>, String> {
         Ok(self
-            .candidates(seed, catalog)?
+            .candidates(seed, catalog, edit_kind)?
             .into_iter()
             .find(|candidate| {
                 !self
@@ -163,16 +181,17 @@ impl ScratchDurationSearch {
         &mut self,
         seed: u64,
         catalog: &TacticAssetCatalog,
-        candidate: &ScratchDurationCandidate,
+        edit_kind: ScratchOptionEditKind,
+        candidate: &ScratchOptionCandidate,
         accepted: Option<Vec<usize>>,
     ) -> Result<(), String> {
         let expected = self
-            .candidates(seed, catalog)?
+            .candidates(seed, catalog, edit_kind)?
             .into_iter()
             .find(|value| value.action_sequence_sha256 == candidate.action_sequence_sha256)
-            .ok_or_else(|| "scratch duration candidate is detached".to_owned())?;
+            .ok_or_else(|| "scratch option candidate is detached".to_owned())?;
         if expected != *candidate {
-            return Err("scratch duration candidate identity is inconsistent".into());
+            return Err("scratch option candidate identity is inconsistent".into());
         }
         if let Some(incumbent) = accepted {
             *self = Self::new(incumbent, catalog)?;
@@ -180,14 +199,19 @@ impl ScratchDurationSearch {
             .attempted_candidate_sha256s
             .insert(candidate.action_sequence_sha256)
         {
-            return Err("scratch duration candidate was attempted twice".into());
+            return Err("scratch option candidate was attempted twice".into());
         }
         Ok(())
     }
 
-    fn remaining(&self, seed: u64, catalog: &TacticAssetCatalog) -> Result<usize, String> {
+    fn remaining(
+        &self,
+        seed: u64,
+        catalog: &TacticAssetCatalog,
+        edit_kind: ScratchOptionEditKind,
+    ) -> Result<usize, String> {
         Ok(self
-            .candidates(seed, catalog)?
+            .candidates(seed, catalog, edit_kind)?
             .into_iter()
             .filter(|candidate| {
                 !self
@@ -201,14 +225,15 @@ impl ScratchDurationSearch {
         &self,
         seed: u64,
         catalog: &TacticAssetCatalog,
-    ) -> Result<Vec<ScratchDurationCandidate>, String> {
+        edit_kind: ScratchOptionEditKind,
+    ) -> Result<Vec<ScratchOptionCandidate>, String> {
         let mut unique = BTreeSet::new();
         let mut ranked = Vec::new();
         for (changed_action_index, action) in
             self.incumbent_action_sequence.iter().copied().enumerate()
         {
             let previous = catalog.entries()[action].option_id();
-            let Some(replacement_option_id) = shorter_option(previous, catalog) else {
+            let Some(replacement_option_id) = replacement_option(action, catalog, edit_kind) else {
                 continue;
             };
             let replacement_action = catalog
@@ -224,11 +249,12 @@ impl ScratchDurationSearch {
             ranked.push((
                 candidate_rank(
                     seed,
+                    edit_kind,
                     self.incumbent_sha256,
                     action_sequence_sha256,
                     changed_action_index,
                 ),
-                ScratchDurationCandidate {
+                ScratchOptionCandidate {
                     changed_action_index,
                     previous_option_id: previous.into(),
                     replacement_option_id,
@@ -248,7 +274,20 @@ impl ScratchDurationSearch {
     }
 }
 
-fn shorter_option(option_id: &str, catalog: &TacticAssetCatalog) -> Option<String> {
+fn replacement_option(
+    action: usize,
+    catalog: &TacticAssetCatalog,
+    edit_kind: ScratchOptionEditKind,
+) -> Option<String> {
+    let option_id = catalog.entries().get(action)?.option_id();
+    if edit_kind == ScratchOptionEditKind::PromoteRoll {
+        if option_id.starts_with("scratch.roll.") {
+            return None;
+        }
+        let heading = scratch_action_heading_index(catalog, action).ok()?;
+        let replacement = format!("scratch.roll.h{heading:02}.r03");
+        return catalog.entry(&replacement).map(|_| replacement);
+    }
     let mut components = option_id.split('.').map(str::to_owned).collect::<Vec<_>>();
     let component = components
         .iter_mut()
@@ -263,42 +302,41 @@ fn shorter_option(option_id: &str, catalog: &TacticAssetCatalog) -> Option<Strin
     catalog.entry(&replacement).map(|_| replacement)
 }
 
-pub fn run_native_scratch_duration_refinement(
-    config: &NativeScratchDurationRunConfig<'_>,
-) -> Result<NativeScratchDurationReport, NativeScratchDurationError> {
+pub fn run_native_scratch_option_refinement(
+    config: &NativeScratchOptionRunConfig<'_>,
+) -> Result<NativeScratchOptionReport, NativeScratchOptionError> {
     if config.candidate_limit == 0 || config.maximum_wall_time.is_zero() {
-        return Err(duration_error("scratch duration configuration is invalid"));
+        return Err(option_error("scratch option configuration is invalid"));
     }
     let started = Instant::now();
-    let scratch_source =
-        load_scratch_refinement_source(&config.scratch).map_err(duration_display)?;
+    let scratch_source = load_scratch_refinement_source(&config.scratch).map_err(option_display)?;
     let source = inspect_native_scratch_heading_checkpoint(config.source_heading_root)
-        .map_err(duration_display)?;
+        .map_err(option_display)?;
     let root = config
         .scratch
         .repository_root
         .canonicalize()
-        .map_err(duration_display)?;
+        .map_err(option_display)?;
     let authority = ValidatedNativeResidualExecution::authenticate(
         &root,
         config.scratch.optimization,
         config.scratch.execution,
     )
-    .map_err(duration_display)?;
+    .map_err(option_display)?;
     let process_tape = InputTape::decode(
         &fs::read(root.join(&config.scratch.execution.process_boot_tape.path))
-            .map_err(duration_display)?,
+            .map_err(option_display)?,
     )
-    .map_err(duration_display)?
+    .map_err(option_display)?
     .tape;
     let source_frame = usize::try_from(config.scratch.optimization.route.source_boundary_index)
-        .map_err(duration_display)?;
+        .map_err(option_display)?;
     let prefix_frames = process_tape
         .frames
         .get(..source_frame)
-        .ok_or_else(|| duration_error("scratch source frame is beyond the process tape"))?
+        .ok_or_else(|| option_error("scratch source frame is beyond the process tape"))?
         .to_vec();
-    let catalog = scratch_action_catalog().map_err(duration_display)?;
+    let catalog = scratch_action_catalog().map_err(option_display)?;
     let action_universe_sha256 = catalog.action_schema_sha256();
     if source.schema != "dusklight-native-scratch-heading-inspection/v2"
         || source.checkpoint_schema != "dusklight-native-scratch-heading-checkpoint/v2"
@@ -310,8 +348,8 @@ pub fn run_native_scratch_duration_refinement(
         || source.execution_binding_sha256 != config.scratch.execution.content_sha256
         || source.action_universe_sha256 != action_universe_sha256
     {
-        return Err(duration_error(
-            "scratch duration source is not an exhausted authenticated heading checkpoint",
+        return Err(option_error(
+            "scratch option source is not an exhausted authenticated heading checkpoint",
         ));
     }
     let source_actions = source
@@ -321,35 +359,32 @@ pub fn run_native_scratch_duration_refinement(
             catalog
                 .entries()
                 .binary_search_by_key(&option.as_str(), |entry| entry.option_id())
-                .map_err(|_| duration_error("scratch duration source option is missing"))
+                .map_err(|_| option_error("scratch option source option is missing"))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if action_sequence_sha256(&source_actions).map_err(duration_error)?
+    if action_sequence_sha256(&source_actions).map_err(option_error)?
         != source.incumbent_action_sequence_sha256
     {
-        return Err(duration_error(
-            "scratch duration source sequence is detached",
-        ));
+        return Err(option_error("scratch option source sequence is detached"));
     }
-    let q = ScratchQTable::new(catalog.entries().len()).map_err(duration_display)?;
-    let checkpoint_path = config.output_root.join("checkpoint.dssd");
+    let q = ScratchQTable::new(catalog.entries().len()).map_err(option_display)?;
+    let checkpoint_path = config.output_root.join("checkpoint.dsso");
     let mut checkpoint = if checkpoint_path.exists() {
-        decode_checkpoint(&fs::read(&checkpoint_path).map_err(duration_display)?)?
+        decode_checkpoint(&fs::read(&checkpoint_path).map_err(option_display)?)?
     } else {
         if config.output_root.exists()
             && fs::read_dir(config.output_root)
-                .map_err(duration_display)?
+                .map_err(option_display)?
                 .next()
                 .is_some()
         {
-            return Err(duration_error(
-                "scratch duration output exists without a checkpoint",
+            return Err(option_error(
+                "scratch option output exists without a checkpoint",
             ));
         }
-        fs::create_dir_all(config.output_root).map_err(duration_display)?;
-        let search =
-            ScratchDurationSearch::new(source_actions, &catalog).map_err(duration_error)?;
-        let mut report = NativeScratchDurationReport {
+        fs::create_dir_all(config.output_root).map_err(option_display)?;
+        let search = ScratchOptionSearch::new(source_actions, &catalog).map_err(option_error)?;
+        let mut report = NativeScratchOptionReport {
             schema: REPORT_SCHEMA.into(),
             report_sha256: Digest::ZERO,
             source_checkpoint_sha256: source.checkpoint_sha256,
@@ -357,13 +392,14 @@ pub fn run_native_scratch_duration_refinement(
             execution_binding_sha256: config.scratch.execution.content_sha256,
             action_universe_sha256,
             seed: scratch_source.seed,
+            edit_kind: config.edit_kind,
             stop_reason: "not_started".into(),
             attempted_candidates: 0,
             terminal_candidates: 0,
             strict_winners: 0,
             candidates_remaining: search
-                .remaining(scratch_source.seed, &catalog)
-                .map_err(duration_error)? as u64,
+                .remaining(scratch_source.seed, &catalog, config.edit_kind)
+                .map_err(option_error)? as u64,
             fastest_selected_ticks: source.incumbent_ticks,
             fastest_tape: None,
             fastest_tape_sha256: None,
@@ -373,13 +409,14 @@ pub fn run_native_scratch_duration_refinement(
             attempts: Vec::new(),
         };
         seal_report(&mut report)?;
-        NativeScratchDurationCheckpoint {
+        NativeScratchOptionCheckpoint {
             schema: CHECKPOINT_SCHEMA.into(),
             source_checkpoint_sha256: source.checkpoint_sha256,
             optimization_request_sha256: config.scratch.optimization.content_sha256,
             execution_binding_sha256: config.scratch.execution.content_sha256,
             action_universe_sha256,
             seed: scratch_source.seed,
+            edit_kind: config.edit_kind,
             search,
             report,
         }
@@ -391,8 +428,8 @@ pub fn run_native_scratch_duration_refinement(
     {
         let Some(candidate) = checkpoint
             .search
-            .next_candidate(checkpoint.seed, &catalog)
-            .map_err(duration_error)?
+            .next_candidate(checkpoint.seed, &catalog, checkpoint.edit_kind)
+            .map_err(option_error)?
         else {
             break;
         };
@@ -413,8 +450,8 @@ pub fn run_native_scratch_duration_refinement(
             0,
             &attempt_root,
         )
-        .map_err(duration_display)?;
-        let tape_bytes = outcome.tape.encode().map_err(duration_display)?;
+        .map_err(option_display)?;
+        let tape_bytes = outcome.tape.encode().map_err(option_display)?;
         let tape_sha256 = sha256(&tape_bytes);
         let selected_ticks = outcome.terminal.then(|| {
             outcome
@@ -447,7 +484,7 @@ pub fn run_native_scratch_duration_refinement(
                     },
                     &authority,
                 )
-                .map_err(duration_display)?;
+                .map_err(option_display)?;
             if !exact_cold_replay_attempts(
                 &attempts,
                 &controller_tape,
@@ -455,11 +492,9 @@ pub fn run_native_scratch_duration_refinement(
                 selected_ticks.unwrap(),
                 outcome.tape.frames.len() as u64,
             ) {
-                return Err(duration_error(
-                    "scratch duration winner did not replay exactly",
-                ));
+                return Err(option_error("scratch option winner did not replay exactly"));
             }
-            fs::create_dir_all(&winner_root).map_err(duration_display)?;
+            fs::create_dir_all(&winner_root).map_err(option_display)?;
             write_new(&winner_root.join("selected.tape"), &tape_bytes)?;
             checkpoint.report.fastest_selected_ticks = selected_ticks.unwrap();
             checkpoint.report.fastest_tape = Some(path_text(&winner_root.join("selected.tape")));
@@ -472,35 +507,33 @@ pub fn run_native_scratch_duration_refinement(
             .finish_attempt(
                 checkpoint.seed,
                 &catalog,
+                checkpoint.edit_kind,
                 &candidate,
                 strict_winner.then(|| candidate.action_sequence.clone()),
             )
-            .map_err(duration_error)?;
+            .map_err(option_error)?;
         checkpoint.report.attempted_candidates += 1;
         checkpoint.report.terminal_candidates += u64::from(outcome.terminal);
         checkpoint.report.native_ticks += outcome.native_ticks;
         checkpoint.report.native_wall_micros += outcome.native_wall_micros;
         checkpoint.report.candidates_remaining = checkpoint
             .search
-            .remaining(checkpoint.seed, &catalog)
-            .map_err(duration_error)? as u64;
-        checkpoint
-            .report
-            .attempts
-            .push(NativeScratchDurationAttempt {
-                attempt_index,
-                candidate_sha256: candidate.action_sequence_sha256,
-                changed_action_index: candidate.changed_action_index as u64,
-                previous_option_id: candidate.previous_option_id,
-                replacement_option_id: candidate.replacement_option_id,
-                terminal: outcome.terminal,
-                selected_ticks,
-                strict_winner,
-                native_ticks: outcome.native_ticks,
-                native_wall_micros: outcome.native_wall_micros,
-                tape_sha256,
-                cold_replay_attempts,
-            });
+            .remaining(checkpoint.seed, &catalog, checkpoint.edit_kind)
+            .map_err(option_error)? as u64;
+        checkpoint.report.attempts.push(NativeScratchOptionAttempt {
+            attempt_index,
+            candidate_sha256: candidate.action_sequence_sha256,
+            changed_action_index: candidate.changed_action_index as u64,
+            previous_option_id: candidate.previous_option_id,
+            replacement_option_id: candidate.replacement_option_id,
+            terminal: outcome.terminal,
+            selected_ticks,
+            strict_winner,
+            native_ticks: outcome.native_ticks,
+            native_wall_micros: outcome.native_wall_micros,
+            tape_sha256,
+            cold_replay_attempts,
+        });
         checkpoint.report.wall_micros =
             prior_wall_micros.saturating_add(elapsed_micros(started.elapsed()));
         seal_report(&mut checkpoint.report)?;
@@ -524,21 +557,22 @@ pub fn run_native_scratch_duration_refinement(
 }
 
 fn validate_checkpoint(
-    checkpoint: &NativeScratchDurationCheckpoint,
-    config: &NativeScratchDurationRunConfig<'_>,
+    checkpoint: &NativeScratchOptionCheckpoint,
+    config: &NativeScratchOptionRunConfig<'_>,
     source: &crate::native_scratch_heading::NativeScratchHeadingInspection,
     catalog: &TacticAssetCatalog,
-) -> Result<(), NativeScratchDurationError> {
+) -> Result<(), NativeScratchOptionError> {
     checkpoint
         .search
-        .validate(checkpoint.seed, catalog)
-        .map_err(duration_error)?;
+        .validate(checkpoint.seed, catalog, checkpoint.edit_kind)
+        .map_err(option_error)?;
     let remaining = checkpoint
         .search
-        .remaining(checkpoint.seed, catalog)
-        .map_err(duration_error)? as u64;
+        .remaining(checkpoint.seed, catalog, checkpoint.edit_kind)
+        .map_err(option_error)? as u64;
     if checkpoint.schema != CHECKPOINT_SCHEMA
         || checkpoint.report.schema != REPORT_SCHEMA
+        || checkpoint.edit_kind != config.edit_kind
         || checkpoint.source_checkpoint_sha256 != source.checkpoint_sha256
         || checkpoint.optimization_request_sha256 != config.scratch.optimization.content_sha256
         || checkpoint.execution_binding_sha256 != config.scratch.execution.content_sha256
@@ -549,6 +583,7 @@ fn validate_checkpoint(
         || checkpoint.report.execution_binding_sha256 != checkpoint.execution_binding_sha256
         || checkpoint.report.action_universe_sha256 != checkpoint.action_universe_sha256
         || checkpoint.report.seed != checkpoint.seed
+        || checkpoint.report.edit_kind != checkpoint.edit_kind
         || checkpoint.report.attempted_candidates as usize != checkpoint.report.attempts.len()
         || checkpoint.report.terminal_candidates
             != checkpoint
@@ -584,7 +619,7 @@ fn validate_checkpoint(
         || checkpoint.report.report_sha256 != report_identity(&checkpoint.report)?
         || checkpoint.report.attempted_candidates > config.candidate_limit
     {
-        return Err(duration_error("scratch duration checkpoint is detached"));
+        return Err(option_error("scratch option checkpoint is detached"));
     }
     Ok(())
 }
@@ -595,10 +630,17 @@ fn action_sequence_sha256(sequence: &[usize]) -> Result<Digest, String> {
         .map_err(|error| error.to_string())
 }
 
-fn candidate_rank(seed: u64, incumbent: Digest, candidate: Digest, index: usize) -> [u8; 32] {
+fn candidate_rank(
+    seed: u64,
+    edit_kind: ScratchOptionEditKind,
+    incumbent: Digest,
+    candidate: Digest,
+    index: usize,
+) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    hasher.update(b"dusklight-scratch-duration/v1");
+    hasher.update(b"dusklight-scratch-option/v1");
     hasher.update(seed.to_le_bytes());
+    hasher.update([edit_kind as u8]);
     hasher.update(incumbent.0);
     hasher.update(candidate.0);
     hasher.update((index as u64).to_le_bytes());
@@ -607,16 +649,16 @@ fn candidate_rank(seed: u64, incumbent: Digest, candidate: Digest, index: usize)
 
 fn write_checkpoint(
     path: &Path,
-    checkpoint: &NativeScratchDurationCheckpoint,
-) -> Result<(), NativeScratchDurationError> {
+    checkpoint: &NativeScratchOptionCheckpoint,
+) -> Result<(), NativeScratchOptionError> {
     write_atomic(path, &encode_checkpoint(checkpoint)?)
 }
 
 fn encode_checkpoint(
-    checkpoint: &NativeScratchDurationCheckpoint,
-) -> Result<Vec<u8>, NativeScratchDurationError> {
-    let raw = serde_cbor::to_vec(checkpoint).map_err(duration_display)?;
-    let compressed = zstd::stream::encode_all(Cursor::new(&raw), 1).map_err(duration_display)?;
+    checkpoint: &NativeScratchOptionCheckpoint,
+) -> Result<Vec<u8>, NativeScratchOptionError> {
+    let raw = serde_cbor::to_vec(checkpoint).map_err(option_display)?;
+    let compressed = zstd::stream::encode_all(Cursor::new(&raw), 1).map_err(option_display)?;
     let mut bytes = Vec::with_capacity(CHECKPOINT_HEADER_BYTES + compressed.len());
     bytes.extend_from_slice(CHECKPOINT_MAGIC);
     bytes.extend_from_slice(&CHECKPOINT_VERSION.to_le_bytes());
@@ -629,83 +671,79 @@ fn encode_checkpoint(
 
 fn decode_checkpoint(
     bytes: &[u8],
-) -> Result<NativeScratchDurationCheckpoint, NativeScratchDurationError> {
+) -> Result<NativeScratchOptionCheckpoint, NativeScratchOptionError> {
     if bytes.len() <= CHECKPOINT_HEADER_BYTES
         || &bytes[..8] != CHECKPOINT_MAGIC
         || u16::from_le_bytes(bytes[8..10].try_into().unwrap()) != CHECKPOINT_VERSION
         || bytes[10..12] != [0, 0]
     {
-        return Err(duration_error(
-            "scratch duration checkpoint header is invalid",
-        ));
+        return Err(option_error("scratch option checkpoint header is invalid"));
     }
     let expected_len = u64::from_le_bytes(bytes[12..20].try_into().unwrap());
     let raw = zstd::stream::decode_all(Cursor::new(&bytes[CHECKPOINT_HEADER_BYTES..]))
-        .map_err(duration_display)?;
+        .map_err(option_display)?;
     if raw.len() as u64 != expected_len || Sha256::digest(&raw)[..] != bytes[20..52] {
-        return Err(duration_error(
-            "scratch duration checkpoint checksum is invalid",
+        return Err(option_error(
+            "scratch option checkpoint checksum is invalid",
         ));
     }
-    serde_cbor::from_slice(&raw).map_err(duration_display)
+    serde_cbor::from_slice(&raw).map_err(option_display)
 }
 
 fn write_report(
     path: &Path,
-    report: &NativeScratchDurationReport,
-) -> Result<(), NativeScratchDurationError> {
-    let mut bytes = serde_json::to_vec_pretty(report).map_err(duration_display)?;
+    report: &NativeScratchOptionReport,
+) -> Result<(), NativeScratchOptionError> {
+    let mut bytes = serde_json::to_vec_pretty(report).map_err(option_display)?;
     bytes.push(b'\n');
     write_atomic(path, &bytes)
 }
 
-fn seal_report(report: &mut NativeScratchDurationReport) -> Result<(), NativeScratchDurationError> {
+fn seal_report(report: &mut NativeScratchOptionReport) -> Result<(), NativeScratchOptionError> {
     report.report_sha256 = Digest::ZERO;
     report.report_sha256 = report_identity(report)?;
     Ok(())
 }
 
-fn report_identity(
-    report: &NativeScratchDurationReport,
-) -> Result<Digest, NativeScratchDurationError> {
+fn report_identity(report: &NativeScratchOptionReport) -> Result<Digest, NativeScratchOptionError> {
     let mut canonical = report.clone();
     canonical.report_sha256 = Digest::ZERO;
     Ok(sha256(
-        &serde_json::to_vec(&canonical).map_err(duration_display)?,
+        &serde_json::to_vec(&canonical).map_err(option_display)?,
     ))
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), NativeScratchDurationError> {
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), NativeScratchOptionError> {
     let parent = path
         .parent()
-        .ok_or_else(|| duration_error("scratch duration output has no parent"))?;
-    fs::create_dir_all(parent).map_err(duration_display)?;
+        .ok_or_else(|| option_error("scratch option output has no parent"))?;
+    fs::create_dir_all(parent).map_err(option_display)?;
     let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&temporary)
-        .map_err(duration_display)?;
-    file.write_all(bytes).map_err(duration_display)?;
-    file.sync_all().map_err(duration_display)?;
+        .map_err(option_display)?;
+    file.write_all(bytes).map_err(option_display)?;
+    file.sync_all().map_err(option_display)?;
     drop(file);
     if path.exists() {
-        fs::remove_file(path).map_err(duration_display)?;
+        fs::remove_file(path).map_err(option_display)?;
     }
-    fs::rename(temporary, path).map_err(duration_display)
+    fs::rename(temporary, path).map_err(option_display)
 }
 
-fn write_new(path: &Path, bytes: &[u8]) -> Result<(), NativeScratchDurationError> {
+fn write_new(path: &Path, bytes: &[u8]) -> Result<(), NativeScratchOptionError> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(duration_display)?;
+        fs::create_dir_all(parent).map_err(option_display)?;
     }
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
-        .map_err(duration_display)?;
-    file.write_all(bytes).map_err(duration_display)?;
-    file.sync_all().map_err(duration_display)
+        .map_err(option_display)?;
+    file.write_all(bytes).map_err(option_display)?;
+    file.sync_all().map_err(option_display)
 }
 
 fn sha256(bytes: &[u8]) -> Digest {
@@ -719,18 +757,18 @@ fn path_text(path: &Path) -> String {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NativeScratchDurationError(String);
-impl fmt::Display for NativeScratchDurationError {
+pub struct NativeScratchOptionError(String);
+impl fmt::Display for NativeScratchOptionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
     }
 }
-impl Error for NativeScratchDurationError {}
-fn duration_error(message: impl Into<String>) -> NativeScratchDurationError {
-    NativeScratchDurationError(message.into())
+impl Error for NativeScratchOptionError {}
+fn option_error(message: impl Into<String>) -> NativeScratchOptionError {
+    NativeScratchOptionError(message.into())
 }
-fn duration_display(error: impl fmt::Display) -> NativeScratchDurationError {
-    duration_error(error.to_string())
+fn option_display(error: impl fmt::Display) -> NativeScratchOptionError {
+    option_error(error.to_string())
 }
 
 #[cfg(test)]
@@ -744,27 +782,81 @@ mod tests {
             .unwrap()
     }
 
+    fn replacement(
+        catalog: &TacticAssetCatalog,
+        option: &str,
+        edit_kind: ScratchOptionEditKind,
+    ) -> Option<String> {
+        replacement_option(action(catalog, option), catalog, edit_kind)
+    }
+
     #[test]
     fn shortening_preserves_family_heading_and_schedule() {
         let catalog = scratch_action_catalog().unwrap();
         assert_eq!(
-            shorter_option("scratch.camera_move.h03.t16.l1", &catalog).as_deref(),
+            replacement(
+                &catalog,
+                "scratch.camera_move.h03.t16.l1",
+                ScratchOptionEditKind::ShortenDuration,
+            )
+            .as_deref(),
             Some("scratch.camera_move.h03.t08.l1")
         );
         assert_eq!(
-            shorter_option("scratch.camera_roll.h14.t16.s2", &catalog).as_deref(),
+            replacement(
+                &catalog,
+                "scratch.camera_roll.h14.t16.s2",
+                ScratchOptionEditKind::ShortenDuration,
+            )
+            .as_deref(),
             Some("scratch.camera_roll.h14.t08.s2")
         );
         assert_eq!(
-            shorter_option("scratch.move.h09.t08", &catalog).as_deref(),
+            replacement(
+                &catalog,
+                "scratch.move.h09.t08",
+                ScratchOptionEditKind::ShortenDuration,
+            )
+            .as_deref(),
             Some("scratch.move.h09.t04")
         );
         assert_eq!(
-            shorter_option("scratch.roll.h02.r07", &catalog).as_deref(),
+            replacement(
+                &catalog,
+                "scratch.roll.h02.r07",
+                ScratchOptionEditKind::ShortenDuration,
+            )
+            .as_deref(),
             Some("scratch.roll.h02.r03")
         );
         assert_eq!(
-            shorter_option("scratch.camera_move.h03.t08.l1", &catalog),
+            replacement(
+                &catalog,
+                "scratch.camera_move.h03.t08.l1",
+                ScratchOptionEditKind::ShortenDuration,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn roll_promotion_preserves_semantic_heading_and_uses_short_recovery() {
+        let catalog = scratch_action_catalog().unwrap();
+        assert_eq!(
+            replacement(
+                &catalog,
+                "scratch.camera_move.h03.t08.l1",
+                ScratchOptionEditKind::PromoteRoll,
+            )
+            .as_deref(),
+            Some("scratch.roll.h03.r03")
+        );
+        assert_eq!(
+            replacement(
+                &catalog,
+                "scratch.roll.h03.r07",
+                ScratchOptionEditKind::PromoteRoll,
+            ),
             None
         );
     }
@@ -777,22 +869,25 @@ mod tests {
             action(&catalog, "scratch.move.h09.t08"),
             action(&catalog, "scratch.raw.h00.t01"),
         ];
-        let mut search = ScratchDurationSearch::new(sequence, &catalog).unwrap();
-        assert_eq!(search.remaining(7, &catalog).unwrap(), 2);
-        let first = search.next_candidate(7, &catalog).unwrap().unwrap();
-        search.finish_attempt(7, &catalog, &first, None).unwrap();
+        let mut search = ScratchOptionSearch::new(sequence, &catalog).unwrap();
+        let kind = ScratchOptionEditKind::ShortenDuration;
+        assert_eq!(search.remaining(7, &catalog, kind).unwrap(), 2);
+        let first = search.next_candidate(7, &catalog, kind).unwrap().unwrap();
+        search
+            .finish_attempt(7, &catalog, kind, &first, None)
+            .unwrap();
         let encoded = serde_cbor::to_vec(&search).unwrap();
-        let resumed: ScratchDurationSearch = serde_cbor::from_slice(&encoded).unwrap();
-        assert_eq!(resumed.remaining(7, &catalog).unwrap(), 1);
+        let resumed: ScratchOptionSearch = serde_cbor::from_slice(&encoded).unwrap();
+        assert_eq!(resumed.remaining(7, &catalog, kind).unwrap(), 1);
     }
 
     #[test]
     fn binary_checkpoint_round_trips_and_rejects_corruption() {
         let catalog = scratch_action_catalog().unwrap();
         let search =
-            ScratchDurationSearch::new(vec![action(&catalog, "scratch.move.h09.t08")], &catalog)
+            ScratchOptionSearch::new(vec![action(&catalog, "scratch.move.h09.t08")], &catalog)
                 .unwrap();
-        let mut report = NativeScratchDurationReport {
+        let mut report = NativeScratchOptionReport {
             schema: REPORT_SCHEMA.into(),
             report_sha256: Digest::ZERO,
             source_checkpoint_sha256: Digest([1; 32]),
@@ -800,11 +895,14 @@ mod tests {
             execution_binding_sha256: Digest([3; 32]),
             action_universe_sha256: catalog.action_schema_sha256(),
             seed: 5,
+            edit_kind: ScratchOptionEditKind::ShortenDuration,
             stop_reason: "not_started".into(),
             attempted_candidates: 0,
             terminal_candidates: 0,
             strict_winners: 0,
-            candidates_remaining: search.remaining(5, &catalog).unwrap() as u64,
+            candidates_remaining: search
+                .remaining(5, &catalog, ScratchOptionEditKind::ShortenDuration)
+                .unwrap() as u64,
             fastest_selected_ticks: 333,
             fastest_tape: None,
             fastest_tape_sha256: None,
@@ -814,13 +912,14 @@ mod tests {
             attempts: Vec::new(),
         };
         seal_report(&mut report).unwrap();
-        let checkpoint = NativeScratchDurationCheckpoint {
+        let checkpoint = NativeScratchOptionCheckpoint {
             schema: CHECKPOINT_SCHEMA.into(),
             source_checkpoint_sha256: report.source_checkpoint_sha256,
             optimization_request_sha256: report.optimization_request_sha256,
             execution_binding_sha256: report.execution_binding_sha256,
             action_universe_sha256: report.action_universe_sha256,
             seed: report.seed,
+            edit_kind: report.edit_kind,
             search,
             report,
         };

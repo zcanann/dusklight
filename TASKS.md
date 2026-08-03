@@ -224,7 +224,7 @@ budget. Remove it if it does not.
 - [x] Run the bounded duration pass to exhaustion. Retain it only if it improves
   the real terminal tick; diagnose its result before permitting cross-family
   roll/raw substitution or a multi-option edit.
-- [ ] Add one roll-promotion edit family over the 333-tick incumbent: replace a
+- [x] Add one roll-promotion edit family over the 333-tick incumbent: replace a
   single non-roll movement option with the shortest roll at the same semantic
   heading. Do not change the option boundary or angle in the same candidate.
   Persist deterministic progress and require two exact cold replays for a
@@ -398,8 +398,7 @@ action universe, incumbent, attempts, and sealed report. Failed candidates do
 not update Q, and strict winners must replay exactly twice before resetting the
 small frontier. Focused tests cover semantic shortening, duplicate-free resume,
 binary round trip, and corruption rejection. The full framework audit passed
-440 orchestration tests and the 590-file source-size gate; the new module is
-834 lines.
+440 orchestration tests and the 590-file source-size gate.
 
 Duration-refinement result (2026-08-03): rejected and exhausted. All four
 same-family shortening candidates reached the real load-zone terminal, at 334,
@@ -410,6 +409,15 @@ rejected under the strict speed criterion. Shorter option duration is not the
 active bottleneck. The real 299-tick artifact has two more rolls than the valid
 incumbent, so isolate same-heading roll promotion next rather than combining
 family and heading changes.
+
+Roll-refinement checkpoint (2026-08-03): duration shortening and roll promotion
+now share one 933-line local-option refinement engine rather than duplicating
+execution, persistence, replay, and report code. The checkpoint and report bind
+the edit kind, so `shorten_duration` cannot resume as `promote_roll`. Roll
+candidates replace one non-roll option with `r03` at the same parsed semantic
+heading and change no other boundary or angle. Focused tests cover mapping,
+edit-kind persistence, resume, and corruption rejection. The full framework
+audit passed 441 orchestration tests and the 590-file source-size gate.
 
 ### 4. Prove learning value only after the route works
 
