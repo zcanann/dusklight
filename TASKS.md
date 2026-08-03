@@ -179,9 +179,16 @@ budget. Remove it if it does not.
   after each strict Q winner. A deletion winner cannot schedule another
   deletion; prove the persisted last episode makes this resumable and keeps Q
   dominant without changing the operator or Q updates.
-- [ ] Re-run the same five seeds with event-driven deletion. Retain it only if
-  it preserves the broad novelty-only Q gains while producing useful local
-  improvement; otherwise remove deletion from the shared-budget learner.
+- [x] Re-run the same five seeds with event-driven deletion. It preserved three
+  seeds but exposed that deletion episodes consume global episode ordinals and
+  therefore perturb every later seeded Q selection; do not treat it as an
+  isolated scheduler result.
+- [ ] Give Q selection a learning-only episode ordinal derived from persisted
+  episode modes. A deletion episode must not consume or renumber Q's seeded
+  exploration stream; prove this across resume without adding checkpoint state.
+- [ ] Re-run affected seeds 181081 and 208609 first. Require them to recover at
+  least their 561- and 488-tick novelty-only results; if either still regresses,
+  remove deletion from the shared-budget learner. Only then re-run all five.
 - [ ] Reproduce 124 ticks or less, then continue the unchanged generic process
   to 123 ticks and 120 ticks or less.
 - [ ] Verify that ordinary seed ordering and update cadence do not erase the
@@ -234,6 +241,14 @@ returned to ordinary Q and made 112 learner updates. Unit coverage proves that
 only a persisted strict learning winner opens a deletion slot, including after
 resume; deletion success, deletion failure, and non-winning learning all return
 to Q. The full 431-test framework audit passed.
+
+Unisolated event-driven result (2026-08-02): best ticks were 405, 481, 360, 868,
+and 722 (median 481). Only 8 of 214 episodes were deletions, and three seeds
+matched or improved their novelty-only result, but seeds 181081 and 208609
+regressed by 307 and 234 ticks. Inspection found that the global episode index
+seeds Q selection, so inserting even one forced deletion changes the random
+stream of every subsequent Q episode. Separate the learning ordinal before
+drawing any conclusion about the sparse scheduler.
 
 ### 4. Prove learning value only after the route works
 
