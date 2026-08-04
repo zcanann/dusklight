@@ -304,9 +304,9 @@ void append_little(std::vector<std::uint8_t>& output, const T value) {
         output.push_back(static_cast<std::uint8_t>(value >> (index * 8)));
 }
 
-std::string compact_cached_batch() {
+std::string compact_cached_batch(const bool guarded = false) {
     std::vector<std::uint8_t> payload;
-    payload.push_back(0x02 | 0x04 | 0x08);
+    payload.push_back(0x02 | 0x04 | 0x08 | (guarded ? 0x80 : 0));
     append_little(payload, std::uint64_t{506});
     for (std::uint8_t byte = 0; byte < 16; ++byte) payload.push_back(byte);
     payload.push_back(2);
@@ -320,6 +320,12 @@ std::string compact_cached_batch() {
     append_little(payload, std::uint16_t{1});
     payload.push_back(8);
     payload.insert(payload.end(), {'b', 'a', 's', 'e', 'l', 'i', 'n', 'e'});
+    if (guarded) {
+        payload.push_back(1);
+        payload.push_back(1);
+        payload.push_back(7);
+        payload.insert(payload.end(), {'F', '_', 'S', 'P', '1', '0', '3'});
+    }
     append_little(payload, std::uint16_t{0});
     append_little(payload, std::uint16_t{1});
     append_little(payload, std::uint16_t{4});
@@ -328,7 +334,8 @@ std::string compact_cached_batch() {
         static_cast<std::uint8_t>(-4), 127, 0, 1, 2, 3, 4, 5, 1,
         static_cast<std::uint8_t>(-1)});
 
-    std::vector<std::uint8_t> envelope{'D', 'S', 'K', 'S', 'B', 'X', 1, 0};
+    std::vector<std::uint8_t> envelope{
+        'D', 'S', 'K', 'S', 'B', 'X', guarded ? std::uint8_t{2} : std::uint8_t{1}, 0};
     append_little(envelope, static_cast<std::uint32_t>(payload.size()));
     const XXH128_hash_t hash = XXH3_128bits(payload.data(), payload.size());
     XXH128_canonical_t canonical{};
@@ -337,6 +344,21 @@ std::string compact_cached_batch() {
         envelope.end(), std::begin(canonical.digest), std::end(canonical.digest));
     envelope.insert(envelope.end(), payload.begin(), payload.end());
     return {reinterpret_cast<const char*>(envelope.data()), envelope.size()};
+}
+
+void test_compact_guarded_candidate_retains_stage_room_support() {
+    const std::string source = compact_cached_batch(true);
+    SuffixBatchDefinition batch;
+    std::string error;
+    REQUIRE(parse_suffix_batch(source, batch, error));
+    REQUIRE(error.empty());
+    REQUIRE(batch.candidates.size() == 1);
+    REQUIRE(batch.candidates[0].cancellationAllowedStageRooms.size() == 1);
+    REQUIRE(batch.candidates[0].cancellationAllowedStageRooms[0].stage == "F_SP103");
+    REQUIRE(batch.candidates[0].cancellationAllowedStageRooms[0].room == 1);
+    REQUIRE(batch.candidates[0].cancellationGuardAllows("F_SP103", 1));
+    REQUIRE(!batch.candidates[0].cancellationGuardAllows("F_SP103", 2));
+    REQUIRE(!batch.candidates[0].cancellationGuardAllows("F_SP104", 1));
 }
 
 void test_compact_cached_batch_expands_and_authenticates() {
@@ -360,6 +382,11 @@ void test_compact_cached_batch_expands_and_authenticates() {
     REQUIRE(batch.candidates[0].pads[0].buttons == 0x100);
     REQUIRE(batch.candidates[0].pads[0].stickX == -4);
     REQUIRE(batch.candidates[0].pads[0].error == -1);
+
+    std::string unguardedV2 = source;
+    unguardedV2[6] = 2;
+    REQUIRE(parse_suffix_batch(unguardedV2, batch, error));
+    REQUIRE(batch.candidates[0].cancellationAllowedStageRooms.empty());
 
     std::string corrupted = source;
     corrupted.back() ^= 1;
@@ -541,6 +568,7 @@ int main() {
     test_cached_batch_binds_bounded_process_local_source();
     test_variable_cached_batch_binds_candidate_horizons_and_retention();
     test_compact_cached_batch_expands_and_authenticates();
+    test_compact_guarded_candidate_retains_stage_room_support();
     test_frozen_policy_is_content_bound_and_one_tick();
     test_invalid_batches_fail_closed();
     std::cout << "suffix batch tests passed\n";

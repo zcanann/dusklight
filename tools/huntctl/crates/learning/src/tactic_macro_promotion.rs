@@ -7,7 +7,8 @@
 use crate::artifact::Digest;
 use crate::option_values::OptionActionDescriptor;
 use crate::tactic_asset::{
-    EncodedTacticAssetSource, TacticAssetError, TacticAssetSource, TacticCatalogEntry,
+    EncodedTacticAssetSource, GuardedRecordedTape, GuardedTapeStageRoom, TacticAssetError,
+    TacticAssetSource, TacticCatalogEntry,
 };
 use crate::tape::InputTape;
 use serde::{Deserialize, Serialize};
@@ -202,9 +203,22 @@ pub struct DiscoveredMacroCandidate {
 
 impl DiscoveredMacroCandidate {
     pub fn catalog_entry(&self) -> Result<TacticCatalogEntry, TacticAssetError> {
+        let condition = self
+            .entry_condition()
+            .map_err(|message| TacticAssetError::InvalidAsset(message.into()))?;
         TacticCatalogEntry::new(
             self.option_id.clone(),
-            TacticAssetSource::RecordedTape(self.tape.clone()),
+            TacticAssetSource::GuardedRecordedTape(GuardedRecordedTape::new(
+                self.tape.clone(),
+                condition
+                    .cells
+                    .into_iter()
+                    .map(|cell| GuardedTapeStageRoom {
+                        stage: cell.stage,
+                        room: cell.room,
+                    })
+                    .collect(),
+            )?),
         )
     }
 
@@ -731,8 +745,13 @@ mod tests {
         );
         assert!(longest.option_id.starts_with("promoted/"));
         let entry = longest.catalog_entry().unwrap();
-        let exact = entry.exact_static_realization().unwrap().unwrap();
-        assert_eq!(exact.tape, longest.tape);
+        let TacticAssetSource::GuardedRecordedTape(guarded) = entry.source() else {
+            panic!("promoted macro must retain a runtime guard");
+        };
+        assert_eq!(guarded.tape, longest.tape);
+        assert_eq!(guarded.allowed_stage_rooms.len(), 1);
+        assert!(entry.exact_static_realization().unwrap().is_none());
+        assert_eq!(entry.description().stopping.cancellation.len(), 1);
     }
 
     #[test]
@@ -809,15 +828,17 @@ mod tests {
         assert_eq!(condition.cells[0].room, 1);
         assert_eq!(condition.cells[0].minimum_goal_distance, 101.0);
         assert_eq!(condition.cells[0].maximum_goal_distance, 102.0);
+        let entry = candidate.catalog_entry().unwrap();
+        let TacticAssetSource::GuardedRecordedTape(guarded) = entry.source() else {
+            panic!("promoted macro must retain a runtime guard");
+        };
+        assert_eq!(guarded.tape, candidate.tape);
         assert_eq!(
-            candidate
-                .catalog_entry()
-                .unwrap()
-                .exact_static_realization()
-                .unwrap()
-                .unwrap()
-                .tape,
-            candidate.tape
+            guarded.allowed_stage_rooms,
+            vec![GuardedTapeStageRoom {
+                stage: "F_SP103".into(),
+                room: 1,
+            }]
         );
     }
 

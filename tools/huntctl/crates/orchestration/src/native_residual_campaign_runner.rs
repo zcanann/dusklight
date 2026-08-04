@@ -153,6 +153,7 @@ fn native_batch(
                 actions: project_native_port_one_actions(imported.actions)?,
                 controller_program_hex: None,
                 maximum_ticks: None,
+                cancellation_guard: None,
             })
         })
         .collect::<Result<Vec<_>, NativeResidualCampaignRunnerError>>()?;
@@ -191,6 +192,7 @@ fn exact_replay_batch(
                 actions: exact_replay_native_actions(segment, &candidate.tape)?,
                 controller_program_hex: None,
                 maximum_ticks: None,
+                cancellation_guard: None,
             })
         })
         .collect::<Result<Vec<_>, NativeResidualCampaignRunnerError>>()?;

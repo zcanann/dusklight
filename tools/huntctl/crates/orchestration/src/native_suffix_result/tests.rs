@@ -27,6 +27,7 @@ fn request(verify_state_hashes: bool) -> NativeSuffixBatch {
             actions: vec![MacroAction::Neutral { frames: 2 }],
             controller_program_hex: None,
             maximum_ticks: None,
+            cancellation_guard: None,
         }],
     }
 }
@@ -281,7 +282,7 @@ fn rejects_missing_or_detached_native_phase_timing() {
 }
 
 #[test]
-fn accepts_early_unsuccessful_reactive_controller_completion_only() {
+fn accepts_early_unsuccessful_declared_controller_or_guard_completion_only() {
     let mut early = result(false, false);
     early.candidates[0].ticks_executed = 1;
     early.timing.candidate_ticks = 1;
@@ -295,9 +296,24 @@ fn accepts_early_unsuccessful_reactive_controller_completion_only() {
 
     let mut reactive = request(false);
     reactive.candidates[0].controller_program_hex = Some("00".into());
-    let validated = early.validate_against(&reactive, &terminal()).unwrap();
+    let validated = early
+        .clone()
+        .validate_against(&reactive, &terminal())
+        .unwrap();
     assert_eq!(validated.simulated_ticks, 1);
     assert_eq!(validated.candidates[0].first_hit_tick, None);
+
+    let mut guarded = request(false);
+    guarded.candidates[0].cancellation_guard = Some(
+        dusklight_search::suffix_batch::NativeSuffixCancellationGuard {
+            allowed_stage_rooms: vec![dusklight_search::suffix_batch::NativeSuffixStageRoom {
+                stage: "F_SP103".into(),
+                room: 1,
+            }],
+        },
+    );
+    let validated = early.validate_against(&guarded, &terminal()).unwrap();
+    assert_eq!(validated.simulated_ticks, 1);
 }
 
 #[test]

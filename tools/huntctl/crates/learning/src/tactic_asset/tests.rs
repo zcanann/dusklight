@@ -444,9 +444,22 @@ fn executable_source_records_round_trip_every_tactic_family_canonically() {
             .unwrap(),
         ),
         TacticAssetSource::RecordedTape(InputTape {
-            frames: vec![frame; 2],
+            frames: vec![frame.clone(); 2],
             ..InputTape::default()
         }),
+        TacticAssetSource::GuardedRecordedTape(
+            GuardedRecordedTape::new(
+                InputTape {
+                    frames: vec![frame; 2],
+                    ..InputTape::default()
+                },
+                vec![GuardedTapeStageRoom {
+                    stage: "F_SP103".into(),
+                    room: 1,
+                }],
+            )
+            .unwrap(),
+        ),
     ];
 
     for source in sources {

@@ -92,6 +92,24 @@ pub struct NativeSuffixCandidate {
     pub controller_program_hex: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub maximum_ticks: Option<usize>,
+    /// Native, per-boundary cancellation guard for a learned fixed-tape option.
+    /// The option remains input-only; the runner only stops emitting its tape
+    /// after gameplay leaves every authenticated stage/room support cell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancellation_guard: Option<NativeSuffixCancellationGuard>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeSuffixCancellationGuard {
+    pub allowed_stage_rooms: Vec<NativeSuffixStageRoom>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeSuffixStageRoom {
+    pub stage: String,
+    pub room: i8,
 }
 
 pub fn propose_suffix_batch(
@@ -1007,6 +1025,7 @@ fn push_candidate(
             actions,
             controller_program_hex: None,
             maximum_ticks: None,
+            cancellation_guard: None,
         });
     }
     Ok(())

@@ -42,7 +42,7 @@ use dusklight_search::search::{MacroAction, SearchPadState};
 use dusklight_search::suffix_batch::{
     NATIVE_CACHED_SUFFIX_BATCH_SCHEMA, NATIVE_VARIABLE_CACHED_SUFFIX_BATCH_SCHEMA,
     NativeCheckpointCacheRequest, NativeCheckpointValidation, NativeSuffixBatch,
-    NativeSuffixCandidate,
+    NativeSuffixCancellationGuard, NativeSuffixCandidate, NativeSuffixStageRoom,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -152,6 +152,7 @@ struct PreparedNativeTactic {
     option_tape: InputTape,
     execution: OptionExecution,
     duration: TacticDurationBounds,
+    cancellation_guard: Option<NativeSuffixCancellationGuard>,
 }
 
 #[derive(Clone)]
@@ -287,6 +288,7 @@ pub fn materialize_tactic_frontier_with_cache_capacity<W: PersistentTacticBatchW
             actions: pad_runs(replay_frames)?,
             controller_program_hex: None,
             maximum_ticks: None,
+            cancellation_guard: None,
         }],
     };
     write_new_compact_batch(&paths.request, &request)?;
@@ -708,6 +710,7 @@ fn execute_static_tactic<W: PersistentTacticBatchWorker>(
         checkpoint_source,
         checkpoint_retention,
         checkpoint_cache_capacity_bytes,
+        prepared.cancellation_guard.clone(),
     )?;
     write_new_compact_batch(&paths.request, &request)?;
     let validated = worker.run_tactic_batch(&paths.request, &paths.result, &request)?;
@@ -839,6 +842,7 @@ fn prepare_selected(
                     option_tape: realized.tape,
                     execution: realized.execution,
                     duration: entry.description().duration,
+                    cancellation_guard: None,
                 }))
             }
             PreparedTacticExecution::NativeGeneric(candidate) => {
@@ -858,6 +862,41 @@ fn prepare_selected(
                     termination: entry.description().stopping.termination.clone(),
                     cancellation: entry.description().stopping.cancellation.clone(),
                 })
+            }
+            PreparedTacticExecution::GuardedRecordedTape(guarded) => {
+                let option_tape = guarded.tape.clone();
+                let description = entry.description();
+                let execution = OptionExecution::capture(
+                    selected.descriptor.option_id.clone(),
+                    selected.descriptor.option_type.clone(),
+                    selected.descriptor.parameters.clone(),
+                    description.duration.minimum_ticks,
+                    description.duration.maximum_ticks,
+                    description.stopping.termination.clone(),
+                    description.stopping.cancellation.clone(),
+                    OptionEndReason::Completed,
+                    &option_tape,
+                    TapeRange {
+                        start_frame: 0,
+                        end_frame_exclusive: option_tape.frames.len() as u64,
+                    },
+                )
+                .map_err(|error| NativeTacticWorkerError::Execution(error.to_string()))?;
+                Ok(PreparedNativeExecution::Static(PreparedNativeTactic {
+                    option_tape,
+                    execution,
+                    duration: description.duration,
+                    cancellation_guard: Some(NativeSuffixCancellationGuard {
+                        allowed_stage_rooms: guarded
+                            .allowed_stage_rooms
+                            .iter()
+                            .map(|cell| NativeSuffixStageRoom {
+                                stage: cell.stage.clone(),
+                                room: cell.room,
+                            })
+                            .collect(),
+                    }),
+                }))
             }
         };
     }
@@ -903,6 +942,7 @@ fn prepare_selected(
         option_tape: compiled.tape,
         execution,
         duration: choice.duration,
+        cancellation_guard: None,
     }))
 }
 
@@ -913,6 +953,7 @@ fn tactic_batch(
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
     checkpoint_retention: NativeTacticCheckpointRetention,
     checkpoint_cache_capacity_bytes: usize,
+    cancellation_guard: Option<NativeSuffixCancellationGuard>,
 ) -> Result<NativeSuffixBatch, NativeTacticWorkerError> {
     if tape.frames.is_empty() || tape.frames.len() > 4_096 {
         return Err(NativeTacticWorkerError::InvalidDuration);
@@ -950,6 +991,7 @@ fn tactic_batch(
             actions,
             controller_program_hex: None,
             maximum_ticks: None,
+            cancellation_guard,
         }],
     })
 }
@@ -1001,6 +1043,7 @@ fn tactic_controller_batch(
             actions: pad_runs(prefix_frames)?,
             controller_program_hex: Some(lower_hex_bytes(&program_bytes)),
             maximum_ticks: None,
+            cancellation_guard: None,
         }],
     })
 }
@@ -1149,7 +1192,10 @@ fn observe_outcome(
     let start_frame = route_prefix.frames.len() as u64;
     let end_frame_exclusive = route_tape.frames.len() as u64;
     let terminal = episode.success;
-    if realized_ticks < prepared.option_tape.frames.len() && !terminal {
+    if realized_ticks < prepared.option_tape.frames.len()
+        && !terminal
+        && prepared.cancellation_guard.is_none()
+    {
         return Err(NativeTacticWorkerError::DetachedResult("early stop"));
     }
     let (end_reason, cancellation_conditions) =
@@ -1349,6 +1395,14 @@ fn realized_option_end(
 ) -> Result<(OptionEndReason, Vec<OptionCondition>), NativeTacticWorkerError> {
     if realized_ticks < prepared.option_tape.frames.len() {
         if !terminal {
+            if prepared.cancellation_guard.is_some()
+                && prepared.execution.cancellation_conditions.len() == 1
+            {
+                return Ok((
+                    OptionEndReason::Cancelled { condition_index: 0 },
+                    prepared.execution.cancellation_conditions.clone(),
+                ));
+            }
             return Err(NativeTacticWorkerError::DetachedResult("early stop"));
         }
         let mut cancellation_conditions = prepared.execution.cancellation_conditions.clone();

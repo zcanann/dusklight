@@ -1523,7 +1523,7 @@ fn native_prompt_facts_drive_matching_feature_and_action_surfaces() {
 }
 
 #[test]
-fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
+fn promoted_guarded_tactics_join_without_removing_primitive_actions() {
     let generic = propose_parameterized_tactics(ParameterizedTacticProposalContext {
         seed: 11,
         decision_index: 3,
@@ -1595,7 +1595,9 @@ fn promoted_recorded_tactics_join_without_removing_primitive_actions() {
         combined
             .entries()
             .iter()
-            .any(|entry| entry.option_id().starts_with("promoted/"))
+            .any(|entry| entry.option_id().starts_with("promoted/")
+                && entry.description().kind
+                    == dusklight_learning::tactic_asset::TacticAssetKind::GuardedRecordedTape)
     );
     assert!(
         combined

@@ -4,7 +4,9 @@ use dusklight_control::controller_program::ControllerProgram;
 use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
 use dusklight_control::option_execution::{OptionParameter, OptionType};
 use dusklight_evidence::native_episode_shard::NativeTerminalReason;
-use dusklight_learning::tactic_asset::{TacticAssetSource, TacticCatalogEntry};
+use dusklight_learning::tactic_asset::{
+    GuardedRecordedTape, GuardedTapeStageRoom, TacticAssetSource, TacticCatalogEntry,
+};
 use dusklight_learning::tactic_exploration::TacticSelectionReason;
 use dusklight_learning::{
     native_generic_tactic::{
@@ -49,6 +51,7 @@ fn authenticated_terminal_can_cancel_a_static_tactic_before_its_minimum_duration
             minimum_ticks: 8,
             maximum_ticks: 8,
         },
+        cancellation_guard: None,
     };
 
     let (end_reason, cancellation_conditions) = realized_option_end(&prepared, 6, true).unwrap();
@@ -139,6 +142,7 @@ fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
         None,
         NativeTacticCheckpointRetention::PortableImage,
         123_456,
+        None,
     )
     .unwrap();
     assert_eq!(batch.maximum_ticks, 3);
@@ -173,6 +177,7 @@ fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
         Some(&checkpoint_source),
         NativeTacticCheckpointRetention::PortableImage,
         TACTIC_CHECKPOINT_CACHE_BYTES,
+        None,
     )
     .unwrap();
     let cache = restored
@@ -197,6 +202,7 @@ fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
         Some(&checkpoint_source),
         NativeTacticCheckpointRetention::LiveEndpoint,
         TACTIC_CHECKPOINT_CACHE_BYTES,
+        None,
     )
     .unwrap();
     let live_cache = live
@@ -212,6 +218,7 @@ fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
         Some(&checkpoint_source),
         NativeTacticCheckpointRetention::None,
         TACTIC_CHECKPOINT_CACHE_BYTES,
+        None,
     )
     .unwrap();
     let evaluation_cache = evaluation_only
@@ -229,6 +236,98 @@ fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
             Some(&checkpoint_source),
         )
         .is_empty()
+    );
+}
+
+#[test]
+fn promoted_tape_guard_cancels_early_and_is_carried_by_one_native_batch() {
+    let option_tape = InputTape {
+        frames: vec![
+            InputFrame {
+                owned_ports: 1,
+                ..InputFrame::default()
+            };
+            8
+        ],
+        ..InputTape::default()
+    };
+    let catalog = TacticAssetCatalog::new(vec![
+        TacticCatalogEntry::new(
+            "promoted/example",
+            TacticAssetSource::GuardedRecordedTape(
+                GuardedRecordedTape::new(
+                    option_tape,
+                    vec![GuardedTapeStageRoom {
+                        stage: "F_SP103".into(),
+                        room: 1,
+                    }],
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap(),
+    ])
+    .unwrap();
+    let selected = SelectedTactic {
+        schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+        learner_snapshot_sha256: Digest([1; 32]),
+        decision_index: 4,
+        descriptor: catalog.entries()[0].description().option.clone(),
+        reason: TacticSelectionReason::Greedy,
+        exploration_draw: 0,
+    };
+    let PreparedNativeExecution::Static(prepared) =
+        prepare_selected(&selected, &catalog, &[]).unwrap()
+    else {
+        panic!("guarded tape must use the single-pass native suffix executor");
+    };
+    assert_eq!(prepared.execution.cancellation_conditions.len(), 1);
+    let (end_reason, conditions) = realized_option_end(&prepared, 3, false).unwrap();
+    assert_eq!(
+        end_reason,
+        OptionEndReason::Cancelled { condition_index: 0 }
+    );
+    assert_eq!(conditions, prepared.execution.cancellation_conditions);
+
+    let identity = NativeSuffixWorkerIdentity {
+        executable_sha256: Digest([1; 32]),
+        game_data_sha256: Digest([2; 32]),
+        input_tape_sha256: Digest([3; 32]),
+        milestone_program_sha256: Digest([4; 32]),
+        card_fixture_sha256: Digest([5; 32]),
+        world_context_sha256: Digest([6; 32]),
+        source_frame: 440,
+        source_boundary_fingerprint: "7".repeat(32),
+        checkpoint_validation_kind: "recorded_replay_window".into(),
+        checkpoint_validation_ticks: 2,
+        maximum_ticks: 99,
+        terminal: crate::native_suffix_result::NativeTerminalBinding {
+            goal: "goal".into(),
+            program_sha256: Digest([8; 32]),
+            definition_sha256: Digest([9; 32]),
+        },
+    };
+    let batch = tactic_batch(
+        &identity,
+        &selected,
+        &prepared.option_tape,
+        None,
+        NativeTacticCheckpointRetention::None,
+        TACTIC_CHECKPOINT_CACHE_BYTES,
+        prepared.cancellation_guard.clone(),
+    )
+    .unwrap();
+    assert_eq!(batch.candidates.len(), 1);
+    assert_eq!(
+        batch.candidates[0]
+            .cancellation_guard
+            .as_ref()
+            .unwrap()
+            .allowed_stage_rooms,
+        vec![NativeSuffixStageRoom {
+            stage: "F_SP103".into(),
+            room: 1,
+        }]
     );
 }
 
@@ -732,6 +831,7 @@ fn native_episode_observes_the_real_stop_and_next_fact_boundary() {
             minimum_ticks: 1,
             maximum_ticks: 1,
         },
+        cancellation_guard: None,
     };
     let request = NativeSuffixBatch {
         schema: dusklight_search::suffix_batch::NATIVE_SUFFIX_BATCH_SCHEMA.into(),
@@ -749,6 +849,7 @@ fn native_episode_observes_the_real_stop_and_next_fact_boundary() {
             actions: pad_runs(&option_tape.frames).unwrap(),
             controller_program_hex: None,
             maximum_ticks: None,
+            cancellation_guard: None,
         }],
     };
     let validated = ValidatedNativeSuffixBatch {

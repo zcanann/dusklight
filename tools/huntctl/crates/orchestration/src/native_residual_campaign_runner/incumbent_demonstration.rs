@@ -266,6 +266,7 @@ pub(super) fn incumbent_demonstration_batch(
             actions: project_native_port_one_actions(imported.actions)?,
             controller_program_hex: None,
             maximum_ticks: None,
+            cancellation_guard: None,
         }],
     })
 }

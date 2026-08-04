@@ -295,6 +295,7 @@ pub fn tactic_observations_available(
                 snapshot.player.camera_yaw_radians_f32_bits.is_some()
             }
             TacticObservationRequirement::StageName => !snapshot.world.stage.is_empty(),
+            TacticObservationRequirement::Room => true,
             TacticObservationRequirement::ActorIdentity
             | TacticObservationRequirement::ActorPosition => {
                 snapshot.actors_complete && !snapshot.actors.is_empty()

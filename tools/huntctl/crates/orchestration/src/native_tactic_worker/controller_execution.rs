@@ -74,6 +74,7 @@ pub(super) fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
             checkpoint_source,
             checkpoint_retention,
             checkpoint_cache_capacity_bytes,
+            None,
         )?;
         let iteration_paths = iteration_paths(paths, selected.decision_index, local_tick);
         write_new_compact_batch(&iteration_paths.request, &request)?;
@@ -131,6 +132,7 @@ pub(super) fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
                     option_tape,
                     execution: local_execution,
                     duration,
+                    cancellation_guard: None,
                 },
                 candidate_tape,
                 candidate_prefix_ticks,
@@ -417,6 +419,7 @@ pub(super) fn finish_native_controller_candidate(
             option_tape,
             execution,
             duration,
+            cancellation_guard: None,
         },
         candidate_tape,
         candidate_prefix_ticks,
@@ -610,6 +613,7 @@ pub(super) fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
                     option_tape,
                     execution: local_execution,
                     duration,
+                    cancellation_guard: None,
                 },
                 candidate_tape,
                 candidate_prefix_ticks,
@@ -644,6 +648,7 @@ pub(super) fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
             checkpoint_source,
             checkpoint_retention,
             checkpoint_cache_capacity_bytes,
+            None,
         )?;
         let iteration_paths = iteration_paths(paths, selected.decision_index, local_tick);
         write_new_compact_batch(&iteration_paths.request, &request)?;
@@ -698,6 +703,7 @@ pub(super) fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
                     option_tape,
                     execution: local_execution,
                     duration,
+                    cancellation_guard: None,
                 },
                 candidate_tape,
                 candidate_prefix_ticks,

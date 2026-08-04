@@ -14,7 +14,7 @@ use std::error::Error;
 use std::fmt;
 use xxhash_rust::xxh3::xxh3_128;
 
-pub const COMPACT_SUFFIX_BATCH_MAGIC: [u8; 8] = *b"DSKSBX\x01\0";
+pub const COMPACT_SUFFIX_BATCH_MAGIC: [u8; 8] = *b"DSKSBX\x02\0";
 const HEADER_BYTES: usize = 28;
 const FLAG_VERIFY_STATE_HASHES: u8 = 1 << 0;
 const FLAG_CHECKPOINT_CACHE: u8 = 1 << 1;
@@ -23,6 +23,7 @@ const FLAG_RETAIN_CANDIDATE_CHECKPOINTS: u8 = 1 << 3;
 const FLAG_RETAIN_LIVE_ENDPOINT: u8 = 1 << 4;
 const FLAG_VARIABLE_CANDIDATE_TICKS: u8 = 1 << 5;
 const FLAG_RETAIN_CANDIDATE_INDEX: u8 = 1 << 6;
+const FLAG_CANDIDATE_CANCELLATION_GUARDS: u8 = 1 << 7;
 const RECORDED_REPLAY_WINDOW: u8 = 2;
 const MAXIMUM_BYTES: usize = 64 * 1024 * 1024;
 
@@ -130,6 +131,13 @@ pub fn encode_compact_suffix_batch(
     if cache.retain_candidate_index.is_some() {
         flags |= FLAG_RETAIN_CANDIDATE_INDEX;
     }
+    if batch
+        .candidates
+        .iter()
+        .any(|candidate| candidate.cancellation_guard.is_some())
+    {
+        flags |= FLAG_CANDIDATE_CANCELLATION_GUARDS;
+    }
     if usize::from(cache.retain_candidate_checkpoints)
         + usize::from(cache.retain_live_endpoint)
         + usize::from(cache.retain_candidate_index.is_some())
@@ -193,6 +201,32 @@ pub fn encode_compact_suffix_batch(
             let candidate_maximum_ticks = u16::try_from(candidate_maximum_ticks)
                 .map_err(|_| CompactSuffixBatchError::new("candidate maximum ticks exceeds u16"))?;
             payload.extend_from_slice(&candidate_maximum_ticks.to_le_bytes());
+        }
+
+        if flags & FLAG_CANDIDATE_CANCELLATION_GUARDS != 0 {
+            let cells = candidate
+                .cancellation_guard
+                .as_ref()
+                .map(|guard| guard.allowed_stage_rooms.as_slice())
+                .unwrap_or_default();
+            let cell_count = u8::try_from(cells.len()).map_err(|_| {
+                CompactSuffixBatchError::new("candidate cancellation guard exceeds 255 cells")
+            })?;
+            payload.push(cell_count);
+            for (index, cell) in cells.iter().enumerate() {
+                if cell.stage.is_empty()
+                    || cell.stage.len() > 8
+                    || !cell.stage.is_ascii()
+                    || index > 0 && &cells[index - 1] >= cell
+                {
+                    return Err(CompactSuffixBatchError::new(
+                        "candidate cancellation guard is not canonical",
+                    ));
+                }
+                payload.push(cell.room as u8);
+                payload.push(cell.stage.len() as u8);
+                payload.extend_from_slice(cell.stage.as_bytes());
+            }
         }
 
         let controller = candidate
@@ -300,7 +334,8 @@ mod tests {
     use super::*;
     use dusklight_search::search::SearchPadState;
     use dusklight_search::suffix_batch::{
-        NativeCheckpointCacheRequest, NativeCheckpointValidation, NativeSuffixCandidate,
+        NativeCheckpointCacheRequest, NativeCheckpointValidation, NativeSuffixCancellationGuard,
+        NativeSuffixCandidate, NativeSuffixStageRoom,
     };
 
     fn fixture() -> NativeSuffixBatch {
@@ -345,6 +380,7 @@ mod tests {
                 }],
                 controller_program_hex: None,
                 maximum_ticks: None,
+                cancellation_guard: None,
             }],
         }
     }
@@ -376,6 +412,31 @@ mod tests {
                 .to_string()
                 .contains("non-PAD")
         );
+    }
+
+    #[test]
+    fn compact_envelope_carries_canonical_stage_room_cancellation_guards() {
+        let mut batch = fixture();
+        batch.candidates[0].cancellation_guard = Some(NativeSuffixCancellationGuard {
+            allowed_stage_rooms: vec![NativeSuffixStageRoom {
+                stage: "F_SP103".into(),
+                room: 1,
+            }],
+        });
+        let encoded = encode_compact_suffix_batch(&batch).unwrap();
+        assert_eq!(&encoded[..8], b"DSKSBX\x02\0");
+        assert!(encoded.windows(7).any(|window| window == b"F_SP103"));
+
+        batch.candidates[0]
+            .cancellation_guard
+            .as_mut()
+            .unwrap()
+            .allowed_stage_rooms
+            .push(NativeSuffixStageRoom {
+                stage: "F_SP103".into(),
+                room: 1,
+            });
+        assert!(encode_compact_suffix_batch(&batch).is_err());
     }
 
     #[test]

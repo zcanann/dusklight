@@ -368,7 +368,7 @@ impl NativeSuffixBatchResult {
             let validated = actual.validate_common(
                 expected.maximum_ticks.unwrap_or(request.maximum_ticks),
                 request.verify_state_hashes,
-                expected.controller_program_hex.is_some(),
+                expected.controller_program_hex.is_some() || expected.cancellation_guard.is_some(),
                 terminal,
             )?;
             validate_retained_checkpoint(actual, request, candidate_index, self.checkpoint_bytes)?;

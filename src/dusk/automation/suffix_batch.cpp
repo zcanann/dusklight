@@ -18,8 +18,10 @@ namespace {
 
 using json = nlohmann::json;
 
-constexpr std::array<std::uint8_t, 8> CompactSuffixBatchMagic{
+constexpr std::array<std::uint8_t, 8> CompactSuffixBatchMagicV1{
     'D', 'S', 'K', 'S', 'B', 'X', 1, 0};
+constexpr std::array<std::uint8_t, 8> CompactSuffixBatchMagicV2{
+    'D', 'S', 'K', 'S', 'B', 'X', 2, 0};
 constexpr std::size_t CompactSuffixBatchHeaderBytes = 28;
 constexpr std::uint8_t CompactVerifyStateHashes = 1 << 0;
 constexpr std::uint8_t CompactCheckpointCache = 1 << 1;
@@ -28,13 +30,16 @@ constexpr std::uint8_t CompactRetainCandidateCheckpoints = 1 << 3;
 constexpr std::uint8_t CompactRetainLiveEndpoint = 1 << 4;
 constexpr std::uint8_t CompactVariableCandidateTicks = 1 << 5;
 constexpr std::uint8_t CompactRetainCandidateIndex = 1 << 6;
-constexpr std::uint8_t CompactKnownFlags = CompactVerifyStateHashes |
+constexpr std::uint8_t CompactCandidateCancellationGuards = 1 << 7;
+constexpr std::uint8_t CompactKnownFlagsV1 = CompactVerifyStateHashes |
                                            CompactCheckpointCache |
                                            CompactSourceIdentity |
                                            CompactRetainCandidateCheckpoints |
                                            CompactRetainLiveEndpoint |
                                            CompactVariableCandidateTicks |
                                            CompactRetainCandidateIndex;
+constexpr std::uint8_t CompactKnownFlagsV2 =
+    CompactKnownFlagsV1 | CompactCandidateCancellationGuards;
 constexpr std::uint8_t CompactRecordedReplayWindow = 2;
 
 class CompactReader {
@@ -84,9 +89,12 @@ std::string compact_hex(const std::span<const std::uint8_t> bytes) {
 }
 
 bool compact_suffix_batch_magic(const std::string_view source) {
-    return source.size() >= CompactSuffixBatchMagic.size() &&
-           std::equal(CompactSuffixBatchMagic.begin(), CompactSuffixBatchMagic.end(),
-               reinterpret_cast<const std::uint8_t*>(source.data()));
+    if (source.size() < CompactSuffixBatchMagicV1.size()) return false;
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(source.data());
+    return std::equal(
+               CompactSuffixBatchMagicV1.begin(), CompactSuffixBatchMagicV1.end(), bytes) ||
+           std::equal(
+               CompactSuffixBatchMagicV2.begin(), CompactSuffixBatchMagicV2.end(), bytes);
 }
 
 bool parse_compact_suffix_batch(
@@ -100,7 +108,9 @@ bool parse_compact_suffix_batch(
     }
     const auto bytes = std::span{
         reinterpret_cast<const std::uint8_t*>(source.data()), source.size()};
-    CompactReader header(bytes.subspan(CompactSuffixBatchMagic.size()));
+    const bool guardedTransport = std::equal(CompactSuffixBatchMagicV2.begin(),
+        CompactSuffixBatchMagicV2.end(), bytes.begin());
+    CompactReader header(bytes.subspan(CompactSuffixBatchMagicV1.size()));
     std::uint32_t payloadSize = 0;
     std::span<const std::uint8_t> expectedDigest;
     if (!header.readLittle(payloadSize) || !header.readBytes(16, expectedDigest) ||
@@ -127,7 +137,8 @@ bool parse_compact_suffix_batch(
     std::uint32_t capacityBytes = 0;
     std::uint8_t capacityEntries = 0;
     std::uint32_t sourceRouteTicks = 0;
-    if (!reader.readByte(flags) || (flags & ~CompactKnownFlags) != 0 ||
+    const std::uint8_t knownFlags = guardedTransport ? CompactKnownFlagsV2 : CompactKnownFlagsV1;
+    if (!reader.readByte(flags) || (flags & ~knownFlags) != 0 ||
         (flags & CompactCheckpointCache) == 0 ||
         !reader.readLittle(sourceFrame) || !reader.readBytes(16, sourceBoundary) ||
         !reader.readByte(validationKind) ||
@@ -209,10 +220,7 @@ bool parse_compact_suffix_batch(
             }) ||
             ((flags & CompactVariableCandidateTicks) != 0 &&
                 (!reader.readLittle(candidateMaximumTicks) || candidateMaximumTicks == 0 ||
-                    candidateMaximumTicks > maximumTicks)) ||
-            !reader.readLittle(controllerLength) ||
-            !reader.readBytes(controllerLength, controllerBytes) ||
-            !reader.readLittle(runCount) || runCount > candidateMaximumTicks) {
+                    candidateMaximumTicks > maximumTicks))) {
             error = "compact suffix candidate header is invalid";
             return false;
         }
@@ -222,6 +230,44 @@ bool parse_compact_suffix_batch(
         candidate.maximumTicks = candidateMaximumTicks;
         if (!ids.insert(candidate.id).second) {
             error = "compact suffix candidate has a duplicate id";
+            return false;
+        }
+        if ((flags & CompactCandidateCancellationGuards) != 0) {
+            std::uint8_t guardCount = 0;
+            if (!reader.readByte(guardCount)) {
+                error = "compact suffix candidate cancellation guard is truncated";
+                return false;
+            }
+            candidate.cancellationAllowedStageRooms.reserve(guardCount);
+            for (std::size_t guardIndex = 0; guardIndex < guardCount; ++guardIndex) {
+                std::uint8_t room = 0;
+                std::uint8_t stageLength = 0;
+                std::span<const std::uint8_t> stageBytes;
+                if (!reader.readByte(room) || !reader.readByte(stageLength) ||
+                    stageLength == 0 || stageLength > 8 ||
+                    !reader.readBytes(stageLength, stageBytes) ||
+                    !std::ranges::all_of(stageBytes,
+                        [](const std::uint8_t byte) { return byte < 0x80; })) {
+                    error = "compact suffix candidate cancellation guard is invalid";
+                    return false;
+                }
+                SuffixBatchCandidate::StageRoom cell{
+                    .stage = std::string{reinterpret_cast<const char*>(stageBytes.data()),
+                        stageBytes.size()},
+                    .room = static_cast<std::int8_t>(room),
+                };
+                if (!candidate.cancellationAllowedStageRooms.empty() &&
+                    candidate.cancellationAllowedStageRooms.back() >= cell) {
+                    error = "compact suffix candidate cancellation guard is not canonical";
+                    return false;
+                }
+                candidate.cancellationAllowedStageRooms.push_back(std::move(cell));
+            }
+        }
+        if (!reader.readLittle(controllerLength) ||
+            !reader.readBytes(controllerLength, controllerBytes) ||
+            !reader.readLittle(runCount) || runCount > candidateMaximumTicks) {
+            error = "compact suffix candidate executable payload is invalid";
             return false;
         }
         candidate.pads.reserve(candidate.maximumTicks);

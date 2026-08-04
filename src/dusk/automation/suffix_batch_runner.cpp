@@ -382,6 +382,7 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
     mCandidateChosenPadReady = false;
     mCandidateControllerObservationReady = false;
     mCandidateControllerReached = false;
+    mCandidateCancellationGuardFailed = false;
     resetBatchProfile(true);
     mError.clear();
     mFailed = false;
@@ -974,6 +975,7 @@ bool SuffixBatchRunner::captureEpisodePreInput(
     mCandidateChosenPadReady = false;
     mCandidateControllerObservationReady = false;
     mCandidateControllerReached = false;
+    mCandidateCancellationGuardFailed = false;
     if (mCandidateTick == 0) {
         AccumulateMicros encoding(mProfile.corpusEncodingMicros);
         begin_learning_episode(mCurrentEpisode);
@@ -1622,8 +1624,15 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
         mGoalTracker.observe(observation, simulationTick, tapeFrame);
     }
     const bool success = mGoalTracker.goalReached();
+    if (!candidate.cancellationAllowedStageRooms.empty()) {
+        const std::string_view stage =
+            observation.stageName == nullptr ? std::string_view{} : observation.stageName;
+        mCandidateCancellationGuardFailed =
+            !candidate.cancellationGuardAllows(stage, observation.room);
+    }
     const bool exhausted =
-        mCandidateControllerReached || mCandidateTick + 1 == candidate.maximumTicks;
+        mCandidateControllerReached || mCandidateCancellationGuardFailed ||
+        mCandidateTick + 1 == candidate.maximumTicks;
     if (!appendEpisodePostSimulation(
             observation, expectedPad, simulationTick, success || exhausted, error)) {
         fail(error);
@@ -1632,6 +1641,7 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
     mPolicyFeatureRowReady = false;
     mCandidateChosenPadReady = false;
     mCandidateControllerReached = false;
+    mCandidateCancellationGuardFailed = false;
     if (!success && !exhausted) {
         ++mCandidateTick;
         return false;

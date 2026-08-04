@@ -118,6 +118,7 @@ pub(crate) fn execute_selected_tactic_batch_if_compatible<W: PersistentTacticBat
                     actions: pad_runs(&candidate_tape.frames)?,
                     controller_program_hex: None,
                     maximum_ticks: Some(maximum_ticks),
+                    cancellation_guard: prepared.cancellation_guard.clone(),
                 });
                 prepared_outcomes.push(PreparedBatchedOutcome::Static {
                     prepared: Box::new(prepared),
@@ -282,6 +283,7 @@ fn push_controller_candidate(
         actions: pad_runs(prefix_frames)?,
         controller_program_hex: Some(lower_hex_bytes(&program_bytes)),
         maximum_ticks: Some(maximum_ticks),
+        cancellation_guard: None,
     });
     prepared_outcomes.push(PreparedBatchedOutcome::Controller {
         duration,

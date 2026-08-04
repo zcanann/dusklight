@@ -8,6 +8,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <compare>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -53,6 +54,13 @@ enum class SuffixPolicyActionAuthority : std::uint8_t {
 };
 
 struct SuffixBatchCandidate {
+    struct StageRoom {
+        std::string stage;
+        std::int8_t room = -1;
+
+        auto operator<=>(const StageRoom&) const = default;
+    };
+
     std::string id;
     std::size_t maximumTicks = 0;
     bool tapePassthrough = false;
@@ -69,6 +77,16 @@ struct SuffixBatchCandidate {
     // Fully expanded before simulation. The hot path performs one indexed load.
     // For factorized candidates this is the independent expected-PAD oracle.
     std::vector<RawPadState> pads;
+    std::vector<StageRoom> cancellationAllowedStageRooms;
+
+    [[nodiscard]] bool cancellationGuardAllows(
+        const std::string_view stage, const std::int8_t room) const {
+        return cancellationAllowedStageRooms.empty() ||
+               std::ranges::any_of(cancellationAllowedStageRooms,
+                   [&](const StageRoom& cell) {
+                       return cell.stage == stage && cell.room == room;
+                   });
+    }
 };
 
 struct SuffixBatchFrozenPolicy {

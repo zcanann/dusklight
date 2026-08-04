@@ -292,7 +292,7 @@ pub(super) fn validate_parameterized_policy_catalog(
         !entry.option_id().starts_with("family/")
             && !(entry.option_id().starts_with("promoted/")
                 && entry.description().kind
-                    == dusklight_learning::tactic_asset::TacticAssetKind::RecordedTape)
+                    == dusklight_learning::tactic_asset::TacticAssetKind::GuardedRecordedTape)
     }) {
         return Err(route_message(format!(
             "parameterized policy catalog contains non-atomic authored action {:?}",

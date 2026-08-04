@@ -773,9 +773,12 @@ fn realize_entry_frames(
             .map(|tape| tape.frames)
             .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string())),
         TacticAssetSource::RecordedTape(tape) => Ok(tape.frames.clone()),
-        TacticAssetSource::NativeGenericTactic(_) => Err(TacticBlueprintError::StaticExecution(
-            format!("option {:?} has no static realization", entry.option_id()),
-        )),
+        TacticAssetSource::NativeGenericTactic(_) | TacticAssetSource::GuardedRecordedTape(_) => {
+            Err(TacticBlueprintError::StaticExecution(format!(
+                "option {:?} has no static realization",
+                entry.option_id()
+            )))
+        }
     }
 }
 
@@ -810,7 +813,7 @@ fn capture_entry_execution(
             )
             .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string()))?
         }
-        TacticAssetSource::NativeGenericTactic(_) => {
+        TacticAssetSource::NativeGenericTactic(_) | TacticAssetSource::GuardedRecordedTape(_) => {
             return Err(TacticBlueprintError::StaticExecution(format!(
                 "option {:?} has no static execution capture",
                 entry.option_id()

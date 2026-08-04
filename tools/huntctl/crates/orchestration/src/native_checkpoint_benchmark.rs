@@ -736,6 +736,7 @@ fn batch(
             actions: pad_runs(frames)?,
             controller_program_hex: None,
             maximum_ticks: None,
+            cancellation_guard: None,
         }],
     })
 }

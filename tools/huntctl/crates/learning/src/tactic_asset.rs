@@ -48,6 +48,7 @@ pub enum TacticAssetKind {
     Roll,
     ReactiveController,
     RecordedTape,
+    GuardedRecordedTape,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -61,6 +62,7 @@ pub enum TacticObservationRequirement {
     PlayerActionLane,
     CameraYaw,
     StageName,
+    Room,
     ActorIdentity,
     ActorPosition,
     ActorSnapshotCompleteness,
@@ -85,6 +87,7 @@ pub enum TacticExecutor {
     StaticPlan,
     NativeGenericObservationLoop,
     ReactiveControllerProgram,
+    GuardedRecordedTape,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -224,6 +227,24 @@ pub enum TacticAssetSource {
     Roll(RollOptionPlan),
     ReactiveController(ControllerProgram),
     RecordedTape(InputTape),
+    GuardedRecordedTape(GuardedRecordedTape),
+}
+
+pub const GUARDED_RECORDED_TAPE_SCHEMA_V1: &str = "dusklight-guarded-recorded-tape/v1";
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuardedRecordedTape {
+    pub schema: String,
+    pub tape: InputTape,
+    pub allowed_stage_rooms: Vec<GuardedTapeStageRoom>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuardedTapeStageRoom {
+    pub stage: String,
+    pub room: i8,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -274,6 +295,10 @@ impl EncodedTacticAssetSource {
                     .map_err(|error| invalid(error.to_string()))?
                     .tape,
             ),
+            TacticAssetKind::GuardedRecordedTape => TacticAssetSource::GuardedRecordedTape(
+                serde_cbor::from_slice(&self.canonical_bytes)
+                    .map_err(|error| TacticAssetError::Serialization(error.to_string()))?,
+            ),
         };
         if source.kind() != self.kind || source.canonical_bytes()? != self.canonical_bytes {
             return Err(invalid(
@@ -303,6 +328,7 @@ impl TacticAssetKind {
             Self::Roll => 3,
             Self::ReactiveController => 4,
             Self::RecordedTape => 5,
+            Self::GuardedRecordedTape => 6,
         }
     }
 }
@@ -316,6 +342,7 @@ impl TacticAssetSource {
             Self::Roll(_) => TacticAssetKind::Roll,
             Self::ReactiveController(_) => TacticAssetKind::ReactiveController,
             Self::RecordedTape(_) => TacticAssetKind::RecordedTape,
+            Self::GuardedRecordedTape(_) => TacticAssetKind::GuardedRecordedTape,
         }
     }
 }
@@ -329,6 +356,7 @@ impl TacticAssetAdapter for TacticAssetSource {
             Self::Roll(plan) => plan.describe(option_id),
             Self::ReactiveController(plan) => plan.describe(option_id),
             Self::RecordedTape(tape) => tape.describe(option_id),
+            Self::GuardedRecordedTape(tape) => tape.describe(option_id),
         }
     }
 
@@ -340,6 +368,7 @@ impl TacticAssetAdapter for TacticAssetSource {
             Self::Roll(plan) => TacticAssetAdapter::canonical_bytes(plan),
             Self::ReactiveController(plan) => TacticAssetAdapter::canonical_bytes(plan),
             Self::RecordedTape(tape) => TacticAssetAdapter::canonical_bytes(tape),
+            Self::GuardedRecordedTape(tape) => TacticAssetAdapter::canonical_bytes(tape),
         }
     }
 
@@ -351,6 +380,7 @@ impl TacticAssetAdapter for TacticAssetSource {
             Self::Roll(plan) => plan.static_frames(),
             Self::ReactiveController(plan) => plan.static_frames(),
             Self::RecordedTape(tape) => tape.static_frames(),
+            Self::GuardedRecordedTape(tape) => tape.static_frames(),
         }
     }
 
@@ -365,6 +395,7 @@ impl TacticAssetAdapter for TacticAssetSource {
             Self::Roll(plan) => plan.exact_static_realization(option_id),
             Self::ReactiveController(plan) => plan.exact_static_realization(option_id),
             Self::RecordedTape(tape) => tape.exact_static_realization(option_id),
+            Self::GuardedRecordedTape(tape) => tape.exact_static_realization(option_id),
         }
     }
 }
@@ -443,6 +474,7 @@ pub enum PreparedTacticExecution<'a> {
     Static(ExactTacticRealization),
     NativeGeneric(NativeGenericTacticCandidate),
     ReactiveController(&'a ControllerProgram),
+    GuardedRecordedTape(&'a GuardedRecordedTape),
 }
 
 impl TacticAssetCatalog {
@@ -531,6 +563,14 @@ impl TacticAssetCatalog {
                 }
                 _ => Err(invalid(
                     "reactive controller executor does not own a controller program",
+                )),
+            },
+            TacticExecutor::GuardedRecordedTape => match &entry.source {
+                TacticAssetSource::GuardedRecordedTape(tape) => {
+                    Ok(PreparedTacticExecution::GuardedRecordedTape(tape))
+                }
+                _ => Err(invalid(
+                    "guarded tape executor does not own a guarded recorded tape",
                 )),
             },
         }
@@ -735,6 +775,102 @@ impl TacticAssetAdapter for InputTape {
         let exact = recorded_tape_realization(self, option_id)?;
         exact.validate_against(&description)?;
         Ok(Some(exact))
+    }
+}
+
+impl GuardedRecordedTape {
+    pub fn new(
+        tape: InputTape,
+        mut allowed_stage_rooms: Vec<GuardedTapeStageRoom>,
+    ) -> Result<Self, TacticAssetError> {
+        allowed_stage_rooms.sort();
+        allowed_stage_rooms.dedup();
+        let guarded = Self {
+            schema: GUARDED_RECORDED_TAPE_SCHEMA_V1.into(),
+            tape,
+            allowed_stage_rooms,
+        };
+        guarded.validate()?;
+        Ok(guarded)
+    }
+
+    pub fn validate(&self) -> Result<(), TacticAssetError> {
+        self.tape
+            .validate()
+            .map_err(|error| invalid(error.to_string()))?;
+        if self.schema != GUARDED_RECORDED_TAPE_SCHEMA_V1
+            || self.tape.frames.is_empty()
+            || self.tape.frames.len() > MAX_OPTION_TICKS as usize
+            || self.allowed_stage_rooms.is_empty()
+            || self
+                .allowed_stage_rooms
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+            || self
+                .allowed_stage_rooms
+                .iter()
+                .any(|cell| cell.stage.is_empty() || cell.stage.len() > 8 || !cell.stage.is_ascii())
+        {
+            return Err(invalid("guarded recorded tape is invalid"));
+        }
+        Ok(())
+    }
+
+    fn cancellation_condition(&self) -> Result<OptionCondition, TacticAssetError> {
+        let canonical = self.canonical_bytes()?;
+        Ok(OptionCondition::Observation {
+            observation_schema_sha256: digest(b"dusklight-stage-room-observation/v1"),
+            expression_sha256: digest(&canonical),
+        })
+    }
+}
+
+impl TacticAssetAdapter for GuardedRecordedTape {
+    fn describe(&self, option_id: &str) -> Result<TacticAssetDescription, TacticAssetError> {
+        validate_option_id(option_id)?;
+        self.validate()?;
+        let exact = recorded_tape_realization(&self.tape, option_id)?;
+        let canonical = self.canonical_bytes()?;
+        checked(TacticAssetDescription {
+            schema: TACTIC_ASSET_ADAPTER_SCHEMA_V1.into(),
+            kind: TacticAssetKind::GuardedRecordedTape,
+            source_schema: GUARDED_RECORDED_TAPE_SCHEMA_V1.into(),
+            content_sha256: digest(&canonical),
+            option: descriptor(&exact.execution),
+            duration: TacticDurationBounds {
+                minimum_ticks: exact.execution.duration.minimum_ticks,
+                maximum_ticks: exact.execution.duration.maximum_ticks,
+            },
+            applicability: TacticApplicability::ObservationBound,
+            required_observations: BTreeSet::from([
+                TacticObservationRequirement::StageName,
+                TacticObservationRequirement::Room,
+            ]),
+            executor: TacticExecutor::GuardedRecordedTape,
+            stopping: TacticStoppingContract {
+                termination: OptionCondition::DurationElapsed,
+                cancellation: vec![self.cancellation_condition()?],
+            },
+            statically_realizable: false,
+        })
+    }
+
+    fn canonical_bytes(&self) -> Result<Vec<u8>, TacticAssetError> {
+        self.validate()?;
+        serde_cbor::to_vec(self).map_err(|error| TacticAssetError::Serialization(error.to_string()))
+    }
+
+    fn static_frames(&self) -> Result<Option<Vec<InputFrame>>, TacticAssetError> {
+        self.validate()?;
+        Ok(None)
+    }
+
+    fn exact_static_realization(
+        &self,
+        _option_id: &str,
+    ) -> Result<Option<ExactTacticRealization>, TacticAssetError> {
+        self.validate()?;
+        Ok(None)
     }
 }
 

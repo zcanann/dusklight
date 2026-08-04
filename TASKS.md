@@ -342,7 +342,7 @@ remains open until it also accounts for complete cold validations.
   Promote a subsequence to a parameterized tactic only when replay across
   multiple compatible states improves value or sample efficiency over its
   primitive actions.
-- [ ] Allow promoted tactics and primitive actions in the same policy. Tactics
+- [x] Allow promoted tactics and primitive actions in the same policy. Tactics
   must compose, terminate early when their assumptions fail, and never prevent
   discovery of a better primitive or tactic sequence.
 - [x] Add deterministic tests in which the optimal solution requires a
@@ -378,12 +378,19 @@ wall contact, and prior control; the route reward remains only authenticated
 terminal success minus native tick cost. Replay mining covers both repeated
 option prefixes and connected multi-option sequences. Promotion requires native
 comparison against the original primitive-component sequence at two distinct
-held-out states and seeds, and imported promoted tapes join the same catalog
-without removing primitive families. Mid-option assumption failure is not yet
-an executable cancellation guard for recorded macros, so that task remains
-open. The around-corner fixture now explicitly proves that the learned held-out
-route commits to three initially worse moves while a one-step goal-progress
-control cycles and fails.
+held-out states and seeds. Imported promoted sequences are now guarded recorded
+tactics in the same policy as every primitive family. Their learned entry
+procedure, contact, and goal-distance cells gate selection; their invariant
+stage/room support is encoded as one authenticated mid-option cancellation
+condition and evaluated at every native boundary in the same suffix pass. A
+failed guard stops the tape early and records `Cancelled`, while primitives
+remain unchanged and selectable. The compact v2 wire retains v1 decoding and
+carries the guard without a per-frame restore loop. Rust adapter, catalog,
+early-result, worker, and 452-test orchestration coverage pass; the native
+compact parser/guard unit and production executable build pass. The
+around-corner fixture explicitly proves that the learned held-out route commits
+to three initially worse moves while a one-step goal-progress control cycles
+and fails.
 
 ## P0: prove Ordon is actually learnable
 
