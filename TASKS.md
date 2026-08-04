@@ -174,6 +174,11 @@ worker-session validators.
 - [x] Measure one versus two workers with isolated checkpoint ownership. Keep
   two only if end-to-end unique branch throughput improves without state
   contamination or host saturation.
+- [ ] Let multiple checkpoint-owning learner lanes publish and consume bounded-
+  staleness model updates while they are still exploring. Each lane must keep
+  branching from its retained save-state graph; generation-barrier learning
+  after every lane has finished is not an online-learning substitute, and
+  independent cold-root campaigns are not a shared branch search.
 - [x] Require restored suffix evaluation to beat equivalent cold-root candidate
   evaluation by at least 10x end to end. If it does not, treat save/restore
   performance or orchestration as broken and fix it before another route run.
@@ -336,6 +341,19 @@ from 1.763/s to 2.203/s (24.9%). This removes measured duplicate memory work;
 the broader capture/restore task remains open because a 295 MiB image capture
 still costs about 144 milliseconds and full-horizon capacity remains below the
 required multi-thousand alternatives plus cold validations.
+
+Parallel-learning audit (2026-08-03): a two-lane generation-barrier campaign
+restored historical graph nodes directly and found one 239-tick terminal among
+734 useful expansions, but it published only one model revision after both
+lanes had finished. It therefore proves save-state graph exploration and route
+reconstruction, not online learning. Two independent one-lane learned campaigns
+did publish 81 model revisions while exploring from retained checkpoints and
+performed 291 direct non-root restores with zero fallback replays; together
+they produced 622 useful expansions in about 195 seconds, found no terminal,
+and did not share experience. The CLI must continue to reject learned multi-
+lane plans until bounded-staleness cross-lane publication exists; silently
+changing such a request to generation-barrier behavior would mislabel the
+experiment.
 
 ## P0: learn trajectories and coordinated tactics
 
