@@ -155,11 +155,11 @@ void test_exact_manifest_capture_reuses_owned_buffers() {
 }
 
 void test_semantic_padding_is_explicit_and_raw_integrity_stays_exact() {
-    std::array<std::byte, 16> memory{};
+    std::array<std::byte, 8192> memory{};
     memory[3] = std::byte{0x11};
     memory[5] = std::byte{0x22};
     const std::array ignored{
-        StateCheckpointIgnoredRange{.offset = 4, .size = 3},
+        StateCheckpointIgnoredRange{.offset = 4, .size = 5000},
     };
     StateCheckpoint checkpoint;
     REQUIRE(checkpoint.addMemoryRegion("memory", memory.data(), memory.size(), ignored) ==

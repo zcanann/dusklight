@@ -316,6 +316,27 @@ and useful-expansion set
 This crosses the raw thousands-throughput gate; the capacity-envelope task
 remains open until it also accounts for complete cold validations.
 
+Semantic-checkpoint hashing treatment (2026-08-03): semantic identity formerly
+copied every registered region with ignored presentation ranges into a temporary
+buffer and zeroed it before hashing. It now streams the live bytes and canonical
+zero chunks directly, while preserving the exact raw checkpoint and semantic
+digests. A same-executable control switch keeps the former path available as
+`DUSKLIGHT_DISABLE_SEMANTIC_ZERO_CHUNKS=1`. The fixed seed-104729, 64-decision,
+128-transition pair under
+`build/campaigns/ordon-p0-zero-shot-preflight-seed104729-d64-p2-v{5-same-native-treatment,6-same-native-control}-20260803`
+has identical execution and plan identities, graph
+`0f3f74b52c77e003d6d43d8dc964ffd1360b2c349b4c9373780fd566659c8eb4`,
+useful-expansion set
+`5f18a4f4aa09363d58bcb38ce8eb697c63d6ec964bd9810f4dfd577bdf4952d7`,
+631 states, 2,498 native ticks, and 17 learned-model updates. Capture time fell
+from 15,927,023 to 10,908,861 microseconds (31.5%), tactic execution from
+45,261,218 to 30,812,014 microseconds (31.9%), and complete wall time from
+72,601,697 to 58,106,934 microseconds (20.0%). Useful-expansion throughput rose
+from 1.763/s to 2.203/s (24.9%). This removes measured duplicate memory work;
+the broader capture/restore task remains open because a 295 MiB image capture
+still costs about 144 milliseconds and full-horizon capacity remains below the
+required multi-thousand alternatives plus cold validations.
+
 ## P0: learn trajectories and coordinated tactics
 
 - [x] Replace terminal-only whole-episode credit with state-graph backups over

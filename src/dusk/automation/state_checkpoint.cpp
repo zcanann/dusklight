@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <new>
@@ -77,6 +78,47 @@ std::string bytes_digest(const void* const bytes, const std::size_t size) {
         result.push_back(Hex[byte & 0xf]);
     }
     return result;
+}
+
+void update_semantic_bytes(XXH3_state_t* state, const std::byte* bytes,
+    const std::size_t size,
+    const std::span<const StateCheckpointIgnoredRange> ignoredRanges) {
+    static constexpr std::array<std::byte, 4096> Zeroes{};
+    std::size_t offset = 0;
+    for (const StateCheckpointIgnoredRange range : ignoredRanges) {
+        XXH3_128bits_update(state, bytes + offset, range.offset - offset);
+        std::size_t remaining = range.size;
+        while (remaining != 0) {
+            const std::size_t chunk = std::min(remaining, Zeroes.size());
+            XXH3_128bits_update(state, Zeroes.data(), chunk);
+            remaining -= chunk;
+        }
+        offset = range.offset + range.size;
+    }
+    XXH3_128bits_update(state, bytes + offset, size - offset);
+}
+
+std::string semantic_bytes_digest(const void* const bytes, const std::size_t size,
+    const std::span<const StateCheckpointIgnoredRange> ignoredRanges) {
+    XXH3_state_t* state = XXH3_createState();
+    if (state == nullptr) {
+        return {};
+    }
+    XXH3_128bits_reset(state);
+    update_semantic_bytes(
+        state, static_cast<const std::byte*>(bytes), size, ignoredRanges);
+    const std::string result = finish_digest(state);
+    XXH3_freeState(state);
+    return result;
+}
+
+bool semantic_zero_chunk_hashing_enabled() {
+    static const bool enabled = [] {
+        const char* const disabled =
+            std::getenv("DUSKLIGHT_DISABLE_SEMANTIC_ZERO_CHUNKS");
+        return disabled == nullptr || std::string_view(disabled) != "1";
+    }();
+    return enabled;
 }
 
 }  // namespace
@@ -302,6 +344,8 @@ StateCheckpointError StateCheckpoint::currentDigestImpl(std::string& digest,
     hash_u64(state, mEntries.size());
     std::vector<std::byte> componentBytes;
     try {
+        const bool zeroChunkSemantic =
+            semantic && semantic_zero_chunk_hashing_enabled();
         std::vector<StateCheckpointEntryDigest> capturedEntryDigests;
         if (entryDigests != nullptr) {
             capturedEntryDigests.reserve(mEntries.size());
@@ -321,10 +365,13 @@ StateCheckpointError StateCheckpoint::currentDigestImpl(std::string& digest,
             }
             const void* entryBytes = nullptr;
             if (entry.kind == StateCheckpointEntryKind::MemoryRegion) {
-                if (semantic && !entry.semanticIgnoredRanges.empty()) {
+                if (semantic && !zeroChunkSemantic &&
+                    !entry.semanticIgnoredRanges.empty()) {
                     componentBytes.resize(entry.size);
                     std::memcpy(componentBytes.data(), entry.address, entry.size);
-                    for (const StateCheckpointIgnoredRange range : entry.semanticIgnoredRanges) {
+                    for (const StateCheckpointIgnoredRange range :
+                        entry.semanticIgnoredRanges)
+                    {
                         std::memset(componentBytes.data() + range.offset, 0, range.size);
                     }
                     entryBytes = componentBytes.data();
@@ -337,7 +384,7 @@ StateCheckpointError StateCheckpoint::currentDigestImpl(std::string& digest,
                     XXH3_freeState(state);
                     return StateCheckpointError::CaptureFailed;
                 }
-                if (semantic) {
+                if (semantic && !zeroChunkSemantic) {
                     for (const StateCheckpointIgnoredRange range :
                         entry.semanticIgnoredRanges)
                     {
@@ -346,13 +393,22 @@ StateCheckpointError StateCheckpoint::currentDigestImpl(std::string& digest,
                 }
                 entryBytes = componentBytes.data();
             }
-            XXH3_128bits_update(state, entryBytes, entry.size);
+            if (zeroChunkSemantic) {
+                update_semantic_bytes(state,
+                    static_cast<const std::byte*>(entryBytes), entry.size,
+                    entry.semanticIgnoredRanges);
+            } else {
+                XXH3_128bits_update(state, entryBytes, entry.size);
+            }
             if (entryDigests != nullptr) {
                 capturedEntryDigests.push_back({
                     .name = entry.name,
                     .kind = entry.kind,
                     .size = entry.size,
-                    .digest = bytes_digest(entryBytes, entry.size),
+                    .digest = zeroChunkSemantic
+                        ? semantic_bytes_digest(
+                              entryBytes, entry.size, entry.semanticIgnoredRanges)
+                        : bytes_digest(entryBytes, entry.size),
                 });
             }
         }
