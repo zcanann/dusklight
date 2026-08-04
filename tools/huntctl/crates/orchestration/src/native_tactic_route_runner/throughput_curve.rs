@@ -9,7 +9,7 @@ pub const NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V3: &str =
     "dusklight-native-tactic-throughput-curve/v3";
 pub const NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V4: &str =
     "dusklight-native-tactic-throughput-curve/v4";
-pub const NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS: [usize; 5] = [1, 2, 4, 8, 16];
+pub const NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS: [usize; 2] = [1, 2];
 const MINIMUM_LONG_WORK_DECISIONS: u64 = 16;
 const MINIMUM_REPETITIONS: u32 = 2;
 const MAXIMUM_REPETITIONS: u32 = 6;

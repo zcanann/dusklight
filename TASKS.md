@@ -172,8 +172,12 @@ continuations took 336,013-368,567 microseconds end to end. Equivalent
 authenticated prefix replay plus the same continuation took 3,823,491
 microseconds at tick 15, 13,665,354 at tick 62, and 26,658,865 at tick 124:
 approximately 10.4x, 37.1x, and 79.3x slower respectively. Native simulation
-for the three direct continuations totaled 3,288 microseconds; remaining direct
-wall time is orchestration/artifact overhead and stays in the throughput work.
+for the three direct continuations totaled 3,288 microseconds. These parity
+batches intentionally spent 313,416-344,281 microseconds per tick on the
+checkpoint-wide state proof; production tactic workers disable that proof under
+the separately passed native-subsystem parity treatment. Campaign throughput
+must therefore be measured on the production tactic path, not inferred from the
+proof-enabled checkpoint audit.
 
 ## P0: learn trajectories and coordinated tactics
 

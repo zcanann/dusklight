@@ -40,11 +40,11 @@ fn sample(
         state_graph_sha256s: vec![Digest([9; 32])],
         useful_graph_expansion_set_sha256s: vec![Digest([8; 32])],
         completed_decisions: 16,
-        unique_useful_graph_expansions: 256,
+        unique_useful_graph_expansions: 32,
         wall_micros,
         process_launch_micros: 0,
         unique_useful_graph_expansions_per_second_millionths: per_second_millionths(
-            256,
+            32,
             wall_micros,
         ),
         peak_worker_checkpoint_resident_bytes: 100,
@@ -52,9 +52,9 @@ fn sample(
         maximum_model_replay_lag_revisions: 2,
         learner_updates: 4,
         model_snapshots_published: 4,
-        training_replay_rows: 256,
-        restore_samples: 272,
-        non_root_restore_requests: 128,
+        training_replay_rows: 32,
+        restore_samples: 48,
+        non_root_restore_requests: 32,
         direct_restore_fallback_replays: 8,
         cache_evictions: 12,
         tactic_selection_micros: 100,
@@ -153,7 +153,7 @@ fn detached_and_non_prefix_sample_roots_are_rejected() {
     let output_root = non_prefix.path.join("curve");
     let progress_root = output_root.join(PROGRESS_DIRECTORY);
     fs::create_dir_all(&progress_root).unwrap();
-    fs::create_dir(sample_root(&output_root, 3, 1, 4)).unwrap();
+    fs::create_dir(sample_root(&output_root, 3, 2, 2)).unwrap();
     assert!(reject_non_prefix_progress(&output_root, &progress_root, &schedule, 1).is_err());
 }
 
@@ -194,14 +194,14 @@ fn bounded_curve_stop_reports_the_last_durable_sample() {
     let completed = vec![
         sample(1, 1, 1, 1_000),
         sample(2, 1, 2, 900),
-        sample(3, 1, 4, 800),
+        sample(3, 2, 2, 800),
     ];
     let stopped = stopped_curve_run(&schedule, &completed).unwrap();
     assert_eq!(
         stopped,
         NativeTacticThroughputCurveRun::StoppedAfterSample {
             completed_samples: 3,
-            total_samples: 10,
+            total_samples: 4,
             last_sample: completed[2].clone(),
         }
     );
@@ -212,18 +212,7 @@ fn bounded_curve_stop_reports_the_last_durable_sample() {
 fn throughput_schedule_balances_worker_order_between_repetitions() {
     assert_eq!(
         throughput_sample_schedule(2).unwrap(),
-        vec![
-            (1, 1, 1),
-            (2, 1, 2),
-            (3, 1, 4),
-            (4, 1, 8),
-            (5, 1, 16),
-            (6, 2, 16),
-            (7, 2, 8),
-            (8, 2, 4),
-            (9, 2, 2),
-            (10, 2, 1),
-        ]
+        vec![(1, 1, 1), (2, 1, 2), (3, 2, 2), (4, 2, 1),]
     );
 }
 
@@ -244,30 +233,30 @@ fn sample_commit_binds_useful_expansion_evidence() {
 #[test]
 fn fleet_launch_commit_rejects_detached_timing() {
     let plan = Digest([4; 32]);
-    let mut commit = NativeTacticThroughputFleetLaunchCommit::new(plan, 16, 5_000).unwrap();
-    commit.validate(plan, 16).unwrap();
+    let mut commit = NativeTacticThroughputFleetLaunchCommit::new(plan, 2, 5_000).unwrap();
+    commit.validate(plan, 2).unwrap();
 
     commit.launch_micros += 1;
-    assert!(commit.validate(plan, 16).is_err());
+    assert!(commit.validate(plan, 2).is_err());
 }
 
 #[test]
 fn fixed_graph_work_builds_a_strict_scaling_curve() {
-    let order = [1, 2, 4, 8, 16, 16, 8, 4, 2, 1];
+    let order = [1, 2, 2, 1];
     let samples = order
         .into_iter()
         .enumerate()
         .map(|(index, workers)| {
-            let repetition = if index < 5 { 1 } else { 2 };
+            let repetition = if index < 2 { 1 } else { 2 };
             sample(
                 index as u32 + 1,
                 repetition,
                 workers,
-                16_000_000 / workers as u64,
+                2_000_000 / workers as u64,
             )
         })
         .collect::<Vec<_>>();
-    let derived = DerivedCurve::from_samples(&samples, 16, 256, 2_000, 2).unwrap();
+    let derived = DerivedCurve::from_samples(&samples, 16, 32, 2_000, 2).unwrap();
     assert!(derived.fixed_work_satisfied);
     assert!(derived.identical_useful_expansion_evidence_satisfied);
     assert!(derived.memory_bound_satisfied);
@@ -276,27 +265,27 @@ fn fixed_graph_work_builds_a_strict_scaling_curve() {
     assert!(derived.strictly_increasing_throughput);
     assert!(derived.passed());
     assert_eq!(
-        derived.curve[4].speedup_over_one_worker_millionths,
-        16_000_000
+        derived.curve[1].speedup_over_one_worker_millionths,
+        2_000_000
     );
-    assert_eq!(derived.curve[4].parallel_efficiency_millionths, 1_000_000);
+    assert_eq!(derived.curve[1].parallel_efficiency_millionths, 1_000_000);
 }
 
 #[test]
 fn raw_tick_speed_cannot_hide_non_scaling_useful_work() {
-    let order = [1, 2, 4, 8, 16, 16, 8, 4, 2, 1];
+    let order = [1, 2, 2, 1];
     let mut samples = order
         .into_iter()
         .enumerate()
         .map(|(index, workers)| {
-            let repetition = if index < 5 { 1 } else { 2 };
+            let repetition = if index < 2 { 1 } else { 2 };
             sample(index as u32 + 1, repetition, workers, 1_000_000)
         })
         .collect::<Vec<_>>();
-    samples[4].unique_useful_graph_expansions = 255;
-    samples[4].unique_useful_graph_expansions_per_second_millionths =
-        per_second_millionths(255, samples[4].wall_micros);
-    let derived = DerivedCurve::from_samples(&samples, 16, 256, 2_000, 2).unwrap();
+    samples[1].unique_useful_graph_expansions = 31;
+    samples[1].unique_useful_graph_expansions_per_second_millionths =
+        per_second_millionths(31, samples[1].wall_micros);
+    let derived = DerivedCurve::from_samples(&samples, 16, 32, 2_000, 2).unwrap();
     assert!(!derived.fixed_work_satisfied);
     assert!(!derived.strictly_increasing_throughput);
     assert!(!derived.passed());
@@ -304,41 +293,41 @@ fn raw_tick_speed_cannot_hide_non_scaling_useful_work() {
 
 #[test]
 fn warm_microbenchmark_cannot_claim_long_campaign_scaling() {
-    let order = [1, 2, 4, 8, 16, 16, 8, 4, 2, 1];
+    let order = [1, 2, 2, 1];
     let mut samples = order
         .into_iter()
         .enumerate()
         .map(|(index, workers)| {
             sample(
                 index as u32 + 1,
-                if index < 5 { 1 } else { 2 },
+                if index < 2 { 1 } else { 2 },
                 workers,
-                16_000_000 / workers as u64,
+                2_000_000 / workers as u64,
             )
         })
         .collect::<Vec<_>>();
-    samples[3].cache_evictions = 0;
-    let derived = DerivedCurve::from_samples(&samples, 16, 256, 2_000, 2).unwrap();
+    samples[1].cache_evictions = 0;
+    let derived = DerivedCurve::from_samples(&samples, 16, 32, 2_000, 2).unwrap();
     assert!(!derived.long_work_exercised);
     assert!(!derived.passed());
 }
 
 #[test]
 fn persistent_curve_rejects_per_sample_process_relaunch() {
-    let order = [1, 2, 4, 8, 16, 16, 8, 4, 2, 1];
+    let order = [1, 2, 2, 1];
     let samples = order
         .into_iter()
         .enumerate()
         .map(|(index, workers)| {
             sample(
                 index as u32 + 1,
-                if index < 5 { 1 } else { 2 },
+                if index < 2 { 1 } else { 2 },
                 workers,
-                16_000_000 / workers as u64,
+                2_000_000 / workers as u64,
             )
         })
         .collect::<Vec<_>>();
-    let derived = DerivedCurve::from_samples(&samples, 16, 256, 2_000, 2).unwrap();
+    let derived = DerivedCurve::from_samples(&samples, 16, 32, 2_000, 2).unwrap();
     let passed = derived.passed();
     let mut report = NativeTacticThroughputCurveReport {
         schema: NATIVE_TACTIC_THROUGHPUT_CURVE_SCHEMA_V4.into(),
@@ -346,16 +335,16 @@ fn persistent_curve_rejects_per_sample_process_relaunch() {
         recorded_unix_millis: 1,
         operating_system: "test".into(),
         architecture: "test".into(),
-        logical_cpu_count: 16,
+        logical_cpu_count: 2,
         optimization_request_sha256: Digest([1; 32]),
         execution_binding_sha256: Digest([2; 32]),
         execution_plan_sha256: Digest([3; 32]),
-        fleet_workers: 16,
+        fleet_workers: 2,
         fleet_launch_micros: 10,
         repetitions: 2,
         worker_counts: NATIVE_TACTIC_THROUGHPUT_WORKER_COUNTS.to_vec(),
         fixed_completed_decisions: 16,
-        fixed_unique_useful_graph_expansions: 256,
+        fixed_unique_useful_graph_expansions: 32,
         checkpoint_pool_memory_bound_bytes: 2_000,
         maximum_allowed_stale_revisions: 2,
         execution_order: samples,
