@@ -21,7 +21,7 @@ fn fleet_rejects_a_cache_that_cannot_retain_one_native_checkpoint() {
 }
 
 #[test]
-fn persistent_fleet_views_select_a_bounded_prefix_and_reset_dispatch_order() {
+fn persistent_fleet_views_bind_distinct_plan_jobs_and_bounded_worker_prefixes() {
     let (senders, _receivers): (Vec<_>, Vec<_>) = (0..4)
         .map(|_| mpsc::channel::<NativeTacticProposalJob>())
         .unzip();
@@ -52,6 +52,8 @@ fn persistent_fleet_views_select_a_bounded_prefix_and_reset_dispatch_order() {
     assert_eq!(four.next_worker.load(Ordering::Relaxed), 0);
     assert!(one.direct_restore_enabled);
     assert!(!four.direct_restore_enabled);
+    // A fleet owns generic native processes, not one learner-plan identity.
+    // Each view binds the plan identity and treatment used by its own jobs.
     assert_eq!(one.execution_plan_sha256, Digest([1; 32]));
     assert_eq!(four.execution_plan_sha256, Digest([2; 32]));
     assert_eq!(one.checkpoint_cache_capacity_bytes, 123);

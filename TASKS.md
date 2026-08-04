@@ -30,9 +30,11 @@ policy ceiling.
 - Native terminal detection, controller playback, cold replay, binary
   checkpoints, save states, branch orchestration, generic observations, and a
   generic action/option library already exist.
-- The scored scratch path incorrectly bypasses save-state branching and starts
-  every episode from the cold root. Post-success refinement also replays every
-  complete candidate from the root.
+- The former scored scratch path incorrectly bypassed save-state branching and
+  started every episode from the cold root. Its public command is retired;
+  `tactic-route` is now the canonical zero-shot learner. Post-success scratch
+  refinement still replays every complete candidate from the root and must not
+  return as the primary learning path.
 - The scratch learner found terminals, but its best ordinary learned route was
   hundreds of ticks long. Single-option heading, duration, roll, and deletion
   passes polished one lineage to 221 ticks. That is useful diagnostic evidence,
@@ -115,6 +117,16 @@ is materialized before its action, sibling alternatives restore that source,
 and the selected endpoint remains directly restorable. These are retained
 canonical-runner capabilities, not new scratch-loop implementations.
 
+Restore-locality audit (2026-08-03): the paired two-worker campaign at
+`build/campaigns/ordon-p0-restore-locality-w2-d2-p2-r2-v4-20260803` passed both
+repetitions with identical exploration-evidence digests and four useful graph
+expansions per treatment. Owner-local continuation removed one prefix
+materialization, 24 replayed prefix ticks, and 929,805-997,393 microseconds of
+replay/restore work per pair. This audit also exposed and fixed a false fleet
+constraint that bound reusable native processes to one complete learner-plan
+hash even though every dispatched job and result already carries its own exact
+plan authority.
+
 ## P0: make branching fast enough to learn
 
 - [ ] Benchmark existing cold-root replay, save, restore, short branch, and
@@ -124,6 +136,13 @@ canonical-runner capabilities, not new scratch-loop implementations.
 - [ ] Remove avoidable process boot, game boot, serialization, hashing, logging,
   and artifact-write work from the inner branch loop. Keep a native worker alive
   across many owned restores and branches where correctness permits.
+- [ ] Eliminate rendering leakage at transition boundaries. The current
+  pre-terminal checkpoint audit at
+  `build/benchmarks/ordon-p0-native-checkpoint-v1-20260803` measured 17
+  microseconds of CPU renderer submission in the authenticated-replay fallback
+  while the direct process-local continuation remained fully suppressed. Make
+  the runtime and headless audit agree, then rerun and seal the three-frontier
+  parity report.
 - [ ] Measure one versus two workers with isolated checkpoint ownership. Keep
   two only if end-to-end unique branch throughput improves without state
   contamination or host saturation.
