@@ -48,6 +48,7 @@ pub(crate) use read::read_checkpoint;
 pub(crate) use v6::{TacticQCampaignPersistenceView, TacticQCheckpointCommit, write_checkpoint_v6};
 
 const FACT_OBJECT_SCHEMA_V1: &str = "dusklight-tactic-q-fact-object/v1";
+const PACKED_TRANSITION_SCHEMA_V1: &str = "dusklight-tactic-q-packed-transition/v1";
 const CHECKPOINT_MANIFEST_SCHEMA_V4: &str = "dusklight-tactic-q-checkpoint-manifest/v4";
 const TRAINING_CORPUS_MANIFEST_SCHEMA_V1: &str = "dusklight-tactic-q-training-corpus-manifest/v1";
 const TRAINING_CORPUS_MANIFEST_SCHEMA_V2: &str = "dusklight-tactic-q-training-corpus-manifest/v2";
@@ -98,19 +99,10 @@ struct StoredFactSnapshot {
     snapshot_without_actors: FactSnapshot,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct StoredTransitionObjects {
-    pub before: StoredContentRef,
-    pub after: StoredContentRef,
-    pub tactic: StoredContentRef,
-    pub emitted_tape: StoredContentRef,
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct TacticQContentStore {
     store: ContentStore,
     fact_references: Arc<Mutex<BTreeMap<Digest, StoredContentRef>>>,
-    tactic_references: Arc<Mutex<BTreeMap<Digest, StoredContentRef>>>,
     tape_references: Arc<Mutex<BTreeMap<Digest, StoredContentRef>>>,
     transition_references: Arc<Mutex<BTreeMap<(Digest, Digest), StoredContentRef>>>,
 }
@@ -120,7 +112,6 @@ impl TacticQContentStore {
         Ok(Self {
             store: ContentStore::initialize(root).map_err(TacticQContentStoreError::Store)?,
             fact_references: Arc::default(),
-            tactic_references: Arc::default(),
             tape_references: Arc::default(),
             transition_references: Arc::default(),
         })
@@ -130,7 +121,6 @@ impl TacticQContentStore {
         Ok(Self {
             store: ContentStore::open(root).map_err(TacticQContentStoreError::Store)?,
             fact_references: Arc::default(),
-            tactic_references: Arc::default(),
             tape_references: Arc::default(),
             transition_references: Arc::default(),
         })
@@ -138,21 +128,6 @@ impl TacticQContentStore {
 
     pub(crate) fn root(&self) -> &Path {
         self.store.root()
-    }
-
-    pub fn store_transition(
-        &self,
-        before: &FactSnapshot,
-        after: &FactSnapshot,
-        tactic: &OptionActionDescriptor,
-        emitted_tape: &InputTape,
-    ) -> Result<StoredTransitionObjects, TacticQContentStoreError> {
-        Ok(StoredTransitionObjects {
-            before: self.store_fact(before)?,
-            after: self.store_fact(after)?,
-            tactic: self.store_tactic(tactic)?,
-            emitted_tape: self.store_tape(emitted_tape)?,
-        })
     }
 
     pub fn store_option_transition(
@@ -169,9 +144,14 @@ impl TacticQContentStore {
         if let Some(reference) = cached_reference(&self.transition_references, &key)? {
             return Ok(reference);
         }
-        let stored =
-            encode_transition(transition, route, self).map_err(TacticQContentStoreError::domain)?;
-        let raw = serde_cbor::to_vec(&stored).map_err(TacticQContentStoreError::domain)?;
+        transition
+            .validate()
+            .map_err(TacticQContentStoreError::domain)?;
+        let raw = serde_cbor::to_vec(&PackedOptionTransition {
+            schema: PACKED_TRANSITION_SCHEMA_V1.into(),
+            transition: transition.clone(),
+        })
+        .map_err(TacticQContentStoreError::domain)?;
         let reference = StoredContentRef::from(
             &self
                 .store
@@ -187,7 +167,21 @@ impl TacticQContentStore {
         reference: StoredContentRef,
     ) -> Result<OptionTransitionSample, TacticQContentStoreError> {
         require_kind(reference, ContentKind::TacticTransition)?;
-        let stored: StoredOptionTransition = self.read_cbor(reference)?;
+        let raw = self.read_bytes(reference)?;
+        if let Ok(packed) = decode_cbor::<PackedOptionTransition>(&raw) {
+            if packed.schema != PACKED_TRANSITION_SCHEMA_V1 {
+                return Err(TacticQContentStoreError::Invalid(
+                    "packed tactic transition schema is invalid",
+                ));
+            }
+            packed
+                .transition
+                .validate()
+                .map_err(TacticQContentStoreError::domain)?;
+            return Ok(packed.transition);
+        }
+        let stored: StoredOptionTransition =
+            decode_cbor(&raw).map_err(TacticQContentStoreError::domain)?;
         load_transition(&stored, self).map_err(TacticQContentStoreError::domain)
     }
 
@@ -382,28 +376,6 @@ impl TacticQContentStore {
     ) -> Result<ActorFactSnapshot, TacticQContentStoreError> {
         require_kind(reference, ContentKind::ActorSnapshot)?;
         self.read_cbor(reference)
-    }
-
-    pub fn store_tactic(
-        &self,
-        tactic: &OptionActionDescriptor,
-    ) -> Result<StoredContentRef, TacticQContentStoreError> {
-        tactic
-            .validate()
-            .map_err(TacticQContentStoreError::domain)?;
-        let raw = serde_cbor::to_vec(tactic).map_err(TacticQContentStoreError::domain)?;
-        let identity = Digest(Sha256::digest(&raw).into());
-        if let Some(reference) = cached_reference(&self.tactic_references, &identity)? {
-            return Ok(reference);
-        }
-        let reference = StoredContentRef::from(
-            &self
-                .store
-                .put_bytes(&raw, ContentKind::TacticDefinition)
-                .map_err(TacticQContentStoreError::Store)?,
-        );
-        cache_reference(&self.tactic_references, identity, reference)?;
-        Ok(reference)
     }
 
     pub fn load_tactic(
@@ -616,6 +588,18 @@ struct StoredOptionTransition {
     value_sample: StoredOptionValueSample,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     intermediate_boundaries: Vec<StoredOptionIntermediateBoundary>,
+}
+
+/// One durable content object for a complete transition. The former layout
+/// synced separate before/after facts, tactic metadata, emitted input, and the
+/// transition manifest for every proposal. Recovery only needs the complete
+/// authenticated transition, so packing those immutable values removes the
+/// file-sync fan-out while legacy split objects remain readable.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PackedOptionTransition {
+    schema: String,
+    transition: OptionTransitionSample,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1048,79 +1032,6 @@ fn store_checkpoint_manifest(
         model_revision: checkpoint.model_revision,
         model_config: checkpoint.model_config.clone(),
         exploration: checkpoint.exploration,
-    })
-}
-
-fn encode_transition(
-    transition: &OptionTransitionSample,
-    route: &InputTape,
-    store: &TacticQContentStore,
-) -> Result<StoredOptionTransition, TacticQCampaignError> {
-    transition.validate()?;
-    let emitted_tape = InputTape {
-        boot: route.boot.clone(),
-        tick_rate_numerator: route.tick_rate_numerator,
-        tick_rate_denominator: route.tick_rate_denominator,
-        frames: transition.execution.emitted_raw_actions.clone(),
-    };
-    let objects = store
-        .store_transition(
-            &transition.before,
-            &transition.after,
-            &transition.value_sample.action,
-            &emitted_tape,
-        )
-        .map_err(checkpoint_store_error)?;
-    let intermediate_boundaries = transition
-        .intermediate_boundaries
-        .iter()
-        .map(|boundary| {
-            Ok(StoredOptionIntermediateBoundary {
-                evidence_sha256: boundary.evidence_sha256,
-                offset_ticks: boundary.offset_ticks,
-                state_sha256: boundary.state_sha256,
-                state: store
-                    .store_fact(&boundary.state)
-                    .map_err(checkpoint_store_error)?,
-            })
-        })
-        .collect::<Result<Vec<_>, TacticQCampaignError>>()?;
-    Ok(StoredOptionTransition {
-        schema: transition.schema.clone(),
-        execution_authority_sha256: transition.execution_authority_sha256,
-        feature_schema_sha256: transition.feature_schema_sha256,
-        before_state_sha256: transition.before_state_sha256,
-        after_state_sha256: transition.after_state_sha256,
-        source_checkpoint_sha256: transition.source_checkpoint_sha256,
-        next_checkpoint_sha256: transition.next_checkpoint_sha256,
-        before: objects.before,
-        after: objects.after,
-        execution: StoredOptionExecution {
-            schema: transition.execution.schema.clone(),
-            tactic: objects.tactic,
-            duration: transition.execution.duration,
-            termination_condition: transition.execution.termination_condition.clone(),
-            cancellation_conditions: transition.execution.cancellation_conditions.clone(),
-            end_reason: transition.execution.end_reason,
-            emitted_tape: objects.emitted_tape,
-            realized_tape_range: transition.execution.realized_tape_range,
-            tape_sha256: transition.execution.tape_sha256,
-        },
-        value_sample: StoredOptionValueSample {
-            tactic: objects.tactic,
-            state: transition.value_sample.state.clone(),
-            duration_ticks: transition.value_sample.duration_ticks,
-            reward: transition.value_sample.reward,
-            next_state: transition.value_sample.next_state.clone(),
-            terminal: transition.value_sample.terminal,
-            before_state_sha256: transition.value_sample.before_state_sha256,
-            after_state_sha256: transition.value_sample.after_state_sha256,
-            source_checkpoint_sha256: transition.value_sample.source_checkpoint_sha256,
-            next_checkpoint_sha256: transition.value_sample.next_checkpoint_sha256,
-            realized_tape_range: transition.value_sample.realized_tape_range,
-            realized_tape_sha256: transition.value_sample.realized_tape_sha256,
-        },
-        intermediate_boundaries,
     })
 }
 

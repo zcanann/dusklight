@@ -293,6 +293,29 @@ minutes: a real improvement, but still below the thousands gate. Persistence
 remains approximately 1.6 seconds in uncontended samples and produced several
 multi-second outliers, so it is the next independent throughput target.
 
+Packed-transition persistence treatment (2026-08-03): every completed proposal
+was previously persisted as separate before/after facts, tactic metadata,
+emitted input, intermediate facts, and a transition manifest, with a durable
+file sync for each immutable object. The writer now stores one checksummed CBOR
+transition object; the reader retains and tests the former split-object format
+so existing checkpoints remain readable. Against the stable checkpoint-reuse
+v2 curve with the same executable binding, execution plan, 16 decisions, and 32
+useful expansions, median replay-content persistence fell from 717,708 to
+202,650 microseconds (71.8%) and median total persistence fell from 1,559,772 to
+985,340 microseconds (36.8%). One sample's content store fell from 298 to 123
+objects (58.7% fewer); packed values increased its total bytes from 60,425,108
+to 61,697,547 (2.1%), an accepted bounded tradeoff for eliminating file-sync
+fan-out. The fixed-work curve at
+`build/campaigns/ordon-p0-throughput-packed-transition-w1-w2-d16-p2-r2-v1-20260803`
+measured 3.419 useful expansions/second with one worker and 3.497 with two,
+projecting about 2,098 useful alternatives per ten minutes. Every sample
+retained graph
+`a960bb9987e48e87e473481f0d3725bfb7f628cb22368c40de5e5fd336207d31`
+and useful-expansion set
+`8ec759960082b003100550f4b0f4e1db9540a33c43d448cb23767f06cb932402`.
+This crosses the raw thousands-throughput gate; the capacity-envelope task
+remains open until it also accounts for complete cold validations.
+
 ## P0: learn trajectories and coordinated tactics
 
 - [ ] Replace terminal-only whole-episode credit with state-graph backups over

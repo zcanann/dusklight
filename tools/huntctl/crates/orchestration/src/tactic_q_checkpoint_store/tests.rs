@@ -1,5 +1,7 @@
 use super::*;
+use dusklight_automation_contracts::tape::InputFrame;
 use dusklight_control::option_execution::OptionParameter;
+use dusklight_control::option_execution::OptionType;
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
 use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::option_values::OptionActionDescriptor;
@@ -43,7 +45,15 @@ fn shared_store_round_trips_whole_facts_and_reads_legacy_split_objects() {
         option_type: dusklight_control::option_execution::OptionType::Move,
         parameters: BTreeMap::new(),
     };
-    let tactic_ref = store.store_tactic(&tactic).unwrap();
+    let tactic_ref = StoredContentRef::from(
+        &ContentStore::open(&root)
+            .unwrap()
+            .put_bytes(
+                &serde_cbor::to_vec(&tactic).unwrap(),
+                ContentKind::TacticDefinition,
+            )
+            .unwrap(),
+    );
     assert_eq!(store.load_tactic(tactic_ref).unwrap(), tactic);
     let tape = InputTape::default();
     let tape_ref = store.store_tape(&tape).unwrap();
@@ -70,6 +80,175 @@ fn shared_store_round_trips_whole_facts_and_reads_legacy_split_objects() {
             .unwrap(),
     );
     assert_eq!(store.load_fact(legacy_ref).unwrap(), first);
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn advanced_fact(root: &FactSnapshot, ticks: u64) -> FactSnapshot {
+    let mut state = root.clone();
+    state.boundary_index += ticks;
+    state.simulation_tick += ticks;
+    state.tape_frame += ticks;
+    state.recent_history.clear();
+    state.recent_option = None;
+    state.terminal.reached = Some(false);
+    state.validate().unwrap();
+    state
+}
+
+fn option_transition() -> (OptionTransitionSample, InputTape) {
+    let before = fact();
+    let mut route = InputTape {
+        frames: vec![InputFrame::default(); before.tape_frame as usize],
+        ..InputTape::default()
+    };
+    route.frames.extend(vec![InputFrame::default(); 8]);
+    let execution = OptionExecution::capture(
+        "move".into(),
+        OptionType::Move,
+        BTreeMap::new(),
+        8,
+        8,
+        OptionCondition::DurationElapsed,
+        Vec::new(),
+        OptionEndReason::Completed,
+        &route,
+        TapeRange {
+            start_frame: before.tape_frame,
+            end_frame_exclusive: before.tape_frame + 8,
+        },
+    )
+    .unwrap();
+    let root_checkpoint_sha256 = Digest([4; 32]);
+    let source_checkpoint_sha256 = route_checkpoint_sha256(
+        root_checkpoint_sha256,
+        &crate::state_graph::tape_prefix(&route, before.tape_frame as usize).unwrap(),
+    )
+    .unwrap();
+    let next_checkpoint_sha256 = route_checkpoint_sha256(root_checkpoint_sha256, &route).unwrap();
+    let after = advanced_fact(&before, 8);
+    let mut transition = OptionTransitionSample::capture(
+        Digest([2; 32]),
+        source_checkpoint_sha256,
+        next_checkpoint_sha256,
+        before.clone(),
+        after,
+        execution,
+        &route,
+        -8.0,
+        false,
+        |state| Ok::<_, &'static str>(vec![state.tape_frame as f32]),
+    )
+    .unwrap();
+    transition.execution_authority_sha256 = Digest([1; 32]);
+    transition.intermediate_boundaries = vec![
+        OptionIntermediateBoundary::capture(&transition.execution, 4, advanced_fact(&before, 4))
+            .unwrap(),
+    ];
+    transition.validate().unwrap();
+    (transition, route)
+}
+
+#[test]
+fn option_transition_store_packs_new_rows_and_reads_legacy_split_rows() {
+    let root = std::env::temp_dir().join(format!(
+        "dusklight-tactic-transition-content-store-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    let store = TacticQContentStore::initialize(&root).unwrap();
+    let (transition, route) = option_transition();
+
+    let packed_ref = store.store_option_transition(&transition, &route).unwrap();
+    assert_eq!(
+        store.load_option_transition(packed_ref).unwrap(),
+        transition
+    );
+    assert_eq!(
+        decode_cbor::<PackedOptionTransition>(&store.read_bytes(packed_ref).unwrap())
+            .unwrap()
+            .schema,
+        PACKED_TRANSITION_SCHEMA_V1
+    );
+
+    let before = store.store_fact(&transition.before).unwrap();
+    let after = store.store_fact(&transition.after).unwrap();
+    let tactic = StoredContentRef::from(
+        &ContentStore::open(&root)
+            .unwrap()
+            .put_bytes(
+                &serde_cbor::to_vec(&transition.value_sample.action).unwrap(),
+                ContentKind::TacticDefinition,
+            )
+            .unwrap(),
+    );
+    let emitted_tape = store
+        .store_tape(&InputTape {
+            boot: route.boot.clone(),
+            tick_rate_numerator: route.tick_rate_numerator,
+            tick_rate_denominator: route.tick_rate_denominator,
+            frames: transition.execution.emitted_raw_actions.clone(),
+        })
+        .unwrap();
+    let intermediate_boundaries = transition
+        .intermediate_boundaries
+        .iter()
+        .map(|boundary| StoredOptionIntermediateBoundary {
+            evidence_sha256: boundary.evidence_sha256,
+            offset_ticks: boundary.offset_ticks,
+            state_sha256: boundary.state_sha256,
+            state: store.store_fact(&boundary.state).unwrap(),
+        })
+        .collect();
+    let legacy = StoredOptionTransition {
+        schema: transition.schema.clone(),
+        execution_authority_sha256: transition.execution_authority_sha256,
+        feature_schema_sha256: transition.feature_schema_sha256,
+        before_state_sha256: transition.before_state_sha256,
+        after_state_sha256: transition.after_state_sha256,
+        source_checkpoint_sha256: transition.source_checkpoint_sha256,
+        next_checkpoint_sha256: transition.next_checkpoint_sha256,
+        before,
+        after,
+        execution: StoredOptionExecution {
+            schema: transition.execution.schema.clone(),
+            tactic,
+            duration: transition.execution.duration,
+            termination_condition: transition.execution.termination_condition.clone(),
+            cancellation_conditions: transition.execution.cancellation_conditions.clone(),
+            end_reason: transition.execution.end_reason,
+            emitted_tape,
+            realized_tape_range: transition.execution.realized_tape_range,
+            tape_sha256: transition.execution.tape_sha256,
+        },
+        value_sample: StoredOptionValueSample {
+            tactic,
+            state: transition.value_sample.state.clone(),
+            duration_ticks: transition.value_sample.duration_ticks,
+            reward: transition.value_sample.reward,
+            next_state: transition.value_sample.next_state.clone(),
+            terminal: transition.value_sample.terminal,
+            before_state_sha256: transition.value_sample.before_state_sha256,
+            after_state_sha256: transition.value_sample.after_state_sha256,
+            source_checkpoint_sha256: transition.value_sample.source_checkpoint_sha256,
+            next_checkpoint_sha256: transition.value_sample.next_checkpoint_sha256,
+            realized_tape_range: transition.value_sample.realized_tape_range,
+            realized_tape_sha256: transition.value_sample.realized_tape_sha256,
+        },
+        intermediate_boundaries,
+    };
+    let legacy_ref = StoredContentRef::from(
+        &ContentStore::open(&root)
+            .unwrap()
+            .put_bytes(
+                &serde_cbor::to_vec(&legacy).unwrap(),
+                ContentKind::TacticTransition,
+            )
+            .unwrap(),
+    );
+    assert_eq!(
+        store.load_option_transition(legacy_ref).unwrap(),
+        transition
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
