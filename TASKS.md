@@ -56,6 +56,10 @@ and move the learning path onto the existing save-state branch architecture.
   facing, camera, collision response, action availability, and history are
   observations from which it may learn; they are not authored route rewards.
 - Save states are working search nodes, not merely replay evidence.
+- Every non-root decision must branch from one rewindable binary machine
+  snapshot. A process-local live endpoint may accelerate one continuation, but
+  it is single-use and is not a substitute for the save state needed to restore
+  sibling alternatives.
 - Every evaluated branch contributes transitions and outcomes. A failed branch
   cannot simply consume native time and disappear.
 - Search must propose coordinated variable-length action sequences. Single
@@ -87,6 +91,11 @@ and move the learning path onto the existing save-state branch architecture.
   graph node. If no live handle survives, materialize that historical node once
   by authenticated prefix replay; sibling alternatives must restore the
   process-local checkpoint rather than replaying the prefix independently.
+- [x] Enforce the non-root branch invariant in the worker scheduler: materialize
+  at most one rewindable source snapshot for a decision, execute compatible
+  siblings in one multi-candidate restore batch, and retain only the selected
+  child as the next graph-node snapshot. Never run sibling candidates from the
+  cold root merely because a process-local handle is unavailable.
 - [x] Prove deterministic restore semantics: identical state fingerprint,
   observation, action availability, continuation outcome, and terminal timing
   after repeated restores. Reject contaminated or process-local checkpoints.
@@ -143,6 +152,11 @@ worker-session validators.
   worker handoff separately. Report simulated ticks/second, branches/second,
   unique transitions/second, restore latency, CPU utilization, and bytes per
   retained node.
+- [ ] Make rewindable snapshot capture and restore cheap enough for the branch
+  cadence. Profile machine-image capture, host-state capture, cache insertion,
+  restore, and eviction independently; optimize the measured representation or
+  memory-copy path rather than replacing rewindable branch state with a
+  single-use live endpoint.
 - [ ] Remove avoidable process boot, game boot, serialization, hashing, logging,
   and artifact-write work from the inner branch loop. Keep a native worker alive
   across many owned restores and branches where correctness permits.
@@ -248,6 +262,15 @@ capacity projection is therefore about 1,196 useful alternatives per ten
 minutes. A second worker provides no material single-lane benefit after sibling
 batching; additional worker throughput must come from independent graph nodes or
 concurrent lanes, not from duplicating one decision's prefix.
+
+Branch-state invariant (2026-08-03): the selected portable image is intentional,
+not serialization fallback. A live endpoint contains enough host authority to
+continue once but cannot rewind the emulated machine after the first sibling
+advances it. Replacing the selected image with live-only retention would either
+fail the second sibling or force another authenticated prefix replay. The hot
+path therefore captures one binary node image per selected decision and restores
+all compatible siblings from it; future work must reduce that single capture's
+measured cost or introduce an equally rewindable copy-on-write representation.
 
 ## P0: learn trajectories and coordinated tactics
 
