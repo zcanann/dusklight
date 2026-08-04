@@ -729,11 +729,13 @@ fn batch(
             source_route_ticks,
             retain_candidate_checkpoints,
             retain_live_endpoint,
+            retain_candidate_index: None,
         }),
         candidates: vec![NativeSuffixCandidate {
             id: id.into(),
             actions: pad_runs(frames)?,
             controller_program_hex: None,
+            maximum_ticks: None,
         }],
     })
 }

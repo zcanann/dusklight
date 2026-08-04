@@ -204,6 +204,7 @@ pub(crate) fn tactic_root_probe_batch_with_ticks(
                 port_one_secondary_pads: None,
             }],
             controller_program_hex: None,
+            maximum_ticks: None,
         }],
     })
 }

@@ -10,7 +10,7 @@ use dusklight_learning::native_frozen_policy_suffix_batch::{
 };
 use dusklight_search::suffix_batch::{
     NATIVE_CACHED_SUFFIX_BATCH_SCHEMA, NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA,
-    NATIVE_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch,
+    NATIVE_SUFFIX_BATCH_SCHEMA, NATIVE_VARIABLE_CACHED_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -287,12 +287,16 @@ impl NativeSuffixBatchResult {
             NATIVE_SUFFIX_BATCH_SCHEMA
                 | NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA
                 | NATIVE_CACHED_SUFFIX_BATCH_SCHEMA
+                | NATIVE_VARIABLE_CACHED_SUFFIX_BATCH_SCHEMA
         ) {
             return Err(result_error(
                 "unsupported residual suffix-batch request schema",
             ));
         }
-        let cached = request.schema == NATIVE_CACHED_SUFFIX_BATCH_SCHEMA;
+        let cached = matches!(
+            request.schema.as_str(),
+            NATIVE_CACHED_SUFFIX_BATCH_SCHEMA | NATIVE_VARIABLE_CACHED_SUFFIX_BATCH_SCHEMA
+        );
         let expected_result_schema = if cached {
             NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V9
         } else {
@@ -347,19 +351,21 @@ impl NativeSuffixBatchResult {
         let mut ids = BTreeSet::new();
         let mut simulated_ticks = 0_u64;
         let mut candidates = Vec::with_capacity(self.candidates.len());
-        for (expected, actual) in request.candidates.iter().zip(&self.candidates) {
+        for (candidate_index, (expected, actual)) in
+            request.candidates.iter().zip(&self.candidates).enumerate()
+        {
             if expected.id != actual.id || !ids.insert(actual.id.as_str()) {
                 return Err(result_error(
                     "native suffix result candidates are reordered, duplicated, or detached",
                 ));
             }
             let validated = actual.validate_common(
-                request.maximum_ticks,
+                expected.maximum_ticks.unwrap_or(request.maximum_ticks),
                 request.verify_state_hashes,
                 expected.controller_program_hex.is_some(),
                 terminal,
             )?;
-            validate_retained_checkpoint(actual, request, self.checkpoint_bytes)?;
+            validate_retained_checkpoint(actual, request, candidate_index, self.checkpoint_bytes)?;
             candidates.push(validated);
             simulated_ticks = simulated_ticks
                 .checked_add(actual.ticks_executed)
@@ -727,6 +733,8 @@ fn validate_checkpoint_cache(
         || actual.batch_capture_attempts
             != if expected.retain_candidate_checkpoints {
                 request.candidates.len() as u64
+            } else if expected.retain_candidate_index.is_some() {
+                1
             } else {
                 0
             }
@@ -766,6 +774,7 @@ fn validate_checkpoint_cache(
 fn validate_retained_checkpoint(
     candidate: &NativeSuffixCandidateResult,
     request: &NativeSuffixBatch,
+    candidate_index: usize,
     checkpoint_bytes: u64,
 ) -> Result<(), NativeSuffixResultError> {
     let Some(cache) = request.checkpoint_cache.as_ref() else {
@@ -776,7 +785,10 @@ fn validate_retained_checkpoint(
         }
         return Ok(());
     };
-    if !cache.retain_candidate_checkpoints && !cache.retain_live_endpoint {
+    let portable_retention =
+        cache.retain_candidate_checkpoints || cache.retain_candidate_index == Some(candidate_index);
+    let retention_expected = portable_retention || cache.retain_live_endpoint;
+    if !retention_expected {
         if candidate.retained_checkpoint.is_some() {
             return Err(result_error(
                 "suffix candidate retained a checkpoint contrary to its cache request",
@@ -798,7 +810,7 @@ fn validate_retained_checkpoint(
             "native retained checkpoint is incomplete or detached from its candidate",
         ));
     }
-    if cache.retain_candidate_checkpoints {
+    if portable_retention {
         if retained.storage_kind != "portable_image"
             || !retained
                 .image_digest

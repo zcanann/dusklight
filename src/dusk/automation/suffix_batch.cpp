@@ -26,11 +26,15 @@ constexpr std::uint8_t CompactCheckpointCache = 1 << 1;
 constexpr std::uint8_t CompactSourceIdentity = 1 << 2;
 constexpr std::uint8_t CompactRetainCandidateCheckpoints = 1 << 3;
 constexpr std::uint8_t CompactRetainLiveEndpoint = 1 << 4;
+constexpr std::uint8_t CompactVariableCandidateTicks = 1 << 5;
+constexpr std::uint8_t CompactRetainCandidateIndex = 1 << 6;
 constexpr std::uint8_t CompactKnownFlags = CompactVerifyStateHashes |
                                            CompactCheckpointCache |
                                            CompactSourceIdentity |
                                            CompactRetainCandidateCheckpoints |
-                                           CompactRetainLiveEndpoint;
+                                           CompactRetainLiveEndpoint |
+                                           CompactVariableCandidateTicks |
+                                           CompactRetainCandidateIndex;
 constexpr std::uint8_t CompactRecordedReplayWindow = 2;
 
 class CompactReader {
@@ -157,7 +161,10 @@ bool parse_compact_suffix_batch(
     cache.retainCandidateCheckpoints =
         (flags & CompactRetainCandidateCheckpoints) != 0;
     cache.retainLiveEndpoint = (flags & CompactRetainLiveEndpoint) != 0;
-    if (cache.retainCandidateCheckpoints && cache.retainLiveEndpoint) {
+    if (static_cast<unsigned>(cache.retainCandidateCheckpoints) +
+            static_cast<unsigned>(cache.retainLiveEndpoint) +
+            static_cast<unsigned>((flags & CompactRetainCandidateIndex) != 0) >
+        1) {
         error = "compact suffix batch checkpoint retention conflicts";
         return false;
     }
@@ -169,8 +176,6 @@ bool parse_compact_suffix_batch(
         }
         cache.sourceIdentity = compact_hex(sourceIdentity);
     }
-    parsed.checkpointCache = std::move(cache);
-
     std::uint16_t candidateCount = 0;
     if (!reader.readLittle(candidateCount) || candidateCount == 0 ||
         candidateCount > SuffixBatchMaximumCandidates ||
@@ -178,12 +183,22 @@ bool parse_compact_suffix_batch(
         error = "compact suffix batch candidate count is invalid";
         return false;
     }
+    if ((flags & CompactRetainCandidateIndex) != 0) {
+        std::uint16_t retainedIndex = 0;
+        if (!reader.readLittle(retainedIndex) || retainedIndex >= candidateCount) {
+            error = "compact suffix retained candidate index is invalid";
+            return false;
+        }
+        cache.retainCandidateIndex = retainedIndex;
+    }
+    parsed.checkpointCache = std::move(cache);
     parsed.candidates.reserve(candidateCount);
     std::unordered_set<std::string> ids;
     ids.reserve(candidateCount);
     for (std::size_t candidateIndex = 0; candidateIndex < candidateCount; ++candidateIndex) {
         std::uint8_t idLength = 0;
         std::span<const std::uint8_t> idBytes;
+        std::uint16_t candidateMaximumTicks = maximumTicks;
         std::uint16_t controllerLength = 0;
         std::span<const std::uint8_t> controllerBytes;
         std::uint16_t runCount = 0;
@@ -192,20 +207,24 @@ bool parse_compact_suffix_batch(
             !std::ranges::all_of(idBytes, [](const std::uint8_t byte) {
                 return byte >= 0x21 && byte <= 0x7e;
             }) ||
+            ((flags & CompactVariableCandidateTicks) != 0 &&
+                (!reader.readLittle(candidateMaximumTicks) || candidateMaximumTicks == 0 ||
+                    candidateMaximumTicks > maximumTicks)) ||
             !reader.readLittle(controllerLength) ||
             !reader.readBytes(controllerLength, controllerBytes) ||
-            !reader.readLittle(runCount) || runCount > parsed.maximumTicks) {
+            !reader.readLittle(runCount) || runCount > candidateMaximumTicks) {
             error = "compact suffix candidate header is invalid";
             return false;
         }
         SuffixBatchCandidate candidate;
         candidate.id.assign(
             reinterpret_cast<const char*>(idBytes.data()), idBytes.size());
+        candidate.maximumTicks = candidateMaximumTicks;
         if (!ids.insert(candidate.id).second) {
             error = "compact suffix candidate has a duplicate id";
             return false;
         }
-        candidate.pads.reserve(parsed.maximumTicks);
+        candidate.pads.reserve(candidate.maximumTicks);
         for (std::size_t runIndex = 0; runIndex < runCount; ++runIndex) {
             std::uint16_t frames = 0;
             std::uint16_t buttons = 0;
@@ -220,7 +239,7 @@ bool parse_compact_suffix_batch(
             std::uint8_t connected = 0;
             std::uint8_t padError = 0;
             if (!reader.readLittle(frames) || frames == 0 ||
-                frames > parsed.maximumTicks - candidate.pads.size() ||
+                frames > candidate.maximumTicks - candidate.pads.size() ||
                 !reader.readLittle(buttons) || !reader.readByte(stickX) ||
                 !reader.readByte(stickY) || !reader.readByte(substickX) ||
                 !reader.readByte(substickY) || !reader.readByte(triggerLeft) ||
@@ -257,11 +276,11 @@ bool parse_compact_suffix_batch(
             candidate.controllerProgram = true;
             candidate.controllerStartTick = candidate.pads.size();
             if (candidate.controller.duration() !=
-                parsed.maximumTicks - candidate.controllerStartTick) {
+                candidate.maximumTicks - candidate.controllerStartTick) {
                 error = "compact suffix controller duration differs from maximum_ticks";
                 return false;
             }
-        } else if (candidate.pads.size() != parsed.maximumTicks) {
+        } else if (candidate.pads.size() != candidate.maximumTicks) {
             error = "compact suffix candidate PAD runs differ from maximum_ticks";
             return false;
         }
@@ -533,7 +552,7 @@ bool parse_policy_output(const json& value,
 
 bool parse_candidate(const json& value, const std::size_t maximumTicks,
     const bool allowFactorizedPolicy, const bool allowFrozenPolicy,
-    const bool allowControllerProgram,
+    const bool allowControllerProgram, const bool allowVariableTicks,
     SuffixBatchCandidate& output, std::string& error) {
     constexpr std::array ActionKeys{
         std::string_view{"id"}, std::string_view{"actions"}};
@@ -543,10 +562,20 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
         std::string_view{"policy_head"}, std::string_view{"policy_outputs"}};
     constexpr std::array ControllerKeys{std::string_view{"id"},
         std::string_view{"actions"}, std::string_view{"controller_program_hex"}};
-    const bool actionCandidate = has_exact_keys(value, ActionKeys);
+    constexpr std::array VariableActionKeys{std::string_view{"id"},
+        std::string_view{"actions"}, std::string_view{"maximum_ticks"}};
+    constexpr std::array VariableControllerKeys{std::string_view{"id"},
+        std::string_view{"actions"}, std::string_view{"controller_program_hex"},
+        std::string_view{"maximum_ticks"}};
+    const bool variableActionCandidate =
+        allowVariableTicks && has_exact_keys(value, VariableActionKeys);
+    const bool variableControllerCandidate =
+        allowVariableTicks && has_exact_keys(value, VariableControllerKeys);
+    const bool actionCandidate = has_exact_keys(value, ActionKeys) || variableActionCandidate;
     const bool sourceCandidate = has_exact_keys(value, TapeKeys);
     const bool policyCandidate = has_exact_keys(value, PolicyKeys);
-    const bool controllerCandidate = has_exact_keys(value, ControllerKeys);
+    const bool controllerCandidate =
+        has_exact_keys(value, ControllerKeys) || variableControllerCandidate;
     if ((!actionCandidate && !sourceCandidate && !policyCandidate && !controllerCandidate) ||
         (policyCandidate && !allowFactorizedPolicy) || !value["id"].is_string())
     {
@@ -562,6 +591,13 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
         error = "candidate id is empty or exceeds 128 bytes";
         return false;
     }
+    std::size_t candidateMaximumTicks = maximumTicks;
+    if ((variableActionCandidate || variableControllerCandidate) &&
+        !read_integer(value["maximum_ticks"], std::size_t{1}, maximumTicks,
+            candidateMaximumTicks)) {
+        error = "candidate maximum_ticks is invalid or exceeds the batch maximum";
+        return false;
+    }
     for (const unsigned char byte : id) {
         if (byte < 0x21 || byte > 0x7e) {
             error = "candidate id must be printable ASCII without whitespace";
@@ -575,9 +611,9 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
         }
         const auto& source = value["source"].get_ref<const std::string&>();
         if (source == "tape") {
-            output = {.id = id, .tapePassthrough = true};
+            output = {.id = id, .maximumTicks = maximumTicks, .tapePassthrough = true};
         } else if (source == "frozen_policy" && allowFrozenPolicy) {
-            output = {.id = id, .frozenPolicy = true};
+            output = {.id = id, .maximumTicks = maximumTicks, .frozenPolicy = true};
         } else {
             error = "candidate source must be tape or an admitted frozen_policy";
             return false;
@@ -587,6 +623,7 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
     if (policyCandidate) {
         SuffixBatchCandidate parsed;
         parsed.id = id;
+        parsed.maximumTicks = maximumTicks;
         parsed.factorizedPolicy = true;
         if (!parse_policy_head(value["policy_head"], parsed.policyHead) ||
             !value["policy_outputs"].is_array() || value["policy_outputs"].empty() ||
@@ -636,7 +673,8 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
 
     SuffixBatchCandidate parsed;
     parsed.id = id;
-    parsed.pads.reserve(maximumTicks);
+    parsed.maximumTicks = candidateMaximumTicks;
+    parsed.pads.reserve(candidateMaximumTicks);
     constexpr std::array PadRunKeys{
         std::string_view{"op"}, std::string_view{"pad"}, std::string_view{"frames"}};
     for (std::size_t index = 0; index < actions.size(); ++index) {
@@ -650,8 +688,9 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
         }
         std::size_t frames = 0;
         RawPadState pad;
-        if (!read_integer(action["frames"], std::size_t{1}, maximumTicks, frames) ||
-            !parse_pad(action["pad"], pad) || frames > maximumTicks - parsed.pads.size())
+        if (!read_integer(action["frames"], std::size_t{1}, candidateMaximumTicks, frames) ||
+            !parse_pad(action["pad"], pad) ||
+            frames > candidateMaximumTicks - parsed.pads.size())
         {
             error = "candidate action " + std::to_string(index) +
                     " has invalid pad fields or duration";
@@ -665,11 +704,11 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
             return false;
         parsed.controllerProgram = true;
         parsed.controllerStartTick = parsed.pads.size();
-        if (parsed.controller.duration() != maximumTicks - parsed.controllerStartTick) {
+        if (parsed.controller.duration() != candidateMaximumTicks - parsed.controllerStartTick) {
             error = "controller duration plus static prefix differs from maximum_ticks";
             return false;
         }
-    } else if (parsed.pads.size() != maximumTicks) {
+    } else if (parsed.pads.size() != candidateMaximumTicks) {
         error = "candidate expands to " + std::to_string(parsed.pads.size()) +
                 " ticks instead of maximum_ticks";
         return false;
@@ -740,7 +779,9 @@ bool parse_suffix_batch(
     const bool legacy = schema == LegacySuffixBatchSchema;
     const bool previous = schema == PreviousSuffixBatchSchema;
     const bool reactive = schema == ReactiveSuffixBatchSchema;
-    const bool cached = schema == CachedSuffixBatchSchema;
+    const bool cached = schema == CachedSuffixBatchSchema ||
+                        schema == VariableCachedSuffixBatchSchema;
+    const bool variableCached = schema == VariableCachedSuffixBatchSchema;
     const bool factorized = schema == FactorizedSuffixBatchSchema;
     const bool legacyFrozen = schema == FrozenPolicySuffixBatchSchemaV6;
     const bool exploratoryFrozen = schema == SuffixBatchSchema;
@@ -781,9 +822,20 @@ bool parse_suffix_batch(
             std::string_view{"retain_candidate_checkpoints"},
             std::string_view{"retain_live_endpoint"},
         };
+        constexpr std::array VariableCacheKeys{
+            std::string_view{"capacity_bytes"},
+            std::string_view{"capacity_entries"},
+            std::string_view{"source_identity"},
+            std::string_view{"source_route_ticks"},
+            std::string_view{"retain_candidate_checkpoints"},
+            std::string_view{"retain_live_endpoint"},
+            std::string_view{"retain_candidate_index"},
+        };
         const json& cache = root["checkpoint_cache"];
         SuffixCheckpointCachePolicy policy;
-        if (!has_exact_keys(cache, CacheKeys) ||
+        const bool variableCacheShape =
+            has_exact_keys(cache, CacheKeys) || has_exact_keys(cache, VariableCacheKeys);
+        if (!(variableCached ? variableCacheShape : has_exact_keys(cache, CacheKeys)) ||
             !read_integer(cache["capacity_bytes"], std::size_t{1},
                 SuffixBatchMaximumCheckpointCacheBytes, policy.capacityBytes) ||
             !read_integer(cache["capacity_entries"], std::size_t{1},
@@ -803,8 +855,20 @@ bool parse_suffix_batch(
         policy.retainCandidateCheckpoints =
             cache["retain_candidate_checkpoints"].get<bool>();
         policy.retainLiveEndpoint = cache["retain_live_endpoint"].get<bool>();
-        if (policy.retainCandidateCheckpoints && policy.retainLiveEndpoint) {
-            error = "suffix batch checkpoint cache cannot retain a portable image and live endpoint";
+        if (variableCached && cache.contains("retain_candidate_index")) {
+            std::size_t retainedIndex = 0;
+            if (!read_integer(cache["retain_candidate_index"], std::size_t{0},
+                    SuffixBatchMaximumCandidates - 1, retainedIndex)) {
+                error = "suffix batch retained candidate index is invalid";
+                return false;
+            }
+            policy.retainCandidateIndex = retainedIndex;
+        }
+        if (static_cast<unsigned>(policy.retainCandidateCheckpoints) +
+                static_cast<unsigned>(policy.retainLiveEndpoint) +
+                static_cast<unsigned>(policy.retainCandidateIndex.has_value()) >
+            1) {
+            error = "suffix batch checkpoint cache requests conflicting retention modes";
             return false;
         }
         parsed.checkpointCache = std::move(policy);
@@ -856,7 +920,7 @@ bool parse_suffix_batch(
         if (!parse_candidate(candidates[index], parsed.maximumTicks,
                 factorized || frozen, frozen,
                 reactive || (cached && candidates[index].is_object() &&
-                    candidates[index].contains("controller_program_hex")),
+                    candidates[index].contains("controller_program_hex")), variableCached,
                 candidate, error)) {
             error = "candidate " + std::to_string(index) + ": " + error;
             return false;
@@ -871,6 +935,12 @@ bool parse_suffix_batch(
         parsed.checkpointCache->retainLiveEndpoint && parsed.candidates.size() != 1)
     {
         error = "live endpoint retention requires exactly one candidate";
+        return false;
+    }
+    if (parsed.checkpointCache.has_value() &&
+        parsed.checkpointCache->retainCandidateIndex.has_value() &&
+        *parsed.checkpointCache->retainCandidateIndex >= parsed.candidates.size()) {
+        error = "suffix batch retained candidate index exceeds the candidate batch";
         return false;
     }
     const bool hasFrozenCandidate = std::ranges::any_of(parsed.candidates,

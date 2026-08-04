@@ -26,6 +26,7 @@ fn request(verify_state_hashes: bool) -> NativeSuffixBatch {
             id: "candidate-0".into(),
             actions: vec![MacroAction::Neutral { frames: 2 }],
             controller_program_hex: None,
+            maximum_ticks: None,
         }],
     }
 }
@@ -336,6 +337,7 @@ fn cached_result_binds_direct_source_and_retained_endpoint() {
             source_route_ticks: 40,
             retain_candidate_checkpoints: true,
             retain_live_endpoint: false,
+            retain_candidate_index: None,
         },
     );
     let mut result = result(false, false);

@@ -265,6 +265,7 @@ pub(super) fn incumbent_demonstration_batch(
             id: "incumbent-demonstration".into(),
             actions: project_native_port_one_actions(imported.actions)?,
             controller_program_hex: None,
+            maximum_ticks: None,
         }],
     })
 }

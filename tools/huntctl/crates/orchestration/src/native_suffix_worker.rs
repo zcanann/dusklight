@@ -14,7 +14,7 @@ use dusklight_learning::native_frozen_policy_reinference::{
 use dusklight_learning::native_frozen_policy_suffix_batch::NativeFrozenPolicySuffixBatch;
 use dusklight_search::suffix_batch::{
     NATIVE_CACHED_SUFFIX_BATCH_SCHEMA, NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA,
-    NATIVE_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch,
+    NATIVE_SUFFIX_BATCH_SCHEMA, NATIVE_VARIABLE_CACHED_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch,
 };
 use dusklight_worker_protocol::client::{BatchComplete, ClientError, HelloResponse, WorkerClient};
 use dusklight_worker_protocol::transport::ProcessTransport;
@@ -600,6 +600,7 @@ fn validate_batch_shape(batch: &NativeSuffixBatch) -> Result<(), NativeSuffixWor
         NATIVE_SUFFIX_BATCH_SCHEMA
             | NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA
             | NATIVE_CACHED_SUFFIX_BATCH_SCHEMA
+            | NATIVE_VARIABLE_CACHED_SUFFIX_BATCH_SCHEMA
     ) || batch.candidates.is_empty()
         || batch.source_boundary_fingerprint.len() != 32
         || !batch
@@ -610,21 +611,44 @@ fn validate_batch_shape(batch: &NativeSuffixBatch) -> Result<(), NativeSuffixWor
         || batch.maximum_ticks > MAXIMUM_PERSISTENT_BATCH_TICKS
         || batch.checkpoint_validation.kind != "recorded_replay_window"
         || batch.checkpoint_validation.ticks == 0
-        || (batch.schema == NATIVE_CACHED_SUFFIX_BATCH_SCHEMA
-            && batch.checkpoint_cache.as_ref().is_none_or(|cache| {
-                cache.capacity_bytes == 0
-                    || cache.capacity_bytes > 1024 * 1024 * 1024
-                    || cache.capacity_entries == 0
-                    || cache.capacity_entries > 16
-                    || cache.source_identity.is_some() != (cache.source_route_ticks != 0)
-                    || cache.source_identity.as_ref().is_some_and(|identity| {
-                        identity.len() != 32
-                            || !identity
-                                .bytes()
-                                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                    })
+        || (matches!(
+            batch.schema.as_str(),
+            NATIVE_CACHED_SUFFIX_BATCH_SCHEMA | NATIVE_VARIABLE_CACHED_SUFFIX_BATCH_SCHEMA
+        ) && batch.checkpoint_cache.as_ref().is_none_or(|cache| {
+            cache.capacity_bytes == 0
+                || cache.capacity_bytes > 1024 * 1024 * 1024
+                || cache.capacity_entries == 0
+                || cache.capacity_entries > 16
+                || cache.source_identity.is_some() != (cache.source_route_ticks != 0)
+                || cache.source_identity.as_ref().is_some_and(|identity| {
+                    identity.len() != 32
+                        || !identity
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                })
+                || usize::from(cache.retain_candidate_checkpoints)
+                    + usize::from(cache.retain_live_endpoint)
+                    + usize::from(cache.retain_candidate_index.is_some())
+                    > 1
+                || cache
+                    .retain_candidate_index
+                    .is_some_and(|index| index >= batch.candidates.len())
+        }))
+        || (!matches!(
+            batch.schema.as_str(),
+            NATIVE_CACHED_SUFFIX_BATCH_SCHEMA | NATIVE_VARIABLE_CACHED_SUFFIX_BATCH_SCHEMA
+        ) && batch.checkpoint_cache.is_some())
+        || (batch.schema == NATIVE_VARIABLE_CACHED_SUFFIX_BATCH_SCHEMA
+            && batch.candidates.iter().any(|candidate| {
+                candidate
+                    .maximum_ticks
+                    .is_none_or(|ticks| ticks == 0 || ticks > batch.maximum_ticks)
             }))
-        || (batch.schema != NATIVE_CACHED_SUFFIX_BATCH_SCHEMA && batch.checkpoint_cache.is_some())
+        || (batch.schema != NATIVE_VARIABLE_CACHED_SUFFIX_BATCH_SCHEMA
+            && batch
+                .candidates
+                .iter()
+                .any(|candidate| candidate.maximum_ticks.is_some()))
         || (batch.schema == NATIVE_SUFFIX_BATCH_SCHEMA
             && batch
                 .candidates

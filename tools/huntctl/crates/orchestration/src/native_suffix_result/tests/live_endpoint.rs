@@ -12,6 +12,7 @@ fn result_has_no_portable_machine_image() {
             source_route_ticks: 40,
             retain_candidate_checkpoints: false,
             retain_live_endpoint: true,
+            retain_candidate_index: None,
         },
     );
     let mut result = result(false, false);

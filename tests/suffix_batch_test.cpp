@@ -251,6 +251,52 @@ void test_cached_batch_binds_bounded_process_local_source() {
     REQUIRE(!parse_suffix_batch(unbounded, batch, error));
 }
 
+void test_variable_cached_batch_binds_candidate_horizons_and_retention() {
+    const std::string source = R"({
+        "schema":"dusklight-suffix-batch/v11","source_frame":506,
+        "source_boundary_fingerprint":"e7ac8251329f22a5df682bbe5eb2a2ba",
+        "checkpoint_validation":{"kind":"recorded_replay_window","ticks":8},
+        "maximum_ticks":4,"verify_state_hashes":false,
+        "checkpoint_cache":{"capacity_bytes":671088640,"capacity_entries":2,
+          "source_identity":"0123456789abcdef0123456789abcdef",
+          "source_route_ticks":40,"retain_candidate_checkpoints":false,
+          "retain_live_endpoint":false,"retain_candidate_index":1},
+        "candidates":[
+          {"id":"short","maximum_ticks":2,"actions":[
+            {"op":"pad_run","pad":{"buttons":0,"stick_x":0,"stick_y":127,
+             "substick_x":0,"substick_y":0,"trigger_left":0,"trigger_right":0,
+             "analog_a":0,"analog_b":0,"connected":true,"error":0},"frames":2}]},
+          {"id":"long","maximum_ticks":4,"actions":[
+            {"op":"pad_run","pad":{"buttons":0,"stick_x":0,"stick_y":127,
+             "substick_x":0,"substick_y":0,"trigger_left":0,"trigger_right":0,
+             "analog_a":0,"analog_b":0,"connected":true,"error":0},"frames":4}]}
+        ]
+    })";
+    SuffixBatchDefinition batch;
+    std::string error;
+    REQUIRE(parse_suffix_batch(source, batch, error));
+    REQUIRE(error.empty());
+    REQUIRE(batch.candidates.size() == 2);
+    REQUIRE(batch.candidates[0].maximumTicks == 2);
+    REQUIRE(batch.candidates[1].maximumTicks == 4);
+    REQUIRE(batch.checkpointCache->retainCandidateIndex == std::optional<std::size_t>(1));
+
+    std::string withoutRetention = source;
+    const std::string retainedField = ",\"retain_candidate_index\":1";
+    const std::size_t retained = withoutRetention.find(retainedField);
+    REQUIRE(retained != std::string::npos);
+    withoutRetention.erase(retained, retainedField.size());
+    REQUIRE(parse_suffix_batch(withoutRetention, batch, error));
+    REQUIRE(!batch.checkpointCache->retainCandidateIndex.has_value());
+
+    std::string invalid = source;
+    const std::size_t horizon = invalid.find("\"maximum_ticks\":2");
+    REQUIRE(horizon != std::string::npos);
+    invalid.replace(horizon, std::string("\"maximum_ticks\":2").size(),
+        "\"maximum_ticks\":5");
+    REQUIRE(!parse_suffix_batch(invalid, batch, error));
+}
+
 template <typename T>
 void append_little(std::vector<std::uint8_t>& output, const T value) {
     static_assert(std::is_unsigned_v<T>);
@@ -493,6 +539,7 @@ int main() {
     test_factorized_policy_rows_expand_to_an_online_native_program();
     test_reactive_controller_executes_as_one_native_candidate();
     test_cached_batch_binds_bounded_process_local_source();
+    test_variable_cached_batch_binds_candidate_horizons_and_retention();
     test_compact_cached_batch_expands_and_authenticates();
     test_frozen_policy_is_content_bound_and_one_tick();
     test_invalid_batches_fail_closed();

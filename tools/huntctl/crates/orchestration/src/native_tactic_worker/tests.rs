@@ -708,6 +708,7 @@ fn native_episode_observes_the_real_stop_and_next_fact_boundary() {
             id: episode.id.clone(),
             actions: pad_runs(&option_tape.frames).unwrap(),
             controller_program_hex: None,
+            maximum_ticks: None,
         }],
     };
     let validated = ValidatedNativeSuffixBatch {

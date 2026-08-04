@@ -788,7 +788,9 @@ bool SuffixBatchRunner::retainCandidateCheckpoint(const std::uint64_t simulation
         };
         return true;
     }
-    if (!policy.retainCandidateCheckpoints)
+    const bool retainPortable = policy.retainCandidateCheckpoints ||
+                                policy.retainCandidateIndex == mCandidateIndex;
+    if (!retainPortable)
         return true;
     ++mCheckpointCacheCaptureAttempts;
     const auto started = ProfileClock::now();
@@ -942,7 +944,8 @@ bool SuffixBatchRunner::captureValidationTickDigest(const std::uint64_t simulati
 
 bool SuffixBatchRunner::captureEpisodePreInput(
     const std::uint64_t simulationTick, std::string& error) {
-    if (mEpisodePreInputCaptured || mCandidateTick >= mDefinition.maximumTicks) {
+    const SuffixBatchCandidate& candidate = mDefinition.candidates[mCandidateIndex];
+    if (mEpisodePreInputCaptured || mCandidateTick >= candidate.maximumTicks) {
         error = "learning episode pre-input boundary was captured twice or out of range";
         return false;
     }
@@ -1032,7 +1035,7 @@ bool SuffixBatchRunner::captureEpisodePreInput(
             .collisionCorrectionX = collision.x,
             .collisionCorrectionZ = collision.z,
             .remainingTicks = static_cast<std::uint32_t>(
-                mDefinition.maximumTicks - mCandidateTick),
+                candidate.maximumTicks - mCandidateTick),
             .previousInput = previousInput,
             .playerDamageWaitTimer = observation.playerDamageWaitTimer,
             .playerIceDamageWaitTimer = observation.playerIceDamageWaitTimer,
@@ -1049,7 +1052,6 @@ bool SuffixBatchRunner::captureEpisodePreInput(
             return false;
         mPolicyFeatureRowReady = true;
     }
-    const SuffixBatchCandidate& candidate = mDefinition.candidates[mCandidateIndex];
     const LearningObservationContext context{
         .phase = LearningObservationPhase::PreInput,
         .boundaryIndex = simulationTick,
@@ -1057,7 +1059,7 @@ bool SuffixBatchRunner::captureEpisodePreInput(
         .tapeFrame = static_cast<std::uint64_t>(
             mDefinition.sourceFrame + activeSourceRouteTicks() + mCandidateTick),
         .remainingTicks = static_cast<std::uint32_t>(
-            mDefinition.maximumTicks - mCandidateTick),
+            candidate.maximumTicks - mCandidateTick),
         .stateIdentity = compute_milestone_observation_fingerprint(
             observation, input_tape_player().tape().boot),
         .previousInput = previousInput,
@@ -1142,10 +1144,11 @@ bool SuffixBatchRunner::preInput(std::uint64_t& simulationTick, std::uint64_t& t
 
 void SuffixBatchRunner::applyCandidateInput() {
     if (!mEnabled || mPhase != Phase::Candidate || mFailed || mCompleted ||
-        mCandidateIndex >= mDefinition.candidates.size() ||
-        mCandidateTick >= mDefinition.maximumTicks)
+        mCandidateIndex >= mDefinition.candidates.size())
         return;
     const auto& candidate = mDefinition.candidates[mCandidateIndex];
+    if (mCandidateTick >= candidate.maximumTicks)
+        return;
     if (candidate.tapePassthrough) {
         AccumulateNanos policy(mProfile.policyApplicationNanos);
         ++mProfile.policyApplicationSamples;
@@ -1395,7 +1398,7 @@ bool SuffixBatchRunner::appendEpisodePostSimulation(const MilestoneObservation& 
         .tapeFrame = static_cast<std::uint64_t>(
             mDefinition.sourceFrame + activeSourceRouteTicks() + mCandidateTick),
         .remainingTicks = static_cast<std::uint32_t>(
-            mDefinition.maximumTicks - (mCandidateTick + 1)),
+            candidate.maximumTicks - (mCandidateTick + 1)),
         .stateIdentity = compute_milestone_observation_fingerprint(
             observation, input_tape_player().tape().boot),
         .previousInput = mConsumedPads.back(),
@@ -1480,7 +1483,7 @@ bool SuffixBatchRunner::finishCandidate(
             std::optional<std::uint32_t>(static_cast<std::uint32_t>(*result.firstHitTick)) :
             std::nullopt,
         .remainingTicks = static_cast<std::uint32_t>(
-            mDefinition.maximumTicks - result.ticksExecuted),
+            mDefinition.candidates[mCandidateIndex].maximumTicks - result.ticksExecuted),
     };
     {
         AccumulateMicros encoding(mProfile.corpusEncodingMicros);
@@ -1576,7 +1579,7 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
         ++mProfile.stateValidationSamples;
         std::string digest;
         std::vector<StateCheckpointEntryDigest>* const terminalEntryDigests =
-            mCandidateTick + 1 == mDefinition.maximumTicks
+            mCandidateTick + 1 == candidate.maximumTicks
                 ? &mTerminalStateEntryDigests
                 : nullptr;
         const StateCheckpointError checkpointError =
@@ -1599,7 +1602,7 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
     }
     const bool success = mGoalTracker.goalReached();
     const bool exhausted =
-        mCandidateControllerReached || mCandidateTick + 1 == mDefinition.maximumTicks;
+        mCandidateControllerReached || mCandidateTick + 1 == candidate.maximumTicks;
     if (!appendEpisodePostSimulation(
             observation, expectedPad, simulationTick, success || exhausted, error)) {
         fail(error);

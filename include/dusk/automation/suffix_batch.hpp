@@ -19,6 +19,7 @@ inline constexpr std::string_view LegacySuffixBatchSchema = "dusklight-suffix-ba
 inline constexpr std::string_view PreviousSuffixBatchSchema = "dusklight-suffix-batch/v3";
 inline constexpr std::string_view ReactiveSuffixBatchSchema = "dusklight-suffix-batch/v8";
 inline constexpr std::string_view CachedSuffixBatchSchema = "dusklight-suffix-batch/v10";
+inline constexpr std::string_view VariableCachedSuffixBatchSchema = "dusklight-suffix-batch/v11";
 inline constexpr std::string_view FactorizedSuffixBatchSchema = "dusklight-suffix-batch/v4";
 inline constexpr std::string_view FrozenPolicySuffixBatchSchemaV6 = "dusklight-suffix-batch/v6";
 inline constexpr std::string_view SuffixBatchSchema = "dusklight-suffix-batch/v7";
@@ -53,6 +54,7 @@ enum class SuffixPolicyActionAuthority : std::uint8_t {
 
 struct SuffixBatchCandidate {
     std::string id;
+    std::size_t maximumTicks = 0;
     bool tapePassthrough = false;
     bool factorizedPolicy = false;
     bool frozenPolicy = false;
@@ -90,6 +92,7 @@ struct SuffixCheckpointCachePolicy {
     std::size_t sourceRouteTicks = 0;
     bool retainCandidateCheckpoints = false;
     bool retainLiveEndpoint = false;
+    std::optional<std::size_t> retainCandidateIndex;
 };
 
 [[nodiscard]] inline std::uint64_t policy_exploration_sample(

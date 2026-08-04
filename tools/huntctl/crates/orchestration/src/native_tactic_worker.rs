@@ -272,6 +272,7 @@ pub fn materialize_tactic_frontier_with_cache_capacity<W: PersistentTacticBatchW
             ),
             actions: pad_runs(replay_frames)?,
             controller_program_hex: None,
+            maximum_ticks: None,
         }],
     };
     write_new_compact_batch(&paths.request, &request)?;
@@ -883,6 +884,7 @@ fn tactic_batch(
             id,
             actions,
             controller_program_hex: None,
+            maximum_ticks: None,
         }],
     })
 }
@@ -940,6 +942,7 @@ fn tactic_controller_batch(
             id,
             actions: pad_runs(prefix_frames)?,
             controller_program_hex: Some(lower_hex_bytes(&program_bytes)),
+            maximum_ticks: None,
         }],
     })
 }
@@ -962,6 +965,7 @@ pub(crate) fn tactic_checkpoint_cache_request(
             checkpoint_retention,
             NativeTacticCheckpointRetention::LiveEndpoint
         ),
+        retain_candidate_index: None,
     }
 }
 

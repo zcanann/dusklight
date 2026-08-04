@@ -868,6 +868,7 @@ fn make_batch(
             id: "native-subsystem-parity".into(),
             actions: pad_runs(frames)?,
             controller_program_hex: None,
+            maximum_ticks: None,
         }],
     })
 }

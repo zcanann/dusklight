@@ -152,6 +152,7 @@ fn native_batch(
                 id: wire_candidate_id(&candidate.envelope.id, repetition),
                 actions: project_native_port_one_actions(imported.actions)?,
                 controller_program_hex: None,
+                maximum_ticks: None,
             })
         })
         .collect::<Result<Vec<_>, NativeResidualCampaignRunnerError>>()?;
@@ -189,6 +190,7 @@ fn exact_replay_batch(
                 id: wire_candidate_id(&candidate.id, repetition),
                 actions: exact_replay_native_actions(segment, &candidate.tape)?,
                 controller_program_hex: None,
+                maximum_ticks: None,
             })
         })
         .collect::<Result<Vec<_>, NativeResidualCampaignRunnerError>>()?;

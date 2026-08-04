@@ -88,6 +88,7 @@ fn fixture() -> (TestRoot, NativeSuffixWorkerLaunch) {
             id: "candidate-0".into(),
             actions: vec![MacroAction::Neutral { frames: 2 }],
             controller_program_hex: None,
+            maximum_ticks: None,
         }],
     };
     fs::write(&initial_batch, serde_json::to_vec_pretty(&batch).unwrap()).unwrap();

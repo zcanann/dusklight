@@ -6,7 +6,10 @@
 //! than repeating JSON field names and hexadecimal blobs.
 
 use dusklight_search::search::MacroAction;
-use dusklight_search::suffix_batch::{NATIVE_CACHED_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch};
+use dusklight_search::suffix_batch::{
+    NATIVE_CACHED_SUFFIX_BATCH_SCHEMA, NATIVE_VARIABLE_CACHED_SUFFIX_BATCH_SCHEMA,
+    NativeSuffixBatch,
+};
 use std::error::Error;
 use std::fmt;
 use xxhash_rust::xxh3::xxh3_128;
@@ -18,6 +21,8 @@ const FLAG_CHECKPOINT_CACHE: u8 = 1 << 1;
 const FLAG_SOURCE_IDENTITY: u8 = 1 << 2;
 const FLAG_RETAIN_CANDIDATE_CHECKPOINTS: u8 = 1 << 3;
 const FLAG_RETAIN_LIVE_ENDPOINT: u8 = 1 << 4;
+const FLAG_VARIABLE_CANDIDATE_TICKS: u8 = 1 << 5;
+const FLAG_RETAIN_CANDIDATE_INDEX: u8 = 1 << 6;
 const RECORDED_REPLAY_WINDOW: u8 = 2;
 const MAXIMUM_BYTES: usize = 64 * 1024 * 1024;
 
@@ -47,11 +52,15 @@ impl Error for CompactSuffixBatchError {}
 pub fn encode_compact_suffix_batch(
     batch: &NativeSuffixBatch,
 ) -> Result<Vec<u8>, CompactSuffixBatchError> {
-    if batch.schema != NATIVE_CACHED_SUFFIX_BATCH_SCHEMA {
+    if !matches!(
+        batch.schema.as_str(),
+        NATIVE_CACHED_SUFFIX_BATCH_SCHEMA | NATIVE_VARIABLE_CACHED_SUFFIX_BATCH_SCHEMA
+    ) {
         return Err(CompactSuffixBatchError::new(
-            "compact suffix transport requires the cached v10 schema",
+            "compact suffix transport requires a cached schema",
         ));
     }
+    let variable_candidates = batch.schema == NATIVE_VARIABLE_CACHED_SUFFIX_BATCH_SCHEMA;
     let cache = batch
         .checkpoint_cache
         .as_ref()
@@ -115,9 +124,27 @@ pub fn encode_compact_suffix_batch(
     if cache.retain_live_endpoint {
         flags |= FLAG_RETAIN_LIVE_ENDPOINT;
     }
-    if cache.retain_candidate_checkpoints && cache.retain_live_endpoint {
+    if variable_candidates {
+        flags |= FLAG_VARIABLE_CANDIDATE_TICKS;
+    }
+    if cache.retain_candidate_index.is_some() {
+        flags |= FLAG_RETAIN_CANDIDATE_INDEX;
+    }
+    if usize::from(cache.retain_candidate_checkpoints)
+        + usize::from(cache.retain_live_endpoint)
+        + usize::from(cache.retain_candidate_index.is_some())
+        > 1
+    {
         return Err(CompactSuffixBatchError::new(
             "compact suffix batch requests conflicting checkpoint retention",
+        ));
+    }
+    if cache
+        .retain_candidate_index
+        .is_some_and(|index| !variable_candidates || index >= batch.candidates.len())
+    {
+        return Err(CompactSuffixBatchError::new(
+            "compact suffix retained candidate index is invalid",
         ));
     }
 
@@ -135,6 +162,11 @@ pub fn encode_compact_suffix_batch(
         payload.extend_from_slice(&identity);
     }
     payload.extend_from_slice(&candidate_count.to_le_bytes());
+    if let Some(index) = cache.retain_candidate_index {
+        let index = u16::try_from(index)
+            .map_err(|_| CompactSuffixBatchError::new("retained candidate index exceeds u16"))?;
+        payload.extend_from_slice(&index.to_le_bytes());
+    }
 
     for candidate in &batch.candidates {
         let id = candidate.id.as_bytes();
@@ -147,6 +179,21 @@ pub fn encode_compact_suffix_batch(
         }
         payload.push(id_length);
         payload.extend_from_slice(id);
+
+        let candidate_maximum_ticks = candidate.maximum_ticks.unwrap_or(batch.maximum_ticks);
+        if candidate_maximum_ticks == 0
+            || candidate_maximum_ticks > batch.maximum_ticks
+            || variable_candidates != candidate.maximum_ticks.is_some()
+        {
+            return Err(CompactSuffixBatchError::new(
+                "candidate maximum ticks differs from its compact schema",
+            ));
+        }
+        if variable_candidates {
+            let candidate_maximum_ticks = u16::try_from(candidate_maximum_ticks)
+                .map_err(|_| CompactSuffixBatchError::new("candidate maximum ticks exceeds u16"))?;
+            payload.extend_from_slice(&candidate_maximum_ticks.to_le_bytes());
+        }
 
         let controller = candidate
             .controller_program_hex
@@ -274,6 +321,7 @@ mod tests {
                 source_route_ticks: 40,
                 retain_candidate_checkpoints: true,
                 retain_live_endpoint: false,
+                retain_candidate_index: None,
             }),
             candidates: vec![NativeSuffixCandidate {
                 id: "candidate-1".into(),
@@ -296,6 +344,7 @@ mod tests {
                     port_one_secondary_pads: None,
                 }],
                 controller_program_hex: None,
+                maximum_ticks: None,
             }],
         }
     }
@@ -327,5 +376,36 @@ mod tests {
                 .to_string()
                 .contains("non-PAD")
         );
+    }
+
+    #[test]
+    fn variable_candidate_horizons_and_selected_retention_are_compact() {
+        let mut batch = fixture();
+        batch.schema = NATIVE_VARIABLE_CACHED_SUFFIX_BATCH_SCHEMA.into();
+        let cache = batch.checkpoint_cache.as_mut().unwrap();
+        cache.retain_candidate_checkpoints = false;
+        cache.retain_candidate_index = Some(1);
+        batch.candidates[0].maximum_ticks = Some(2);
+        if let MacroAction::PadRun { frames, .. } = &mut batch.candidates[0].actions[0] {
+            *frames = 2;
+        }
+        let mut second = batch.candidates[0].clone();
+        second.id = "candidate-2".into();
+        second.maximum_ticks = Some(4);
+        if let MacroAction::PadRun { frames, .. } = &mut second.actions[0] {
+            *frames = 4;
+        }
+        batch.candidates.push(second);
+
+        let encoded = encode_compact_suffix_batch(&batch).unwrap();
+        assert_eq!(&encoded[..8], &COMPACT_SUFFIX_BATCH_MAGIC);
+        assert!(encoded.len() * 3 < serde_json::to_vec_pretty(&batch).unwrap().len());
+
+        batch
+            .checkpoint_cache
+            .as_mut()
+            .unwrap()
+            .retain_candidate_index = Some(2);
+        assert!(encode_compact_suffix_batch(&batch).is_err());
     }
 }
