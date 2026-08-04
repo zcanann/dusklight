@@ -1136,6 +1136,8 @@ fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
         checkpoint_capture_attempts: 3,
         checkpoint_capture_successes: 2,
         checkpoint_capture_micros: 50,
+        checkpoint_image_reuse_attempts: 3,
+        checkpoint_image_reuse_successes: 2,
         live_endpoint_retention_attempts: 1,
         live_endpoint_retention_successes: 1,
         live_endpoint_retention_nanos: 100,
@@ -1163,6 +1165,8 @@ fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
         checkpoint_capture_attempts: 1,
         checkpoint_capture_successes: 1,
         checkpoint_capture_micros: 20,
+        checkpoint_image_reuse_attempts: 1,
+        checkpoint_image_reuse_successes: 1,
         live_endpoint_retention_attempts: 1,
         live_endpoint_retention_successes: 1,
         live_endpoint_retention_nanos: 50,
@@ -1191,6 +1195,8 @@ fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
     assert_eq!(first.direct_restore_fallback_replays, 3);
     assert_eq!(first.cache_hit_rate_per_million, 500_000);
     assert_eq!(first.cache_evictions, 7);
+    assert_eq!(first.checkpoint_image_reuse_attempts, 4);
+    assert_eq!(first.checkpoint_image_reuse_successes, 3);
     assert_eq!(first.replayed_prefix_ticks, 40);
     assert_eq!(first.live_endpoint_retention_attempts, 2);
     assert_eq!(first.live_endpoint_retention_successes, 2);

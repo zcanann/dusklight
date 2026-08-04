@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <numeric>
 #include <system_error>
@@ -36,6 +37,11 @@ std::uint64_t elapsed_nanos(const ProfileClock::time_point start) {
     const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
         ProfileClock::now() - start).count();
     return elapsed < 0 ? 0 : static_cast<std::uint64_t>(elapsed);
+}
+
+bool checkpoint_image_reuse_enabled() {
+    const char* const disabled = std::getenv("DUSKLIGHT_DISABLE_CHECKPOINT_IMAGE_REUSE");
+    return disabled == nullptr || std::string_view(disabled) != "1";
 }
 
 class AccumulateMicros {
@@ -226,6 +232,7 @@ bool SuffixBatchRunner::configure(SuffixBatchDefinition definition,
                 definition.checkpointCache->capacityEntries);
     }
     mEnabled = true;
+    mCheckpointImageReuseEnabled = checkpoint_image_reuse_enabled();
     mAuthenticatedRootBoundaryFingerprint = definition.sourceBoundaryFingerprint;
     mDefinition = std::move(definition);
     mFrozenPolicyModel = std::move(frozenPolicy);
@@ -363,6 +370,8 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
     mCheckpointCacheCaptureMicros = 0;
     mCheckpointCacheCaptureAttempts = 0;
     mCheckpointCacheCaptureSuccesses = 0;
+    mCheckpointImageReuseAttempts = 0;
+    mCheckpointImageReuseSuccesses = 0;
     mLiveEndpointRetentionNanos = 0;
     mLiveEndpointRetentionAttempts = 0;
     mLiveEndpointRetentionSuccesses = 0;
@@ -796,7 +805,19 @@ bool SuffixBatchRunner::retainCandidateCheckpoint(const std::uint64_t simulation
     const auto started = ProfileClock::now();
     const auto machineCaptureStarted = ProfileClock::now();
     StateCheckpointImage image;
-    StateCheckpointError checkpointError = mCheckpoint.capture(image);
+    // The selected source is pinned. Recycle only an older unpinned image so
+    // the next 295 MiB node capture can reuse its exact-manifest allocations.
+    bool reusedImage = false;
+    if (mCheckpointImageReuseEnabled) {
+        ++mCheckpointImageReuseAttempts;
+        reusedImage = mCheckpointCache->extractReusableImage(image);
+        if (reusedImage) {
+            ++mCheckpointImageReuseSuccesses;
+        }
+    }
+    StateCheckpointError checkpointError = reusedImage
+        ? mCheckpoint.captureReusing(image)
+        : mCheckpoint.capture(image);
     const std::uint64_t machineCaptureMicros = elapsed_micros(machineCaptureStarted);
     if (checkpointError != StateCheckpointError::None) {
         error = state_checkpoint_error_message(checkpointError);
@@ -2067,6 +2088,9 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                   {"batch_capture_attempts", mCheckpointCacheCaptureAttempts},
                   {"batch_capture_successes", mCheckpointCacheCaptureSuccesses},
                   {"batch_capture_micros", mCheckpointCacheCaptureMicros},
+                  {"checkpoint_image_reuse_enabled", mCheckpointImageReuseEnabled},
+                  {"batch_image_reuse_attempts", mCheckpointImageReuseAttempts},
+                  {"batch_image_reuse_successes", mCheckpointImageReuseSuccesses},
                   {"live_endpoint_capacity_entries", 1},
                   {"live_endpoint_resident_entries", mLiveEndpoint.has_value() ? 1 : 0},
                   {"live_endpoint_resident_host_snapshot_bytes", liveEndpointBytes},

@@ -690,6 +690,10 @@ pub struct NativeTacticRestoreAccounting {
     pub checkpoint_capture_successes: u64,
     pub checkpoint_capture_micros: u64,
     #[serde(default)]
+    pub checkpoint_image_reuse_attempts: u64,
+    #[serde(default)]
+    pub checkpoint_image_reuse_successes: u64,
+    #[serde(default)]
     pub live_endpoint_retention_attempts: u64,
     #[serde(default)]
     pub live_endpoint_retention_successes: u64,
@@ -755,6 +759,12 @@ impl NativeTacticRestoreAccounting {
         self.checkpoint_capture_micros = self
             .checkpoint_capture_micros
             .saturating_add(other.checkpoint_capture_micros);
+        self.checkpoint_image_reuse_attempts = self
+            .checkpoint_image_reuse_attempts
+            .saturating_add(other.checkpoint_image_reuse_attempts);
+        self.checkpoint_image_reuse_successes = self
+            .checkpoint_image_reuse_successes
+            .saturating_add(other.checkpoint_image_reuse_successes);
         self.live_endpoint_retention_attempts = self
             .live_endpoint_retention_attempts
             .saturating_add(other.live_endpoint_retention_attempts);

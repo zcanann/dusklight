@@ -125,6 +125,35 @@ void test_component_fail_closed() {
     REQUIRE(other.restore(image) == StateCheckpointError::ManifestMismatch);
 }
 
+void test_exact_manifest_capture_reuses_owned_buffers() {
+    std::array<std::byte, 16> memory{};
+    memory[3] = std::byte{0x2a};
+    Component component{.value = 17};
+    StateCheckpoint checkpoint;
+    REQUIRE(checkpoint.addMemoryRegion("memory", memory.data(), memory.size()) ==
+            StateCheckpointError::None);
+    REQUIRE(checkpoint.addComponent("component", sizeof(component.value), &component,
+                capture_component, restore_component) == StateCheckpointError::None);
+
+    StateCheckpointImage image;
+    REQUIRE(checkpoint.capture(image) == StateCheckpointError::None);
+    std::byte* const memoryBuffer = image.entries[0].bytes.data();
+    std::byte* const componentBuffer = image.entries[1].bytes.data();
+    const std::string firstDigest = image.digest;
+
+    memory[3] = std::byte{0x55};
+    component.value = 23;
+    REQUIRE(checkpoint.captureReusing(image) == StateCheckpointError::None);
+    REQUIRE(image.entries[0].bytes.data() == memoryBuffer);
+    REQUIRE(image.entries[1].bytes.data() == componentBuffer);
+    REQUIRE(image.digest != firstDigest);
+    REQUIRE(image.entries[0].bytes[3] == std::byte{0x55});
+
+    image.entries[0].name = "detached";
+    REQUIRE(checkpoint.captureReusing(image) == StateCheckpointError::None);
+    REQUIRE(image.entries[0].name == "memory");
+}
+
 void test_semantic_padding_is_explicit_and_raw_integrity_stays_exact() {
     std::array<std::byte, 16> memory{};
     memory[3] = std::byte{0x11};
@@ -207,6 +236,7 @@ int main() {
     test_round_trip_and_integrity();
     test_registration_rejections();
     test_component_fail_closed();
+    test_exact_manifest_capture_reuses_owned_buffers();
     test_semantic_padding_is_explicit_and_raw_integrity_stays_exact();
     std::cout << "state checkpoint tests passed\n";
     return 0;

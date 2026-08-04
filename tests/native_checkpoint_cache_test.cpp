@@ -90,6 +90,27 @@ void test_pinned_source_cannot_be_evicted() {
     REQUIRE(!cache.stats().sourcePinned);
 }
 
+void test_unpinned_image_is_recycled_without_touching_the_source() {
+    NativeCheckpointCache<std::string> cache(30, 2);
+    REQUIRE(cache.insert("older", "so", image("older", 8), "host-o", 2));
+    REQUIRE(cache.insert("source", "ss", image("source", 8), "host-s", 2));
+    REQUIRE(cache.pin("source"));
+
+    const std::byte* const buffer = cache.peek("older")->image.entries[0].bytes.data();
+    StateCheckpointImage recycled;
+    REQUIRE(cache.extractReusableImage(recycled));
+    REQUIRE(recycled.entries[0].bytes.data() == buffer);
+    REQUIRE(cache.peek("older") == nullptr);
+    REQUIRE(cache.peek("source") != nullptr);
+    REQUIRE(cache.stats().residentEntries == 1);
+    REQUIRE(cache.stats().residentBytes == 10);
+    REQUIRE(cache.stats().evictions == 1);
+
+    StateCheckpointImage unavailable;
+    REQUIRE(!cache.extractReusableImage(unavailable));
+    REQUIRE(cache.peek("source") != nullptr);
+}
+
 }  // namespace
 
 int main() {
@@ -97,6 +118,7 @@ int main() {
     test_replacement_and_oversize_fail_closed();
     test_misses_are_measured();
     test_pinned_source_cannot_be_evicted();
+    test_unpinned_image_is_recycled_without_touching_the_source();
     std::cout << "native checkpoint cache tests passed\n";
     return 0;
 }

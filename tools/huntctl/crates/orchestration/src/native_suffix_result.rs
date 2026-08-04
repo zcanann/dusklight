@@ -85,6 +85,12 @@ pub struct NativeCheckpointCacheResult {
     pub batch_capture_attempts: u64,
     pub batch_capture_successes: u64,
     pub batch_capture_micros: u64,
+    #[serde(default)]
+    pub checkpoint_image_reuse_enabled: bool,
+    #[serde(default)]
+    pub batch_image_reuse_attempts: u64,
+    #[serde(default)]
+    pub batch_image_reuse_successes: u64,
     pub live_endpoint_capacity_entries: u64,
     pub live_endpoint_resident_entries: u64,
     pub live_endpoint_resident_host_snapshot_bytes: u64,
@@ -745,6 +751,9 @@ fn validate_checkpoint_cache(
                 0
             }
         || actual.batch_capture_successes > actual.batch_capture_attempts
+        || actual.batch_image_reuse_successes > actual.batch_image_reuse_attempts
+        || (!actual.checkpoint_image_reuse_enabled
+            && (actual.batch_image_reuse_attempts != 0 || actual.batch_image_reuse_successes != 0))
         || actual.batch_live_retention_successes > actual.batch_live_retention_attempts
         || (actual.source_kind == "direct_process_local_continuation")
             != (actual.batch_live_consumptions == 1)

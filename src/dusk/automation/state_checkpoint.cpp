@@ -187,27 +187,55 @@ StateCheckpointError StateCheckpoint::addComponent(const std::string_view name,
 }
 
 StateCheckpointError StateCheckpoint::capture(StateCheckpointImage& image) const {
+    return captureImpl(image, false);
+}
+
+StateCheckpointError StateCheckpoint::captureReusing(StateCheckpointImage& image) const {
+    return captureImpl(image, true);
+}
+
+StateCheckpointError StateCheckpoint::captureImpl(
+    StateCheckpointImage& image, const bool reuseExactManifest) const {
     StateCheckpointImage captured;
     try {
-        captured.entries.reserve(mEntries.size());
-        for (const Entry& entry : mEntries) {
-            StateCheckpointImageEntry output{
-                .name = entry.name,
-                .kind = entry.kind,
-                .bytes = std::vector<std::byte>(entry.size),
-            };
+        const bool reusable = reuseExactManifest && image.entries.size() == mEntries.size() &&
+                              std::ranges::equal(image.entries, mEntries,
+                                  [](const StateCheckpointImageEntry& actual,
+                                      const Entry& expected) {
+                                      return actual.name == expected.name &&
+                                             actual.kind == expected.kind &&
+                                             actual.bytes.size() == expected.size;
+                                  });
+        if (reusable) {
+            captured = std::move(image);
+            captured.digest.clear();
+        } else {
+            captured.entries.reserve(mEntries.size());
+            for (const Entry& entry : mEntries) {
+                captured.entries.push_back({
+                    .name = entry.name,
+                    .kind = entry.kind,
+                    .bytes = std::vector<std::byte>(entry.size),
+                });
+            }
+        }
+        for (std::size_t index = 0; index < mEntries.size(); ++index) {
+            const Entry& entry = mEntries[index];
+            StateCheckpointImageEntry& output = captured.entries[index];
             if (entry.kind == StateCheckpointEntryKind::MemoryRegion) {
                 std::memcpy(output.bytes.data(), entry.address, entry.size);
             } else if (!entry.capture(entry.context, output.bytes)) {
+                image = {};
                 return StateCheckpointError::CaptureFailed;
             }
-            captured.entries.push_back(std::move(output));
         }
         captured.digest = checkpoint_digest(captured);
     } catch (const std::bad_alloc&) {
+        image = {};
         return StateCheckpointError::AllocationFailed;
     }
     if (captured.digest.empty()) {
+        image = {};
         return StateCheckpointError::AllocationFailed;
     }
     image = std::move(captured);

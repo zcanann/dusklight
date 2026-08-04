@@ -268,6 +268,9 @@ private:
     std::uint64_t mCheckpointCacheCaptureMicros = 0;
     std::uint64_t mCheckpointCacheCaptureAttempts = 0;
     std::uint64_t mCheckpointCacheCaptureSuccesses = 0;
+    bool mCheckpointImageReuseEnabled = true;
+    std::uint64_t mCheckpointImageReuseAttempts = 0;
+    std::uint64_t mCheckpointImageReuseSuccesses = 0;
     std::uint64_t mLiveEndpointRetentionNanos = 0;
     std::uint64_t mLiveEndpointRetentionAttempts = 0;
     std::uint64_t mLiveEndpointRetentionSuccesses = 0;

@@ -570,6 +570,14 @@ impl<'a, W> TimedTacticWorker<'a, W> {
             .pending_accounting
             .checkpoint_capture_micros
             .saturating_add(cache.batch_capture_micros);
+        self.pending_accounting.checkpoint_image_reuse_attempts = self
+            .pending_accounting
+            .checkpoint_image_reuse_attempts
+            .saturating_add(cache.batch_image_reuse_attempts);
+        self.pending_accounting.checkpoint_image_reuse_successes = self
+            .pending_accounting
+            .checkpoint_image_reuse_successes
+            .saturating_add(cache.batch_image_reuse_successes);
         self.pending_accounting.live_endpoint_retention_attempts = self
             .pending_accounting
             .live_endpoint_retention_attempts

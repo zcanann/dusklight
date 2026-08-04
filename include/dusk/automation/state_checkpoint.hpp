@@ -84,6 +84,15 @@ public:
         std::span<const StateCheckpointIgnoredRange> semanticIgnoredRanges = {});
 
     [[nodiscard]] StateCheckpointError capture(StateCheckpointImage& image) const;
+    /**
+     * Captures into an image whose exact manifest-sized buffers may be reused.
+     *
+     * This is intended for private checkpoint caches recycling an evicted
+     * image. On failure, `image` is cleared rather than preserving its prior
+     * contents. Raw integrity hashing and the resulting image are otherwise
+     * identical to `capture`.
+     */
+    [[nodiscard]] StateCheckpointError captureReusing(StateCheckpointImage& image) const;
     [[nodiscard]] StateCheckpointError restore(const StateCheckpointImage& image) const;
     /**
      * Restores a previously validated image without rehashing its bytes.
@@ -121,6 +130,8 @@ private:
         std::string_view name, std::size_t size) const;
     [[nodiscard]] StateCheckpointError restoreImpl(
         const StateCheckpointImage& image, bool validateDigest) const;
+    [[nodiscard]] StateCheckpointError captureImpl(
+        StateCheckpointImage& image, bool reuseExactManifest) const;
     [[nodiscard]] StateCheckpointError currentDigestImpl(std::string& digest,
         std::vector<StateCheckpointEntryDigest>* entryDigests, bool semantic) const;
 

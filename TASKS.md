@@ -272,6 +272,27 @@ path therefore captures one binary node image per selected decision and restores
 all compatible siblings from it; future work must reduce that single capture's
 measured cost or introduce an equally rewindable copy-on-write representation.
 
+Checkpoint-image reuse treatment (2026-08-03): retained nodes are 295,040,780-
+byte binary images. The cache previously evicted an unpinned image and then
+allocated an equally sized replacement for the selected child. It now transfers
+the deterministic LRU victim's exact-manifest buffers into the fresh capture
+while leaving the source pinned. The same instrumented executable exposes a
+disabled control through `DUSKLIGHT_DISABLE_CHECKPOINT_IMAGE_REUSE=1` and reports
+reuse attempts/successes in every native result. Across the eight fixed-work
+samples in the two control and two treatment curves under
+`build/campaigns/ordon-p0-throughput-checkpoint-image-reuse-same-native-*`, the
+median checkpoint-capture total fell from 3,184,173 to 2,203,433 microseconds
+(30.8%), native tactic execution fell from 7,475,800 to 6,504,213 microseconds
+(13.0%), and end-to-end wall fell from 10,986,809 to 10,202,695 microseconds
+(7.1%). All samples produced graph
+`a960bb9987e48e87e473481f0d3725bfb7f628cb22368c40de5e5fd336207d31`
+and useful-expansion set
+`8ec759960082b003100550f4b0f4e1db9540a33c43d448cb23767f06cb932402`.
+The resulting local projection is about 1,882 useful alternatives per ten
+minutes: a real improvement, but still below the thousands gate. Persistence
+remains approximately 1.6 seconds in uncontended samples and produced several
+multi-second outliers, so it is the next independent throughput target.
+
 ## P0: learn trajectories and coordinated tactics
 
 - [ ] Replace terminal-only whole-episode credit with state-graph backups over

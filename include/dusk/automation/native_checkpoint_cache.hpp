@@ -180,6 +180,38 @@ public:
         mPinnedIdentity.clear();
     }
 
+    /**
+     * Removes the least-recently-used unpinned entry and transfers its machine
+     * image to the caller for exact-manifest buffer reuse.
+     *
+     * The removal is an ordinary deterministic eviction. Metadata and semantic
+     * authority are deliberately discarded; only the owned byte buffers are
+     * reusable by a fresh capture.
+     */
+    [[nodiscard]] bool extractReusableImage(StateCheckpointImage& output) {
+        auto victim = mEntries.end();
+        for (auto current = mEntries.begin(); current != mEntries.end(); ++current) {
+            if (current->identity == mPinnedIdentity) {
+                continue;
+            }
+            if (victim == mEntries.end() ||
+                current->lastUseOrdinal < victim->lastUseOrdinal ||
+                (current->lastUseOrdinal == victim->lastUseOrdinal &&
+                    current->identity < victim->identity))
+            {
+                victim = current;
+            }
+        }
+        if (victim == mEntries.end()) {
+            return false;
+        }
+        subtractResident(*victim);
+        output = std::move(victim->image);
+        mEntries.erase(victim);
+        ++mEvictions;
+        return true;
+    }
+
     [[nodiscard]] NativeCheckpointCacheStats stats() const noexcept {
         return {
             .capacityBytes = mCapacityBytes,
