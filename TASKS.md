@@ -146,7 +146,7 @@ worker-session validators.
 - [ ] Remove avoidable process boot, game boot, serialization, hashing, logging,
   and artifact-write work from the inner branch loop. Keep a native worker alive
   across many owned restores and branches where correctness permits.
-- [ ] Execute sibling alternatives from one graph-node checkpoint in one native
+- [x] Execute sibling alternatives from one graph-node checkpoint in one native
   multi-candidate batch, or schedule independent graph nodes concurrently. A
   proposal-width-two decision must not choose between duplicating the entire
   prefix on another process and serializing two separate native requests on one
@@ -223,10 +223,31 @@ batch on its owner. In the two-worker sample it reduced prefix materializations
 from 18 to 3 and replayed prefix ticks from 1,206 to 148 while preserving the
 same state-graph identity and 32 useful expansions. It did not improve optimized
 wall time: the median changed from 22.44 to 23.10 seconds because the two sibling
-requests became serial. The experiment was reverted. The next implementation
-must reuse one checkpoint inside a native multi-candidate request or expose
-parallelism across independent graph nodes; locality alone is not a throughput
-win when it removes proposal parallelism.
+requests became serial. The experiment was reverted because locality alone is
+not a throughput win when it removes proposal parallelism.
+
+Native sibling-batch treatment (2026-08-03): compatible static, compiled native-
+generic, and cancellation-free reactive siblings now execute in one compact
+native request from the same restored graph-node checkpoint. Candidate horizons
+remain independent, and only the selected child is retained as a reusable
+portable image. The same-native, same-plan, same-`campaign`-profile A/B compares
+`build/campaigns/ordon-p0-throughput-portable-owner-same-native-control-w1-w2-d16-p2-r2-v1-20260803`
+against
+`build/campaigns/ordon-p0-throughput-native-sibling-batch-campaign-profile-w1-w2-d16-p2-r2-v1-20260803`.
+Both produced the identical state graph
+`578d53b8c7faffdf410d4ed7349aa1f5f6d4ad8c3e4c63496816fed9044e4ede`,
+identical useful-expansion set
+`a22b08debae51e07a04e49ca20e944ef7b125385f60724383a2181d0a3caef13`,
+and 32 useful expansions per sample. With one worker, median wall time fell from
+23.06 to 16.06 seconds and throughput rose from 1.388 to 1.993 useful
+expansions/second (30.4% less wall time, 43.6% more throughput). Prefix
+materializations fell from 15 to 3, replayed prefix ticks from 1,058 to 148, and
+non-root restore requests from 30 to 15. With two workers, wall time fell from
+16.54 to 16.00 seconds and throughput rose from 1.934 to 2.000/s. The bounded
+capacity projection is therefore about 1,196 useful alternatives per ten
+minutes. A second worker provides no material single-lane benefit after sibling
+batching; additional worker throughput must come from independent graph nodes or
+concurrent lanes, not from duplicating one decision's prefix.
 
 ## P0: learn trajectories and coordinated tactics
 

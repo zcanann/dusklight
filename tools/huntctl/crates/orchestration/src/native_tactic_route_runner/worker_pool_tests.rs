@@ -275,6 +275,28 @@ fn sole_worker_replays_one_portable_batch_and_rearms_the_primary_last() {
 }
 
 #[test]
+fn compatible_siblings_share_the_frontier_owner_dispatch() {
+    let pool = proposal_pool(2);
+    let frontier = cached_frontier(1);
+    let dispatch = pool.batched_proposal_dispatch(2, Some(&frontier), true, 40);
+
+    assert_eq!(dispatch.worker_slot, 1);
+    assert_eq!(dispatch.proposal_indices, vec![0, 1]);
+    assert_eq!(dispatch.checkpoint_source, Some(frontier.source));
+    assert!(!dispatch.materialize_frontier);
+}
+
+#[test]
+fn root_sibling_batch_uses_one_worker_without_frontier_materialization() {
+    let pool = proposal_pool(2);
+    let dispatch = pool.batched_proposal_dispatch(2, None, false, 0);
+
+    assert_eq!(dispatch.proposal_indices, vec![0, 1]);
+    assert!(dispatch.checkpoint_source.is_none());
+    assert!(!dispatch.materialize_frontier);
+}
+
+#[test]
 fn generated_training_rows_are_selected_by_lane_identity_not_projection_offset() {
     let lane = NativeTacticLanePlan {
         lane_index: 1,

@@ -2234,7 +2234,7 @@ bool LearningEpisodeShardWriter::append(const LearningEpisodeDescriptor& descrip
         descriptor.ticksExecuted == 0 || uncompressedEpisode.empty() ||
         uncompressedEpisode.size() > std::numeric_limits<std::uint32_t>::max() ||
         descriptor.ticksExecuted > mMaximumTicks ||
-        descriptor.remainingTicks != mMaximumTicks - descriptor.ticksExecuted ||
+        descriptor.remainingTicks > mMaximumTicks - descriptor.ticksExecuted ||
         !outcomeIsConsistent)
     {
         error = "learning episode block is invalid";

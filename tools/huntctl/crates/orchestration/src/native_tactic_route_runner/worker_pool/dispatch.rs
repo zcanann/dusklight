@@ -9,6 +9,32 @@ pub(super) struct NativeTacticProposalDispatch {
 }
 
 impl NativeTacticProposalPool {
+    pub(super) fn batched_proposal_dispatch(
+        &self,
+        proposal_count: usize,
+        direct: Option<&CachedTacticFrontier>,
+        restoration_present: bool,
+        replayed_prefix: usize,
+    ) -> NativeTacticProposalDispatch {
+        let worker_slot = direct.map_or_else(
+            || {
+                self.preferred_owner_slot
+                    .unwrap_or_else(|| self.next_counterfactual_worker(None))
+            },
+            |frontier| frontier.worker_slot,
+        );
+        NativeTacticProposalDispatch {
+            worker_slot,
+            proposal_indices: (0..proposal_count).collect(),
+            checkpoint_source: direct.map(|frontier| frontier.source.clone()),
+            materialize_frontier: requires_frontier_materialization(
+                restoration_present,
+                replayed_prefix,
+                direct.is_some(),
+            ),
+        }
+    }
+
     pub(super) fn proposal_dispatches(
         &self,
         proposal_count: usize,

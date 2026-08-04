@@ -30,7 +30,7 @@ pub(super) fn decode_episode(
     if reader.u64()? != 0
         || ticks_executed == 0
         || ticks_executed > maximum_ticks
-        || remaining_ticks != maximum_ticks - ticks_executed
+        || remaining_ticks > maximum_ticks - ticks_executed
         || id_length == 0
         || expanded_size > MAX_EXPANDED_BYTES
     {
@@ -89,10 +89,14 @@ pub(super) fn decode_episode(
         ));
     }
     let first_hit_tick = (first_hit != u32::MAX).then_some(first_hit);
+    let episode_maximum_ticks = ticks_executed
+        .checked_add(remaining_ticks)
+        .filter(|ticks| *ticks <= maximum_ticks)
+        .ok_or_else(|| NativeEpisodeShardError::new("episode horizon exceeds shard maximum"))?;
     if success != first_hit_tick.is_some()
         || first_hit_tick.is_some_and(|tick| tick + 1 != ticks_executed)
         || steps.first().is_none_or(|step| {
-            step.pre_input.remaining_ticks != maximum_ticks
+            step.pre_input.remaining_ticks != episode_maximum_ticks
                 || step.pre_input.tape_frame != source_frame
         })
         || steps

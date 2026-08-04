@@ -134,8 +134,9 @@ pub(super) fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
                 },
                 candidate_tape,
                 candidate_prefix_ticks,
-                request,
-                validated,
+                &request,
+                &validated,
+                0,
                 Some(loaded_episode),
                 queries
                     .into_iter()
@@ -262,6 +263,174 @@ pub(super) fn canonical_controller_heading(heading: f32) -> f32 {
     wrapped
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum NativeControllerOutcomeKind {
+    NativeGeneric,
+    Reactive,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn finish_native_controller_candidate(
+    root_checkpoint_sha256: Digest,
+    selected: &SelectedTactic,
+    before: &FactSnapshot,
+    route_prefix: &InputTape,
+    candidate_prefix_ticks: usize,
+    request: &NativeSuffixBatch,
+    validated: &ValidatedNativeSuffixBatch,
+    candidate_index: usize,
+    loaded_episode: LoadedCandidateEpisode,
+    duration: TacticDurationBounds,
+    termination: OptionCondition,
+    program: ControllerProgram,
+    kind: NativeControllerOutcomeKind,
+) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
+    let episode = &loaded_episode.episode;
+    if episode.steps.len() <= candidate_prefix_ticks
+        || episode.steps.len()
+            > candidate_prefix_ticks.saturating_add(duration.maximum_ticks as usize)
+    {
+        return Err(NativeTacticWorkerError::DetachedResult(
+            "reactive controller episode length",
+        ));
+    }
+    let prefix_start = route_prefix
+        .frames
+        .len()
+        .checked_sub(candidate_prefix_ticks)
+        .ok_or(NativeTacticWorkerError::DetachedSelection)?;
+    let prefix_frames = route_prefix.frames[prefix_start..].to_vec();
+    for (step, expected) in episode.steps.iter().zip(&prefix_frames) {
+        if !same_pad(step.chosen_pad, expected.pads[0])
+            || !same_pad(step.consumed_pad, expected.pads[0])
+        {
+            return Err(NativeTacticWorkerError::PadMismatch);
+        }
+    }
+
+    let mut option_tape = InputTape {
+        boot: route_prefix.boot.clone(),
+        tick_rate_numerator: route_prefix.tick_rate_numerator,
+        tick_rate_denominator: route_prefix.tick_rate_denominator,
+        frames: Vec::with_capacity(duration.maximum_ticks as usize),
+    };
+    let mut queries = Vec::with_capacity(duration.maximum_ticks as usize);
+    let option_steps = &episode.steps[candidate_prefix_ticks..];
+    // Audit the exact serialized controller that ran natively. Regenerating
+    // controller PADs through a different tactic stepper can introduce a
+    // one-unit rounding mismatch even when the native action is correct.
+    let mut stepper = ControllerProgramStepper::new(program)
+        .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
+    let mut observation = controller_observation_from_facts(before)?;
+    let mut stepper_end = None;
+    for (index, native_step) in option_steps.iter().enumerate() {
+        let realized = stepper
+            .step(&observation)
+            .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
+        if matches!(realized.end, Some(ControllerRuntimeEnd::TargetLost { .. })) {
+            return Err(NativeTacticWorkerError::DetachedResult(
+                "native controller lost an undeclared target",
+            ));
+        }
+        let frame = realized.frame.ok_or_else(|| {
+            NativeTacticWorkerError::Observation(
+                "native controller returned neither PAD nor stopping condition".into(),
+            )
+        })?;
+        if !same_pad(native_step.chosen_pad, frame.pads[0])
+            || !same_pad(native_step.consumed_pad, frame.pads[0])
+        {
+            return Err(NativeTacticWorkerError::Observation(format!(
+                "native controller PAD mismatch at local tick {index}: chosen {:?}, consumed {:?}, replayed {:?}",
+                native_step.chosen_pad, native_step.consumed_pad, frame.pads[0]
+            )));
+        }
+        if realized.end.is_some() && index + 1 != option_steps.len() {
+            return Err(NativeTacticWorkerError::DetachedResult(
+                "native controller continued after the tactic stopped",
+            ));
+        }
+        stepper_end = realized.end;
+        option_tape.frames.push(frame);
+        queries.push(realized.query);
+        if index + 1 != option_steps.len() {
+            observation =
+                controller_observation_from_post_simulation(&native_step.post_simulation)?;
+        }
+    }
+
+    let (end_reason, cancellation_conditions) = if episode.success {
+        (
+            OptionEndReason::Cancelled { condition_index: 0 },
+            vec![OptionCondition::TargetReached {
+                target: "authored_goal".into(),
+            }],
+        )
+    } else {
+        let end = stepper_end.ok_or(NativeTacticWorkerError::DetachedResult(
+            "native controller stopped before its bounded tactic",
+        ))?;
+        match kind {
+            NativeControllerOutcomeKind::NativeGeneric => (
+                match end {
+                    ControllerRuntimeEnd::TargetReached { .. } => OptionEndReason::Terminated,
+                    ControllerRuntimeEnd::MaximumDuration => OptionEndReason::MaximumDuration,
+                    ControllerRuntimeEnd::TargetLost { .. } => unreachable!(),
+                },
+                Vec::new(),
+            ),
+            NativeControllerOutcomeKind::Reactive => {
+                if !matches!(
+                    end,
+                    ControllerRuntimeEnd::MaximumDuration
+                        | ControllerRuntimeEnd::TargetReached { .. }
+                ) {
+                    return Err(NativeTacticWorkerError::DetachedResult(
+                        "native controller stopped before its bounded tactic",
+                    ));
+                }
+                (OptionEndReason::Completed, Vec::new())
+            }
+        }
+    };
+    let execution = capture_local_execution(
+        selected,
+        duration,
+        termination,
+        cancellation_conditions,
+        end_reason,
+        &option_tape,
+    )?;
+    let mut candidate_tape = InputTape {
+        boot: route_prefix.boot.clone(),
+        tick_rate_numerator: route_prefix.tick_rate_numerator,
+        tick_rate_denominator: route_prefix.tick_rate_denominator,
+        frames: prefix_frames,
+    };
+    candidate_tape.frames.extend_from_slice(&option_tape.frames);
+    observe_outcome(
+        root_checkpoint_sha256,
+        selected,
+        before,
+        route_prefix,
+        PreparedNativeTactic {
+            option_tape,
+            execution,
+            duration,
+        },
+        candidate_tape,
+        candidate_prefix_ticks,
+        request,
+        validated,
+        candidate_index,
+        Some(loaded_episode),
+        queries
+            .into_iter()
+            .map(TacticRuntimeQuery::ReactiveController)
+            .collect(),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
     worker: &mut W,
@@ -295,134 +464,20 @@ pub(super) fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
     write_new_compact_batch(&paths.request, &request)?;
     let validated = worker.run_tactic_batch(&paths.request, &paths.result, &request)?;
     let loaded_episode = load_candidate_episode(&request, &validated)?;
-    let episode = &loaded_episode.episode;
-    if episode.steps.len() <= candidate_prefix_ticks
-        || episode.steps.len()
-            > candidate_prefix_ticks.saturating_add(duration.maximum_ticks as usize)
-    {
-        return Err(NativeTacticWorkerError::DetachedResult(
-            "reactive controller episode length",
-        ));
-    }
-    for (step, expected) in episode.steps.iter().zip(&prefix_frames) {
-        if !same_pad(step.chosen_pad, expected.pads[0])
-            || !same_pad(step.consumed_pad, expected.pads[0])
-        {
-            return Err(NativeTacticWorkerError::PadMismatch);
-        }
-    }
-
-    let mut option_tape = InputTape {
-        boot: route_prefix.boot.clone(),
-        tick_rate_numerator: route_prefix.tick_rate_numerator,
-        tick_rate_denominator: route_prefix.tick_rate_denominator,
-        frames: Vec::with_capacity(duration.maximum_ticks as usize),
-    };
-    let mut queries = Vec::with_capacity(duration.maximum_ticks as usize);
-    let option_steps = &episode.steps[candidate_prefix_ticks..];
-    // The serialized DUSKCTRL program is the executable action sent to the
-    // native worker. Replay that same contract here instead of independently
-    // regenerating PAD values through NativeGenericTacticStepper. The latter
-    // remains the progressive-audit executor; using it to audit a compiled
-    // program duplicated trigonometry and rounding, so rare valid controllers
-    // could differ by one stick unit and be rejected after native execution.
-    let mut controller_stepper = ControllerProgramStepper::new(program)
-        .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
-    let mut observation = controller_observation_from_facts(before)?;
-    let mut stepper_end = None;
-    for (index, native_step) in option_steps.iter().enumerate() {
-        let realized = controller_stepper
-            .step(&observation)
-            .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
-        if matches!(realized.end, Some(ControllerRuntimeEnd::TargetLost { .. })) {
-            return Err(NativeTacticWorkerError::DetachedResult(
-                "native generic controller lost an undeclared target",
-            ));
-        }
-        let frame = realized.frame.ok_or_else(|| {
-            NativeTacticWorkerError::Observation(
-                "native generic controller returned neither PAD nor stopping condition".into(),
-            )
-        })?;
-        if !same_pad(native_step.chosen_pad, frame.pads[0])
-            || !same_pad(native_step.consumed_pad, frame.pads[0])
-        {
-            return Err(NativeTacticWorkerError::Observation(format!(
-                "native generic controller PAD mismatch at local tick {index}: chosen {:?}, consumed {:?}, replayed {:?}",
-                native_step.chosen_pad, native_step.consumed_pad, frame.pads[0]
-            )));
-        }
-        if realized.end.is_some() && index + 1 != option_steps.len() {
-            return Err(NativeTacticWorkerError::DetachedResult(
-                "native controller continued after the tactic stopped",
-            ));
-        }
-        stepper_end = realized.end;
-        option_tape.frames.push(frame);
-        queries.push(realized.query);
-        if index + 1 != option_steps.len() {
-            observation =
-                controller_observation_from_post_simulation(&native_step.post_simulation)?;
-        }
-    }
-
-    let (end_reason, cancellation_conditions) = if episode.success {
-        (
-            OptionEndReason::Cancelled { condition_index: 0 },
-            vec![OptionCondition::TargetReached {
-                target: "authored_goal".into(),
-            }],
-        )
-    } else {
-        (
-            match stepper_end.ok_or(NativeTacticWorkerError::DetachedResult(
-                "native controller stopped before its bounded tactic",
-            ))? {
-                ControllerRuntimeEnd::TargetReached { .. } => OptionEndReason::Terminated,
-                ControllerRuntimeEnd::MaximumDuration => OptionEndReason::MaximumDuration,
-                ControllerRuntimeEnd::TargetLost { .. } => {
-                    return Err(NativeTacticWorkerError::DetachedResult(
-                        "native generic controller lost an undeclared target",
-                    ));
-                }
-            },
-            Vec::new(),
-        )
-    };
-    let execution = capture_local_execution(
-        selected,
-        duration,
-        termination,
-        cancellation_conditions,
-        end_reason,
-        &option_tape,
-    )?;
-    let mut candidate_tape = InputTape {
-        boot: route_prefix.boot.clone(),
-        tick_rate_numerator: route_prefix.tick_rate_numerator,
-        tick_rate_denominator: route_prefix.tick_rate_denominator,
-        frames: prefix_frames,
-    };
-    candidate_tape.frames.extend_from_slice(&option_tape.frames);
-    observe_outcome(
+    finish_native_controller_candidate(
         root_checkpoint_sha256,
         selected,
         before,
         route_prefix,
-        PreparedNativeTactic {
-            option_tape,
-            execution,
-            duration,
-        },
-        candidate_tape,
         candidate_prefix_ticks,
-        request,
-        validated,
-        Some(loaded_episode),
-        queries
-            .into_iter()
-            .map(TacticRuntimeQuery::ReactiveController)
-            .collect(),
+        &request,
+        &validated,
+        0,
+        loaded_episode,
+        duration,
+        termination,
+        program,
+        NativeControllerOutcomeKind::NativeGeneric,
     )
 }
 
@@ -448,10 +503,10 @@ pub(super) fn execute_reactive_controller_native<W: PersistentTacticBatchWorker>
     candidate_prefix_ticks: usize,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
     checkpoint_retention: NativeTacticCheckpointRetention,
-    mut stepper: ControllerProgramStepper,
+    _stepper: ControllerProgramStepper,
     duration: TacticDurationBounds,
     termination: OptionCondition,
-    mut cancellation: Vec<OptionCondition>,
+    cancellation: Vec<OptionCondition>,
     program: ControllerProgram,
     checkpoint_cache_capacity_bytes: usize,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
@@ -474,123 +529,20 @@ pub(super) fn execute_reactive_controller_native<W: PersistentTacticBatchWorker>
     write_new_compact_batch(&paths.request, &request)?;
     let validated = worker.run_tactic_batch(&paths.request, &paths.result, &request)?;
     let loaded_episode = load_candidate_episode(&request, &validated)?;
-    let episode = &loaded_episode.episode;
-    if episode.steps.len() <= candidate_prefix_ticks
-        || episode.steps.len()
-            > candidate_prefix_ticks.saturating_add(duration.maximum_ticks as usize)
-    {
-        return Err(NativeTacticWorkerError::DetachedResult(
-            "reactive controller episode length",
-        ));
-    }
-    for (step, expected) in episode.steps.iter().zip(&prefix_frames) {
-        if !same_pad(step.chosen_pad, expected.pads[0])
-            || !same_pad(step.consumed_pad, expected.pads[0])
-        {
-            return Err(NativeTacticWorkerError::PadMismatch);
-        }
-    }
-
-    let mut option_tape = InputTape {
-        boot: route_prefix.boot.clone(),
-        tick_rate_numerator: route_prefix.tick_rate_numerator,
-        tick_rate_denominator: route_prefix.tick_rate_denominator,
-        frames: Vec::with_capacity(duration.maximum_ticks as usize),
-    };
-    let mut queries = Vec::with_capacity(duration.maximum_ticks as usize);
-    let option_steps = &episode.steps[candidate_prefix_ticks..];
-    let mut observation = controller_observation_from_facts(before)?;
-    let mut stepper_end = None;
-    for (index, native_step) in option_steps.iter().enumerate() {
-        let realized = stepper
-            .step(&observation)
-            .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
-        if matches!(realized.end, Some(ControllerRuntimeEnd::TargetLost { .. })) {
-            return Err(NativeTacticWorkerError::DetachedResult(
-                "native controller lost an undeclared target",
-            ));
-        }
-        let frame = realized.frame.ok_or_else(|| {
-            NativeTacticWorkerError::Observation(
-                "reactive controller returned neither PAD nor stopping condition".into(),
-            )
-        })?;
-        if !same_pad(native_step.chosen_pad, frame.pads[0])
-            || !same_pad(native_step.consumed_pad, frame.pads[0])
-        {
-            return Err(NativeTacticWorkerError::Observation(format!(
-                "native reactive controller PAD mismatch at local tick {index}: chosen {:?}, consumed {:?}, replayed {:?}",
-                native_step.chosen_pad, native_step.consumed_pad, frame.pads[0]
-            )));
-        }
-        if realized.end.is_some() && index + 1 != option_steps.len() {
-            return Err(NativeTacticWorkerError::DetachedResult(
-                "native controller continued after the tactic stopped",
-            ));
-        }
-        stepper_end = realized.end;
-        option_tape.frames.push(frame);
-        queries.push(realized.query);
-        if index + 1 != option_steps.len() {
-            observation =
-                controller_observation_from_post_simulation(&native_step.post_simulation)?;
-        }
-    }
-
-    let end_reason = if episode.success {
-        let condition_index = u32::try_from(cancellation.len())
-            .map_err(|_| NativeTacticWorkerError::InvalidDuration)?;
-        cancellation.push(OptionCondition::TargetReached {
-            target: "authored_goal".into(),
-        });
-        OptionEndReason::Cancelled { condition_index }
-    } else {
-        if !matches!(
-            stepper_end,
-            Some(
-                ControllerRuntimeEnd::MaximumDuration | ControllerRuntimeEnd::TargetReached { .. }
-            )
-        ) {
-            return Err(NativeTacticWorkerError::DetachedResult(
-                "native controller stopped before its bounded tactic",
-            ));
-        }
-        OptionEndReason::Completed
-    };
-    let execution = capture_local_execution(
-        selected,
-        duration,
-        termination,
-        cancellation,
-        end_reason,
-        &option_tape,
-    )?;
-    let mut candidate_tape = InputTape {
-        boot: route_prefix.boot.clone(),
-        tick_rate_numerator: route_prefix.tick_rate_numerator,
-        tick_rate_denominator: route_prefix.tick_rate_denominator,
-        frames: prefix_frames,
-    };
-    candidate_tape.frames.extend_from_slice(&option_tape.frames);
-    observe_outcome(
+    finish_native_controller_candidate(
         root_checkpoint_sha256,
         selected,
         before,
         route_prefix,
-        PreparedNativeTactic {
-            option_tape,
-            execution,
-            duration,
-        },
-        candidate_tape,
         candidate_prefix_ticks,
-        request,
-        validated,
-        Some(loaded_episode),
-        queries
-            .into_iter()
-            .map(TacticRuntimeQuery::ReactiveController)
-            .collect(),
+        &request,
+        &validated,
+        0,
+        loaded_episode,
+        duration,
+        termination,
+        program,
+        NativeControllerOutcomeKind::Reactive,
     )
 }
 
@@ -661,8 +613,9 @@ pub(super) fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
                 },
                 candidate_tape,
                 candidate_prefix_ticks,
-                request,
-                validated,
+                &request,
+                &validated,
+                0,
                 Some(loaded_episode),
                 queries
                     .into_iter()
@@ -748,8 +701,9 @@ pub(super) fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
                 },
                 candidate_tape,
                 candidate_prefix_ticks,
-                request,
-                validated,
+                &request,
+                &validated,
+                0,
                 Some(loaded_episode),
                 queries
                     .into_iter()

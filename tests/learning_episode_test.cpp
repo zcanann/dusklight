@@ -919,6 +919,17 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
         REQUIRE(replacement.finish(error));
         REQUIRE(read_little<std::uint32_t>(read_file(path), 16) == 1);
         std::filesystem::remove(path);
+
+        const std::filesystem::path widerPath = path.string() + ".wider";
+        LearningEpisodeShardMetadata widerMetadata = metadata;
+        widerMetadata.maximumTicks = 6;
+        LearningEpisodeShardWriter wider;
+        REQUIRE(wider.begin(widerPath, widerMetadata, error));
+        REQUIRE(wider.append(
+            {.id = "shorter-than-shard", .ticksExecuted = 1, .remainingTicks = 3},
+            episode, error));
+        REQUIRE(wider.finish(error));
+        std::filesystem::remove(widerPath);
     }
 }
 

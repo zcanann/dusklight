@@ -125,12 +125,28 @@ impl NativeTacticProposalPool {
                 })
             })
             .flatten();
-        let dispatches = self.proposal_dispatches(
-            proposals.len(),
-            direct,
-            restoration.is_some(),
-            replayed_prefix,
-        );
+        let native_batch_compatible = selected_tactic_batch_is_compatible(
+            proposals,
+            &proposal_catalog,
+            &proposal_blueprints,
+            self.execution_strategy,
+        )
+        .map_err(route_error)?;
+        let dispatches = if native_batch_compatible {
+            vec![self.batched_proposal_dispatch(
+                proposals.len(),
+                direct,
+                restoration.is_some(),
+                replayed_prefix,
+            )]
+        } else {
+            self.proposal_dispatches(
+                proposals.len(),
+                direct,
+                restoration.is_some(),
+                replayed_prefix,
+            )
+        };
         let mut responses = Vec::with_capacity(dispatches.len());
         for dispatch in dispatches {
             let (response, receiver) = mpsc::sync_channel(1);
@@ -721,6 +737,141 @@ pub(in crate::native_tactic_route_runner) fn recorded_demonstration_chunks(
         .collect())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn execute_compatible_job_batch<W: PersistentTacticBatchWorker>(
+    worker: &mut TimedTacticWorker<'_, W>,
+    worker_slot: usize,
+    job: &NativeTacticProposalJob,
+    proposals: &[IndexedNativeTacticProposal],
+    checkpoint_source: Option<&NativeTacticCheckpointSource>,
+    artifact_directory: &str,
+    execution_started: Instant,
+    native_before: Duration,
+    native_batch_before: Duration,
+    ipc_before: Duration,
+    observation_before: Duration,
+    corpus_before: Duration,
+) -> Result<Option<Vec<NativeTacticProposalWork>>, NativeTacticWorkerError> {
+    if proposals.len() < 2 {
+        return Ok(None);
+    }
+    for proposal in proposals {
+        fs::create_dir_all(proposal_artifact_root(
+            &job.paths_root,
+            proposal.proposal_index,
+        ))
+        .map_err(|error| NativeTacticWorkerError::Io(error.to_string()))?;
+    }
+    let first = proposals
+        .first()
+        .ok_or(NativeTacticWorkerError::DetachedSelection)?;
+    let artifact_root =
+        proposal_artifact_root(&job.paths_root, first.proposal_index).join(artifact_directory);
+    fs::create_dir_all(&artifact_root)
+        .map_err(|error| NativeTacticWorkerError::Io(error.to_string()))?;
+    let selected = proposals
+        .iter()
+        .map(|proposal| proposal.selected.clone())
+        .collect::<Vec<_>>();
+    let retain_candidate_index =
+        (!matches!(job.primary_retention, NativeTacticCheckpointRetention::None))
+            .then(|| {
+                proposals
+                    .iter()
+                    .position(|proposal| proposal.proposal_index == 0)
+            })
+            .flatten();
+    let Some(outcomes) = execute_selected_tactic_batch_if_compatible(
+        worker,
+        &selected,
+        &job.proposal_catalog,
+        &job.proposal_blueprints,
+        &job.source_snapshot,
+        &job.source_route_tape,
+        checkpoint_source,
+        &NativeTacticWorkerPaths {
+            request: artifact_root.join("request.dsbx"),
+            result: artifact_root.join("result.json"),
+        },
+        retain_candidate_index,
+        job.execution_strategy,
+        job.checkpoint_cache_capacity_bytes,
+    )?
+    else {
+        return Ok(None);
+    };
+    if outcomes.len() != proposals.len() {
+        return Err(NativeTacticWorkerError::DetachedResult(
+            "batched tactic outcome count",
+        ));
+    }
+    if checkpoint_source.is_none() {
+        worker.record_route_replay(job.source_route_tape.frames.len())?;
+    }
+
+    // Batch-level native and IPC accounting must be reported exactly once;
+    // state extraction remains candidate-local because it occurs in Rust.
+    let native_elapsed = worker.native_elapsed.saturating_sub(native_before);
+    let native_batch_elapsed = worker
+        .native_batch_elapsed
+        .saturating_sub(native_batch_before);
+    let ipc_elapsed = worker.ipc_elapsed.saturating_sub(ipc_before);
+    let observation_capture_elapsed = worker
+        .observation_capture_elapsed
+        .saturating_sub(observation_before);
+    let corpus_encoding_elapsed = worker.corpus_encoding_elapsed.saturating_sub(corpus_before);
+    let state_extraction_micros = outcomes.iter().fold(0_u64, |total, outcome| {
+        total.saturating_add(outcome.state_extraction_micros)
+    });
+    let preparation_elapsed = execution_started
+        .elapsed()
+        .saturating_sub(native_batch_elapsed)
+        .saturating_sub(ipc_elapsed)
+        .saturating_sub(Duration::from_micros(state_extraction_micros));
+    let mut restore_accounting = Some(worker.take_accounting());
+    Ok(Some(
+        outcomes
+            .into_iter()
+            .enumerate()
+            .map(|(index, outcome)| NativeTacticProposalWork {
+                execution_plan_sha256: job.execution_plan_sha256,
+                worker_slot,
+                outcome,
+                native_elapsed: if index == 0 {
+                    native_elapsed
+                } else {
+                    Duration::ZERO
+                },
+                ipc_elapsed: if index == 0 {
+                    ipc_elapsed
+                } else {
+                    Duration::ZERO
+                },
+                observation_capture_elapsed: if index == 0 {
+                    observation_capture_elapsed
+                } else {
+                    Duration::ZERO
+                },
+                corpus_encoding_elapsed: if index == 0 {
+                    corpus_encoding_elapsed
+                } else {
+                    Duration::ZERO
+                },
+                preparation_elapsed: if index == 0 {
+                    preparation_elapsed
+                } else {
+                    Duration::ZERO
+                },
+                restore_accounting: if index == 0 {
+                    restore_accounting.take().unwrap_or_default()
+                } else {
+                    NativeTacticRestoreAccounting::default()
+                },
+            })
+            .collect(),
+    ))
+}
+
 pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
     worker_slot: usize,
     mut worker: NativeSuffixWorkerSession,
@@ -795,7 +946,70 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
         let mut work = Vec::with_capacity(job.proposals.len());
         let mut failed = None;
         let proposals = std::mem::take(&mut job.proposals);
-        for (batch_index, proposal) in proposals.into_iter().enumerate() {
+        let mut batch_executed = false;
+        let mut batched = execute_compatible_job_batch(
+            &mut timed_worker,
+            worker_slot,
+            &job,
+            &proposals,
+            checkpoint_source.as_ref(),
+            "sibling-batch",
+            batch_started,
+            native_before_batch,
+            native_batch_before_batch,
+            ipc_before_batch,
+            observation_before_batch,
+            corpus_before_batch,
+        );
+        if batched
+            .as_ref()
+            .is_err_and(NativeTacticWorkerError::is_missing_process_local_checkpoint)
+            && checkpoint_source.is_some()
+        {
+            checkpoint_source = match materialize_job_frontier(
+                &mut timed_worker,
+                &job,
+                first_proposal_index,
+                "frontier-replay-fallback",
+                true,
+            ) {
+                Ok(source) => Some(source),
+                Err(error) => {
+                    batched = Err(error);
+                    None
+                }
+            };
+            if checkpoint_source.is_some() {
+                batched = execute_compatible_job_batch(
+                    &mut timed_worker,
+                    worker_slot,
+                    &job,
+                    &proposals,
+                    checkpoint_source.as_ref(),
+                    "sibling-batch-after-replay",
+                    batch_started,
+                    native_before_batch,
+                    native_batch_before_batch,
+                    ipc_before_batch,
+                    observation_before_batch,
+                    corpus_before_batch,
+                );
+            }
+        }
+        match batched {
+            Ok(Some(batched_work)) => {
+                work = batched_work;
+                batch_executed = true;
+            }
+            Ok(None) => {}
+            Err(error) => failed = Some(route_error(error)),
+        }
+        let sequential_proposals = if !batch_executed && failed.is_none() {
+            proposals
+        } else {
+            Vec::new()
+        };
+        for (batch_index, proposal) in sequential_proposals.into_iter().enumerate() {
             let proposal_root = proposal_artifact_root(&job.paths_root, proposal.proposal_index);
             if let Err(error) = fs::create_dir_all(&proposal_root).map_err(route_error) {
                 failed = Some(error);
@@ -896,13 +1110,13 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
                     job.checkpoint_cache_capacity_bytes,
                 );
             }
-            if outcome.is_ok() && checkpoint_source.is_none() {
-                if let Err(error) =
+            if outcome.is_ok()
+                && checkpoint_source.is_none()
+                && let Err(error) =
                     timed_worker.record_route_replay(job.source_route_tape.frames.len())
-                {
-                    failed = Some(route_error(error));
-                    break;
-                }
+            {
+                failed = Some(route_error(error));
+                break;
             }
             let native_elapsed = timed_worker.native_elapsed.saturating_sub(native_before);
             let native_batch_elapsed = timed_worker

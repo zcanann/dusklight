@@ -13,10 +13,10 @@ use crate::native_tactic_worker::{
     NativeGenericExecutionStrategy, NativeTacticCheckpointRetention, NativeTacticCheckpointSource,
     NativeTacticCheckpointStorage, NativeTacticWorkerError, NativeTacticWorkerOutcome,
     NativeTacticWorkerPaths, PersistentTacticBatchWorker, TACTIC_CHECKPOINT_CACHE_BYTES,
-    TACTIC_INTERMEDIATE_BOUNDARY_STRIDE,
+    TACTIC_INTERMEDIATE_BOUNDARY_STRIDE, execute_selected_tactic_batch_if_compatible,
     execute_selected_tactic_with_checkpoint_retention_and_strategy,
-    materialize_tactic_frontier_with_cache_capacity, tactic_checkpoint_cache_request,
-    tactic_root_checkpoint_sha256,
+    materialize_tactic_frontier_with_cache_capacity, selected_tactic_batch_is_compatible,
+    tactic_checkpoint_cache_request, tactic_root_checkpoint_sha256,
 };
 use crate::optimization_request::{CampaignClass, OptimizationRequest};
 use crate::reporting::GraphSearchReport;

@@ -233,6 +233,46 @@ fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
 }
 
 #[test]
+fn static_siblings_are_admitted_to_one_checkpoint_batch() {
+    let catalog = TacticAssetCatalog::new(vec![
+        TacticCatalogEntry::new(
+            "shield-short",
+            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 2 })),
+        )
+        .unwrap(),
+        TacticCatalogEntry::new(
+            "shield-long",
+            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 4 })),
+        )
+        .unwrap(),
+    ])
+    .unwrap();
+    let selected = ["shield-short", "shield-long"].map(|option_id| SelectedTactic {
+        schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+        learner_snapshot_sha256: Digest([1; 32]),
+        decision_index: 4,
+        descriptor: catalog
+            .entry(option_id)
+            .unwrap()
+            .description()
+            .option
+            .clone(),
+        reason: TacticSelectionReason::Greedy,
+        exploration_draw: 0,
+    });
+
+    assert!(
+        selected_tactic_batch_is_compatible(
+            &selected,
+            &catalog,
+            &[],
+            NativeGenericExecutionStrategy::NativeController,
+        )
+        .unwrap()
+    );
+}
+
+#[test]
 fn relative_heading_becomes_one_linear_native_controller_candidate() {
     let authored_heading = 0.375_f32;
     let plan = NativeGenericTacticPlan {
@@ -747,8 +787,9 @@ fn native_episode_observes_the_real_stop_and_next_fact_boundary() {
         prepared,
         option_tape,
         0,
-        request,
-        validated,
+        &request,
+        &validated,
+        0,
         Some(loaded_episode),
         Vec::new(),
     )

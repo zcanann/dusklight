@@ -40,8 +40,9 @@ use dusklight_learning::tactic_blueprint::{
 use dusklight_learning::tactic_exploration::SelectedTactic;
 use dusklight_search::search::{MacroAction, SearchPadState};
 use dusklight_search::suffix_batch::{
-    NATIVE_CACHED_SUFFIX_BATCH_SCHEMA, NativeCheckpointCacheRequest, NativeCheckpointValidation,
-    NativeSuffixBatch, NativeSuffixCandidate,
+    NATIVE_CACHED_SUFFIX_BATCH_SCHEMA, NATIVE_VARIABLE_CACHED_SUFFIX_BATCH_SCHEMA,
+    NativeCheckpointCacheRequest, NativeCheckpointValidation, NativeSuffixBatch,
+    NativeSuffixCandidate,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -52,7 +53,12 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+mod batched_execution;
 mod controller_execution;
+
+pub(crate) use batched_execution::{
+    execute_selected_tactic_batch_if_compatible, selected_tactic_batch_is_compatible,
+};
 
 #[cfg(test)]
 use controller_execution::{
@@ -148,9 +154,17 @@ struct PreparedNativeTactic {
     duration: TacticDurationBounds,
 }
 
+#[derive(Clone)]
 struct LoadedCandidateEpisode {
     shard_content_sha256: Digest,
     episode: NativeEpisode,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NativeTacticExecutionContext {
+    root_checkpoint_sha256: Digest,
+    source_frame: usize,
+    replayed_prefix_ticks: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -490,58 +504,20 @@ pub fn execute_selected_tactic_with_checkpoint_retention_and_strategy<
     if checkpoint_cache_capacity_bytes == 0 {
         return Err(NativeTacticWorkerError::InvalidDuration);
     }
-    let root_checkpoint_sha256 = tactic_root_checkpoint_sha256(worker.identity())?;
-    before
-        .validate()
-        .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
-    route_prefix
-        .validate()
-        .map_err(|error| NativeTacticWorkerError::Tape(error.to_string()))?;
-    if before.tape_frame != route_prefix.frames.len() as u64
-        || selected.learner_snapshot_sha256
-            != before
-                .content_sha256()
-                .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?
-    {
-        return Err(NativeTacticWorkerError::DetachedSelection);
-    }
-    let applicable = ApplicableTacticChoices::enumerate(
+    let context = validate_tactic_execution_context(
+        worker.identity(),
+        std::slice::from_ref(selected),
         catalog,
         blueprints,
-        |description| tactic_intrinsically_applicable(description, before),
-        |_| None,
+        before,
+        route_prefix,
+        checkpoint_source,
     )?;
-    if !applicable
-        .candidates
-        .iter()
-        .zip(&applicable.applicable_mask)
-        .any(|(choice, applicable)| {
-            *applicable
-                && choice.choice_id == selected.descriptor.option_id
-                && choice.descriptor == selected.descriptor
-        })
-    {
-        return Err(NativeTacticWorkerError::DetachedSelection);
-    }
-
-    let source_frame = usize::try_from(worker.identity().source_frame)
-        .map_err(|_| NativeTacticWorkerError::InvalidDuration)?;
-    if source_frame > route_prefix.frames.len() {
-        return Err(NativeTacticWorkerError::DetachedSelection);
-    }
-    let candidate_prefix_ticks = route_prefix.frames.len() - source_frame;
-    if checkpoint_source.is_some_and(|source| {
-        source.route_ticks != candidate_prefix_ticks
-            || !lower_hex_identity(&source.restore_identity)
-            || !lower_hex_identity(&source.boundary_fingerprint)
-    }) {
-        return Err(NativeTacticWorkerError::DetachedSelection);
-    }
-    let replayed_prefix_ticks = if checkpoint_source.is_some() {
-        0
-    } else {
-        candidate_prefix_ticks
-    };
+    let NativeTacticExecutionContext {
+        root_checkpoint_sha256,
+        source_frame,
+        replayed_prefix_ticks,
+    } = context;
     match prepare_selected(selected, catalog, blueprints)? {
         PreparedNativeExecution::Static(prepared) => execute_static_tactic(
             worker,
@@ -627,6 +603,80 @@ pub fn execute_selected_tactic_with_checkpoint_retention_and_strategy<
     }
 }
 
+fn validate_tactic_execution_context(
+    identity: &NativeSuffixWorkerIdentity,
+    selected: &[SelectedTactic],
+    catalog: &TacticAssetCatalog,
+    blueprints: &[TacticBlueprint],
+    before: &FactSnapshot,
+    route_prefix: &InputTape,
+    checkpoint_source: Option<&NativeTacticCheckpointSource>,
+) -> Result<NativeTacticExecutionContext, NativeTacticWorkerError> {
+    if selected.is_empty() {
+        return Err(NativeTacticWorkerError::DetachedSelection);
+    }
+    let root_checkpoint_sha256 = tactic_root_checkpoint_sha256(identity)?;
+    before
+        .validate()
+        .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
+    route_prefix
+        .validate()
+        .map_err(|error| NativeTacticWorkerError::Tape(error.to_string()))?;
+    let learner_snapshot_sha256 = before
+        .content_sha256()
+        .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
+    if before.tape_frame != route_prefix.frames.len() as u64
+        || selected
+            .iter()
+            .any(|selected| selected.learner_snapshot_sha256 != learner_snapshot_sha256)
+    {
+        return Err(NativeTacticWorkerError::DetachedSelection);
+    }
+    let applicable = ApplicableTacticChoices::enumerate(
+        catalog,
+        blueprints,
+        |description| tactic_intrinsically_applicable(description, before),
+        |_| None,
+    )?;
+    if selected.iter().any(|selected| {
+        !applicable
+            .candidates
+            .iter()
+            .zip(&applicable.applicable_mask)
+            .any(|(choice, applicable)| {
+                *applicable
+                    && choice.choice_id == selected.descriptor.option_id
+                    && choice.descriptor == selected.descriptor
+            })
+    }) {
+        return Err(NativeTacticWorkerError::DetachedSelection);
+    }
+
+    let source_frame = usize::try_from(identity.source_frame)
+        .map_err(|_| NativeTacticWorkerError::InvalidDuration)?;
+    if source_frame > route_prefix.frames.len() {
+        return Err(NativeTacticWorkerError::DetachedSelection);
+    }
+    let candidate_prefix_ticks = route_prefix.frames.len() - source_frame;
+    if checkpoint_source.is_some_and(|source| {
+        source.route_ticks != candidate_prefix_ticks
+            || !lower_hex_identity(&source.restore_identity)
+            || !lower_hex_identity(&source.boundary_fingerprint)
+    }) {
+        return Err(NativeTacticWorkerError::DetachedSelection);
+    }
+    let replayed_prefix_ticks = if checkpoint_source.is_some() {
+        0
+    } else {
+        candidate_prefix_ticks
+    };
+    Ok(NativeTacticExecutionContext {
+        root_checkpoint_sha256,
+        source_frame,
+        replayed_prefix_ticks,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_static_tactic<W: PersistentTacticBatchWorker>(
     worker: &mut W,
@@ -669,8 +719,9 @@ fn execute_static_tactic<W: PersistentTacticBatchWorker>(
         prepared,
         candidate_tape,
         candidate_prefix_ticks,
-        request,
-        validated,
+        &request,
+        &validated,
+        0,
         None,
         Vec::new(),
     )
@@ -719,10 +770,28 @@ fn load_candidate_episode(
     request: &NativeSuffixBatch,
     validated: &ValidatedNativeSuffixBatch,
 ) -> Result<LoadedCandidateEpisode, NativeTacticWorkerError> {
-    if validated.candidates.len() != 1
-        || validated.candidates[0].id != request.candidates[0].id
-        || validated.candidates[0].simulated_ticks == 0
-        || validated.candidates[0].simulated_ticks > request.maximum_ticks as u64
+    let mut loaded = load_candidate_episodes(request, validated)?;
+    if loaded.len() != 1 {
+        return Err(NativeTacticWorkerError::DetachedResult("candidate summary"));
+    }
+    Ok(loaded.remove(0))
+}
+
+fn load_candidate_episodes(
+    request: &NativeSuffixBatch,
+    validated: &ValidatedNativeSuffixBatch,
+) -> Result<Vec<LoadedCandidateEpisode>, NativeTacticWorkerError> {
+    if validated.candidates.len() != request.candidates.len()
+        || validated
+            .candidates
+            .iter()
+            .zip(&request.candidates)
+            .any(|(actual, expected)| {
+                actual.id != expected.id
+                    || actual.simulated_ticks == 0
+                    || actual.simulated_ticks
+                        > expected.maximum_ticks.unwrap_or(request.maximum_ticks) as u64
+            })
     {
         return Err(NativeTacticWorkerError::DetachedResult("candidate summary"));
     }
@@ -734,22 +803,25 @@ fn load_candidate_episode(
         return Err(NativeTacticWorkerError::DetachedResult("episode shard"));
     }
     let shard_content_sha256 = shard.content_sha256;
-    let mut episodes = shard
-        .episodes
-        .into_iter()
-        .filter(|episode| episode.id == validated.candidates[0].id);
-    let episode = episodes
-        .next()
-        .ok_or(NativeTacticWorkerError::DetachedResult("episode id"))?;
-    if episodes.next().is_some()
-        || episode.steps.len() as u64 != validated.candidates[0].simulated_ticks
-    {
-        return Err(NativeTacticWorkerError::DetachedResult("episode shard"));
+    let mut episodes = shard.episodes;
+    let mut loaded = Vec::with_capacity(request.candidates.len());
+    for (expected, summary) in request.candidates.iter().zip(&validated.candidates) {
+        let position = episodes
+            .iter()
+            .position(|episode| episode.id == expected.id)
+            .ok_or(NativeTacticWorkerError::DetachedResult("episode id"))?;
+        let episode = episodes.remove(position);
+        if episode.steps.len() as u64 != summary.simulated_ticks
+            || episodes.iter().any(|other| other.id == expected.id)
+        {
+            return Err(NativeTacticWorkerError::DetachedResult("episode shard"));
+        }
+        loaded.push(LoadedCandidateEpisode {
+            shard_content_sha256,
+            episode,
+        });
     }
-    Ok(LoadedCandidateEpisode {
-        shard_content_sha256,
-        episode,
-    })
+    Ok(loaded)
 }
 
 fn prepare_selected(
@@ -846,14 +918,7 @@ fn tactic_batch(
         return Err(NativeTacticWorkerError::InvalidDuration);
     }
     let actions = pad_runs(&tape.frames)?;
-    let id = hex_digest(
-        serde_json::to_vec(&(
-            selected.learner_snapshot_sha256,
-            selected.decision_index,
-            &selected.descriptor,
-        ))
-        .map_err(|error| NativeTacticWorkerError::Serialization(error.to_string()))?,
-    );
+    let id = tactic_candidate_id(selected)?;
     Ok(NativeSuffixBatch {
         schema: NATIVE_CACHED_SUFFIX_BATCH_SCHEMA.into(),
         source_frame: usize::try_from(identity.source_frame)
@@ -908,14 +973,7 @@ fn tactic_controller_batch(
     if maximum_ticks == 0 || maximum_ticks > 4_096 {
         return Err(NativeTacticWorkerError::InvalidDuration);
     }
-    let id = hex_digest(
-        serde_json::to_vec(&(
-            selected.learner_snapshot_sha256,
-            selected.decision_index,
-            &selected.descriptor,
-        ))
-        .map_err(|error| NativeTacticWorkerError::Serialization(error.to_string()))?,
-    );
+    let id = tactic_candidate_id(selected)?;
     Ok(NativeSuffixBatch {
         schema: NATIVE_CACHED_SUFFIX_BATCH_SCHEMA.into(),
         source_frame: usize::try_from(identity.source_frame)
@@ -945,6 +1003,17 @@ fn tactic_controller_batch(
             maximum_ticks: None,
         }],
     })
+}
+
+fn tactic_candidate_id(selected: &SelectedTactic) -> Result<String, NativeTacticWorkerError> {
+    Ok(hex_digest(
+        serde_json::to_vec(&(
+            selected.learner_snapshot_sha256,
+            selected.decision_index,
+            &selected.descriptor,
+        ))
+        .map_err(|error| NativeTacticWorkerError::Serialization(error.to_string()))?,
+    ))
 }
 
 pub(crate) fn tactic_checkpoint_cache_request(
@@ -1029,6 +1098,7 @@ pub(crate) fn pad_runs(frames: &[InputFrame]) -> Result<Vec<MacroAction>, Native
         .collect())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn observe_outcome(
     root_checkpoint_sha256: Digest,
     selected: &SelectedTactic,
@@ -1037,12 +1107,22 @@ fn observe_outcome(
     prepared: PreparedNativeTactic,
     candidate_tape: InputTape,
     candidate_prefix_ticks: usize,
-    request: NativeSuffixBatch,
-    validated: ValidatedNativeSuffixBatch,
+    request: &NativeSuffixBatch,
+    validated: &ValidatedNativeSuffixBatch,
+    candidate_index: usize,
     loaded_episode: Option<LoadedCandidateEpisode>,
     native_queries: Vec<TacticRuntimeQuery>,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
-    let loaded = loaded_episode.map_or_else(|| load_candidate_episode(&request, &validated), Ok)?;
+    let loaded = loaded_episode.map_or_else(
+        || {
+            let episodes = load_candidate_episodes(request, validated)?;
+            episodes
+                .get(candidate_index)
+                .cloned()
+                .ok_or(NativeTacticWorkerError::DetachedResult("candidate summary"))
+        },
+        Ok,
+    )?;
     let episode = &loaded.episode;
     if episode.steps.len() <= candidate_prefix_ticks {
         return Err(NativeTacticWorkerError::DetachedResult(
@@ -1145,7 +1225,11 @@ fn observe_outcome(
         capture_intermediate_boundaries(selected, &execution, episode, candidate_prefix_ticks)?;
     let state_extraction_micros =
         u64::try_from(state_extraction_started.elapsed().as_micros()).unwrap_or(u64::MAX);
-    let retained_native_checkpoint = validated.candidates[0].retained_checkpoint.clone();
+    let validated_candidate = validated
+        .candidates
+        .get(candidate_index)
+        .ok_or(NativeTacticWorkerError::DetachedResult("candidate summary"))?;
+    let retained_native_checkpoint = validated_candidate.retained_checkpoint.clone();
     let retained_route_ticks = request
         .checkpoint_cache
         .as_ref()
@@ -1160,15 +1244,13 @@ fn observe_outcome(
             "retained checkpoint route boundary",
         ));
     }
-    let retained_native_boundary_fingerprint = retained_native_checkpoint.as_ref().map(|_| {
-        validated.candidates[0]
-            .terminal_boundary_fingerprint
-            .clone()
-    });
+    let retained_native_boundary_fingerprint = retained_native_checkpoint
+        .as_ref()
+        .map(|_| validated_candidate.terminal_boundary_fingerprint.clone());
     Ok(NativeTacticWorkerOutcome {
         schema: NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V2.into(),
         source_checkpoint_sha256: root_checkpoint_sha256,
-        checkpoint_identity: validated.restore_identity,
+        checkpoint_identity: validated.restore_identity.clone(),
         retained_native_checkpoint,
         retained_native_boundary_fingerprint,
         episode_shard_sha256: loaded.shard_content_sha256,

@@ -152,6 +152,10 @@ fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
     bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
 }
 
+fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
+    bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
 fn mutate_first_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
     mutate_first_episode_in(golden(), mutator)
 }
@@ -347,6 +351,21 @@ fn decodes_native_cpp_golden_shard_with_exact_phase_joins() {
         NativeTerminalReason::GoalReached
     );
     assert!(success.steps[0].post_simulation.goal.reached);
+}
+
+#[test]
+fn episode_horizon_may_be_shorter_than_the_shard_bound() {
+    let mut widened = golden().to_vec();
+    write_u32(&mut widened, 32, 2);
+
+    let shard = NativeEpisodeShard::decode(&widened).unwrap();
+    assert_eq!(shard.maximum_ticks, 2);
+    assert!(
+        shard
+            .episodes
+            .iter()
+            .all(|episode| episode.ticks_executed + episode.remaining_ticks == 1)
+    );
 }
 
 #[test]
