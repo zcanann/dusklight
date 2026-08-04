@@ -174,7 +174,7 @@ worker-session validators.
 - [x] Measure one versus two workers with isolated checkpoint ownership. Keep
   two only if end-to-end unique branch throughput improves without state
   contamination or host saturation.
-- [ ] Let multiple checkpoint-owning learner lanes publish and consume bounded-
+- [x] Let multiple checkpoint-owning learner lanes publish and consume bounded-
   staleness model updates while they are still exploring. Each lane must keep
   branching from its retained save-state graph; generation-barrier learning
   after every lane has finished is not an online-learning substitute, and
@@ -342,18 +342,30 @@ the broader capture/restore task remains open because a 295 MiB image capture
 still costs about 144 milliseconds and full-horizon capacity remains below the
 required multi-thousand alternatives plus cold validations.
 
-Parallel-learning audit (2026-08-03): a two-lane generation-barrier campaign
-restored historical graph nodes directly and found one 239-tick terminal among
-734 useful expansions, but it published only one model revision after both
-lanes had finished. It therefore proves save-state graph exploration and route
-reconstruction, not online learning. Two independent one-lane learned campaigns
-did publish 81 model revisions while exploring from retained checkpoints and
-performed 291 direct non-root restores with zero fallback replays; together
-they produced 622 useful expansions in about 195 seconds, found no terminal,
-and did not share experience. The CLI must continue to reject learned multi-
-lane plans until bounded-staleness cross-lane publication exists; silently
-changing such a request to generation-barrier behavior would mislabel the
-experiment.
+Parallel-learning audit (2026-08-03): the original two-lane generation-barrier
+campaign restored historical graph nodes directly and found one 239-tick
+terminal among 734 useful expansions, but it published only one model revision
+after both lanes had finished. Two independent learned campaigns published 81
+revisions and performed 291 direct non-root restores without sharing their
+experience. Neither configuration was the required online branch learner.
+
+Cross-lane online-learning checkpoint (2026-08-03): bounded-staleness lanes now
+run deterministic decision rounds. Every participating lane pins the same
+immutable learner snapshot, executes its checkpoint-owned native branch work in
+parallel, publishes committed outcomes in sealed lane order, and consumes the
+resulting shared model on the next round. Startup repair is ordered for resume;
+completed or budget-exhausted lanes retire without deadlocking survivors, and
+any lane error aborts the generation rather than leaving peers blocked. The
+453-test orchestration suite passes. The current release smoke at
+`build/campaigns/ordon-p0-zero-shot-cross-lane-online-smoke-d8-p2-v1-20260803`
+completed two lanes and 16 decisions in 13.22 seconds. Both lanes named the
+same learner snapshot at every corresponding decision; the snapshot advanced
+after every round from replay rows 0 through 28. The campaign admitted all 32
+proposal rows, fitted 16 model revisions, recorded 14 lane refreshes importing
+28 rows, observed zero fitted-model replay lag, issued 14 direct process-local
+restore requests with zero fallback replays, and retained independent save-
+state graphs. This closes the online-sharing implementation task; useful-scale
+capacity and route discovery remain separate open gates.
 
 ## P0: learn trajectories and coordinated tactics
 
