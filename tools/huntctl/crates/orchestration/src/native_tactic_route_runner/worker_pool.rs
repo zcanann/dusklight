@@ -75,74 +75,88 @@ pub(super) fn run_seed_coordinator(
     content_store: TacticQContentStore,
     inherited_learner_snapshot: Arc<TacticQImmutableLearnerSnapshot>,
     live_learner: Option<SharedTacticLearnerAuthority>,
+    cross_lane_replay: Option<Arc<CrossLaneReplayCoordinator>>,
     seed_index: usize,
     seed: u64,
 ) -> Result<CompletedNativeTacticSeed, NativeTacticRouteRunError> {
+    let cross_lane_on_error = cross_lane_replay.clone();
     let seed_root = config
         .output_root
         .join(format!("seed-{seed_index:03}-{seed}"));
     let seed_result_path = seed_root.join("seed-result.json");
-    if seed_result_path.exists() {
-        if !config.resume {
-            return Err(route_message("unexpected pre-existing tactic seed result"));
+    let result = (|| {
+        if seed_result_path.exists() {
+            if !config.resume {
+                return Err(route_message("unexpected pre-existing tactic seed result"));
+            }
+            let lane =
+                config.execution_plan.lanes.get(seed_index).ok_or_else(|| {
+                    route_message("tactic seed lane is absent from execution plan")
+                })?;
+            let completed = read_completed_seed(
+                &seed_result_path,
+                seed,
+                config.execution_plan.budgets.decisions_per_lane,
+                config.execution_plan.identity()?,
+                lane,
+                config.execution_plan.demonstration_chunk_ticks.is_some(),
+            )?;
+            if let Some(coordinator) = cross_lane_replay.as_ref() {
+                coordinator.complete_unstarted_lane(seed_index, completed.result.decisions)?;
+            }
+            let generated_training =
+                load_generated_training_corpus(&completed.result, lane, &completed.checkpoint)?;
+            Ok(CompletedNativeTacticSeed {
+                result: completed.result,
+                generated_training,
+                completion_projection: None,
+                invocation_wall_micros: 0,
+                invocation_model_update_micros: 0,
+            })
+        } else {
+            let lane_pool = pool.for_lane(
+                config
+                    .execution_plan
+                    .lanes
+                    .get(seed_index)
+                    .ok_or_else(|| route_message("tactic seed lane is absent from execution plan"))?
+                    .generation_lane_index,
+            )?;
+            let completion = run_seed(
+                config,
+                &lane_pool,
+                registry,
+                encoder,
+                reward_spec,
+                initial_facts,
+                route_prefix,
+                action_schema_sha256,
+                promoted_tactics,
+                root_checkpoint_sha256,
+                root_tape_ref,
+                content_store,
+                inherited_learner_snapshot,
+                live_learner,
+                cross_lane_replay.clone(),
+                seed_index,
+                seed,
+            )?;
+            let result_bytes =
+                serde_json::to_vec_pretty(&completion.result).map_err(route_error)?;
+            write_new(&seed_result_path, &result_bytes)?;
+            let projection = completion.completion_projection.as_ref().ok_or_else(|| {
+                route_message("newly completed tactic seed has no completion projection")
+            })?;
+            publish_seed_completion(&seed_root, &completion.result, &result_bytes, projection)?;
+            Ok(completion)
         }
-        let lane = config
-            .execution_plan
-            .lanes
-            .get(seed_index)
-            .ok_or_else(|| route_message("tactic seed lane is absent from execution plan"))?;
-        let completed = read_completed_seed(
-            &seed_result_path,
-            seed,
-            config.execution_plan.budgets.decisions_per_lane,
-            config.execution_plan.identity()?,
-            lane,
-            config.execution_plan.demonstration_chunk_ticks.is_some(),
-        )?;
-        let generated_training =
-            load_generated_training_corpus(&completed.result, lane, &completed.checkpoint)?;
-        Ok(CompletedNativeTacticSeed {
-            result: completed.result,
-            generated_training,
-            completion_projection: None,
-            invocation_wall_micros: 0,
-            invocation_model_update_micros: 0,
-        })
-    } else {
-        let lane_pool = pool.for_lane(
-            config
-                .execution_plan
-                .lanes
-                .get(seed_index)
-                .ok_or_else(|| route_message("tactic seed lane is absent from execution plan"))?
-                .generation_lane_index,
-        )?;
-        let completion = run_seed(
-            config,
-            &lane_pool,
-            registry,
-            encoder,
-            reward_spec,
-            initial_facts,
-            route_prefix,
-            action_schema_sha256,
-            promoted_tactics,
-            root_checkpoint_sha256,
-            root_tape_ref,
-            content_store,
-            inherited_learner_snapshot,
-            live_learner,
-            seed_index,
-            seed,
-        )?;
-        let result_bytes = serde_json::to_vec_pretty(&completion.result).map_err(route_error)?;
-        write_new(&seed_result_path, &result_bytes)?;
-        let projection = completion.completion_projection.as_ref().ok_or_else(|| {
-            route_message("newly completed tactic seed has no completion projection")
-        })?;
-        publish_seed_completion(&seed_root, &completion.result, &result_bytes, projection)?;
-        Ok(completion)
+    })();
+    if result.is_err()
+        && let Some(coordinator) = cross_lane_on_error
+    {
+        coordinator.abort();
     }
+    result
 }
 
 pub(super) fn load_generated_training_corpus(

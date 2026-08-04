@@ -30,6 +30,7 @@ pub(super) fn run_seed(
     shared_content_store: TacticQContentStore,
     inherited_learner_snapshot: Arc<TacticQImmutableLearnerSnapshot>,
     live_learner: Option<SharedTacticLearnerAuthority>,
+    cross_lane_replay: Option<Arc<CrossLaneReplayCoordinator>>,
     seed_index: usize,
     seed: u64,
 ) -> Result<CompletedNativeTacticSeed, NativeTacticRouteRunError> {
@@ -163,9 +164,13 @@ pub(super) fn run_seed(
         live_learner,
         lane,
         inherited_learner_snapshot.replay_revision,
+        cross_lane_replay,
     )?;
-    if resuming_seed && let Some(session) = replay_session.as_ref() {
-        session.repair_committed(&campaign, &trace)?;
+    if let Some(session) = replay_session.as_ref() {
+        session.synchronize_startup(
+            campaign.decision_index,
+            resuming_seed.then_some((&campaign, trace.as_slice())),
+        )?;
     }
     let mut consumed_learner_snapshot = inherited_learner_snapshot;
     let mut lease_ledger = NativeTacticLeaseLedger::open(&seed_root)?;
@@ -258,6 +263,9 @@ pub(super) fn run_seed(
         let iteration_orchestration_detail_baseline = orchestration_detail_total(&timing)?;
         if cancellation_requested(config) {
             return Err(route_cancelled("native tactic route paused"));
+        }
+        if let Some(session) = replay_session.as_mut() {
+            session.begin_decision(campaign.decision_index)?;
         }
         let decision_acquisition_rank = lane.acquisition.rank(campaign.decision_index);
         let mut active_acquisition_rank = decision_acquisition_rank;
@@ -1375,7 +1383,7 @@ pub(super) fn run_seed(
             &seed_root,
         )?;
         let mut replay_publication_micros = 0;
-        if let Some(session) = replay_session.as_ref() {
+        if let Some(session) = replay_session.as_mut() {
             let replay_publication_started = Instant::now();
             let publish = session.publish_evaluated(
                 decision_index,

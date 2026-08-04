@@ -94,7 +94,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V32: &str = "dusklight-native-tactic-route-report/v32";
@@ -734,6 +734,16 @@ fn run_native_tactic_route_with_optional_fleet(
                     NativeTacticReplaySharingPlan::BoundedStaleness { .. }
                 ))
             .then(|| Arc::clone(&learner_authority));
+            let cross_lane_replay = if let Some(learner) = live_learner.as_ref()
+                && generation.lane_indices.len() > 1
+            {
+                Some(CrossLaneReplayCoordinator::new(
+                    Arc::clone(learner),
+                    &generation.lane_indices,
+                )?)
+            } else {
+                None
+            };
             let mut generation_results = std::thread::scope(|generation_scope| {
                 let coordinator_handles = generation
                     .lane_indices
@@ -752,6 +762,7 @@ fn run_native_tactic_route_with_optional_fleet(
                         let initial_facts = &initial_facts;
                         let route_prefix = &route_prefix;
                         let live_learner = live_learner.clone();
+                        let cross_lane_replay = cross_lane_replay.clone();
                         let content_store = campaign_content_store.clone();
                         let inherited_learner_snapshot = Arc::clone(&inherited_learner_snapshot);
                         generation_scope.spawn(move || {
@@ -770,6 +781,7 @@ fn run_native_tactic_route_with_optional_fleet(
                                 content_store,
                                 inherited_learner_snapshot,
                                 live_learner,
+                                cross_lane_replay,
                                 seed_index,
                                 seed,
                             )
@@ -1232,8 +1244,9 @@ use macro_import::{
 
 mod replay_sharing;
 use replay_sharing::{
-    BoundedStalenessReplaySession, build_replay_session, deterministic_generation_barrier_revision,
-    lane_generated_training_corpus, publish_completed_seed_replay, publish_demonstration_replay,
+    BoundedStalenessReplaySession, CrossLaneReplayCoordinator, build_replay_session,
+    deterministic_generation_barrier_revision, lane_generated_training_corpus,
+    publish_completed_seed_replay, publish_demonstration_replay,
 };
 mod replay_content;
 use replay_content::{persist_evaluated_replay_content, retained_replay_components};

@@ -23,7 +23,7 @@ pub(super) fn finalize_seed(
     native_restore_accounting: NativeTacticRestoreAccounting,
     mut timing: NativeTacticRouteTiming,
     mut best_success: Option<TacticQFinalResult>,
-    replay_session: Option<BoundedStalenessReplaySession>,
+    mut replay_session: Option<BoundedStalenessReplaySession>,
     lease_ledger: NativeTacticLeaseLedger,
 ) -> Result<CompletedNativeTacticSeed, NativeTacticRouteRunError> {
     let finalization_started_micros = elapsed_micros(invocation_started.elapsed());
@@ -65,6 +65,9 @@ pub(super) fn finalize_seed(
         return Err(route_message(
             "native tactic route stopped without exhausting a sealed budget",
         ));
+    }
+    if let Some(session) = replay_session.as_mut() {
+        session.finish(campaign.decision_index)?;
     }
     let final_persistence_started = Instant::now();
     compact_tactic_decision_journal(&seed_root)?;
