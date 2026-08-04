@@ -126,18 +126,24 @@ fn terminal_support_owns_rank_zero_before_demonstration_coverage() {
 }
 
 #[test]
-fn only_rank_zero_optimization_uses_the_live_frontier_model() {
+fn preterminal_learning_and_rank_zero_optimization_use_the_live_frontier_model() {
     assert!(campaign::should_rank_frontier_with_live_model(
-        true, false, false,
+        true, false, false, false, false,
     ));
     assert!(campaign::should_rank_frontier_with_live_model(
-        false, true, true,
+        false, false, false, true, false,
     ));
     assert!(!campaign::should_rank_frontier_with_live_model(
-        false, true, false,
+        false, false, false, false, false,
+    ));
+    assert!(campaign::should_rank_frontier_with_live_model(
+        false, true, true, true, true,
     ));
     assert!(!campaign::should_rank_frontier_with_live_model(
-        false, false, true,
+        false, true, true, true, false,
+    ));
+    assert!(!campaign::should_rank_frontier_with_live_model(
+        false, true, false, true, true,
     ));
 }
 

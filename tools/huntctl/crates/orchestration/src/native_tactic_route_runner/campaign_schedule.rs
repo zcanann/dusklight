@@ -81,14 +81,20 @@ pub(super) fn prefer_root_for_periodic_branch(
     !force_scheduled_frontier && root_refresh_due
 }
 
-/// Route rank-zero terminal optimization through the live learned frontier
-/// scorer when the sealed treatment enables it. Demonstration coverage uses
-/// the same enumerator in coverage mode; all other ranks stay on the graph
-/// scheduler's broad-discovery rotation.
+/// Route learned acquisitions through the live frontier scorer while keeping
+/// an explicit broad-exploration partition. Before native terminal support,
+/// goal-relabeled reachability is the only learned objective available and
+/// must be allowed to choose which retained checkpoint to branch from. Once a
+/// terminal exists, only rank-zero optimization uses the terminal action-value
+/// head; the other ranks remain on graph-wide coverage/novelty rotation.
 pub(super) fn should_rank_frontier_with_live_model(
     demonstration_branch: bool,
+    native_terminal_supported: bool,
     terminal_support_acquisition: bool,
+    goal_reachability_enabled: bool,
     terminal_frontier_action_value_enabled: bool,
 ) -> bool {
-    demonstration_branch || (terminal_support_acquisition && terminal_frontier_action_value_enabled)
+    demonstration_branch
+        || (!native_terminal_supported && goal_reachability_enabled)
+        || (terminal_support_acquisition && terminal_frontier_action_value_enabled)
 }

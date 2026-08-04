@@ -318,11 +318,11 @@ remains open until it also accounts for complete cold validations.
 
 ## P0: learn trajectories and coordinated tactics
 
-- [ ] Replace terminal-only whole-episode credit with state-graph backups over
+- [x] Replace terminal-only whole-episode credit with state-graph backups over
   retained branch transitions. Terminal tick cost must propagate through
   predecessor states so experience at the corner changes choices before the
   corner on later searches.
-- [ ] Select branch nodes using learned value plus uncertainty/coverage rather
+- [x] Select branch nodes using learned value plus uncertainty/coverage rather
   than repeatedly starting at the root or uniformly mutating the incumbent.
   Preserve an explicit exploration budget so early local estimates cannot
   permanently starve alternatives.
@@ -352,6 +352,21 @@ remains open until it also accounts for complete cold validations.
 
 Exit: accumulated branch experience discovers and reuses meaningful
 multi-action behavior rather than only polishing a fixed action list.
+
+Graph-learning integration checkpoint (2026-08-03): `StateGraph` computes exact
+authenticated ticks-to-go for every executable predecessor on a terminal tape;
+`GraphLearningBatch` projects each retained expansion as either an exact
+terminal-connected target or a censored open continuation, and the canonical
+action scheduler fits and ranks from that graph evidence. The runner previously
+failed to use its pre-terminal goal-reachability model when choosing a retained
+checkpoint: ordinary discovery went directly to coverage/novelty rotation even
+after fitting the learned scorer. Pre-terminal goal-relabeled campaigns now use
+the learned frontier acquisition, with expansion coverage and uncertainty in
+the ranking. After terminal discovery, rank zero owns value optimization while
+the remaining acquisition ranks stay on broad graph exploration; periodic root
+refresh remains an independent sealed cadence. Deterministic scheduling,
+goal-reachability ranking, exact predecessor-return, censored-continuation, and
+restart tests pass in the 449-test orchestration suite.
 
 ## P0: prove Ordon is actually learnable
 

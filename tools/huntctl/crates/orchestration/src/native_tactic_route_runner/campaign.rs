@@ -349,7 +349,9 @@ pub(super) fn run_seed(
             let demonstration_branch = branch_acquisition_context.demonstration;
             let ranked_frontier_branch = should_rank_frontier_with_live_model(
                 demonstration_branch,
+                campaign.native_terminal_supported(),
                 branch_acquisition_context.terminal_support,
+                config.execution_plan.value_treatment.uses_goal_relabeling(),
                 config
                     .execution_plan
                     .value_treatment
@@ -596,7 +598,9 @@ pub(super) fn run_seed(
             let demonstration_branch = branch_acquisition_context.demonstration;
             let ranked_frontier_branch = should_rank_frontier_with_live_model(
                 demonstration_branch,
+                campaign.native_terminal_supported(),
                 branch_acquisition_context.terminal_support,
+                config.execution_plan.value_treatment.uses_goal_relabeling(),
                 config
                     .execution_plan
                     .value_treatment
