@@ -11,9 +11,9 @@ authoritative pieces are:
 - `TacticQCampaign` and `StateGraph`: exact content-addressed states, root tick
   costs, authenticated action expansions, parent/child routes, terminal paths,
   training replay, and frontier scheduling;
-- `NativeTacticProposalPool`: persistent owned native workers, batched sibling
-  proposals, live-endpoint capture, direct process-local restore, and measured
-  root-replay fallback;
+- `NativeTacticProposalPool`: persistent owned native workers, worker-grouped
+  sibling proposals, live-endpoint capture, direct process-local restore, and
+  measured root-replay fallback;
 - `CampaignTacticLearnerAuthority`: shared authenticated transition replay and
   learned policy publication;
 - `macro_discovery`: mining and held-out validation of reusable action
@@ -48,20 +48,26 @@ checkpoint, full observation, best root tick cost, restoration locator, and
 incoming/outgoing graph evidence. The graph reconstructs the lowest-cost
 terminal route through these edges.
 
-At a decision, the proposal pool materializes the selected source state once
-when necessary and evaluates sibling actions by repeatedly restoring that
-process-local checkpoint. The selected nonterminal endpoint is retained for a
-direct restore on the following decision. Every evaluated sibling is admitted
-to graph/training evidence even though only the policy-selected sibling moves
-the current cursor.
+At a decision, each native process assigned sibling work materializes the
+selected source state when necessary and repeatedly restores its process-local
+checkpoint for the siblings assigned there. The selected nonterminal endpoint
+is retained as a single-use live continuation for the following decision.
+Every evaluated sibling is admitted to graph/training evidence even though only
+the policy-selected sibling moves the current cursor.
 
 The remaining locality limitation is concrete: the route coordinator keeps
-only one `CachedTacticFrontier`, representing the latest selected endpoint.
-Historical graph nodes have portable replay authority but normally no retained
-process-local handle. Revisiting one therefore pays one authenticated prefix
-materialization before its sibling batch can restore locally. Checkpoint memory
-capacity exists, but the coordinator does not yet maintain a node-indexed cache
-of those live handles.
+only one `CachedTacticFrontier`, representing the latest selected endpoint, and
+that endpoint is a single-use continuation. Historical graph nodes have
+portable replay authority but normally no retained process-local handle.
+Moreover, distributing a width-two branch across two processes makes the
+counterfactual worker replay and capture the same prefix owned by the selected
+worker. An exact-plan portable-owner treatment reduced two-worker
+materializations from 18 to 3 and replayed prefix ticks from 1,206 to 148, but
+serializing both separate requests on one owner was about 3% slower than the
+optimized parallel control. The required fix is native multi-candidate sibling
+execution from one checkpoint or concurrent expansion of independent graph
+nodes, followed by a bounded node-indexed ownership cache; another save-state
+system is not required.
 
 ## Reuse and retirement decision
 
@@ -72,7 +78,8 @@ of those live handles.
 - Keep its artifact readers and refiners only while retained historical
   evidence needs them; do not integrate their separate Q table or checkpoint
   into the canonical learner.
-- Measure current root materialization and direct-restore costs before changing
-  checkpoint retention. If historical frontier materialization is material,
-  replace the single latest-endpoint cache with bounded node-indexed
-  worker-local ownership rather than adding another save-state system.
+- Preserve the measured root-materialization and direct-restore accounting.
+  Make one native request restore a graph-node checkpoint across its sibling
+  candidates, or run independent graph-node expansions concurrently, before
+  extending the single latest-endpoint cache to bounded node-indexed
+  worker-local ownership. Do not add another save-state system.

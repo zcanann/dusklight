@@ -1,9 +1,9 @@
 # Native tactic throughput evidence
 
 The v4 fixed-work curve is a long-work diagnostic, not a warm-process
-microbenchmark. Every one-, two-, four-, eight-, and sixteen-worker cell must:
+microbenchmark. Every one- and two-worker cell must:
 
-- execute at least 16 graph decisions with 16 proposals per decision;
+- execute at least 16 graph decisions with 2 proposals per decision;
 - publish and consume fitted learner work;
 - grow durable replay and admit graph evidence;
 - perform repeated non-root restoration;
@@ -24,23 +24,22 @@ huntctl learn tactic-throughput-curve \
   --output build/benchmarks/throughput-v4 \
   --seed SEED \
   --decisions-per-seed 16 \
-  --proposals-per-decision 16 \
+  --proposals-per-decision 2 \
   --memory-bytes BYTES \
   --repetitions 2 \
   --bundle benchmarks/native-tactic-throughput/PLATFORM
 ```
 
 `--memory-bytes` is the aggregate checkpoint-pool bound at the widest
-16-worker cell, not a per-worker allowance. It must provide every fleet member
+two-worker cell, not a per-worker allowance. It must provide every fleet member
 enough space to retain at least one measured native checkpoint. Fleet launch
 measures the root checkpoint independently on every worker, requires identical
 nonzero sizes, and rejects an undersized cache before beginning sample 1.
 
-For the retained Windows execution on 2026-07-29, one checkpoint was
-`294,721,440` bytes. The minimum 16-worker aggregate was therefore
-`4,715,543,040` bytes; the curve uses `5,368,709,120` bytes (5 GiB), or
-`335,544,320` bytes per worker. Passing only `335,544,320` bytes as the
-aggregate gives each worker `20,971,520` bytes and is invalid.
+For the retained Windows execution on 2026-08-03, one checkpoint was
+`294,721,440` bytes. The two-worker curve uses `1,342,177,280` bytes
+(1.25 GiB), or `671,088,640` bytes per worker, enough for the bounded two-entry
+process-local cache.
 
 If the command is interrupted, repeat the exact invocation with `--resume`.
 The output contains an authenticated binary run commit, append-only fleet

@@ -146,6 +146,11 @@ worker-session validators.
 - [ ] Remove avoidable process boot, game boot, serialization, hashing, logging,
   and artifact-write work from the inner branch loop. Keep a native worker alive
   across many owned restores and branches where correctness permits.
+- [ ] Execute sibling alternatives from one graph-node checkpoint in one native
+  multi-candidate batch, or schedule independent graph nodes concurrently. A
+  proposal-width-two decision must not choose between duplicating the entire
+  prefix on another process and serializing two separate native requests on one
+  process. Prove the chosen design against an optimized-orchestrator control.
 - [x] Eliminate false rendering leakage at transition boundaries. The profiler
   previously timed the empty suppression branch, so an OS scheduling delay was
   mislabeled as renderer work. Suppressed samples now retain coverage while
@@ -179,13 +184,15 @@ the separately passed native-subsystem parity treatment. Campaign throughput
 must therefore be measured on the production tactic path, not inferred from the
 proof-enabled checkpoint audit.
 
-Production throughput curve (2026-08-03): the bounded, parity-controlled curve
+Debug-orchestrator throughput curve (2026-08-03): the bounded, parity-controlled curve
 at `build/campaigns/ordon-p0-throughput-curve-w1-w2-d16-p2-r2-v1-20260803`
 measured only 0.347 useful graph expansions/second with one worker and 0.369
 with two. Native simulation consumed about two seconds of each 87-92 second
 sample; goal-relabeled model updates consumed about 40 seconds. Two workers
 improved end-to-end throughput by 6.3% with identical useful expansion evidence,
-bounded memory, and bounded learner staleness, so the local limit remains two.
+bounded memory, and bounded learner staleness. The report's recorded orchestrator
+hash is the exact hash of `target/debug/huntctl.exe`; it is not valid production
+throughput evidence.
 
 Achieved-goal relabel treatment (2026-08-03): uniformly sampled relabel targets
 now grow with the square root of observed transitions instead of expanding the
@@ -198,8 +205,28 @@ median wall time from 86.84 to 58.82 seconds. Model-update time fell from about
 by 7.2%. The treatment preserves exact reverse-path tick backups and passed the
 existing around-corner, prompted-action, collision, trajectory, and achieved-
 goal generalization controls. Its roughly 326 useful alternatives per ten
-minutes remains far below the required thousands, so throughput is still a P0
-failure rather than a solved gate.
+minutes was also measured through that debug orchestrator and must not be used
+as the local capacity estimate.
+
+Optimized control (2026-08-03): the exact branch-cadence-four plan was rerun
+through the pre-change optimized release binary at
+`build/campaigns/ordon-p0-throughput-optimized-control-w1-w2-d16-p2-r2-v1-20260803`.
+It measured 0.949 useful expansions/second with one worker and 1.426/s with two;
+two workers achieved 1.50x speedup and 75.1% parallel efficiency. That projects
+to roughly 856 useful alternatives per ten minutes, still below the required
+thousands but materially different from the invalid debug-binary estimate.
+
+Checkpoint-locality treatment (2026-08-03): an exact-plan experiment at
+`build/campaigns/ordon-p0-throughput-portable-owner-w1-w2-d16-p2-r2-v2-20260803`
+retained selected nodes as reusable portable images and kept each narrow sibling
+batch on its owner. In the two-worker sample it reduced prefix materializations
+from 18 to 3 and replayed prefix ticks from 1,206 to 148 while preserving the
+same state-graph identity and 32 useful expansions. It did not improve optimized
+wall time: the median changed from 22.44 to 23.10 seconds because the two sibling
+requests became serial. The experiment was reverted. The next implementation
+must reuse one checkpoint inside a native multi-candidate request or expose
+parallelism across independent graph nodes; locality alone is not a throughput
+win when it removes proposal parallelism.
 
 ## P0: learn trajectories and coordinated tactics
 
