@@ -409,6 +409,24 @@ and fails.
 - [ ] Repeat with permuted seed order and equivalent budgets to prove the result
   is not scheduler ordering, lucky initialization, or update-stream leakage.
 
+Zero-shot production preflight (2026-08-03):
+`routes/Glitch Exhibition/intro/benchmarks/ordon-p0-zero-shot-route-learning-v1.request.json`
+is the sealed five-seed `from_scratch_discovery` authority for the local
+authenticated `4786d70e...` source. It has no incumbent or demonstration, uses
+the real `ordon_spring_load_committed` terminal, permits a 1,024-tick discovery
+horizon, and binds five fixed seeds without requiring five concurrent native
+processes. A fresh current-code execution binding at
+`build/campaigns/ordon-p0-zero-shot-execution-v3-20260803` passed materialization.
+The bounded seed-104729 preflight at
+`build/campaigns/ordon-p0-zero-shot-preflight-seed104729-d64-p2-v2-20260803`
+completed 64 decisions and all 128 sibling leases in 75.60 seconds. It retained
+638 graph records and all 128 training transitions, published 17 learned-model
+revisions, refreshed the policy 16 times, executed 60 direct non-root restores,
+and performed zero direct-restore fallback replays. It found no terminal. This
+is positive evidence that the production zero-shot path now branches and learns
+from save states; it is not route-success evidence and closes none of the Ordon
+acceptance boxes above.
+
 Exit: the generic learner reliably discovers substantially-better-than-human
 Ordon routes within a useful local-machine time budget.
 
