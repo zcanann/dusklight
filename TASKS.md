@@ -152,7 +152,7 @@ worker-session validators.
   recording zero execution time; the sealed three-frontier checkpoint audit
   reports zero CPU renderer submission, audio emulation, and game-audio update
   time for every materialization, continuation, and replay batch.
-- [ ] Measure one versus two workers with isolated checkpoint ownership. Keep
+- [x] Measure one versus two workers with isolated checkpoint ownership. Keep
   two only if end-to-end unique branch throughput improves without state
   contamination or host saturation.
 - [x] Require restored suffix evaluation to beat equivalent cold-root candidate
@@ -178,6 +178,28 @@ checkpoint-wide state proof; production tactic workers disable that proof under
 the separately passed native-subsystem parity treatment. Campaign throughput
 must therefore be measured on the production tactic path, not inferred from the
 proof-enabled checkpoint audit.
+
+Production throughput curve (2026-08-03): the bounded, parity-controlled curve
+at `build/campaigns/ordon-p0-throughput-curve-w1-w2-d16-p2-r2-v1-20260803`
+measured only 0.347 useful graph expansions/second with one worker and 0.369
+with two. Native simulation consumed about two seconds of each 87-92 second
+sample; goal-relabeled model updates consumed about 40 seconds. Two workers
+improved end-to-end throughput by 6.3% with identical useful expansion evidence,
+bounded memory, and bounded learner staleness, so the local limit remains two.
+
+Achieved-goal relabel treatment (2026-08-03): uniformly sampled relabel targets
+now grow with the square root of observed transitions instead of expanding the
+early replay against every achieved endpoint. The otherwise identical passed
+curve at `build/campaigns/ordon-p0-throughput-curve-w1-w2-d16-p2-r2-v2-20260803`
+reduced one-worker median wall time from 92.29 to 63.06 seconds and two-worker
+median wall time from 86.84 to 58.82 seconds. Model-update time fell from about
+40 seconds to about 13 seconds per sample. Useful expansion throughput rose to
+0.507/s and 0.544/s respectively; two workers now improve end-to-end throughput
+by 7.2%. The treatment preserves exact reverse-path tick backups and passed the
+existing around-corner, prompted-action, collision, trajectory, and achieved-
+goal generalization controls. Its roughly 326 useful alternatives per ten
+minutes remains far below the required thousands, so throughput is still a P0
+failure rather than a solved gate.
 
 ## P0: learn trajectories and coordinated tactics
 

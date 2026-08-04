@@ -5,6 +5,15 @@ const MAX_ACHIEVED_GOAL_TARGETS: usize = 32;
 const MAX_ACHIEVED_GOAL_HOPS: u32 = 16;
 const MAX_REVERSE_STATES_PER_TARGET: usize = 4_096;
 
+fn achieved_goal_target_budget(transition_count: usize, remaining_samples: usize) -> usize {
+    if transition_count == 0 {
+        return 0;
+    }
+    (remaining_samples / transition_count)
+        .min(MAX_ACHIEVED_GOAL_TARGETS)
+        .min(transition_count.isqrt().max(1))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ReverseReach {
     ticks: u64,
@@ -80,7 +89,7 @@ pub(super) fn fit(
     // speed. Bound the target count further for very large corpora so fitting
     // remains within the model's deterministic sample budget.
     let remaining_samples = MAX_GENERALIZED_TACTIC_SAMPLES.saturating_sub(samples.len());
-    let maximum_targets = (remaining_samples / transitions.len()).min(MAX_ACHIEVED_GOAL_TARGETS);
+    let maximum_targets = achieved_goal_target_budget(transitions.len(), remaining_samples);
     let targets = if maximum_targets == 0 {
         Vec::new()
     } else {
@@ -207,6 +216,17 @@ fn reverse_path_costs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn online_relabeling_breadth_grows_sublinearly() {
+        assert_eq!(achieved_goal_target_budget(0, 1_000), 0);
+        assert_eq!(achieved_goal_target_budget(2, 1_000), 1);
+        assert_eq!(achieved_goal_target_budget(8, 1_000), 2);
+        assert_eq!(achieved_goal_target_budget(16, 1_000), 4);
+        assert_eq!(achieved_goal_target_budget(32, 1_000), 5);
+        assert_eq!(achieved_goal_target_budget(1_024, usize::MAX), 32);
+        assert_eq!(achieved_goal_target_budget(1_024, 2_048), 2);
+    }
 
     fn edge(index: usize, before: u8, after: u8, ticks: u32) -> ReverseEdge {
         ReverseEdge {
