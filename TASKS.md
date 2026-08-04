@@ -326,26 +326,26 @@ remains open until it also accounts for complete cold validations.
   than repeatedly starting at the root or uniformly mutating the incumbent.
   Preserve an explicit exploration budget so early local estimates cannot
   permanently starve alternatives.
-- [ ] Propose variable-length sequences from the generic action library,
+- [x] Propose variable-length sequences from the generic action library,
   including simultaneous inputs and available prompted actions. The proposal
   mechanism must be able to change direction, camera/lock state, movement, and
   roll timing together when evidence supports it.
-- [ ] Make action availability part of the state and proposal mask. The learner
+- [x] Make action availability part of the state and proposal mask. The learner
   must know when roll, jump, mount, lift, interact, or future prompted actions
   are possible without receiving an authored instruction to use them.
-- [ ] Retain trajectory-derived measurements such as displacement, velocity
+- [x] Retain trajectory-derived measurements such as displacement, velocity
   change, heading stability, collision response, and control continuity as
   observations. Demonstrate that the model can learn their relationship to
   eventual terminal time without hard-coded bonuses for straightness, rolling,
   wall contact, or any specific tactic.
-- [ ] Mine repeated high-value action subsequences from successful branches.
+- [x] Mine repeated high-value action subsequences from successful branches.
   Promote a subsequence to a parameterized tactic only when replay across
   multiple compatible states improves value or sample efficiency over its
   primitive actions.
 - [ ] Allow promoted tactics and primitive actions in the same policy. Tactics
   must compose, terminate early when their assumptions fail, and never prevent
   discovery of a better primitive or tactic sequence.
-- [ ] Add deterministic tests in which the optimal solution requires a
+- [x] Add deterministic tests in which the optimal solution requires a
   coordinated multi-action change separated by individually worse
   intermediates. The branch learner must cross this local optimum; the old
   single-edit optimizer should fail the control case.
@@ -367,6 +367,23 @@ the remaining acquisition ranks stay on broad graph exploration; periodic root
 refresh remains an independent sealed cadence. Deterministic scheduling,
 goal-reachability ranking, exact predecessor-return, censored-continuation, and
 restart tests pass in the 449-test orchestration suite.
+
+Coordinated-action checkpoint (2026-08-03): the canonical family generator
+offers 4/8/16/40-tick movement, curved movement, camera-lock setup, directional
+rolls, and combined, one-frame-staggered, and fully staggered direction/L/A
+programs. Native `do_status` facts drive both prompt features and the applicable
+action mask. The fixed observation schema retains displacement, velocity,
+heading/goal alignment, commanded stalls, momentum loss, collision correction,
+wall contact, and prior control; the route reward remains only authenticated
+terminal success minus native tick cost. Replay mining covers both repeated
+option prefixes and connected multi-option sequences. Promotion requires native
+comparison against the original primitive-component sequence at two distinct
+held-out states and seeds, and imported promoted tapes join the same catalog
+without removing primitive families. Mid-option assumption failure is not yet
+an executable cancellation guard for recorded macros, so that task remains
+open. The around-corner fixture now explicitly proves that the learned held-out
+route commits to three initially worse moves while a one-step goal-progress
+control cycles and fails.
 
 ## P0: prove Ordon is actually learnable
 

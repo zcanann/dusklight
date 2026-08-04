@@ -712,6 +712,42 @@ pub fn benchmark_held_out_fixture_policy(
 mod tests {
     use super::*;
 
+    fn greedy_one_step_goal_progress_control(
+        fixture: &AroundCornerFixture,
+        maximum_steps: usize,
+    ) -> Option<Vec<FixtureAction>> {
+        let mut state = fixture.start();
+        let mut route = Vec::new();
+        let mut visited = BTreeSet::new();
+        for _ in 0..maximum_steps {
+            if !visited.insert(state) {
+                return None;
+            }
+            let action = fixture
+                .applicable_actions(state)
+                .into_iter()
+                .min_by_key(|action| {
+                    let target = fixture
+                        .execute(state, *action)
+                        .expect("applicable fixture action must execute")
+                        .target;
+                    i32::from(fixture.goal.x)
+                        .abs_diff(i32::from(target.x))
+                        .pow(2)
+                        + i32::from(fixture.goal.y)
+                            .abs_diff(i32::from(target.y))
+                            .pow(2)
+                })?;
+            let transition = fixture.execute(state, action)?;
+            route.push(action);
+            if transition.terminal {
+                return Some(route);
+            }
+            state = transition.target;
+        }
+        None
+    }
+
     #[test]
     fn exhaustive_mode_finds_the_known_shortest_route() {
         let fixture = AroundCornerFixture::default();
@@ -745,6 +781,29 @@ mod tests {
                     })
                     .unwrap()
             )
+        );
+    }
+
+    #[test]
+    fn learned_route_crosses_the_goal_distance_local_optimum_that_greedy_control_cannot() {
+        let training = AroundCornerFixture::seeded(0);
+        let held_out = AroundCornerFixture::seeded(0x31);
+        let learner = learn_fixture_returns(&training);
+        let learned = schedule_around_corner(&held_out, Some(&learner), 0x31, 1_000).unwrap();
+
+        assert_eq!(
+            learned.native_ticks,
+            AroundCornerFixture::KNOWN_SHORTEST_TICKS
+        );
+        assert_eq!(
+            &learned.actions[..3],
+            &[FixtureAction::North; 3],
+            "the solution must commit to three moves away from the goal before turning the corner"
+        );
+        assert_eq!(
+            greedy_one_step_goal_progress_control(&held_out, 32),
+            None,
+            "one-step goal progress should cycle instead of crossing the local optimum"
         );
     }
 
