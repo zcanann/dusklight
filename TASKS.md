@@ -87,7 +87,7 @@ and move the learning path onto the existing save-state branch architecture.
   graph node. If no live handle survives, materialize that historical node once
   by authenticated prefix replay; sibling alternatives must restore the
   process-local checkpoint rather than replaying the prefix independently.
-- [ ] Prove deterministic restore semantics: identical state fingerprint,
+- [x] Prove deterministic restore semantics: identical state fingerprint,
   observation, action availability, continuation outcome, and terminal timing
   after repeated restores. Reject contaminated or process-local checkpoints.
 - [x] Preserve every branch transition in the learning corpus, including
@@ -127,6 +127,16 @@ constraint that bound reusable native processes to one complete learner-plan
 hash even though every dispatched job and result already carries its own exact
 plan authority.
 
+Checkpoint parity audit (2026-08-03):
+`build/benchmarks/ordon-p0-native-checkpoint-v2-20260803.json` passed at route
+ticks 15, 62, and 124. Direct continuation and authenticated replay matched the
+source state, complete transition, checkpoint-wide semantic digest, all 22
+checkpoint-entry digests, terminal evidence bytes, and terminal boundary at
+every frontier. The repeated restore-locality pairs above additionally matched
+the applicable proposal surface and successor evidence. Invalid or foreign
+process-local checkpoint identities remain fail-closed in the native result and
+worker-session validators.
+
 ## P0: make branching fast enough to learn
 
 - [ ] Benchmark existing cold-root replay, save, restore, short branch, and
@@ -136,17 +146,16 @@ plan authority.
 - [ ] Remove avoidable process boot, game boot, serialization, hashing, logging,
   and artifact-write work from the inner branch loop. Keep a native worker alive
   across many owned restores and branches where correctness permits.
-- [ ] Eliminate rendering leakage at transition boundaries. The current
-  pre-terminal checkpoint audit at
-  `build/benchmarks/ordon-p0-native-checkpoint-v1-20260803` measured 17
-  microseconds of CPU renderer submission in the authenticated-replay fallback
-  while the direct process-local continuation remained fully suppressed. Make
-  the runtime and headless audit agree, then rerun and seal the three-frontier
-  parity report.
+- [x] Eliminate false rendering leakage at transition boundaries. The profiler
+  previously timed the empty suppression branch, so an OS scheduling delay was
+  mislabeled as renderer work. Suppressed samples now retain coverage while
+  recording zero execution time; the sealed three-frontier checkpoint audit
+  reports zero CPU renderer submission, audio emulation, and game-audio update
+  time for every materialization, continuation, and replay batch.
 - [ ] Measure one versus two workers with isolated checkpoint ownership. Keep
   two only if end-to-end unique branch throughput improves without state
   contamination or host saturation.
-- [ ] Require restored suffix evaluation to beat equivalent cold-root candidate
+- [x] Require restored suffix evaluation to beat equivalent cold-root candidate
   evaluation by at least 10x end to end. If it does not, treat save/restore
   performance or orchestration as broken and fix it before another route run.
 - [ ] Establish a ten-minute capacity envelope showing how many unique decision
@@ -157,6 +166,14 @@ plan authority.
 Exit: the framework can evaluate thousands of meaningful short alternatives
 within a ten-minute campaign and explains where every remaining wall-clock
 second goes.
+
+Checkpoint speed gate (2026-08-03): the parity-sealed direct one-tick
+continuations took 336,013-368,567 microseconds end to end. Equivalent
+authenticated prefix replay plus the same continuation took 3,823,491
+microseconds at tick 15, 13,665,354 at tick 62, and 26,658,865 at tick 124:
+approximately 10.4x, 37.1x, and 79.3x slower respectively. Native simulation
+for the three direct continuations totaled 3,288 microseconds; remaining direct
+wall time is orchestration/artifact overhead and stays in the throughput work.
 
 ## P0: learn trajectories and coordinated tactics
 

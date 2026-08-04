@@ -50,7 +50,7 @@ public:
     void endCpuDrawTraversalProfile();
     /** CPU-side GX painter/submission work inside fpcM_Management. */
     void beginCpuRendererSubmissionProfile();
-    void endCpuRendererSubmissionProfile();
+    void endCpuRendererSubmissionProfile(bool rendererSubmissionExecuted = true);
     /** Deterministic DSP rendering retained without host audio submission. */
     void beginAudioEmulationProfile();
     void endAudioEmulationProfile();

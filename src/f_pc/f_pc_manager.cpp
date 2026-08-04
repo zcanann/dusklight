@@ -81,7 +81,7 @@ void fpcM_Management(fpcM_ManagementFunc i_preExecuteFn, fpcM_ManagementFunc i_p
                 if (!suppressRendererSubmission) {
                     cAPIGph_Painter();
                 }
-                suffixBatch.endCpuRendererSubmissionProfile();
+                suffixBatch.endCpuRendererSubmissionProfile(!suppressRendererSubmission);
             }
 
             if (!dPa_control_c::isStatus(1)) {

@@ -1275,9 +1275,11 @@ void SuffixBatchRunner::beginCpuRendererSubmissionProfile() {
     mProfile.cpuRendererActive = true;
 }
 
-void SuffixBatchRunner::endCpuRendererSubmissionProfile() {
+void SuffixBatchRunner::endCpuRendererSubmissionProfile(
+    const bool rendererSubmissionExecuted) {
     if (!mProfile.cpuRendererActive) return;
-    mProfile.cpuRendererSubmissionMicros += elapsed_micros(mProfile.cpuRendererStart);
+    if (rendererSubmissionExecuted)
+        mProfile.cpuRendererSubmissionMicros += elapsed_micros(mProfile.cpuRendererStart);
     ++mProfile.cpuRendererSubmissionSamples;
     mProfile.cpuRendererActive = false;
 }
