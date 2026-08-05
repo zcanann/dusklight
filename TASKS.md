@@ -342,6 +342,21 @@ the broader capture/restore task remains open because a 295 MiB image capture
 still costs about 144 milliseconds and full-horizon capacity remains below the
 required multi-thousand alternatives plus cold validations.
 
+Captured-image semantic-identity treatment rejected (2026-08-03): two attempts
+to derive the semantic identity from the newly copied checkpoint image failed
+closed in native restore before admitting campaign evidence. Hashing each entry
+as it was copied and capturing all host components before copying machine memory
+both passed focused checkpoint tests, but the native source restored with a
+different semantic identity. The second bounded treatment at
+`build/campaigns/ordon-p0-captured-digest-treatment-d4-p2-v3-20260803` expected
+`bc1b81c5bebbee1f1321cc5380dc2f0b` and observed
+`a61b7f4e86884c447ae14cb9ae83c412`. All treatment code was rejected; the
+last native-proven capture plus independent live semantic proof remains in
+production. Do not retry digest fusion until profiling identifies which native
+state changes across capture callbacks and defines an explicit quiescent
+snapshot boundary. This leaves checkpoint capture optimization open without
+weakening save-state branch identity.
+
 Parallel-learning audit (2026-08-03): the original two-lane generation-barrier
 campaign restored historical graph nodes directly and found one 239-tick
 terminal among 734 useful expansions, but it published only one model revision
