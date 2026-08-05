@@ -357,6 +357,28 @@ state changes across capture callbacks and defines an explicit quiescent
 snapshot boundary. This leaves checkpoint capture optimization open without
 weakening save-state branch identity.
 
+Fused raw-checkpoint hashing treatment rejected (2026-08-04): raw v1 identity
+was computed while each immutable image entry was copied, leaving the separate
+live semantic proof unchanged. Focused tests passed the fused and legacy paths,
+and the production smoke at
+`build/campaigns/ordon-p0-fused-raw-native-smoke-d4-p2-v1-20260804` completed
+four decisions without restore fallback or semantic mismatch. In the alternating
+two-repetition A/B under `build/campaigns/ordon-p0-fused-raw-{treatment,control}-d16-p2-r*-v1-20260804`,
+all runs used plan
+`f2b8cf7a3d471f7bc3144d2a2dfae7eb1c6b2c464bf6d27228863e945d048ce6`,
+produced graph
+`1e703bb15788ab87f834be5b03224188a70d6ee4c7d308c563faff8a0777b2bf`
+and useful-expansion set
+`74302d99fed4c3af44cdce57e2bca4d35894922ac8f72a309fc316f91bbeec0b`,
+and completed 32 useful expansions over 566 native ticks. Fusing reduced median
+total checkpoint capture from 1,209,748 to 1,193,800 microseconds (1.3%) and
+the 19 retained-image machine captures from 832,554 to 824,740 microseconds
+(0.9%), while median campaign wall time increased from 8,676,269 to 8,794,130
+microseconds (1.4%) and throughput fell from 3.689 to 3.642 useful expansions
+per second (1.3%). The code was rejected. The next representation treatment
+must reduce or share the 256 MiB MEM1 copy inside each 295,040,780-byte image;
+rearranging the already-fast raw XXH pass is not material.
+
 Parallel-learning audit (2026-08-03): the original two-lane generation-barrier
 campaign restored historical graph nodes directly and found one 239-tick
 terminal among 734 useful expansions, but it published only one model revision
