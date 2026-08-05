@@ -92,7 +92,12 @@ value. Because each expansion produced several fresh states, a promising state
 could never be revisited. The fix now separates learned exploitation, broad
 exploration, and root refresh, and makes learned reachability value precede
 coverage count inside the exploitation partition. Its 454 orchestration tests
-pass; the next bounded native treatment must verify the behavior.
+pass. The first matched treatment then exposed a separate Windows persistence
+failure: recovery-directory publication returned access denied at decisions
+143 and 255 while leaving valid prior recovery points. Recovery publication now
+retries only transient Windows permission-denied renames for a bounded two
+seconds and retains fail-closed behavior for every other error. The resumed
+native treatment must verify both fixes.
 
 Exit: a bounded production campaign either learns a cold-replayable route or
 produces enough evidence to name and fix the specific learning subsystem that

@@ -8,6 +8,8 @@ const RECOVERY_VERSION: u16 = 1;
 const RECOVERY_HEADER_BYTES: usize = 8 + 2 + 2 + 4 + 32;
 const MAX_RECOVERY_MANIFEST_BYTES: usize = 1024 * 1024;
 const MAX_RECOVERY_FILE_BYTES: usize = RECOVERY_HEADER_BYTES + MAX_RECOVERY_MANIFEST_BYTES;
+const RECOVERY_PUBLISH_ATTEMPTS: usize = 101;
+const RECOVERY_PUBLISH_RETRY_MILLIS: u64 = 20;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -101,9 +103,51 @@ pub(super) fn persist_tactic_recovery_point(
     recovery.content_sha256 = recovery_digest(&recovery)?;
     let encoded = encode_recovery(&recovery)?;
     write_new(&partial_directory.join(RECOVERY_MANIFEST_FILE), &encoded)?;
-    fs::rename(&partial_directory, &final_directory).map_err(route_error)?;
+    publish_recovery_directory(&partial_directory, &final_directory)?;
     sync_directory(&recovery_root)?;
     Ok(final_directory)
+}
+
+fn publish_recovery_directory(
+    partial_directory: &Path,
+    final_directory: &Path,
+) -> Result<(), NativeTacticRouteRunError> {
+    retry_transient_permission_denied(
+        cfg!(windows),
+        || fs::rename(partial_directory, final_directory),
+        std::thread::sleep,
+    )
+    .map_err(|error| {
+        route_message(format!(
+            "failed to publish native tactic recovery point {}: {error}",
+            final_directory.display()
+        ))
+    })
+}
+
+fn retry_transient_permission_denied<F, S>(
+    retry_permission_denied: bool,
+    mut operation: F,
+    mut pause: S,
+) -> std::io::Result<()>
+where
+    F: FnMut() -> std::io::Result<()>,
+    S: FnMut(Duration),
+{
+    for attempt in 0..RECOVERY_PUBLISH_ATTEMPTS {
+        match operation() {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if retry_permission_denied
+                    && error.kind() == std::io::ErrorKind::PermissionDenied
+                    && attempt + 1 < RECOVERY_PUBLISH_ATTEMPTS =>
+            {
+                pause(Duration::from_millis(RECOVERY_PUBLISH_RETRY_MILLIS));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("bounded recovery publication loop returns on every final attempt")
 }
 
 pub(super) fn load_tactic_recovery_point(
@@ -551,6 +595,40 @@ mod tests {
         assert!(!partial.exists());
         assert!(load_tactic_recovery_point(&root, 0).is_ok());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn windows_recovery_publish_retries_transient_access_denied_only() {
+        let mut attempts = 0;
+        let mut pauses = 0;
+        retry_transient_permission_denied(
+            true,
+            || {
+                attempts += 1;
+                if attempts < 3 {
+                    Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+                } else {
+                    Ok(())
+                }
+            },
+            |_| pauses += 1,
+        )
+        .unwrap();
+        assert_eq!(attempts, 3);
+        assert_eq!(pauses, 2);
+
+        let mut attempts = 0;
+        let error = retry_transient_permission_denied(
+            true,
+            || {
+                attempts += 1;
+                Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+            },
+            |_| panic!("non-permission error must not pause"),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(attempts, 1);
     }
 
     #[test]
