@@ -73,7 +73,7 @@ No task is currently blocked on missing design.
   authored waypoint progress, bonuses for straightness/rolling/wall contact, or
   a named route tactic. Preserve trajectory, velocity, collision response,
   action availability, and input history as observations the learner may use.
-- [ ] Repeat the bounded diagnostic until at least one zero-shot terminal is
+- [x] Repeat the bounded diagnostic until at least one zero-shot terminal is
   found and reproduced by two cold replays with identical terminal identity and
   tick count.
 
@@ -109,6 +109,9 @@ MiB; the same content is 56.1 MiB compact. New seed results now use compact JSON
 and enforce the 64 MiB bound before publication. Readers temporarily accept
 existing v45 pretty artifacts up to 128 MiB for replay/migration. Full trace
 descriptor deduplication into bounded binary storage remains open below.
+The 229-tick route then passed two cold replays with identical first-hit tick,
+controller tape, and terminal boundary fingerprint
+`0f3f6ab4888746792e01a15f18465d8e`.
 
 Exit: a bounded production campaign either learns a cold-replayable route or
 produces enough evidence to name and fix the specific learning subsystem that
