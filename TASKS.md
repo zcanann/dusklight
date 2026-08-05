@@ -69,7 +69,7 @@ No task is currently blocked on missing design.
   random-valid selection where possible. Compare coverage, terminal discovery,
   and ranking decisions without paying for redundant native experience. Add a
   matched native control only for questions that offline replay cannot answer.
-- [ ] Fix the diagnosed learning/search defect without adding Ordon coordinates,
+- [x] Fix the diagnosed learning/search defect without adding Ordon coordinates,
   authored waypoint progress, bonuses for straightness/rolling/wall contact, or
   a named route tactic. Preserve trajectory, velocity, collision response,
   action availability, and input history as observations the learner may use.
@@ -97,7 +97,18 @@ failure: recovery-directory publication returned access denied at decisions
 143 and 255 while leaving valid prior recovery points. Recovery publication now
 retries only transient Windows permission-denied renames for a bounded two
 seconds and retains fail-closed behavior for every other error. The resumed
-native treatment must verify both fixes.
+native treatment verified both fixes: seed 104729 found the real load-zone
+terminal after 34.4 seconds, produced eight terminal proposals and three
+selected terminal decisions, and completed cleanly at 702 useful expansions.
+Its best authenticated route is 229 ticks, so discovery is now quick but route
+quality remains inadequate.
+
+Cold replay then exposed a writer/reader contract bug: the authoritative seed
+result was 97.5 MiB of pretty JSON while its reader rejected anything above 64
+MiB; the same content is 56.1 MiB compact. New seed results now use compact JSON
+and enforce the 64 MiB bound before publication. Readers temporarily accept
+existing v45 pretty artifacts up to 128 MiB for replay/migration. Full trace
+descriptor deduplication into bounded binary storage remains open below.
 
 Exit: a bounded production campaign either learns a cold-replayable route or
 produces enough evidence to name and fix the specific learning subsystem that

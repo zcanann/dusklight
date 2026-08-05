@@ -18,6 +18,20 @@ pub(super) fn read_bounded_json<T: for<'de> Deserialize<'de>>(
     serde_json::from_slice(&fs::read(path).map_err(route_error)?).map_err(route_error)
 }
 
+pub(super) fn encode_bounded_compact_json<T: Serialize>(
+    value: &T,
+    maximum_bytes: u64,
+    artifact: &str,
+) -> Result<Vec<u8>, NativeTacticRouteRunError> {
+    let bytes = serde_json::to_vec(value).map_err(route_error)?;
+    if bytes.len() as u64 > maximum_bytes {
+        return Err(route_message(format!(
+            "{artifact} exceeds its bounded compact JSON size"
+        )));
+    }
+    Ok(bytes)
+}
+
 pub(super) fn reserve_attempt_root(
     output_root: &Path,
 ) -> Result<PathBuf, NativeTacticRouteRunError> {
@@ -71,6 +85,19 @@ pub(super) fn tactic_state_trace(
 
 pub(super) fn frontier_sampling_round(episode: u64) -> u64 {
     episode.saturating_sub(1 + episode / 4)
+}
+
+#[cfg(test)]
+mod bounded_json_tests {
+    use super::*;
+
+    #[test]
+    fn compact_writer_enforces_its_bound_before_publication() {
+        let value = serde_json::json!({"values": [1, 2, 3]});
+        let bytes = encode_bounded_compact_json(&value, 64, "fixture").unwrap();
+        assert_eq!(bytes, br#"{"values":[1,2,3]}"#);
+        assert!(encode_bounded_compact_json(&value, 8, "fixture").is_err());
+    }
 }
 
 pub(super) fn initial_probe_batch(

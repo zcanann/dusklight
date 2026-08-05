@@ -152,7 +152,11 @@ const NAVIGABLE_SURFACE_MAXIMUM_ATTACHMENT_DISTANCE: f32 = 512.0;
 const NAVIGABLE_SURFACE_ROUTE_TARGETS: usize = 8;
 const NAVIGABLE_SURFACE_ROUTE_RESOLUTIONS: [usize; 3] = [4, 6, 8];
 const NAVIGABLE_SURFACE_PORTAL_CLEARANCE: f32 = 24.0;
-const MAX_RESUME_JSON_BYTES: u64 = 64 * 1024 * 1024;
+// Completed v45 campaigns wrote pretty-printed seed and route reports. Accept
+// those existing artifacts for replay/migration while new authoritative seed
+// results remain capped by the smaller compact-writer bound below.
+const MAX_RESUME_JSON_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_SEED_RESULT_JSON_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ROUTE_ATTEMPTS: usize = 10_000;
 const TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2: &str = "dusklight-native-tactic-route-performance/v2";
 const TACTIC_MACRO_ENTRY_GOAL_DISTANCE_PADDING: f32 = 128.0;
