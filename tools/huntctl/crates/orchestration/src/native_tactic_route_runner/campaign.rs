@@ -355,10 +355,12 @@ pub(super) fn run_seed(
             .map_err(route_error)?;
             let graph_scheduling_started = Instant::now();
             let demonstration_branch = branch_acquisition_context.demonstration;
+            let learned_exploitation_acquisition = branch_acquisition_context.rank == 0;
             let ranked_frontier_branch = should_rank_frontier_with_live_model(
                 demonstration_branch,
                 campaign.native_terminal_supported(),
                 branch_acquisition_context.terminal_support,
+                learned_exploitation_acquisition,
                 config.execution_plan.value_treatment.uses_goal_relabeling(),
                 config
                     .execution_plan
@@ -402,7 +404,11 @@ pub(super) fn run_seed(
                 elapsed_micros(graph_scheduling_started.elapsed()),
             )?;
             let prefer_root = prefer_root_for_periodic_branch(
-                terminal_restart || branch_acquisition_context.terminal_support,
+                terminal_restart
+                    || branch_acquisition_context.terminal_support
+                    || (!campaign.native_terminal_supported()
+                        && learned_exploitation_acquisition
+                        && config.execution_plan.value_treatment.uses_goal_relabeling()),
                 lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
             );
             let selected_branch = if prefer_root { &root } else { &frontier };
@@ -604,10 +610,12 @@ pub(super) fn run_seed(
             .map_err(route_error)?;
             let graph_scheduling_started = Instant::now();
             let demonstration_branch = branch_acquisition_context.demonstration;
+            let learned_exploitation_acquisition = branch_acquisition_context.rank == 0;
             let ranked_frontier_branch = should_rank_frontier_with_live_model(
                 demonstration_branch,
                 campaign.native_terminal_supported(),
                 branch_acquisition_context.terminal_support,
+                learned_exploitation_acquisition,
                 config.execution_plan.value_treatment.uses_goal_relabeling(),
                 config
                     .execution_plan
@@ -651,7 +659,11 @@ pub(super) fn run_seed(
                 elapsed_micros(graph_scheduling_started.elapsed()),
             )?;
             let prefer_root = prefer_root_for_periodic_branch(
-                branch_terminal_restart || branch_acquisition_context.terminal_support,
+                branch_terminal_restart
+                    || branch_acquisition_context.terminal_support
+                    || (!campaign.native_terminal_supported()
+                        && learned_exploitation_acquisition
+                        && config.execution_plan.value_treatment.uses_goal_relabeling()),
                 lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
             );
             let selected_branch = if prefer_root { &root } else { &frontier };

@@ -47,13 +47,15 @@ pub(super) fn compare_frontier_acquisition(
                 .cmp(&left.goal_reachability_supported);
         }
         if left.goal_reachability_supported && right.goal_reachability_supported {
-            return left
-                .expansion_count
-                .cmp(&right.expansion_count)
-                .then_with(|| {
-                    option_f64(right.best_goal_progress_per_tick)
-                        .total_cmp(&option_f64(left.best_goal_progress_per_tick))
-                })
+            // This comparator is the learned-exploitation partition. Broad
+            // graph coverage has its own sealed acquisition ranks. Putting
+            // expansion count first here makes exploitation impossible when
+            // every branch produces more fresh frontier states than it can
+            // consume: an expanded promising state can never outrank the
+            // perpetually growing zero-expansion set.
+            return option_f64(right.best_goal_progress_per_tick)
+                .total_cmp(&option_f64(left.best_goal_progress_per_tick))
+                .then_with(|| left.expansion_count.cmp(&right.expansion_count))
                 .then_with(|| left.novelty_rank.cmp(&right.novelty_rank))
                 .then_with(|| {
                     option_f64(right.generalized_nearest_distance.map(f64::from)).total_cmp(

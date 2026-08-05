@@ -34,12 +34,12 @@ generic action families, learned frontier selection, graph backups, online
 cross-lane model sharing, tactic mining, route reconstruction, and cold replay.
 The obsolete cold-root `scratch-route` entry point is retired.
 
-The latest production curve measured about 3.5 useful expansions per second,
-or roughly 2,100 short alternatives in ten minutes, after packed transition
-persistence. That is enough capacity to run the first serious learning test.
-Checkpoint capture is still expensive, but further checkpoint optimization is
-not a prerequisite unless campaign evidence shows that branch volume is the
-limiting variable.
+The fixed-work production curve measured about 3.5 useful expansions per
+second, but the first growing-corpus campaign sustained only 1.11 expansions
+per second. The small curve therefore overestimated ten-minute capacity by more
+than 3x. Checkpoint capture was not the dominant scale cost; repeated model
+updates, evidence projection, graph scheduling, hashing, ranking, and durable
+publication were.
 
 A 64-decision, 128-proposal zero-shot preflight for seed 104729 exercised direct
 non-root restores and online fitting but found no terminal. That run proves the
@@ -49,17 +49,17 @@ No task is currently blocked on missing design.
 
 ## P0 — determine whether the learner actually learns
 
-- [ ] Run seed 104729 with no incumbent or demonstration for a meaningful fixed
-  budget: 1,024 decisions, two proposals per decision, and at most ten minutes.
-  Use the real `ordon_spring_load_committed` predicate and the current production
-  learner unchanged for the first treatment.
-- [ ] Make that single campaign answer several questions at once. Report time
+- [x] Run seed 104729 with no incumbent or demonstration for up to 1,024
+  decisions, two proposals per decision, and a hard ten-minute limit, whichever
+  is reached first. Use the real `ordon_spring_load_committed` predicate and the
+  current production learner unchanged for the first treatment.
+- [x] Make that single campaign answer several questions at once. Report time
   to first terminal, terminals, unique authenticated states, useful branches,
   transition count, direct restores and fallbacks, action-family coverage,
   prompted-action availability/selection, frontier revisits, learned ranking
   changes, value calibration, materially distinct trajectory clusters, fastest
   ticks, and cold-replay results.
-- [ ] If it finds no terminal, diagnose the failure from the retained corpus
+- [x] If it finds no terminal, diagnose the failure from the retained corpus
   before running more volume. Classify it as one or more of:
   insufficient proposal/action coverage, frontier/search starvation, broken
   value propagation or ranking, inadequate state features, restore/state-graph
@@ -76,6 +76,23 @@ No task is currently blocked on missing design.
 - [ ] Repeat the bounded diagnostic until at least one zero-shot terminal is
   found and reproduced by two cold replays with identical terminal identity and
   tick count.
+
+Latest diagnostic (2026-08-04): seed 104729 hit the ten-minute learner wall at
+349 decisions, 698 admitted proposals, 2,858 authenticated states, 57 coarse
+spatial cells, 89 model revisions, and no terminal. Every major generic family
+was available and selected, including roll, camera lock, combined lock/roll,
+curves, relative headings, seek-target, prompted actions, and neutral. Native
+branching completed 327 direct non-root restores with zero fallback replays.
+
+The failure was search starvation. The closest retained state appeared at
+decision 54 and was never improved during the remaining 294 decisions. In a
+single-seed plan, root refresh exactly replaced every rank-zero learned frontier
+slot; all other frontier choices ordered zero-expansion states ahead of learned
+value. Because each expansion produced several fresh states, a promising state
+could never be revisited. The fix now separates learned exploitation, broad
+exploration, and root refresh, and makes learned reachability value precede
+coverage count inside the exploitation partition. Its 454 orchestration tests
+pass; the next bounded native treatment must verify the behavior.
 
 Exit: a bounded production campaign either learns a cold-replayable route or
 produces enough evidence to name and fix the specific learning subsystem that
@@ -122,23 +139,22 @@ routes on the local machine.
 Exit: learned choices and reusable tactics, not lucky unguided search or a
 hand-authored route, causally improve results.
 
-## Conditional throughput work
+## P0 — remove the measured growing-corpus costs
 
-Do not start another checkpoint-representation or serialization treatment just
-because it may be faster. Start one only when a campaign above shows that useful
-branch volume or validation capacity is the active limiter.
+The growing-corpus campaign has now shown a real scale limiter, but checkpoint
+capture is not it. Do not start another checkpoint-representation treatment
+without new evidence.
 
 - [ ] Complete the capacity envelope with production measurements for cold-root
   replay, save, restore, short branch, worker handoff, unique transitions,
   retained-node bytes, and complete cold validations. Reuse campaign telemetry
   instead of launching one experiment per metric.
-- [ ] If the learner cannot approach the measured ~2,100-alternative envelope,
-  profile the lost time and fix the dominant execution, model-fit, persistence,
-  orchestration, or validation cost.
-- [ ] If learning curves show additional samples are the limiting variable,
-  improve the dominant measured cost. Preserve rewindable binary state and
-  authenticated restore semantics; a single-use live endpoint is not a save
-  state.
+- [ ] Use the retained ten-minute telemetry to remove repeated whole-corpus work
+  from model fitting, evidence projection, graph projection/hash/ranking, and
+  durable replay publication. Preserve exact reports and recovery semantics;
+  measure the combined campaign instead of isolated microbenchmarks.
+- [ ] Re-run the same bounded treatment and require materially more than 698
+  useful expansions without weakening the exploitation/exploration schedule.
 - [ ] Re-measure one versus two checkpoint-owning lanes. Keep a second lane only
   when it increases end-to-end unique useful experience without contamination
   or host saturation.

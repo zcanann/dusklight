@@ -91,10 +91,13 @@ pub(super) fn should_rank_frontier_with_live_model(
     demonstration_branch: bool,
     native_terminal_supported: bool,
     terminal_support_acquisition: bool,
+    learned_exploitation_acquisition: bool,
     goal_reachability_enabled: bool,
     terminal_frontier_action_value_enabled: bool,
 ) -> bool {
     demonstration_branch
-        || (!native_terminal_supported && goal_reachability_enabled)
+        || (!native_terminal_supported
+            && learned_exploitation_acquisition
+            && goal_reachability_enabled)
         || (terminal_support_acquisition && terminal_frontier_action_value_enabled)
 }

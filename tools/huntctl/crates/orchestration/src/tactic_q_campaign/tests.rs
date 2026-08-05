@@ -392,6 +392,42 @@ fn goal_reachability_ranks_equally_fresh_cold_start_frontiers() {
 }
 
 #[test]
+fn goal_reachability_value_precedes_coverage_count_in_exploitation() {
+    let repeatedly_promising = TacticFrontierAcquisition {
+        expansion_count: 4,
+        terminal: false,
+        terminal_value_supported: false,
+        achieved_goal_value_supported: false,
+        goal_reachability_supported: true,
+        goal_reachability_evidence_available: true,
+        reward: -0.4,
+        best_mean_q: None,
+        best_goal_progress_per_tick: Some(40.0),
+        predicted_terminal_ticks_to_go: None,
+        predicted_total_terminal_ticks: None,
+        exact_terminal_ticks_to_go: None,
+        exact_total_terminal_ticks: None,
+        maximum_ensemble_variance: None,
+        generalized_nearest_distance: Some(0.2),
+        discovery_spatial_novelty: None,
+        novelty_rank: 8,
+        replayed_prefix_ticks: 40,
+    };
+    let fresh_but_slow = TacticFrontierAcquisition {
+        expansion_count: 0,
+        best_goal_progress_per_tick: Some(8.0),
+        generalized_nearest_distance: Some(1.0),
+        novelty_rank: 0,
+        ..repeatedly_promising.clone()
+    };
+
+    assert_eq!(
+        compare_frontier_acquisition(&repeatedly_promising, &fresh_but_slow),
+        std::cmp::Ordering::Less
+    );
+}
+
+#[test]
 fn blocked_goal_reachability_evidence_cannot_rank_frontiers() {
     let blocked_but_optimistic = TacticFrontierAcquisition {
         expansion_count: 0,

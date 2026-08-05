@@ -317,7 +317,16 @@ impl NativeTacticExecutionPlan {
                     // exists.
                     epsilon_per_million: request.epsilon_per_million,
                     intervention,
-                    root_refresh_phase: generation_lane_index as u32 % request.root_refresh_cadence,
+                    // A single lane cycles rank zero every fourth episode.
+                    // Phase zero would replace every learned-exploitation
+                    // acquisition with a root refresh, leaving no exploitation
+                    // branch at all. Keep root coverage independent from the
+                    // acquisition partition.
+                    root_refresh_phase: if request.seeds.len() == 1 {
+                        1 % request.root_refresh_cadence
+                    } else {
+                        generation_lane_index as u32 % request.root_refresh_cadence
+                    },
                     episode_group_base: (lane_index as u64)
                         .checked_mul(EPISODE_GROUP_STRIDE)
                         .ok_or_else(|| route_message("episode group overflowed"))?,
@@ -568,6 +577,18 @@ mod tests {
                     cycle_width: 4,
                     ranked_lanes_per_cycle: 3,
                 }
+        }));
+        assert!(
+            single_seed
+                .iter()
+                .all(|plan| plan.lanes[0].root_refresh_phase == 1)
+        );
+        assert!(single_seed.iter().all(|plan| {
+            let lane = &plan.lanes[0];
+            (1..=16).all(|episode| {
+                !(lane.acquisition.rank(episode) == 0
+                    && lane.root_refresh_due(episode, plan.root_refresh_cadence))
+            })
         }));
     }
 
