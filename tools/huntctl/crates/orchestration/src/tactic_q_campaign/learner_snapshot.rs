@@ -1,5 +1,6 @@
 use super::*;
 use dusklight_learning::goal_reachability_calibration::calibrate_goal_reachability;
+use dusklight_learning::terminal_action_calibration::calibrate_terminal_action_ranking;
 
 fn is_default_value_treatment(value: &TacticValueTreatment) -> bool {
     *value == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
@@ -37,6 +38,8 @@ pub struct TacticQLearnerSnapshot {
     pub model_sha256: Option<Digest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal_reachability_calibration: Option<GoalReachabilityCalibration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_action_calibration: Option<TerminalActionCalibration>,
 }
 
 impl TacticQLearnerSnapshot {
@@ -47,7 +50,7 @@ impl TacticQLearnerSnapshot {
     ) -> Result<Self, TacticQCampaignError> {
         validate_training_corpus(corpus)?;
         let snapshot = Self {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5.into(),
             kind: TacticQLearnerSnapshotKind::Demonstration,
             value_treatment,
             execution_authority_sha256: corpus.execution_authority_sha256,
@@ -63,6 +66,7 @@ impl TacticQLearnerSnapshot {
             model_config,
             model_sha256: None,
             goal_reachability_calibration: None,
+            terminal_action_calibration: None,
         };
         snapshot.validate()?;
         Ok(snapshot)
@@ -80,7 +84,8 @@ impl TacticQLearnerSnapshot {
             && self.value_treatment == TacticValueTreatment::LocalGeneralizedFittedQKnnV1;
         let current = self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V2
             || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3
-            || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4;
+            || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4
+            || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5;
         if (!legacy && !current)
             || self.execution_authority_sha256 == Digest::ZERO
             || self.feature_schema_sha256 == Digest::ZERO
@@ -93,10 +98,22 @@ impl TacticQLearnerSnapshot {
             || (self.goal_reachability_calibration.is_some()
                 && (!matches!(
                     self.schema.as_str(),
-                    TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3 | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4
+                    TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3
+                        | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4
+                        | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5
                 ) || !self.value_treatment.uses_goal_relabeling()))
             || self
                 .goal_reachability_calibration
+                .as_ref()
+                .is_some_and(|calibration| {
+                    u64::try_from(calibration.source_transitions)
+                        .map_or(true, |rows| rows > self.training_replay_rows)
+                })
+            || (self.terminal_action_calibration.is_some()
+                && (self.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5
+                    || !self.value_treatment.uses_goal_relabeling()))
+            || self
+                .terminal_action_calibration
                 .as_ref()
                 .is_some_and(|calibration| {
                     u64::try_from(calibration.source_transitions)
@@ -110,6 +127,9 @@ impl TacticQLearnerSnapshot {
         serde_cbor::to_vec(&self.model_config)
             .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
         if let Some(calibration) = &self.goal_reachability_calibration {
+            calibration.validate()?;
+        }
+        if let Some(calibration) = &self.terminal_action_calibration {
             calibration.validate()?;
         }
         Ok(())
@@ -144,7 +164,7 @@ impl TacticQImmutableLearnerSnapshot {
         goal_distance_feature: usize,
         value_treatment: TacticValueTreatment,
     ) -> Result<Self, TacticQCampaignError> {
-        Self::fit_with_prior_goal_reachability_calibration(
+        Self::fit_with_prior_calibrations(
             corpus,
             replay_revision,
             model_revision,
@@ -152,18 +172,20 @@ impl TacticQImmutableLearnerSnapshot {
             goal_distance_feature,
             value_treatment,
             None,
+            None,
         )
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn fit_with_prior_goal_reachability_calibration(
+    pub(crate) fn fit_with_prior_calibrations(
         corpus: TacticQTrainingCorpus,
         replay_revision: u64,
         model_revision: u64,
         model_config: OptionValueConfig,
         goal_distance_feature: usize,
         value_treatment: TacticValueTreatment,
-        prior_calibration: Option<&GoalReachabilityCalibration>,
+        prior_goal_reachability_calibration: Option<&GoalReachabilityCalibration>,
+        prior_terminal_action_calibration: Option<&TerminalActionCalibration>,
     ) -> Result<Self, TacticQCampaignError> {
         validate_training_corpus(&corpus)?;
         let training_replay_sha256 =
@@ -175,7 +197,8 @@ impl TacticQImmutableLearnerSnapshot {
             model_config,
             goal_distance_feature,
             value_treatment,
-            prior_calibration,
+            prior_goal_reachability_calibration,
+            prior_terminal_action_calibration,
             training_replay_sha256,
         )
     }
@@ -183,14 +206,15 @@ impl TacticQImmutableLearnerSnapshot {
     /// Fits a replay snapshot that was already authenticated, deduplicated,
     /// and identity-bound by the durable replay control plane.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn fit_verified_replay_with_prior_goal_reachability_calibration(
+    pub(crate) fn fit_verified_replay_with_prior_calibrations(
         corpus: TacticQTrainingCorpus,
         replay_revision: u64,
         model_revision: u64,
         model_config: OptionValueConfig,
         goal_distance_feature: usize,
         value_treatment: TacticValueTreatment,
-        prior_calibration: Option<&GoalReachabilityCalibration>,
+        prior_goal_reachability_calibration: Option<&GoalReachabilityCalibration>,
+        prior_terminal_action_calibration: Option<&TerminalActionCalibration>,
         training_replay_sha256: Digest,
     ) -> Result<Self, TacticQCampaignError> {
         Self::fit_verified_replay_inner(
@@ -200,7 +224,8 @@ impl TacticQImmutableLearnerSnapshot {
             model_config,
             goal_distance_feature,
             value_treatment,
-            prior_calibration,
+            prior_goal_reachability_calibration,
+            prior_terminal_action_calibration,
             training_replay_sha256,
         )
     }
@@ -213,7 +238,8 @@ impl TacticQImmutableLearnerSnapshot {
         model_config: OptionValueConfig,
         goal_distance_feature: usize,
         value_treatment: TacticValueTreatment,
-        prior_calibration: Option<&GoalReachabilityCalibration>,
+        prior_goal_reachability_calibration: Option<&GoalReachabilityCalibration>,
+        prior_terminal_action_calibration: Option<&TerminalActionCalibration>,
         training_replay_sha256: Digest,
     ) -> Result<Self, TacticQCampaignError> {
         if replay_revision != corpus.transitions.len() as u64 {
@@ -320,7 +346,7 @@ impl TacticQImmutableLearnerSnapshot {
         let goal_reachability_calibration =
             goal_reachability_calibration_prefix_rows(value_treatment, corpus.transitions.len())
                 .map(|calibration_rows| {
-                    if let Some(prior) = prior_calibration
+                    if let Some(prior) = prior_goal_reachability_calibration
                         .filter(|prior| prior.source_transitions == calibration_rows)
                     {
                         Ok(prior.clone())
@@ -333,6 +359,29 @@ impl TacticQImmutableLearnerSnapshot {
                     }
                 })
                 .transpose()?;
+        let terminal_action_calibration = native_terminal_action_model
+            .as_ref()
+            .map(|_| {
+                let calibration_rows = terminal_action_calibration_prefix_rows(&corpus.transitions)
+                    .ok_or(TacticQCampaignError::InvalidState(
+                        "terminal action model exists without terminal calibration rows",
+                    ))?;
+                if let Some(prior) = prior_terminal_action_calibration
+                    .filter(|prior| prior.source_transitions == calibration_rows)
+                {
+                    Ok(prior.clone())
+                } else {
+                    calibrate_terminal_action_ranking(
+                        &corpus.transitions[..calibration_rows],
+                        goal_distance_feature,
+                        model_config.fitted_q.iterations,
+                        model_config.fitted_q.discount,
+                        value_treatment.uses_universal_terminal_action_head(),
+                    )
+                    .map_err(TacticQCampaignError::from)
+                }
+            })
+            .transpose()?;
         let model_sha256 = model
             .as_ref()
             .map(|model| {
@@ -342,7 +391,7 @@ impl TacticQImmutableLearnerSnapshot {
             })
             .transpose()?;
         let manifest = TacticQLearnerSnapshot {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5.into(),
             kind: TacticQLearnerSnapshotKind::Learned,
             value_treatment,
             execution_authority_sha256: corpus.execution_authority_sha256,
@@ -355,6 +404,7 @@ impl TacticQImmutableLearnerSnapshot {
             model_config,
             model_sha256,
             goal_reachability_calibration: goal_reachability_calibration.clone(),
+            terminal_action_calibration: terminal_action_calibration.clone(),
         };
         let sha256 = manifest.content_sha256()?;
         Ok(Self {
@@ -391,6 +441,16 @@ fn goal_reachability_calibration_prefix_rows(
     value_treatment
         .uses_goal_relabeling()
         .then(|| calibration_prefix_rows(available_rows))
+}
+
+fn terminal_action_calibration_prefix_rows(
+    transitions: &[OptionTransitionSample],
+) -> Option<usize> {
+    let first_terminal_rows = transitions
+        .iter()
+        .position(|transition| transition.value_sample.terminal)?
+        .saturating_add(1);
+    Some(calibration_prefix_rows(transitions.len()).max(first_terminal_rows))
 }
 
 #[cfg(test)]
@@ -457,6 +517,7 @@ mod tests {
             model_config: OptionValueConfig::default(),
             model_sha256: None,
             goal_reachability_calibration: None,
+            terminal_action_calibration: None,
         };
         let raw = serde_cbor::to_vec(&legacy).unwrap();
         let decoded: TacticQLearnerSnapshot = serde_cbor::from_slice(&raw).unwrap();

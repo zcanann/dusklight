@@ -23,9 +23,11 @@ use crate::reporting::GraphSearchReport;
 use crate::tactic_macro_store::{
     TACTIC_MACRO_REGISTRY_EXTENSION, read_tactic_macro_registry, write_tactic_macro_registry,
 };
+#[cfg(test)]
+use crate::tactic_q_campaign::TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4;
 use crate::tactic_q_campaign::{
     EvaluatedRewardedTacticOutcome, TACTIC_Q_CHECKPOINT_EXTENSION,
-    TACTIC_Q_DEMONSTRATION_EPISODE_GROUP, TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4,
+    TACTIC_Q_DEMONSTRATION_EPISODE_GROUP, TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5,
     TacticCampaignDiagnostics, TacticCampaignGraphProjection, TacticCampaignGraphProjectionEdge,
     TacticCampaignGraphProjectionNode, TacticExpansionLease, TacticFrontierAcquisition,
     TacticGraphSchedulingTiming, TacticQCampaign, TacticQCampaignCheckpoint, TacticQCampaignError,
@@ -74,6 +76,7 @@ use dusklight_learning::tactic_macro_promotion::{
     TacticMacroPromotionRegistry, discover_replay_macros, replay_macro_candidate,
 };
 use dusklight_learning::tactic_value_treatment::TacticValueTreatment;
+use dusklight_learning::terminal_action_calibration::TerminalActionCalibration;
 use dusklight_objectives::milestone_dsl::{Comparison, Expression, Field, Value};
 use dusklight_proposals::behavior_archive::BehaviorArchive;
 use dusklight_search::search::{MacroAction, SearchPadState};

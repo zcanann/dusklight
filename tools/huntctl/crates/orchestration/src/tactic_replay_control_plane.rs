@@ -1052,6 +1052,7 @@ mod tests {
             model_config: OptionValueConfig::default(),
             model_sha256: None,
             goal_reachability_calibration: None,
+            terminal_action_calibration: None,
         };
         service.publish_learner_snapshot(&snapshot).unwrap()
     }

@@ -511,6 +511,7 @@ pub(super) fn decision_record(
         proposal_feedback: trace.proposal_feedback,
         proposal_batch,
         goal_reachability_calibration: trace.goal_reachability_calibration.clone(),
+        terminal_action_calibration: trace.terminal_action_calibration.clone(),
     }
 }
 
@@ -722,6 +723,7 @@ pub(super) fn project_tactic_decision_record(
         proposal_feedback: record.proposal_feedback,
         proposal_batch,
         goal_reachability_calibration: record.goal_reachability_calibration,
+        terminal_action_calibration: record.terminal_action_calibration,
     })
 }
 

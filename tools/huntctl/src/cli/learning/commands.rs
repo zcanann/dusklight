@@ -506,7 +506,8 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
         Some(
             "calibrate-tactic-value"
             | "cross-calibrate-tactic-value"
-            | "compare-tactic-value-controls",
+            | "compare-tactic-value-controls"
+            | "calibrate-terminal-action-ranking",
         ) => tactic_calibration::command(args),
         _ => usage_error(),
     }

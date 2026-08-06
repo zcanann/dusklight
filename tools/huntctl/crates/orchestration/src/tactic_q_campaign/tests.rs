@@ -16,6 +16,42 @@ use dusklight_learning::tactic_exploration::TacticSelectionReason;
 use std::fs;
 
 #[test]
+fn unproven_terminal_model_cannot_replace_the_policy_primary() {
+    let catalog = TacticAssetCatalog::new(vec![
+        TacticCatalogEntry::new(
+            "baseline",
+            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 1 })),
+        )
+        .unwrap(),
+        TacticCatalogEntry::new(
+            "model-candidate",
+            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 2 })),
+        )
+        .unwrap(),
+    ])
+    .unwrap();
+    let descriptors = catalog.option_descriptors().cloned().collect::<Vec<_>>();
+    let baseline = SelectedTactic {
+        schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+        learner_snapshot_sha256: Digest([1; 32]),
+        decision_index: 7,
+        descriptor: descriptors[0].clone(),
+        reason: TacticSelectionReason::UnsupportedBootstrap,
+        exploration_draw: 1,
+    };
+    let model_candidate = SelectedTactic {
+        descriptor: descriptors[1].clone(),
+        reason: TacticSelectionReason::GeneralizedValue,
+        ..baseline.clone()
+    };
+    let mut proposals = vec![model_candidate.clone(), baseline.clone()];
+
+    super::decision::restore_primary_proposal(&mut proposals, baseline.clone(), 2);
+
+    assert_eq!(proposals, vec![baseline, model_candidate]);
+}
+
+#[test]
 fn seeded_frontier_rotation_visits_every_eligible_cell_before_repeating() {
     let choice_count = 35;
     let visited = (0..choice_count as u64)
@@ -782,6 +818,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
                 proposals: vec![decision.selected.clone()],
                 goal_reachability_estimates: Vec::new(),
                 goal_reachability_calibration: None,
+                terminal_action_calibration: None,
             },
             std::slice::from_ref(&decision.selected.descriptor),
             1,
@@ -808,6 +845,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
                 proposals: vec![decision.selected.clone()],
                 goal_reachability_estimates: Vec::new(),
                 goal_reachability_calibration: None,
+                terminal_action_calibration: None,
             },
             std::slice::from_ref(&decision.selected.descriptor),
             1,
@@ -838,6 +876,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
                     proposals: vec![decision.selected.clone()],
                     goal_reachability_estimates: Vec::new(),
                     goal_reachability_calibration: None,
+                    terminal_action_calibration: None,
                 },
                 std::slice::from_ref(&decision.selected.descriptor),
                 1,

@@ -1042,6 +1042,10 @@ pub struct NativeTacticDecisionTrace {
     /// pre-terminal reachability model had policy authority at this boundary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal_reachability_calibration: Option<GoalReachabilityCalibration>,
+    /// Whole-source-state held-out evidence governing whether the
+    /// native-terminal action model had policy authority at this boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_action_calibration: Option<TerminalActionCalibration>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1239,4 +1243,6 @@ pub(super) struct NativeTacticDecisionRecord {
     pub(super) proposal_batch: Vec<NativeTacticProposalRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) goal_reachability_calibration: Option<GoalReachabilityCalibration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) terminal_action_calibration: Option<TerminalActionCalibration>,
 }

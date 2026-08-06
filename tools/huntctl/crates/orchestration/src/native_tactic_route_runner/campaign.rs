@@ -1350,6 +1350,7 @@ pub(super) fn run_seed(
             proposal_feedback,
             proposal_batch: proposal_traces,
             goal_reachability_calibration: proposal_batch.goal_reachability_calibration.clone(),
+            terminal_action_calibration: proposal_batch.terminal_action_calibration.clone(),
         };
         if decision_trace_is_useful(&decision_trace) {
             useful_decisions = useful_decisions.saturating_add(1);

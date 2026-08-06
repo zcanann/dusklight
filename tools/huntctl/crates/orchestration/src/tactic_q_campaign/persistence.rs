@@ -260,6 +260,7 @@ impl TacticQCampaign {
             native_terminal_action_model: RefCell::new(None),
             continuous_model: RefCell::new(None),
             goal_reachability_calibration: None,
+            terminal_action_calibration: None,
             visited_states,
             hindsight,
             checkpoint_persistence: checkpoint.persistence,

@@ -65,10 +65,17 @@ No task is currently blocked on missing design.
   value propagation or ranking, inadequate state features, restore/state-graph
   errors, or genuinely insufficient samples. Record evidence for the
   classification; “mine longer” is not a diagnosis.
-- [ ] Re-score the same retained experience with adaptive, frozen-policy, and
-  random-valid selection where possible. Compare coverage, terminal discovery,
-  and ranking decisions without paying for redundant native experience. Add a
-  matched native control only for questions that offline replay cannot answer.
+- [x] Re-score native-terminal action ranking on the retained v6 corpus using
+  whole-source-state holdout and exact authenticated ticks-to-terminal. Keep
+  an unproven learned action as a measured sibling instead of deploying it.
+- [x] Re-score post-terminal graph scheduling against least-visited and seeded
+  random-valid order on the retained final graph. Report explicitly when the
+  graph lacks comparable exact outcomes instead of substituting immediate
+  progress or reward for the terminal objective.
+- [ ] Complete the adaptive, frozen-policy, and random-valid causal comparison.
+  Reuse retained experience where it supplies identical supported
+  opportunities; acquire matched native evidence only for comparisons that
+  are censored in the retained graph.
 - [x] Fix the diagnosed learning/search defect without adding Ordon coordinates,
   authored waypoint progress, bonuses for straightness/rolling/wall contact, or
   a named route tactic. Preserve trajectory, velocity, collision response,
@@ -155,6 +162,26 @@ worth that budget. Re-score this retained corpus against frozen and
 random-valid selection before changing the exploration share or running more
 seeds.
 
+The retained causal audits (2026-08-05) show why immediate post-terminal
+deployment was invalid. Of 698 transitions, only 45 have exact authenticated
+terminal continuations, and only two source states have two terminal-supported
+action siblings. The universal action head ranked both correctly, but its 95%
+Wilson lower bound is 0.342 against a 0.5 chance rate, so it has no deployment
+authority. The learner now withholds complete source states, calibrates against
+exact ticks-to-terminal, and leaves the learned action in the evaluated sibling
+slot until at least eight comparable groups establish better-than-chance
+ranking. The gate and its evidence are bound into learner snapshots and
+decision journals; `calibrate-terminal-action-ranking` reproduces the report
+from a retained checkpoint without native execution.
+
+The graph-scheduler control found 322 terminal-path interior states but only 71
+were ever leased. None of 19 optimization decisions had two exact terminal
+outcomes, so the retained graph cannot compare learned, least-visited, and
+random-valid scheduling at all. This is outcome-coverage starvation: one-step
+sibling evaluation collects observations, but almost every alternative remains
+censored because it never receives a continuation to the terminal or its equal
+budget.
+
 Exit: a bounded production campaign either learns a cold-replayable route or
 produces enough evidence to name and fix the specific learning subsystem that
 failed. Raw throughput is not allowed to conceal a search or learning failure.
@@ -167,6 +194,12 @@ failed. Raw throughput is not allowed to conceal a search or learning failure.
   authority across recovery, retain ordinary broad exploration between
   completed refinement attempts, and report completed versus interrupted
   refinement attempts.
+- [ ] Acquire paired terminal-return evidence from the same authenticated save
+  boundary. When a terminal-path decision evaluates multiple action siblings,
+  continue both the policy choice and a deterministic control until each hits
+  the terminal or consumes the same incumbent ticks-to-go. Preserve both
+  lineages in the state graph, count supported versus censored comparisons, and
+  prevent either outcome from replacing the other after observation.
 - [ ] Run five fixed zero-shot seeds under the same ten-minute envelope. All
   five must reach the native load zone; report distributions rather than only
   the best seed.

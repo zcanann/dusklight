@@ -81,6 +81,7 @@ impl TacticQCampaign {
             proposals,
             goal_reachability_estimates: Vec::new(),
             goal_reachability_calibration: None,
+            terminal_action_calibration: None,
         })
     }
 
@@ -242,6 +243,26 @@ impl TacticQCampaign {
         }
         let mut goal_reachability_estimates = Vec::new();
         let mut goal_reachability_calibration = None;
+        let terminal_action_calibration = (policy.uses_learned_selector()
+            && self.value_treatment.uses_goal_relabeling()
+            && native_terminal_supported
+            && terminal_support_acquisition)
+            .then(|| self.terminal_action_calibration.clone())
+            .flatten();
+        let terminal_action_deployment_ready = terminal_action_calibration
+            .as_ref()
+            .is_some_and(|calibration| calibration.deployment_ready);
+        // Preserve the policy action that existed before terminal-model
+        // augmentation until same-state held-out evidence grants that model
+        // control. Its candidate remains in the native sibling batch so the
+        // gate can accumulate evidence without converting evaluation into
+        // unproven behavior.
+        let unproven_terminal_primary = (policy.uses_learned_selector()
+            && self.value_treatment.uses_goal_relabeling()
+            && native_terminal_supported
+            && terminal_support_acquisition
+            && !terminal_action_deployment_ready)
+            .then(|| proposals[0].clone());
         if policy.uses_learned_selector() {
             let context = GeneralizedTacticContext::from_facts(&self.current.snapshot)?;
             let applicable_descriptors = ranking
@@ -386,14 +407,15 @@ impl TacticQCampaign {
             )?;
             if goal_reachability_deployment_ready {
                 retain_goal_reachability_acquisition(&mut proposals)?;
-            } else {
+            } else if unproven_terminal_primary.is_none() {
                 retain_generalized_value_acquisition(&mut proposals)?;
             }
         }
+        if let Some(primary) = unproven_terminal_primary {
+            restore_primary_proposal(&mut proposals, primary, maximum_proposals);
+        }
         if let Some(primary) = forced_primary {
-            proposals.retain(|proposal| proposal.descriptor != primary.descriptor);
-            proposals.insert(0, primary);
-            proposals.truncate(maximum_proposals);
+            restore_primary_proposal(&mut proposals, primary, maximum_proposals);
         }
         if proposals.iter().any(|proposal| {
             !ranking.choices.iter().any(|choice| {
@@ -411,6 +433,7 @@ impl TacticQCampaign {
             proposals,
             goal_reachability_estimates,
             goal_reachability_calibration,
+            terminal_action_calibration,
         })
     }
 
@@ -1044,6 +1067,16 @@ impl TacticQCampaign {
             transition,
         })
     }
+}
+
+pub(super) fn restore_primary_proposal(
+    proposals: &mut Vec<SelectedTactic>,
+    primary: SelectedTactic,
+    maximum_proposals: usize,
+) {
+    proposals.retain(|proposal| proposal.descriptor != primary.descriptor);
+    proposals.insert(0, primary);
+    proposals.truncate(maximum_proposals);
 }
 
 fn proposal_exploration_config(

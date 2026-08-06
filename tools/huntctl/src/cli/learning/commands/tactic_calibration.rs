@@ -8,6 +8,7 @@ use huntctl::learning::generalized_tactic_calibration::{
 };
 use huntctl::learning::option_transition::OptionTransitionSample;
 use huntctl::learning::tactic_features::GoalConditionedTacticFeatureEncoder;
+use huntctl::learning::terminal_action_calibration::calibrate_terminal_action_ranking;
 use huntctl::search_evaluator::tactic_q_campaign::{TacticQCampaign, TacticQTrainingCorpus};
 use serde_json::json;
 use std::error::Error;
@@ -19,8 +20,55 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
         Some("calibrate-tactic-value") => command_calibrate(&args[1..]),
         Some("cross-calibrate-tactic-value") => command_cross_calibrate(&args[1..]),
         Some("compare-tactic-value-controls") => command_compare(&args[1..]),
+        Some("calibrate-terminal-action-ranking") => command_terminal_action(&args[1..]),
         _ => Err("unknown generalized tactic calibration command".into()),
     }
+}
+
+fn command_terminal_action(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
+    let source = load_source(learn_args)?;
+    let output = new_output(learn_args, "terminal action calibration")?;
+    let fitted_q_iterations = usize_option(learn_args, "--fitted-q-iterations", 64)?;
+    let per_tick_discount = option(learn_args, "--per-tick-discount")
+        .map(|value| value.parse::<f32>())
+        .transpose()?
+        .unwrap_or(0.999);
+    let action_head = option(learn_args, "--action-head");
+    let universal_action_head = match action_head.as_deref().unwrap_or("universal") {
+        "universal" => true,
+        "classed" => false,
+        _ => return Err("--action-head must be universal or classed".into()),
+    };
+    let report = calibrate_terminal_action_ranking(
+        &source.transitions,
+        goal_distance_feature(learn_args)?,
+        fitted_q_iterations,
+        per_tick_discount,
+        universal_action_head,
+    )?;
+    write_report(&output, &report)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": report.schema,
+            "output": output,
+            "checkpoint": source.checkpoint_path,
+            "input": source.corpus_path,
+            "source_root_checkpoint_sha256": source.root_checkpoint_sha256,
+            "replay_source": source.replay_source,
+            "source_transitions": report.source_transitions,
+            "terminal_supported_transitions": report.terminal_supported_transitions,
+            "comparable_state_groups": report.comparable_state_groups,
+            "ranking_wins": report.ranking_wins,
+            "ranking_win_rate": report.ranking_win_rate,
+            "chance_win_rate": report.chance_win_rate,
+            "ranking_win_rate_wilson_lower_bound":
+                report.ranking_win_rate_wilson_lower_bound,
+            "mean_observed_regret_ticks": report.mean_observed_regret_ticks,
+            "deployment_ready": report.deployment_ready,
+        }))?
+    );
+    Ok(())
 }
 
 struct CalibrationSource {

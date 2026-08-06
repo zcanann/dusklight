@@ -264,6 +264,7 @@ mod tests {
             model_config: route_option_value_config(Digest([1; 32])),
             model_sha256: Some(Digest([6; 32])),
             goal_reachability_calibration: None,
+            terminal_action_calibration: None,
         };
         let mut completion = NativeTacticLearnerCompletion {
             schema: NATIVE_TACTIC_LEARNER_COMPLETION_SCHEMA_V1.into(),

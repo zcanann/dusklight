@@ -59,6 +59,7 @@ use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenP
 use dusklight_learning::tactic_value_treatment::{
     ContinuousTacticDoubleQModel, ContinuousTacticValueModel, TacticValueTreatment,
 };
+use dusklight_learning::terminal_action_calibration::TerminalActionCalibration;
 use dusklight_proposals::behavior_archive::{
     BehaviorArchive, TacticEndpointDescriptor, TacticFrontierEntry, TacticStateDescriptor,
     tactic_endpoint_descriptor_for_state, tactic_state_descriptor,
@@ -82,6 +83,7 @@ pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V1: &str = "dusklight-tactic-q-learne
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V2: &str = "dusklight-tactic-q-learner-snapshot/v2";
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3: &str = "dusklight-tactic-q-learner-snapshot/v3";
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4: &str = "dusklight-tactic-q-learner-snapshot/v4";
+pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5: &str = "dusklight-tactic-q-learner-snapshot/v5";
 /// Episode group reserved for critic evidence that must never become an
 /// executable frontier.
 pub const TACTIC_Q_MODEL_ONLY_EPISODE_GROUP: u64 = u64::MAX;
@@ -115,6 +117,7 @@ pub struct TacticQProposalBatch {
     pub proposals: Vec<SelectedTactic>,
     pub goal_reachability_estimates: Vec<TacticQGoalReachabilityEstimate>,
     pub goal_reachability_calibration: Option<GoalReachabilityCalibration>,
+    pub terminal_action_calibration: Option<TerminalActionCalibration>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -436,6 +439,7 @@ pub struct TacticQCampaign {
     native_terminal_action_model: RefCell<Option<CachedContinuousTacticDoubleQModel>>,
     continuous_model: RefCell<Option<CachedContinuousTacticValueModel>>,
     goal_reachability_calibration: Option<GoalReachabilityCalibration>,
+    terminal_action_calibration: Option<TerminalActionCalibration>,
     visited_states: BTreeSet<TacticStateDescriptor>,
     hindsight: HindsightOptionReplay,
     checkpoint_persistence: Option<TacticQCheckpointPersistence>,
@@ -595,6 +599,7 @@ impl TacticQCampaign {
             native_terminal_action_model: RefCell::new(None),
             continuous_model: RefCell::new(None),
             goal_reachability_calibration: None,
+            terminal_action_calibration: None,
             visited_states,
             hindsight,
             checkpoint_persistence: None,
@@ -620,7 +625,7 @@ impl TacticQCampaign {
             })
             .transpose()?;
         let snapshot = TacticQLearnerSnapshot {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5.into(),
             kind: TacticQLearnerSnapshotKind::Learned,
             value_treatment: self.value_treatment,
             execution_authority_sha256: self.execution_authority_sha256,
@@ -636,6 +641,7 @@ impl TacticQCampaign {
             model_config: self.model_config.clone(),
             model_sha256,
             goal_reachability_calibration: self.goal_reachability_calibration.clone(),
+            terminal_action_calibration: self.terminal_action_calibration.clone(),
         };
         snapshot.validate()?;
         Ok(snapshot)
@@ -729,6 +735,7 @@ impl TacticQCampaign {
                 });
         self.goal_reachability_calibration =
             snapshot.manifest.goal_reachability_calibration.clone();
+        self.terminal_action_calibration = snapshot.manifest.terminal_action_calibration.clone();
         Ok(admitted)
     }
 
