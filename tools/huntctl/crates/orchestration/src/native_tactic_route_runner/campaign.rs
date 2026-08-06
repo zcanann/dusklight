@@ -1,8 +1,8 @@
 pub(super) use super::campaign_schedule::{
-    first_demonstration_intervention, next_branch_acquisition_rank,
-    prefer_root_for_periodic_branch, scheduled_branch_acquisition,
+    ActiveTerminalRefinementRollout, first_demonstration_intervention,
+    next_branch_acquisition_rank, prefer_root_for_periodic_branch, scheduled_branch_acquisition,
     should_probe_policy_before_branch, should_rank_frontier_with_live_model,
-    should_schedule_branch,
+    should_schedule_branch, should_schedule_branch_with_terminal_refinement,
 };
 use super::*;
 
@@ -145,6 +145,17 @@ pub(super) fn run_seed(
     // Process-local handles intentionally do not survive campaign resume.
     let mut cached_frontier: Option<CachedTacticFrontier> = None;
     let mut branch_acquisition: Option<TacticFrontierAcquisition> = None;
+    let mut active_terminal_refinement = trace
+        .iter()
+        .rev()
+        .find(|decision| decision.branch_acquisition.is_some())
+        .and_then(|decision| decision.branch_acquisition.as_ref())
+        .and_then(|acquisition| {
+            ActiveTerminalRefinementRollout::new(
+                acquisition.replayed_prefix_ticks,
+                acquisition.exact_terminal_ticks_to_go,
+            )
+        });
     let mut demonstration_intervention_pending = false;
     let retained_success_root = seed_root.join("retained-successes");
     let mut best_success = load_best_retained_success(
@@ -324,12 +335,23 @@ pub(super) fn run_seed(
             campaign.native_terminal_supported() && next_branch_acquisition_rank == 0;
         let demonstration_coverage_pending = demonstration_curriculum
             && covered_demonstration_frontiers.len() < demonstration_frontier_states.len();
-        let scheduled_branch = should_schedule_branch(
+        let current_route_ticks = u64::try_from(campaign.route_tape.frames.len())
+            .map_err(|_| route_message("terminal refinement route length overflows"))?
+            .saturating_sub(source_frame);
+        let terminal_refinement_completed = active_terminal_refinement
+            .is_some_and(|rollout| !rollout.has_remaining_budget(current_route_ticks));
+        if terminal_refinement_completed {
+            active_terminal_refinement = None;
+        }
+        let terminal_refinement_in_progress = active_terminal_refinement.is_some();
+        let scheduled_branch = should_schedule_branch_with_terminal_refinement(
             campaign.decision_index,
             config.execution_plan.branch_every_decisions,
             terminal_restart,
             terminal_support_acquisition,
             demonstration_coverage_pending,
+            terminal_refinement_in_progress,
+            terminal_refinement_completed,
         );
         if !campaign.replay().is_empty() && scheduled_branch {
             let branch_started = Instant::now();
@@ -423,6 +445,12 @@ pub(super) fn run_seed(
                 selected_uncovered_demonstration_frontier,
             );
             branch_acquisition = selected_branch.acquisition.clone();
+            active_terminal_refinement = branch_acquisition.as_ref().and_then(|acquisition| {
+                ActiveTerminalRefinementRollout::new(
+                    acquisition.replayed_prefix_ticks,
+                    acquisition.exact_terminal_ticks_to_go,
+                )
+            });
             let action_catalog_started = Instant::now();
             let branch_proposals = parameterized_catalog_for_state_with_promoted(
                 seed,
@@ -678,6 +706,12 @@ pub(super) fn run_seed(
                 selected_uncovered_demonstration_frontier,
             );
             branch_acquisition = selected_branch.acquisition.clone();
+            active_terminal_refinement = branch_acquisition.as_ref().and_then(|acquisition| {
+                ActiveTerminalRefinementRollout::new(
+                    acquisition.replayed_prefix_ticks,
+                    acquisition.exact_terminal_ticks_to_go,
+                )
+            });
             let action_catalog_started = Instant::now();
             let branch_proposals = parameterized_catalog_for_state_with_promoted(
                 seed,

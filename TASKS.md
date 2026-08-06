@@ -125,8 +125,22 @@ material and does not satisfy the throughput task. Model fitting still consumed
 achieved-goal fitting recomputed the complete route-agnostic observation for
 every `(transition, sampled goal)` pair even though only eight goal-relative
 columns change. The exact feature path now computes each physical boundary's
-base observation once per refit and appends only those goal-relative columns;
-matched native measurement is pending.
+base observation once per refit and appends only those goal-relative columns.
+
+That second matched treatment also failed the campaign-level gate: useful
+expansions fell to 686 (1.094 per second), model time was still 209.6 seconds,
+and the best route remained 229 ticks. Do not spend another campaign on base
+feature or replay-materialization micro-optimizations. Across all three matched
+runs, the first terminal appears in 34--38 seconds and never improves during
+roughly 280 later decisions. Retained trace evidence identifies a quality
+search defect: a branch rooted on the authenticated terminal path is abandoned
+when the ordinary four-decision branch cadence fires, even when it has executed
+fewer native ticks than the incumbent continuation from that exact prefix. An
+early-prefix alternative can therefore be interrupted before it has an equal
+opportunity to reach the terminal. Post-terminal refinement must preserve each
+candidate rollout until it reaches the terminal or consumes the incumbent's
+exact remaining-tick budget; only then may ordinary broad/root acquisition
+replace it.
 
 Exit: a bounded production campaign either learns a cold-replayable route or
 produces enough evidence to name and fix the specific learning subsystem that
@@ -134,6 +148,12 @@ failed. Raw throughput is not allowed to conceal a search or learning failure.
 
 ## P0 — establish reliability and route quality
 
+- [ ] Give every terminal-path refinement branch an equal native continuation
+  budget: do not preempt it until it reaches the terminal or executes the
+  incumbent's exact ticks-to-go from that prefix. Reconstruct this rollout
+  authority across recovery, retain ordinary broad exploration between
+  completed refinement attempts, and report completed versus interrupted
+  refinement attempts.
 - [ ] Run five fixed zero-shot seeds under the same ten-minute envelope. All
   five must reach the native load zone; report distributions rather than only
   the best seed.
