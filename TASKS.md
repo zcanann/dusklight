@@ -142,13 +142,26 @@ candidate rollout until it reaches the terminal or consumes the incumbent's
 exact remaining-tick budget; only then may ordinary broad/root acquisition
 replace it.
 
+The equal-budget treatment (2026-08-05) verified that contract on retained
+native trace: 14 terminal-path refinement attempts ran, every nonterminal
+attempt consumed at least its exact incumbent continuation budget, two reached
+the terminal, and 16 broad post-terminal acquisitions still ran between
+completed attempts. The treatment improved a selected 301-tick terminal route
+to 254 ticks, but its final best was still worse than the prior treatment's
+229-tick route because the longer refinements displaced broad attempts and the
+learned continuation failed on 12 of 14 opportunities. Fair refinement
+evaluation is now present; the learned refinement policy has not proved it is
+worth that budget. Re-score this retained corpus against frozen and
+random-valid selection before changing the exploration share or running more
+seeds.
+
 Exit: a bounded production campaign either learns a cold-replayable route or
 produces enough evidence to name and fix the specific learning subsystem that
 failed. Raw throughput is not allowed to conceal a search or learning failure.
 
 ## P0 — establish reliability and route quality
 
-- [ ] Give every terminal-path refinement branch an equal native continuation
+- [x] Give every terminal-path refinement branch an equal native continuation
   budget: do not preempt it until it reaches the terminal or executes the
   incumbent's exact ticks-to-go from that prefix. Reconstruct this rollout
   authority across recovery, retain ordinary broad exploration between

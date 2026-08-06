@@ -1,8 +1,10 @@
+#[cfg(test)]
+pub(super) use super::campaign_schedule::should_schedule_branch;
 pub(super) use super::campaign_schedule::{
     ActiveTerminalRefinementRollout, first_demonstration_intervention,
     next_branch_acquisition_rank, prefer_root_for_periodic_branch, scheduled_branch_acquisition,
     should_probe_policy_before_branch, should_rank_frontier_with_live_model,
-    should_schedule_branch, should_schedule_branch_with_terminal_refinement,
+    should_schedule_branch_with_terminal_refinement,
 };
 use super::*;
 
