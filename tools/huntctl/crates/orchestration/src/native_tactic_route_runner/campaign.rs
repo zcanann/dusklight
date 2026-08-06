@@ -6,6 +6,7 @@ pub(super) use super::campaign_schedule::{
     should_probe_policy_before_branch, should_rank_frontier_with_live_model,
     should_schedule_branch_with_terminal_refinement,
 };
+use super::paired_terminal_returns::{ActivePairedTerminalReturn, PairedTerminalReturnSeed};
 use super::*;
 
 mod seed_finalization;
@@ -147,16 +148,22 @@ pub(super) fn run_seed(
     // Process-local handles intentionally do not survive campaign resume.
     let mut cached_frontier: Option<CachedTacticFrontier> = None;
     let mut branch_acquisition: Option<TacticFrontierAcquisition> = None;
-    let mut active_terminal_refinement = trace
-        .iter()
-        .rev()
-        .find(|decision| decision.branch_acquisition.is_some())
-        .and_then(|decision| decision.branch_acquisition.as_ref())
-        .and_then(|acquisition| {
-            ActiveTerminalRefinementRollout::new(
-                acquisition.replayed_prefix_ticks,
-                acquisition.exact_terminal_ticks_to_go,
-            )
+    let mut active_paired_terminal_return = ActivePairedTerminalReturn::recover(&trace)?;
+    let mut active_terminal_refinement = active_paired_terminal_return
+        .as_ref()
+        .map(ActivePairedTerminalReturn::rollout)
+        .or_else(|| {
+            trace
+                .iter()
+                .rev()
+                .find(|decision| decision.branch_acquisition.is_some())
+                .and_then(|decision| decision.branch_acquisition.as_ref())
+                .and_then(|acquisition| {
+                    ActiveTerminalRefinementRollout::new(
+                        acquisition.replayed_prefix_ticks,
+                        acquisition.exact_terminal_ticks_to_go,
+                    )
+                })
         });
     let mut demonstration_intervention_pending = false;
     let retained_success_root = seed_root.join("retained-successes");
@@ -172,11 +179,29 @@ pub(super) fn run_seed(
         &campaign,
         &mut best_success,
     )?;
+    let mut consumed_learner_snapshot = inherited_learner_snapshot;
+    if let Some(pair) = active_paired_terminal_return.as_ref()
+        && consumed_learner_snapshot.sha256 != pair.frozen_learner_snapshot_sha256()
+    {
+        let learner = live_learner.as_ref().ok_or_else(|| {
+            route_message("paired terminal-return recovery has no learner authority")
+        })?;
+        let frozen = lock_learner_authority(learner)?.snapshot_by_identity(
+            pair.frozen_learner_snapshot_sha256(),
+            pair.frozen_replay_revision(),
+        )?;
+        campaign
+            .consume_learner_snapshot_with_exploration_filter(&frozen, |episode_group| {
+                lane.owns_episode_group(episode_group)
+            })
+            .map_err(route_error)?;
+        consumed_learner_snapshot = frozen;
+    }
     let mut replay_session = build_replay_session(
         config.execution_plan,
         live_learner,
         lane,
-        inherited_learner_snapshot.replay_revision,
+        consumed_learner_snapshot.replay_revision,
         cross_lane_replay,
     )?;
     if let Some(session) = replay_session.as_ref() {
@@ -185,7 +210,6 @@ pub(super) fn run_seed(
             resuming_seed.then_some((&campaign, trace.as_slice())),
         )?;
     }
-    let mut consumed_learner_snapshot = inherited_learner_snapshot;
     let mut lease_ledger = NativeTacticLeaseLedger::open(&seed_root)?;
     if resuming_seed {
         let completed_expansions_by_decision = trace
@@ -280,11 +304,68 @@ pub(super) fn run_seed(
         if let Some(session) = replay_session.as_mut() {
             session.begin_decision(campaign.decision_index)?;
         }
+        if active_paired_terminal_return
+            .as_ref()
+            .is_some_and(ActivePairedTerminalReturn::control_pending)
+        {
+            let branch_started = Instant::now();
+            episode = episode
+                .checked_add(1)
+                .ok_or_else(|| route_message("episode counter overflowed"))?;
+            let control_target = active_paired_terminal_return
+                .as_ref()
+                .expect("checked paired control")
+                .control_target();
+            let control_branch = campaign
+                .exact_frontier_branch(control_target)
+                .map_err(route_error)?;
+            let action_catalog_started = Instant::now();
+            let branch_proposals = parameterized_catalog_for_state_with_promoted(
+                seed,
+                campaign.decision_index,
+                &control_branch.state,
+                encoder,
+                u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                parameterized_feedback_for_state(&campaign, &control_branch.state, encoder)?,
+                action_schema_sha256,
+                promoted_tactics,
+            )?;
+            record_orchestration_detail(
+                &mut timing,
+                OrchestrationPhase::ActionCatalogConstruction,
+                elapsed_micros(action_catalog_started.elapsed()),
+            )?;
+            campaign
+                .restore_branch(
+                    &control_branch,
+                    lane.episode_group(episode)?,
+                    registry,
+                    &branch_proposals.catalog,
+                    &branch_proposals.blueprints,
+                    |_| true,
+                )
+                .map_err(route_error)?;
+            let pair = active_paired_terminal_return
+                .as_mut()
+                .expect("checked paired control");
+            pair.begin_control();
+            active_terminal_refinement = Some(pair.rollout());
+            branch_acquisition = None;
+            cached_frontier = None;
+            timing.checkpoint_branching_micros = timing
+                .checkpoint_branching_micros
+                .saturating_add(elapsed_micros(branch_started.elapsed()));
+        }
         let decision_acquisition_rank = lane.acquisition.rank(campaign.decision_index);
-        let mut active_acquisition_rank = decision_acquisition_rank;
+        let mut active_acquisition_rank = if active_paired_terminal_return.is_some() {
+            0
+        } else {
+            decision_acquisition_rank
+        };
         let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
         let mut policy_update_probes = Vec::new();
         if should_probe_policy_before_branch(terminal_restart)
+            && active_paired_terminal_return.is_none()
             && let Some(session) = replay_session.as_mut()
         {
             let learner_refresh_started = Instant::now();
@@ -550,7 +631,9 @@ pub(super) fn run_seed(
                 OrchestrationPhase::TacticSelection,
                 selection_micros,
             )?;
-            if let Some(session) = replay_session.as_mut() {
+            if active_paired_terminal_return.is_none()
+                && let Some(session) = replay_session.as_mut()
+            {
                 let learner_refresh_started = Instant::now();
                 if let Some(snapshot) = session.pending_snapshot()? {
                     policy_update_probes.push(consume_policy_update_with_probe(
@@ -818,10 +901,29 @@ pub(super) fn run_seed(
             .join(format!("decision-{decision_index:06}"));
         fs::create_dir_all(&paths_root).map_err(route_error)?;
         let source_snapshot = campaign.current.snapshot.clone();
+        let source_snapshot_sha256 = source_snapshot.content_sha256().map_err(route_error)?;
         let source_route_tape = campaign.route_tape.clone();
         let restoration = campaign
             .current_restoration_contract()
             .map_err(route_error)?;
+        let paired_terminal_return_seed = if active_paired_terminal_return.is_none() {
+            PairedTerminalReturnSeed::from_pre_execution_proposals(
+                execution_plan_sha256,
+                campaign.decision_index,
+                restoration.plan.route.route_checkpoint_sha256,
+                source_snapshot_sha256,
+                branch_acquisition.as_ref(),
+                consumed_learner_snapshot.sha256,
+                consumed_learner_snapshot.replay_revision,
+                &proposal_batch.proposals,
+            )
+        } else {
+            None
+        };
+        let freeze_policy_for_paired_return = paired_terminal_return_seed.is_some()
+            || active_paired_terminal_return
+                .as_ref()
+                .is_some_and(ActivePairedTerminalReturn::freezes_policy);
         let source_tape_persistence_started = Instant::now();
         let source_route_tape_ref = decision_content_store
             .store_tape(&source_route_tape)
@@ -835,7 +937,6 @@ pub(super) fn run_seed(
                 ..NativeTacticPersistenceTiming::default()
             },
         )?;
-        let source_snapshot_sha256 = source_snapshot.content_sha256().map_err(route_error)?;
         let matching_cached_frontier = cached_frontier.as_ref().filter(|frontier| {
             frontier.state_sha256 == source_snapshot_sha256
                 && frontier.route_frames == source_route_tape.frames.len()
@@ -1063,7 +1164,9 @@ pub(super) fn run_seed(
             next_action_catalog_micros,
         )?;
         let graph_admission_started = Instant::now();
-        let step = if config.execution_plan.proposal_policy == TacticProposalPolicy::FrozenPolicy {
+        let step = if config.execution_plan.proposal_policy == TacticProposalPolicy::FrozenPolicy
+            || freeze_policy_for_paired_return
+        {
             campaign
                 .retain_rewarded_without_policy_update(
                     decision,
@@ -1274,10 +1377,57 @@ pub(super) fn run_seed(
                     terminal: proposal.outcome.terminal,
                     goal_distance_after: after_features[encoder.goal_distance_feature()],
                     after_snapshot_sha256: proposal.transition.after_state_sha256,
+                    after_checkpoint_sha256: proposal.transition.next_checkpoint_sha256,
                     retained: index == winner_index,
                 })
             })
             .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
+        let paired_terminal_return = if let Some(pair_seed) = paired_terminal_return_seed {
+            let control = evaluated
+                .get(pair_seed.control_proposal_index())
+                .ok_or_else(|| route_message("paired terminal-return control disappeared"))?;
+            let policy_route_ticks = u64::try_from(winning_outcome.route_tape.frames.len())
+                .map_err(route_error)?
+                .saturating_sub(source_frame);
+            let control_route_ticks = u64::try_from(control.outcome.route_tape.frames.len())
+                .map_err(route_error)?
+                .saturating_sub(source_frame);
+            let (active, trace) = pair_seed.admit_first_steps(
+                winning_outcome.terminal,
+                policy_route_ticks,
+                control.transition.next_checkpoint_sha256,
+                control.transition.after_state_sha256,
+                control.outcome.execution.duration.realized_ticks,
+                control.outcome.terminal,
+                control_route_ticks,
+            )?;
+            active_paired_terminal_return = active;
+            active_terminal_refinement = active_paired_terminal_return
+                .as_ref()
+                .map(ActivePairedTerminalReturn::rollout);
+            Some(trace)
+        } else if let Some(pair) = active_paired_terminal_return.as_mut() {
+            if learner_snapshot_sha256 != pair.frozen_learner_snapshot_sha256() {
+                return Err(route_message(
+                    "paired terminal-return continuation changed learner authority",
+                ));
+            }
+            let current_route_ticks = u64::try_from(campaign.route_tape.frames.len())
+                .map_err(route_error)?
+                .saturating_sub(source_frame);
+            let trace = pair.record_decision(winning_outcome.terminal, current_route_ticks);
+            if pair.complete() {
+                active_paired_terminal_return = None;
+                active_terminal_refinement = None;
+            } else {
+                active_terminal_refinement = active_paired_terminal_return
+                    .as_ref()
+                    .map(ActivePairedTerminalReturn::rollout);
+            }
+            Some(trace)
+        } else {
+            None
+        };
         decision_restore_accounting.proposal_transitions = proposal_traces.len() as u64;
         decision_restore_accounting.useful_transitions = proposal_traces
             .iter()
@@ -1332,6 +1482,7 @@ pub(super) fn run_seed(
             training_replay_rows: campaign.training_replay_len() as u64,
             scheduler_decision: Some(scheduler_decision),
             branch_acquisition: branch_acquisition.take(),
+            paired_terminal_return,
             frontier_cells,
             logical_frontier_records: frontier_cells.saturating_add(1),
             directly_restorable_native_frontiers: usize::from(directly_restored_frontier),

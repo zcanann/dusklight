@@ -367,6 +367,52 @@ impl CampaignTacticLearnerAuthority {
         self.fit_and_publish(replay)
     }
 
+    /// Reconstruct a previously published immutable snapshot without moving
+    /// the live learner head backward. Paired causal rollouts use this only on
+    /// crash recovery to restore the policy authority frozen at pair start.
+    pub(super) fn snapshot_by_identity(
+        &self,
+        expected_sha256: Digest,
+        replay_revision: u64,
+    ) -> Result<Arc<TacticQImmutableLearnerSnapshot>, NativeTacticRouteRunError> {
+        if self.latest.sha256 == expected_sha256 && self.latest.replay_revision == replay_revision {
+            return Ok(self.snapshot());
+        }
+        let manifest = self
+            .replay
+            .learner_snapshot(expected_sha256)
+            .map_err(route_error)?;
+        if manifest.training_replay_rows != replay_revision {
+            return Err(route_message(
+                "frozen learner snapshot has a detached replay revision",
+            ));
+        }
+        let replay = self
+            .replay
+            .snapshot_through(replay_revision)
+            .map_err(route_error)?;
+        let training_replay_sha256 = replay.training_replay_sha256();
+        let snapshot =
+            TacticQImmutableLearnerSnapshot::fit_verified_replay_with_prior_calibrations(
+                replay.corpus,
+                replay.version.revision,
+                manifest.model_revision,
+                self.model_config.clone(),
+                self.goal_distance_feature,
+                self.value_treatment,
+                manifest.goal_reachability_calibration.as_ref(),
+                manifest.terminal_action_calibration.as_ref(),
+                training_replay_sha256,
+            )
+            .map_err(route_error)?;
+        if snapshot.sha256 != expected_sha256 || snapshot.manifest != manifest {
+            return Err(route_message(
+                "frozen learner snapshot cannot be reconstructed exactly",
+            ));
+        }
+        Ok(Arc::new(snapshot))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn publish(
         &mut self,
@@ -906,6 +952,16 @@ mod tests {
         let learned_selected = latest_decision.selected.clone();
         let published_snapshot_count = authority.published_snapshot_count();
         assert_eq!(published_snapshot_count, 3);
+        let historical = authority
+            .snapshot_by_identity(learned_snapshot.sha256, learned_snapshot.replay_revision)
+            .unwrap();
+        assert_eq!(historical.sha256, learned_snapshot.sha256);
+        assert_eq!(historical.manifest, learned_snapshot.manifest);
+        assert_eq!(authority.snapshot().sha256, latest_snapshot.sha256);
+        assert_eq!(
+            authority.published_snapshot_count(),
+            published_snapshot_count
+        );
 
         drop(campaign);
         drop(authority);

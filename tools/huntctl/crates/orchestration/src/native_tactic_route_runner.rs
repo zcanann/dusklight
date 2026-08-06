@@ -170,15 +170,17 @@ use report::{
     NativeTacticProposalRecord, NativeTacticSeedPerformance,
 };
 pub use report::{
-    NativeTacticCampaignAdmissionTiming, NativeTacticDecisionTrace,
-    NativeTacticDemonstrationReport, NativeTacticFrontierAvailability, NativeTacticGraphMetrics,
-    NativeTacticImportedMacroReport, NativeTacticLearnerAuthorityReport,
+    NATIVE_TACTIC_PAIRED_TERMINAL_RETURN_SCHEMA_V1, NativeTacticCampaignAdmissionTiming,
+    NativeTacticDecisionTrace, NativeTacticDemonstrationReport, NativeTacticFrontierAvailability,
+    NativeTacticGraphMetrics, NativeTacticImportedMacroReport, NativeTacticLearnerAuthorityReport,
     NativeTacticMacroDiscoveryReport, NativeTacticMacroReuseReport, NativeTacticMeasurementTrace,
-    NativeTacticOrchestrationTiming, NativeTacticPersistenceTiming, NativeTacticProposalTrace,
-    NativeTacticReplaySharingTelemetry, NativeTacticRestoreAccounting, NativeTacticRestoreSource,
-    NativeTacticRouteReport, NativeTacticRouteRunConfig, NativeTacticRouteTiming,
-    NativeTacticSeedResult, NativeTacticSeedStopReason, NativeTacticStateTrace,
-    NativeTacticValueTrace, NativeTacticWorkerUtilization,
+    NativeTacticOrchestrationTiming, NativeTacticPairedTerminalReturnRole,
+    NativeTacticPairedTerminalReturnStatus, NativeTacticPairedTerminalReturnTrace,
+    NativeTacticPersistenceTiming, NativeTacticProposalTrace, NativeTacticReplaySharingTelemetry,
+    NativeTacticRestoreAccounting, NativeTacticRestoreSource, NativeTacticRouteReport,
+    NativeTacticRouteRunConfig, NativeTacticRouteTiming, NativeTacticSeedResult,
+    NativeTacticSeedStopReason, NativeTacticStateTrace, NativeTacticValueTrace,
+    NativeTacticWorkerUtilization,
 };
 mod causal_policy_probe;
 pub use causal_policy_probe::NativeTacticPolicyUpdateProbe;
@@ -1276,6 +1278,7 @@ mod worker_fleet;
 use worker_fleet::NativeTacticWorkerFleet;
 mod campaign;
 mod campaign_schedule;
+mod paired_terminal_returns;
 use campaign::{NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1, run_seed};
 mod graph_metrics;
 use graph_metrics::{

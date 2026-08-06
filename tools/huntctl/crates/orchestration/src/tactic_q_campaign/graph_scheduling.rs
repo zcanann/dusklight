@@ -311,6 +311,52 @@ impl TacticQCampaign {
         Ok([root, frontier])
     }
 
+    /// Materialize one exact executable graph node without ranking it against
+    /// any observed outcome. Paired terminal-return controls use this to honor
+    /// the control target selected at the original source boundary, even after
+    /// the policy lineage has produced additional evidence.
+    pub(crate) fn exact_frontier_branch(
+        &self,
+        target: crate::state_graph::ExactStateId,
+    ) -> Result<TacticCampaignBranch, TacticQCampaignError> {
+        let graph = self.state_graph()?;
+        let root = graph
+            .node(graph.root())
+            .ok_or(TacticQCampaignError::InvalidState(
+                "state graph root is absent",
+            ))?;
+        let node = graph
+            .node(target)
+            .filter(|node| node.id != graph.root() && node.restoration.executable && !node.terminal)
+            .ok_or(TacticQCampaignError::InvalidState(
+                "exact paired-control frontier is absent, terminal, or not executable",
+            ))?;
+        let route = graph.route(target.route_checkpoint_sha256).ok_or(
+            TacticQCampaignError::InvalidState("exact paired-control route is absent"),
+        )?;
+        let root_frames = usize::try_from(root.restoration.route.tape_frames)
+            .map_err(|_| TacticQCampaignError::InvalidState("root route frames overflow"))?;
+        let replayed_prefix_ticks = route.frames.len().checked_sub(root_frames).ok_or(
+            TacticQCampaignError::InvalidState(
+                "exact paired-control route precedes its native root",
+            ),
+        )? as u64;
+        Ok(TacticCampaignBranch {
+            kind: TacticBranchKind::RetainedFrontier,
+            logical_frontier: LogicalTacticFrontierRecord {
+                identity_sha256: target.route_checkpoint_sha256,
+                state_sha256: target.state_sha256,
+                route_frames: route.frames.len() as u64,
+                replayed_prefix_ticks,
+            },
+            restorable_native_checkpoint: None,
+            acquisition: None,
+            state: node.state.as_ref().clone(),
+            route_tape: route.clone(),
+            descriptor: None,
+        })
+    }
+
     /// Register every currently eligible action in the authoritative graph,
     /// rank the resulting untried expansions, and lease the exact batch that
     /// may be sent to native workers.

@@ -495,6 +495,7 @@ pub(super) fn decision_record(
         training_replay_rows: trace.training_replay_rows,
         scheduler_decision: trace.scheduler_decision.clone(),
         branch_acquisition: trace.branch_acquisition.clone(),
+        paired_terminal_return: trace.paired_terminal_return.clone(),
         frontier_cells: trace.frontier_cells,
         logical_frontier_records: trace.logical_frontier_records,
         directly_restorable_native_frontiers: trace.directly_restorable_native_frontiers,
@@ -587,6 +588,8 @@ pub(super) fn project_tactic_decision_record(
                         != proposal.trace.emitted_tape_sha256)
                 || candidate.value_sample.terminal != proposal.trace.terminal
                 || candidate.after_state_sha256 != proposal.trace.after_snapshot_sha256
+                || (proposal.trace.after_checkpoint_sha256 != Digest::ZERO
+                    && candidate.next_checkpoint_sha256 != proposal.trace.after_checkpoint_sha256)
                 || candidate.value_sample.reward.to_bits() != proposal.trace.reward.to_bits()
             {
                 return Err(route_message(
@@ -663,6 +666,49 @@ pub(super) fn project_tactic_decision_record(
     for probe in &record.policy_update_probes {
         probe.validate()?;
     }
+    if let Some(paired) = &record.paired_terminal_return {
+        super::paired_terminal_returns::validate_paired_terminal_return_trace(paired)?;
+        let expected_pair_sha256 = super::paired_terminal_returns::paired_terminal_return_identity(
+            record.execution_plan_sha256,
+            paired.source_decision_index,
+            paired.source_checkpoint_sha256,
+            paired.source_state_sha256,
+            &paired.policy_option_id,
+            &paired.control_option_id,
+        );
+        if paired.frozen_learner_snapshot_sha256 != record.learner_snapshot_sha256
+            || paired.pair_sha256 != expected_pair_sha256
+            || record.decision_index < paired.source_decision_index
+        {
+            return Err(route_message(
+                "paired terminal-return trace changed learner or source authority",
+            ));
+        }
+        if record.decision_index == paired.source_decision_index {
+            let [policy, control, ..] = proposal_batch.as_slice() else {
+                return Err(route_message(
+                    "paired terminal-return source has no deterministic control",
+                ));
+            };
+            if paired.role != NativeTacticPairedTerminalReturnRole::Policy
+                || transition.source_checkpoint_sha256 != paired.source_checkpoint_sha256
+                || transition.before_state_sha256 != paired.source_state_sha256
+                || transition.value_sample.action.option_id != paired.policy_option_id
+                || !policy.retained
+                || policy.option_id != paired.policy_option_id
+                || control.retained
+                || control.option_id != paired.control_option_id
+                || control.after_checkpoint_sha256 != paired.control_target_checkpoint_sha256
+                || control.after_snapshot_sha256 != paired.control_target_state_sha256
+                || control.realized_ticks != paired.control_first_step_ticks
+                || control.terminal != paired.control_first_step_terminal
+            {
+                return Err(route_message(
+                    "paired terminal-return source is detached from its proposal order",
+                ));
+            }
+        }
+    }
     if !record.policy_update_probes.is_empty()
         && (record.policy_update_probes.last().is_none_or(|probe| {
             probe.after_learner_snapshot_sha256 != record.learner_snapshot_sha256
@@ -709,6 +755,7 @@ pub(super) fn project_tactic_decision_record(
         training_replay_rows: record.training_replay_rows,
         scheduler_decision: record.scheduler_decision,
         branch_acquisition: record.branch_acquisition,
+        paired_terminal_return: record.paired_terminal_return,
         frontier_cells: record.frontier_cells,
         logical_frontier_records: record.logical_frontier_records,
         directly_restorable_native_frontiers: record.directly_restorable_native_frontiers,

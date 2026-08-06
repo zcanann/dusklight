@@ -674,6 +674,7 @@ fn journal_projects_graph_and_materializes_routes_from_content_objects() {
         terminal: transition.value_sample.terminal,
         goal_distance_after: trace.goal_distance_after,
         after_snapshot_sha256: transition.after_state_sha256,
+        after_checkpoint_sha256: transition.next_checkpoint_sha256,
         retained: true,
     };
     trace.proposal_batch = vec![proposal_trace.clone()];
@@ -786,6 +787,81 @@ fn journal_projects_graph_and_materializes_routes_from_content_objects() {
         |facts| Ok::<_, &'static str>(vec![facts.player.position_f32_bits[0] as f32]),
     )
     .unwrap();
+    let paired_execution_plan = Digest([8; 32]);
+    let mut paired_trace = trace.clone();
+    paired_trace.execution_plan_sha256 = paired_execution_plan;
+    paired_trace.proposal_batch[0].execution_plan_sha256 = paired_execution_plan;
+    let mut control_trace = paired_trace.proposal_batch[0].clone();
+    control_trace.option_id = alternate_transition.value_sample.action.option_id.clone();
+    control_trace.reward = alternate_transition.value_sample.reward;
+    control_trace.realized_ticks = alternate_transition.execution.duration.realized_ticks;
+    control_trace.root_route_ticks = alternate_route.frames.len() as u64;
+    control_trace.emitted_tape_sha256 = alternate_transition.value_sample.realized_tape_sha256;
+    control_trace.terminal = alternate_transition.value_sample.terminal;
+    control_trace.after_snapshot_sha256 = alternate_transition.after_state_sha256;
+    control_trace.after_checkpoint_sha256 = alternate_transition.next_checkpoint_sha256;
+    control_trace.retained = false;
+    paired_trace.proposal_batch.push(control_trace.clone());
+    let pair_sha256 = paired_terminal_returns::paired_terminal_return_identity(
+        paired_execution_plan,
+        paired_trace.decision_index,
+        transition.source_checkpoint_sha256,
+        transition.before_state_sha256,
+        &transition.value_sample.action.option_id,
+        &alternate_transition.value_sample.action.option_id,
+    );
+    paired_trace.paired_terminal_return = Some(NativeTacticPairedTerminalReturnTrace {
+        schema: NATIVE_TACTIC_PAIRED_TERMINAL_RETURN_SCHEMA_V1.into(),
+        pair_sha256,
+        source_decision_index: paired_trace.decision_index,
+        source_checkpoint_sha256: transition.source_checkpoint_sha256,
+        source_state_sha256: transition.before_state_sha256,
+        source_prefix_ticks: 0,
+        incumbent_ticks_to_go: 10,
+        frozen_learner_snapshot_sha256: paired_trace.learner_snapshot_sha256,
+        frozen_replay_revision: 1,
+        policy_option_id: transition.value_sample.action.option_id.clone(),
+        control_option_id: alternate_transition.value_sample.action.option_id.clone(),
+        control_target_checkpoint_sha256: alternate_transition.next_checkpoint_sha256,
+        control_target_state_sha256: alternate_transition.after_state_sha256,
+        control_first_step_ticks: alternate_transition.execution.duration.realized_ticks,
+        control_first_step_terminal: alternate_transition.value_sample.terminal,
+        role: NativeTacticPairedTerminalReturnRole::Policy,
+        status_after_decision: NativeTacticPairedTerminalReturnStatus::PolicyInProgress,
+        policy_terminal_supported: false,
+        control_terminal_supported: false,
+    });
+    let paired_record = decision_record(
+        &paired_trace,
+        2,
+        root_checkpoint_sha256,
+        root_ref,
+        Some(root_ref),
+        None,
+        Some(transition.clone()),
+        vec![
+            NativeTacticProposalRecord {
+                trace: paired_trace.proposal_batch[0].clone(),
+                component: None,
+                transition: None,
+                inline_transition: Some(transition.clone()),
+            },
+            NativeTacticProposalRecord {
+                trace: control_trace,
+                component: None,
+                transition: None,
+                inline_transition: Some(alternate_transition.clone()),
+            },
+        ],
+    );
+    assert!(project_tactic_decision_record(&store, paired_record.clone()).is_ok());
+    let mut detached_pair = paired_record;
+    detached_pair
+        .paired_terminal_return
+        .as_mut()
+        .unwrap()
+        .control_target_state_sha256 = Digest([0xff; 32]);
+    assert!(project_tactic_decision_record(&store, detached_pair).is_err());
     let mut child_route = alternate_route.clone();
     child_route
         .frames
@@ -1247,6 +1323,7 @@ fn evaluated_tick_accounting_includes_every_proposal() {
             terminal: index == 1,
             goal_distance_after: 7.0,
             after_snapshot_sha256: Digest([index as u8 + 1; 32]),
+            after_checkpoint_sha256: Digest([index as u8 + 11; 32]),
             retained: index == 1,
         })
         .collect();

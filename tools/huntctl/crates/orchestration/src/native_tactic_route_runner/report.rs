@@ -1014,6 +1014,12 @@ pub struct NativeTacticDecisionTrace {
     pub scheduler_decision: Option<TacticSchedulerDecisionTrace>,
     #[serde(default)]
     pub branch_acquisition: Option<TacticFrontierAcquisition>,
+    /// Durable equal-budget comparison rooted at one authenticated
+    /// terminal-supported source state. While this is active, both the
+    /// policy-selected first action and its pre-outcome deterministic control
+    /// use the same frozen learner authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paired_terminal_return: Option<NativeTacticPairedTerminalReturnTrace>,
     pub frontier_cells: usize,
     #[serde(default)]
     pub logical_frontier_records: usize,
@@ -1134,7 +1140,53 @@ pub struct NativeTacticProposalTrace {
     pub terminal: bool,
     pub goal_distance_after: f32,
     pub after_snapshot_sha256: Digest,
+    /// Exact route/checkpoint identity of this proposal's target state.
+    #[serde(default)]
+    pub after_checkpoint_sha256: Digest,
     pub retained: bool,
+}
+
+pub const NATIVE_TACTIC_PAIRED_TERMINAL_RETURN_SCHEMA_V1: &str =
+    "dusklight-native-tactic-paired-terminal-return/v1";
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeTacticPairedTerminalReturnRole {
+    Policy,
+    Control,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeTacticPairedTerminalReturnStatus {
+    PolicyInProgress,
+    ControlPending,
+    ControlInProgress,
+    Complete,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticPairedTerminalReturnTrace {
+    pub schema: String,
+    pub pair_sha256: Digest,
+    pub source_decision_index: u64,
+    pub source_checkpoint_sha256: Digest,
+    pub source_state_sha256: Digest,
+    pub source_prefix_ticks: u64,
+    pub incumbent_ticks_to_go: u64,
+    pub frozen_learner_snapshot_sha256: Digest,
+    pub frozen_replay_revision: u64,
+    pub policy_option_id: String,
+    pub control_option_id: String,
+    pub control_target_checkpoint_sha256: Digest,
+    pub control_target_state_sha256: Digest,
+    pub control_first_step_ticks: u32,
+    pub control_first_step_terminal: bool,
+    pub role: NativeTacticPairedTerminalReturnRole,
+    pub status_after_decision: NativeTacticPairedTerminalReturnStatus,
+    pub policy_terminal_supported: bool,
+    pub control_terminal_supported: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1209,6 +1261,8 @@ pub(super) struct NativeTacticDecisionRecord {
     pub(super) scheduler_decision: Option<TacticSchedulerDecisionTrace>,
     #[serde(default)]
     pub(super) branch_acquisition: Option<TacticFrontierAcquisition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) paired_terminal_return: Option<NativeTacticPairedTerminalReturnTrace>,
     pub(super) frontier_cells: usize,
     #[serde(default)]
     pub(super) logical_frontier_records: usize,

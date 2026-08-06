@@ -47,10 +47,14 @@ pub(super) fn load_or_create_seed_campaign(
             seed,
         )?;
         let mut resumed_campaign = resumed.0;
+        let paired_terminal_return_in_progress =
+            super::super::paired_terminal_returns::ActivePairedTerminalReturn::recover(&resumed.1)?
+                .is_some();
         let imported = if imports_inherited_learner_snapshot(
             config.execution_plan.proposal_policy,
             config.execution_plan.demonstration_chunk_ticks.is_some(),
-        ) {
+        ) && !paired_terminal_return_in_progress
+        {
             resumed_campaign
                 .consume_learner_snapshot(&inherited_learner_snapshot)
                 .map_err(route_error)?;

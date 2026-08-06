@@ -1418,6 +1418,19 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert!(frontier_branch.restorable_native_checkpoint.is_none());
     assert_eq!(root_branch.logical_frontier.replayed_prefix_ticks, 0);
     assert!(frontier_branch.logical_frontier.replayed_prefix_ticks > 0);
+    let exact_frontier = restored
+        .exact_frontier_branch(crate::state_graph::ExactStateId {
+            route_checkpoint_sha256: frontier_branch.logical_frontier.identity_sha256,
+            state_sha256: frontier_branch.logical_frontier.state_sha256,
+        })
+        .unwrap();
+    assert_eq!(exact_frontier.state, frontier_branch.state);
+    assert_eq!(exact_frontier.route_tape, frontier_branch.route_tape);
+    assert_eq!(
+        exact_frontier.logical_frontier,
+        frontier_branch.logical_frontier
+    );
+    assert!(exact_frontier.acquisition.is_none());
     let frontier_restoration = restored.current_restoration_contract().unwrap();
     assert_eq!(
         frontier_restoration.plan.node.state_sha256,

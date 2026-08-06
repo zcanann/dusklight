@@ -194,12 +194,20 @@ failed. Raw throughput is not allowed to conceal a search or learning failure.
   authority across recovery, retain ordinary broad exploration between
   completed refinement attempts, and report completed versus interrupted
   refinement attempts.
-- [ ] Acquire paired terminal-return evidence from the same authenticated save
-  boundary. When a terminal-path decision evaluates multiple action siblings,
-  continue both the policy choice and a deterministic control until each hits
-  the terminal or consumes the same incumbent ticks-to-go. Preserve both
-  lineages in the state graph, count supported versus censored comparisons, and
-  prevent either outcome from replacing the other after observation.
+- [x] Implement paired terminal-return collection from the same authenticated
+  save boundary. At a terminal-path decision, choose proposal zero as the
+  policy lineage and proposal one as its deterministic control before native
+  outcomes exist. Continue both until terminal or the same incumbent
+  ticks-to-go; freeze their learner snapshot, preserve both graph lineages,
+  recover unfinished pairs exactly, and prevent observed outcomes from changing
+  the selected pair.
+- [ ] Acquire paired native evidence for the adaptive, frozen-policy, and
+  random-valid treatments. Report completed, in-progress, terminal-supported,
+  and censored pairs. A supported action comparison requires both lineages to
+  hit the native terminal; equal-budget failures remain explicitly censored.
+  Acquire at least eight supported matched opportunities per treatment before
+  interpreting action-ranking rates, then use confidence intervals rather than
+  the floor itself as the success criterion.
 - [ ] Run five fixed zero-shot seeds under the same ten-minute envelope. All
   five must reach the native load zone; report distributions rather than only
   the best seed.
@@ -216,6 +224,18 @@ failed. Raw throughput is not allowed to conceal a search or learning failure.
 
 Exit: the framework reliably discovers substantially better-than-human Ordon
 routes on the local machine.
+
+Paired-return implementation (2026-08-05): the production runner now records a
+durable pair identity at the exact source checkpoint, binds it to the original
+pre-outcome proposal order, and restores the control's exact graph node after
+the policy rollout finishes. Both rollouts keep the same immutable learner
+snapshot even while their experience is published globally. Recovery
+reconstructs an older frozen snapshot without moving the shared learner head
+backward. Decision journals reject detached control targets, option identities,
+learner authorities, and phase transitions. Campaign summaries count started,
+completed, supported, censored, in-progress, and invalid pairs. All 462
+orchestration tests pass; native paired evidence has not yet been acquired, so
+the causal treatment comparison remains open.
 
 ## P0 — prove learning and tactic discovery cause the result
 
