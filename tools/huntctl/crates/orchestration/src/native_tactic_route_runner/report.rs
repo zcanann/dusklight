@@ -914,6 +914,12 @@ pub struct NativeTacticSeedResult {
     pub best_terminal_result: Option<String>,
     pub successful_tape: Option<String>,
     pub final_result: Option<String>,
+    /// Relative to the seed directory. New manifests keep the authoritative
+    /// trace in the bounded binary decision journal instead of duplicating it
+    /// as an unbounded JSON array. Legacy results embed `trace` directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_trace_journal: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trace: Vec<NativeTacticDecisionTrace>,
 }
 

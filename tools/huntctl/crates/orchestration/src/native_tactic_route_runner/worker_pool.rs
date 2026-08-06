@@ -141,11 +141,7 @@ pub(super) fn run_seed_coordinator(
                 seed_index,
                 seed,
             )?;
-            let result_bytes = encode_bounded_compact_json(
-                &completion.result,
-                MAX_SEED_RESULT_JSON_BYTES,
-                "native tactic seed result",
-            )?;
+            let result_bytes = encode_seed_result_manifest(&completion.result)?;
             write_new(&seed_result_path, &result_bytes)?;
             let projection = completion.completion_projection.as_ref().ok_or_else(|| {
                 route_message("newly completed tactic seed has no completion projection")

@@ -12,7 +12,7 @@ use super::{
     NativeTacticLaunchSmokeBundle, NativeTacticObservationAudit,
     NativeTacticOptimizationHandoffConfig, NativeTacticPolicyRunConfig,
     NativeTacticPostTerminalControlReport, NativeTacticRestoreLocalityConfig,
-    NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport, NativeTacticRouteReport,
+    NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport,
     NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
     NativeTacticScratchComparisonReport, NativeTacticScratchDiscoveryReport,
     NativeTacticScratchEvidenceBundle, NativeTacticTerminalEvidenceBundle,
@@ -23,11 +23,12 @@ use super::{
     build_native_tactic_optimization_handoff, cli, command_conservative_q, flag,
     native_frozen_policy_probe_model, native_tactic_execution_plan, option,
     prove_generalized_tactic_held_out_value, read_and_validate_native_tactic_cold_replay,
-    realize_native_frozen_policy_tape, repeated_option, required_path,
-    run_native_tactic_cold_replay, run_native_tactic_policy, run_native_tactic_restore_locality,
-    run_native_tactic_route, run_native_tactic_throughput_curve_controlled,
-    sealed_plan_shape_conflict, tactic_macro_registry_identity, u64_option, usage_error,
-    usize_option, verify_native_frozen_policy_cold_replay, verify_native_frozen_policy_reinference,
+    read_native_tactic_route_report, realize_native_frozen_policy_tape, repeated_option,
+    required_path, run_native_tactic_cold_replay, run_native_tactic_policy,
+    run_native_tactic_restore_locality, run_native_tactic_route,
+    run_native_tactic_throughput_curve_controlled, sealed_plan_shape_conflict,
+    tactic_macro_registry_identity, u64_option, usage_error, usize_option,
+    verify_native_frozen_policy_cold_replay, verify_native_frozen_policy_reinference,
 };
 use serde_json::json;
 use sha2::Digest as _;
@@ -376,8 +377,8 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .map(PathBuf::from)
                     .unwrap_or(std::env::current_dir()?),
             )?;
-            let mut route: NativeTacticRouteReport =
-                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            let mut route =
+                read_native_tactic_route_report(&required_path(learn_args, "--report")?)?;
             let output = required_path(learn_args, "--output")?;
             if output.exists() {
                 return Err(format!(
@@ -416,8 +417,8 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
         }
         Some("project-tactic-campaign-summary") => {
             let learn_args = &args[1..];
-            let route: NativeTacticRouteReport =
-                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            let route =
+                read_native_tactic_route_report(&required_path(learn_args, "--report")?)?;
             let plan = NativeTacticExecutionPlan::read(&required_path(learn_args, "--plan")?)?;
             let output = required_path(learn_args, "--output")?;
             if output.exists() {
@@ -450,8 +451,8 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
         }
         Some("validate-tactic-campaign-summary") => {
             let learn_args = &args[1..];
-            let route: NativeTacticRouteReport =
-                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            let route =
+                read_native_tactic_route_report(&required_path(learn_args, "--report")?)?;
             let plan = NativeTacticExecutionPlan::read(&required_path(learn_args, "--plan")?)?;
             let summary: NativeTacticCampaignSummary =
                 serde_json::from_slice(&fs::read(required_path(learn_args, "--summary")?)?)?;
@@ -483,8 +484,8 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 serde_json::from_slice(&fs::read(required_path(learn_args, "--execution")?)?)?;
             let execution_plan =
                 NativeTacticExecutionPlan::read(&required_path(learn_args, "--plan")?)?;
-            let route: NativeTacticRouteReport =
-                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            let route =
+                read_native_tactic_route_report(&required_path(learn_args, "--report")?)?;
             let output_argument = required_path(learn_args, "--output")?;
             let output = if output_argument.is_absolute() {
                 output_argument
@@ -543,8 +544,8 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 serde_json::from_slice(&fs::read(required_path(learn_args, "--execution")?)?)?;
             let execution_plan =
                 NativeTacticExecutionPlan::read(&required_path(learn_args, "--plan")?)?;
-            let route: NativeTacticRouteReport =
-                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            let route =
+                read_native_tactic_route_report(&required_path(learn_args, "--report")?)?;
             let proof = read_and_validate_native_tactic_cold_replay(
                 &repository_root,
                 &request,
@@ -569,8 +570,7 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             let request: OptimizationRequest = serde_json::from_slice(&fs::read(&request_path)?)?;
             let execution: NativeResidualExecutionBinding =
                 serde_json::from_slice(&fs::read(&execution_path)?)?;
-            let route: NativeTacticRouteReport =
-                serde_json::from_slice(&fs::read(&route_report_path)?)?;
+            let route = read_native_tactic_route_report(&route_report_path)?;
             let seed = option(learn_args, "--seed")
                 .ok_or("seal-tactic-terminal-bundle requires --seed")?
                 .parse::<u64>()?;
@@ -1077,8 +1077,7 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             let request: OptimizationRequest = serde_json::from_slice(&fs::read(&request_path)?)?;
             let execution: NativeResidualExecutionBinding =
                 serde_json::from_slice(&fs::read(&execution_path)?)?;
-            let route: NativeTacticRouteReport =
-                serde_json::from_slice(&fs::read(&route_report_path)?)?;
+            let route = read_native_tactic_route_report(&route_report_path)?;
             let output = required_path(learn_args, "--output")?;
             let bundle_root = required_path(learn_args, "--bundle")?;
             if output.exists() {
@@ -1177,8 +1176,8 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .map(PathBuf::from)
                     .unwrap_or(std::env::current_dir()?),
             )?;
-            let route: NativeTacticRouteReport =
-                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            let route =
+                read_native_tactic_route_report(&required_path(learn_args, "--report")?)?;
             let output = required_path(learn_args, "--output")?;
             if output.exists() {
                 return Err(format!(
@@ -1205,8 +1204,8 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .map(PathBuf::from)
                     .unwrap_or(std::env::current_dir()?),
             )?;
-            let route: NativeTacticRouteReport =
-                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            let route =
+                read_native_tactic_route_report(&required_path(learn_args, "--report")?)?;
             let output = required_path(learn_args, "--output")?;
             if output.exists() {
                 return Err(format!(
@@ -1230,8 +1229,8 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             let learn_args = &args[1..];
             let request: OptimizationRequest =
                 serde_json::from_slice(&fs::read(required_path(learn_args, "--request")?)?)?;
-            let route: NativeTacticRouteReport =
-                serde_json::from_slice(&fs::read(required_path(learn_args, "--report")?)?)?;
+            let route =
+                read_native_tactic_route_report(&required_path(learn_args, "--report")?)?;
             let corpus_paths = repeated_option(learn_args, "--input")
                 .into_iter()
                 .map(PathBuf::from)
@@ -1284,9 +1283,9 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             let routes = ["--learned-report", "--frozen-report", "--random-report"]
                 .into_iter()
                 .map(|argument| {
-                    Ok::<_, Box<dyn Error>>(serde_json::from_slice::<NativeTacticRouteReport>(
-                        &fs::read(required_path(learn_args, argument)?)?,
-                    )?)
+                    Ok::<_, Box<dyn Error>>(read_native_tactic_route_report(&required_path(
+                        learn_args, argument,
+                    )?)?)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let output = required_path(learn_args, "--output")?;
@@ -1333,7 +1332,7 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .ok_or("tactic route report has no campaign directory")?;
             let summary_path = output_root.join("campaign-summary.json");
             let completion_path = output_root.join(NATIVE_TACTIC_CAMPAIGN_COMPLETION_FILE);
-            let report: NativeTacticRouteReport = serde_json::from_slice(&fs::read(&report_path)?)?;
+            let report = read_native_tactic_route_report(&report_path)?;
             let completion = NativeTacticCampaignCompletion::read(&completion_path)?;
             completion.validate_files(&report_path, &summary_path)?;
             if completion.execution_plan_sha256 != report.execution_plan_sha256
@@ -1351,8 +1350,10 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .map(PathBuf::from)
                     .unwrap_or(std::env::current_dir()?),
             )?;
-            let scratch: NativeTacticRouteReport =
-                serde_json::from_slice(&fs::read(required_path(learn_args, "--scratch-report")?)?)?;
+            let scratch = read_native_tactic_route_report(&required_path(
+                learn_args,
+                "--scratch-report",
+            )?)?;
             let demonstration: NativeTacticDemonstrationReport = serde_json::from_slice(
                 &fs::read(required_path(learn_args, "--demonstration-report")?)?,
             )?;

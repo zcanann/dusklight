@@ -278,6 +278,7 @@ pub(super) fn finalize_seed(
         best_terminal_result,
         successful_tape,
         final_result,
+        decision_trace_journal: Some(NATIVE_TACTIC_DECISION_JOURNAL_FILE.into()),
         trace,
     };
     Ok(CompletedNativeTacticSeed {

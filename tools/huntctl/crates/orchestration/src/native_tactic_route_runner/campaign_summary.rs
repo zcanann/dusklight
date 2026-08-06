@@ -132,6 +132,25 @@ pub struct NativeTacticCampaignCausalSummary {
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub paired_terminal_return_supported_comparisons: u64,
     #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub paired_terminal_return_policy_only_completions: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub paired_terminal_return_control_only_completions: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub paired_terminal_return_neither_terminal_completions: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub paired_terminal_return_invalid_completions: u64,
+    /// Equal-budget matched outcomes. A one-sided terminal is a decisive win;
+    /// two terminals are ordered by exact ticks; two failures are a terminal-
+    /// rate tie but remain censored for return magnitude.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub paired_terminal_return_matched_policy_wins: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub paired_terminal_return_matched_control_wins: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub paired_terminal_return_matched_ties: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub paired_terminal_return_matched_unresolved: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub paired_terminal_return_censored_comparisons: u64,
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub paired_terminal_return_in_progress: u64,
@@ -524,6 +543,34 @@ impl NativeTacticCampaignSummary {
                 .causal_chain
                 .paired_terminal_return_supported_comparisons
                 > self.causal_chain.paired_terminal_return_pairs_completed
+            || self.causal_chain.paired_terminal_return_pairs_completed
+                != self
+                    .causal_chain
+                    .paired_terminal_return_supported_comparisons
+                    .saturating_add(
+                        self.causal_chain
+                            .paired_terminal_return_policy_only_completions,
+                    )
+                    .saturating_add(
+                        self.causal_chain
+                            .paired_terminal_return_control_only_completions,
+                    )
+                    .saturating_add(
+                        self.causal_chain
+                            .paired_terminal_return_neither_terminal_completions,
+                    )
+                    .saturating_add(self.causal_chain.paired_terminal_return_invalid_completions)
+            || self.causal_chain.paired_terminal_return_pairs_completed
+                != self
+                    .causal_chain
+                    .paired_terminal_return_matched_policy_wins
+                    .saturating_add(
+                        self.causal_chain
+                            .paired_terminal_return_matched_control_wins,
+                    )
+                    .saturating_add(self.causal_chain.paired_terminal_return_matched_ties)
+                    .saturating_add(self.causal_chain.paired_terminal_return_matched_unresolved)
+                    .saturating_add(self.causal_chain.paired_terminal_return_invalid_completions)
             || self
                 .causal_chain
                 .paired_terminal_return_censored_comparisons
@@ -1035,6 +1082,34 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
                 && !invalid_paired_terminal_returns.contains(&paired.pair_sha256)
         })
         .count() as u64;
+    let valid_completed_pairs = paired_latest.iter().filter(|(pair_sha256, paired)| {
+        paired.status_after_decision == NativeTacticPairedTerminalReturnStatus::Complete
+            && !invalid_paired_terminal_returns.contains(pair_sha256)
+    });
+    let paired_terminal_return_policy_only_completions = valid_completed_pairs
+        .clone()
+        .filter(|(_, paired)| {
+            paired.policy_terminal_supported && !paired.control_terminal_supported
+        })
+        .count() as u64;
+    let paired_terminal_return_control_only_completions = valid_completed_pairs
+        .clone()
+        .filter(|(_, paired)| {
+            !paired.policy_terminal_supported && paired.control_terminal_supported
+        })
+        .count() as u64;
+    let paired_terminal_return_neither_terminal_completions = valid_completed_pairs
+        .filter(|(_, paired)| {
+            !paired.policy_terminal_supported && !paired.control_terminal_supported
+        })
+        .count() as u64;
+    let paired_terminal_return_invalid_completions = paired_latest
+        .iter()
+        .filter(|(pair_sha256, paired)| {
+            paired.status_after_decision == NativeTacticPairedTerminalReturnStatus::Complete
+                && invalid_paired_terminal_returns.contains(pair_sha256)
+        })
+        .count() as u64;
     let paired_terminal_return_censored_comparisons = paired_terminal_return_pairs_started
         .saturating_sub(paired_terminal_return_supported_comparisons);
     let paired_terminal_return_in_progress =
@@ -1064,6 +1139,15 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
         .iter()
         .filter(|(policy, control)| policy == control)
         .count() as u64;
+    let paired_terminal_return_matched_policy_wins = paired_terminal_return_policy_only_completions
+        .saturating_add(paired_terminal_return_policy_wins);
+    let paired_terminal_return_matched_control_wins =
+        paired_terminal_return_control_only_completions
+            .saturating_add(paired_terminal_return_control_wins);
+    let paired_terminal_return_matched_ties = paired_terminal_return_neither_terminal_completions
+        .saturating_add(paired_terminal_return_ties);
+    let paired_terminal_return_matched_unresolved = paired_terminal_return_supported_comparisons
+        .saturating_sub(paired_terminal_return_exact_outcomes);
     let paired_terminal_return_policy_ticks_to_terminal = exact_paired_terminal_returns
         .iter()
         .map(|(policy, _)| *policy)
@@ -1144,6 +1228,14 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
         paired_terminal_return_pairs_started,
         paired_terminal_return_pairs_completed,
         paired_terminal_return_supported_comparisons,
+        paired_terminal_return_policy_only_completions,
+        paired_terminal_return_control_only_completions,
+        paired_terminal_return_neither_terminal_completions,
+        paired_terminal_return_invalid_completions,
+        paired_terminal_return_matched_policy_wins,
+        paired_terminal_return_matched_control_wins,
+        paired_terminal_return_matched_ties,
+        paired_terminal_return_matched_unresolved,
         paired_terminal_return_censored_comparisons,
         paired_terminal_return_in_progress,
         paired_terminal_return_exact_outcomes,
@@ -1475,6 +1567,17 @@ mod tests {
         assert_eq!(censored.paired_terminal_return_pairs_started, 1);
         assert_eq!(censored.paired_terminal_return_pairs_completed, 1);
         assert_eq!(censored.paired_terminal_return_supported_comparisons, 0);
+        assert_eq!(censored.paired_terminal_return_policy_only_completions, 1);
+        assert_eq!(censored.paired_terminal_return_control_only_completions, 0);
+        assert_eq!(
+            censored.paired_terminal_return_neither_terminal_completions,
+            0
+        );
+        assert_eq!(censored.paired_terminal_return_invalid_completions, 0);
+        assert_eq!(censored.paired_terminal_return_matched_policy_wins, 1);
+        assert_eq!(censored.paired_terminal_return_matched_control_wins, 0);
+        assert_eq!(censored.paired_terminal_return_matched_ties, 0);
+        assert_eq!(censored.paired_terminal_return_matched_unresolved, 0);
         assert_eq!(censored.paired_terminal_return_censored_comparisons, 1);
         assert_eq!(censored.paired_terminal_return_authority_violations, 0);
 
@@ -1482,6 +1585,9 @@ mod tests {
         route.seeds[0].trace[1].paired_terminal_return = Some(completed);
         let supported = causal_summary(&route);
         assert_eq!(supported.paired_terminal_return_supported_comparisons, 1);
+        assert_eq!(supported.paired_terminal_return_policy_only_completions, 0);
+        assert_eq!(supported.paired_terminal_return_matched_policy_wins, 1);
+        assert_eq!(supported.paired_terminal_return_matched_control_wins, 0);
         assert_eq!(supported.paired_terminal_return_censored_comparisons, 0);
         assert_eq!(supported.paired_terminal_return_exact_outcomes, 1);
         assert_eq!(supported.paired_terminal_return_policy_wins, 1);
@@ -1500,6 +1606,9 @@ mod tests {
         paired.source_state_sha256 = Digest([99; 32]);
         let invalid = causal_summary(&route);
         assert_eq!(invalid.paired_terminal_return_supported_comparisons, 0);
+        assert_eq!(invalid.paired_terminal_return_invalid_completions, 1);
+        assert_eq!(invalid.paired_terminal_return_matched_policy_wins, 0);
+        assert_eq!(invalid.paired_terminal_return_matched_control_wins, 0);
         assert_eq!(invalid.paired_terminal_return_censored_comparisons, 1);
         assert!(invalid.paired_terminal_return_authority_violations > 0);
         assert!(!invalid.causal_chain_ready_for_matched_evaluation);

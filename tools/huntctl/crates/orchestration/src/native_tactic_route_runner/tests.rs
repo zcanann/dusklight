@@ -1117,8 +1117,19 @@ fn throughput_rates_use_campaign_unique_graph_work_and_sum_seed_phases() {
         best_terminal_result: None,
         successful_tape: None,
         final_result: None,
+        decision_trace_journal: None,
         trace: Vec::new(),
     };
+    let mut manifest_fixture = seed.clone();
+    manifest_fixture.decision_trace_journal = Some(NATIVE_TACTIC_DECISION_JOURNAL_FILE.into());
+    manifest_fixture.trace = (0..seed.decisions).map(journal_trace).collect();
+    let manifest_bytes = encode_seed_result_manifest(&manifest_fixture).unwrap();
+    let manifest: NativeTacticSeedResult = serde_json::from_slice(&manifest_bytes).unwrap();
+    assert!(manifest.trace.is_empty());
+    assert_eq!(
+        manifest.decision_trace_journal.as_deref(),
+        Some(NATIVE_TACTIC_DECISION_JOURNAL_FILE)
+    );
     // The campaign authority may be smaller than the sum of per-seed graph
     // snapshots when those snapshots overlap.
     let timing = aggregate_route_timing(&[seed], 4).unwrap();

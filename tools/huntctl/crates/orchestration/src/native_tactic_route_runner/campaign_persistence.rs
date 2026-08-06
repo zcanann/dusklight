@@ -1,5 +1,44 @@
 use super::*;
 
+pub(super) fn encode_seed_result_manifest(
+    result: &NativeTacticSeedResult,
+) -> Result<Vec<u8>, NativeTacticRouteRunError> {
+    let mut manifest = result.clone();
+    manifest.trace.clear();
+    encode_bounded_compact_json(
+        &manifest,
+        MAX_SEED_RESULT_JSON_BYTES,
+        "native tactic seed result manifest",
+    )
+}
+
+pub(super) fn hydrate_seed_result_trace(
+    result_path: &Path,
+    result: &mut NativeTacticSeedResult,
+) -> Result<(), NativeTacticRouteRunError> {
+    if !result.trace.is_empty() {
+        return Ok(());
+    }
+    if result.decisions == 0 {
+        return Ok(());
+    }
+    if result.decision_trace_journal.as_deref() != Some(NATIVE_TACTIC_DECISION_JOURNAL_FILE) {
+        return Err(route_message(
+            "compact tactic seed result has no local binary trace authority",
+        ));
+    }
+    let seed_root = result_path
+        .parent()
+        .ok_or_else(|| route_message("compact tactic seed result has no seed directory"))?;
+    result.trace = read_tactic_decision_journal(seed_root)?;
+    if result.trace.len() as u64 != result.decisions {
+        return Err(route_message(
+            "compact tactic seed result trace journal is incomplete",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn cancellation_requested(config: &NativeTacticRouteRunConfig<'_>) -> bool {
     config
         .cancellation
@@ -161,8 +200,9 @@ pub(super) fn read_completed_seed_preflight(
             return Err(route_message("completed tactic seed result is oversized"));
         }
         let result_bytes = fs::read(path).map_err(route_error)?;
-        let result: NativeTacticSeedResult =
+        let mut result: NativeTacticSeedResult =
             serde_json::from_slice(&result_bytes).map_err(route_error)?;
+        hydrate_seed_result_trace(path, &mut result)?;
         validate_completed_seed_result(
             &result,
             seed,
@@ -229,7 +269,8 @@ pub(super) fn read_completed_seed(
     lane: &NativeTacticLanePlan,
     imported_demonstration: bool,
 ) -> Result<ValidatedCompletedNativeTacticSeed, NativeTacticRouteRunError> {
-    let result: NativeTacticSeedResult = read_bounded_json(path)?;
+    let mut result: NativeTacticSeedResult = read_bounded_json(path)?;
+    hydrate_seed_result_trace(path, &mut result)?;
     validate_completed_seed_result(
         &result,
         seed,

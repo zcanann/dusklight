@@ -203,11 +203,13 @@ failed. Raw throughput is not allowed to conceal a search or learning failure.
   the selected pair.
 - [ ] Acquire paired native evidence for the adaptive, frozen-policy, and
   random-valid treatments. Report completed, in-progress, terminal-supported,
-  and censored pairs. A supported action comparison requires both lineages to
-  hit the native terminal; equal-budget failures remain explicitly censored.
-  Acquire at least eight supported matched opportunities per treatment before
-  interpreting action-ranking rates, then use confidence intervals rather than
-  the floor itself as the success criterion.
+  and censored pairs. Every valid completed pair contributes its binary
+  terminal outcome: a one-sided terminal is a decisive win, two failures are a
+  terminal-rate tie but remain censored for return magnitude, and two terminals
+  are ordered by exact ticks-to-terminal. Acquire at least eight decisive
+  matched outcomes per treatment before interpreting action-ranking win rates,
+  then use confidence intervals rather than the floor itself as the success
+  criterion.
 - [ ] Run five fixed zero-shot seeds under the same ten-minute envelope. All
   five must reach the native load zone; report distributions rather than only
   the best seed.
@@ -257,6 +259,25 @@ and report exact-outcome count, policy wins, control wins, ties, and aggregate
 ticks rather than treating two terminal booleans as an outcome comparison. The
 retained native report reprojects and validates under that stronger contract.
 All 462 orchestration tests pass.
+
+Larger adaptive acquisition (2026-08-05): the optimized campaign profile
+reached the first terminal in 37.6 seconds and retained 492 decisions before
+the fifteen-minute wall. It improved the best route only from 264 to 261 ticks.
+Seven pairs started and six completed: one had both lineages terminal, one was
+policy-only terminal, four had neither lineage terminal, and one remained in
+progress. The exact dual-terminal pair was a 53-tick control continuation
+against the policy's 89 ticks. Counting all information from the equal-budget
+outcomes therefore gives one policy win, one control win, and four matched
+terminal-rate ties--no observed adaptive advantage yet, and far too few
+decisive pairs for inference.
+
+That campaign initially failed finalization because `seed-result.json`
+duplicated the already durable decision trace and crossed its 64 MiB compact
+JSON bound. Seed results and route reports are now small manifests: the full
+trace remains once in checksummed binary decision-journal segments and readers
+rehydrate it for analysis. Recovery finalized the existing 492 decisions
+without rerunning native work; the seed manifest is 10 KiB and the route report
+is 24 KiB, and the rehydrated report/plan/summary chain validates.
 
 ## P0 — prove learning and tactic discovery cause the result
 

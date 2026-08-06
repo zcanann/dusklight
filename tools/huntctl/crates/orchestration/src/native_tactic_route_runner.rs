@@ -1173,7 +1173,8 @@ fn run_native_tactic_route_with_optional_fleet(
         .transpose()?;
     let fleet_shutdown_micros = elapsed_micros(fleet_shutdown_started.elapsed());
     let final_report_build_started = Instant::now();
-    serde_json::to_writer(std::io::sink(), &report).map_err(route_error)?;
+    let report_build_probe = route_report_manifest(&report);
+    serde_json::to_writer(std::io::sink(), &report_build_probe).map_err(route_error)?;
     report.timing.reporting_micros = report_build_before_shutdown_micros
         .checked_add(elapsed_micros(final_report_build_started.elapsed()))
         .ok_or_else(|| route_message("native tactic report build timing overflowed"))?;
@@ -1181,7 +1182,8 @@ fn run_native_tactic_route_with_optional_fleet(
     let final_artifact_persistence_started = Instant::now();
     let summary = NativeTacticCampaignSummary::build(&report, config.execution_plan)?;
     let summary_bytes = summary.to_pretty_json()?;
-    let report_bytes = serde_json::to_vec_pretty(&report).map_err(route_error)?;
+    let report_manifest = route_report_manifest(&report);
+    let report_bytes = serde_json::to_vec_pretty(&report_manifest).map_err(route_error)?;
     publish_new_atomic(&summary_path, &summary_bytes)?;
     publish_new_atomic(&report_path, &report_bytes)?;
     let final_artifact_persistence_micros =
@@ -1197,6 +1199,30 @@ fn run_native_tactic_route_with_optional_fleet(
         elapsed_micros(campaign_started.elapsed()),
     )?;
     publish_completion(&completion_path, &completion)?;
+    Ok(report)
+}
+
+fn route_report_manifest(report: &NativeTacticRouteReport) -> NativeTacticRouteReport {
+    let mut manifest = report.clone();
+    for seed in &mut manifest.seeds {
+        seed.trace.clear();
+    }
+    manifest
+}
+
+pub fn read_native_tactic_route_report(
+    path: &Path,
+) -> Result<NativeTacticRouteReport, NativeTacticRouteRunError> {
+    let mut report: NativeTacticRouteReport = read_bounded_json(path)?;
+    let campaign_root = path
+        .parent()
+        .ok_or_else(|| route_message("native tactic route report has no campaign directory"))?;
+    for (seed_index, seed) in report.seeds.iter_mut().enumerate() {
+        if seed.trace.is_empty() && seed.decisions != 0 {
+            let seed_root = campaign_root.join(format!("seed-{seed_index:03}-{}", seed.seed));
+            hydrate_seed_result_trace(&seed_root.join("seed-result.json"), seed)?;
+        }
+    }
     Ok(report)
 }
 
@@ -1299,8 +1325,9 @@ use candidate_retention::{
 };
 mod campaign_persistence;
 use campaign_persistence::{
-    cancellation_requested, load_seed_performance, read_completed_seed,
-    read_completed_seed_preflight, read_completed_seed_result, resume_seed,
+    cancellation_requested, encode_seed_result_manifest, hydrate_seed_result_trace,
+    load_seed_performance, read_completed_seed, read_completed_seed_preflight,
+    read_completed_seed_result, resume_seed,
 };
 mod campaign_completion_recovery;
 use campaign_completion_recovery::recover_completed_campaign;

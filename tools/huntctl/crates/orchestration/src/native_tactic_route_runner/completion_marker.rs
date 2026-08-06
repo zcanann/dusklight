@@ -89,8 +89,7 @@ impl NativeTacticCampaignCompletion {
         let report = fs::read(report_path).map_err(route_error)?;
         let summary = fs::read(summary_path).map_err(route_error)?;
         self.validate_artifact_hashes(&report, &summary)?;
-        let route: NativeTacticRouteReport =
-            serde_json::from_slice(&report).map_err(route_error)?;
+        let route = read_native_tactic_route_report(report_path)?;
         let summary: NativeTacticCampaignSummary =
             serde_json::from_slice(&summary).map_err(route_error)?;
         summary.validate()?;

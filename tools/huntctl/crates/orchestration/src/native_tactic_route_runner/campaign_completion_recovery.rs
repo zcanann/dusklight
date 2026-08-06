@@ -15,7 +15,7 @@ pub(super) fn recover_completed_campaign(
     if completion_path.exists() {
         let completion = NativeTacticCampaignCompletion::read(&completion_path)?;
         completion.validate_files(&report_path, &summary_path)?;
-        let report: NativeTacticRouteReport = read_bounded_json(&report_path)?;
+        let report = read_native_tactic_route_report(&report_path)?;
         validate_report_binding(config, imported_promoted_tactics, &report)?;
         return Ok(Some(report));
     }
@@ -30,8 +30,7 @@ pub(super) fn recover_completed_campaign(
     let recovered = (|| {
         let report_bytes = fs::read(&report_path).map_err(route_error)?;
         let summary_bytes = fs::read(&summary_path).map_err(route_error)?;
-        let report: NativeTacticRouteReport =
-            serde_json::from_slice(&report_bytes).map_err(route_error)?;
+        let report = read_native_tactic_route_report(&report_path)?;
         let summary: NativeTacticCampaignSummary =
             serde_json::from_slice(&summary_bytes).map_err(route_error)?;
         validate_report_binding(config, imported_promoted_tactics, &report)?;
