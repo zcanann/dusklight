@@ -241,15 +241,22 @@ completed with both lineages terminal-supported, while the second remained
 in-progress and therefore censored at the campaign bound. The summary reported
 zero learner-authority violations and passed independent report/plan/summary
 validation. This proves native activation and recovery/accounting integration;
-one supported adaptive pair does not establish an action-ranking rate or a
-learned advantage. Frozen-policy and random-valid evidence, and at least eight
-supported opportunities per treatment, remain open above.
+the exact matched return was 89 ticks for the learned policy lineage versus 53
+for its deterministic control, a 36-tick control win. One supported adaptive
+pair does not establish an action-ranking rate, but it is specifically evidence
+against claiming a learned advantage from this run. Frozen-policy and
+random-valid evidence, and at least eight supported opportunities per
+treatment, remain open above.
 
 The activation audit also closed a fail-open reporting hole: a malformed pair
 could previously increment the authority-violation count while still entering
 the supported total. Invalid pair identities are now retained as censored,
-excluded from supported evidence, and make the causal chain incomplete. All
-462 orchestration tests pass.
+excluded from supported evidence, and make the causal chain incomplete.
+Campaign summaries now reconstruct exact ticks-to-terminal for both lineages
+and report exact-outcome count, policy wins, control wins, ties, and aggregate
+ticks rather than treating two terminal booleans as an outcome comparison. The
+retained native report reprojects and validates under that stronger contract.
+All 462 orchestration tests pass.
 
 ## P0 — prove learning and tactic discovery cause the result
 

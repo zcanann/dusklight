@@ -135,6 +135,21 @@ pub struct NativeTacticCampaignCausalSummary {
     pub paired_terminal_return_censored_comparisons: u64,
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub paired_terminal_return_in_progress: u64,
+    /// Supported pairs whose exact native ticks-to-terminal can be recovered
+    /// for both lineages. These are the only pairs eligible for an outcome
+    /// effect estimate.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub paired_terminal_return_exact_outcomes: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub paired_terminal_return_policy_wins: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub paired_terminal_return_control_wins: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub paired_terminal_return_ties: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub paired_terminal_return_policy_ticks_to_terminal: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub paired_terminal_return_control_ticks_to_terminal: u64,
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub paired_terminal_return_authority_violations: u64,
     pub causal_chain_ready_for_matched_evaluation: bool,
@@ -524,6 +539,34 @@ impl NativeTacticCampaignSummary {
                     .causal_chain
                     .paired_terminal_return_pairs_started
                     .saturating_sub(self.causal_chain.paired_terminal_return_pairs_completed)
+            || self.causal_chain.paired_terminal_return_exact_outcomes
+                > self
+                    .causal_chain
+                    .paired_terminal_return_supported_comparisons
+            || self.causal_chain.paired_terminal_return_exact_outcomes
+                != self
+                    .causal_chain
+                    .paired_terminal_return_policy_wins
+                    .saturating_add(self.causal_chain.paired_terminal_return_control_wins)
+                    .saturating_add(self.causal_chain.paired_terminal_return_ties)
+            || (self.causal_chain.paired_terminal_return_exact_outcomes == 0
+                && (self
+                    .causal_chain
+                    .paired_terminal_return_policy_ticks_to_terminal
+                    != 0
+                    || self
+                        .causal_chain
+                        .paired_terminal_return_control_ticks_to_terminal
+                        != 0))
+            || (self.causal_chain.paired_terminal_return_exact_outcomes != 0
+                && (self
+                    .causal_chain
+                    .paired_terminal_return_policy_ticks_to_terminal
+                    == 0
+                    || self
+                        .causal_chain
+                        .paired_terminal_return_control_ticks_to_terminal
+                        == 0))
             || (!self.causal_chain.learning_expected && self.causal_chain.policy_update_probes != 0)
             || (matches!(
                 self.schema.as_str(),
@@ -906,6 +949,7 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
         .count() as u64;
     let mut paired_latest = BTreeMap::<Digest, &NativeTacticPairedTerminalReturnTrace>::new();
     let mut invalid_paired_terminal_returns = BTreeSet::<Digest>::new();
+    let mut paired_terminal_ticks = BTreeMap::<Digest, [Option<u64>; 2]>::new();
     let mut paired_terminal_return_authority_violations = 0_u64;
     for seed in &route.seeds {
         if ActivePairedTerminalReturn::recover(&seed.trace).is_err() {
@@ -939,6 +983,40 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
                 paired_terminal_return_authority_violations.saturating_add(1);
             invalid_paired_terminal_returns.insert(paired.pair_sha256);
         }
+        let terminal_ticks = paired_terminal_ticks
+            .entry(paired.pair_sha256)
+            .or_insert([None, None]);
+        let mut exact_outcome_valid = true;
+        if paired.control_first_step_terminal {
+            exact_outcome_valid &= record_exact_terminal_ticks(
+                &mut terminal_ticks[1],
+                u64::from(paired.control_first_step_ticks),
+                paired.incumbent_ticks_to_go,
+            );
+        }
+        if decision.terminal {
+            // `route_suffix_ticks` is the current root-derived route length
+            // after the optimization source boundary. The pair source prefix
+            // uses that same coordinate system.
+            let ticks_to_terminal = decision
+                .route_suffix_ticks
+                .checked_sub(paired.source_prefix_ticks);
+            let role_index = match paired.role {
+                NativeTacticPairedTerminalReturnRole::Policy => 0,
+                NativeTacticPairedTerminalReturnRole::Control => 1,
+            };
+            exact_outcome_valid &= ticks_to_terminal.is_some_and(|ticks| {
+                record_exact_terminal_ticks(
+                    &mut terminal_ticks[role_index],
+                    ticks,
+                    paired.incumbent_ticks_to_go,
+                )
+            });
+        }
+        if !exact_outcome_valid && invalid_paired_terminal_returns.insert(paired.pair_sha256) {
+            paired_terminal_return_authority_violations =
+                paired_terminal_return_authority_violations.saturating_add(1);
+        }
         paired_latest.insert(paired.pair_sha256, paired);
     }
     let paired_terminal_return_pairs_started = paired_latest.len() as u64;
@@ -961,6 +1039,39 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
         .saturating_sub(paired_terminal_return_supported_comparisons);
     let paired_terminal_return_in_progress =
         paired_terminal_return_pairs_started.saturating_sub(paired_terminal_return_pairs_completed);
+    let exact_paired_terminal_returns = paired_latest
+        .iter()
+        .filter_map(|(pair_sha256, paired)| {
+            (paired.status_after_decision == NativeTacticPairedTerminalReturnStatus::Complete
+                && paired.policy_terminal_supported
+                && paired.control_terminal_supported
+                && !invalid_paired_terminal_returns.contains(pair_sha256))
+            .then_some(paired_terminal_ticks.get(pair_sha256).copied())
+            .flatten()
+            .and_then(|[policy, control]| policy.zip(control))
+        })
+        .collect::<Vec<_>>();
+    let paired_terminal_return_exact_outcomes = exact_paired_terminal_returns.len() as u64;
+    let paired_terminal_return_policy_wins = exact_paired_terminal_returns
+        .iter()
+        .filter(|(policy, control)| policy < control)
+        .count() as u64;
+    let paired_terminal_return_control_wins = exact_paired_terminal_returns
+        .iter()
+        .filter(|(policy, control)| control < policy)
+        .count() as u64;
+    let paired_terminal_return_ties = exact_paired_terminal_returns
+        .iter()
+        .filter(|(policy, control)| policy == control)
+        .count() as u64;
+    let paired_terminal_return_policy_ticks_to_terminal = exact_paired_terminal_returns
+        .iter()
+        .map(|(policy, _)| *policy)
+        .fold(0_u64, u64::saturating_add);
+    let paired_terminal_return_control_ticks_to_terminal = exact_paired_terminal_returns
+        .iter()
+        .map(|(_, control)| *control)
+        .fold(0_u64, u64::saturating_add);
     for seed in &route.seeds {
         let Some(first) = seed.trace.first() else {
             continue;
@@ -1035,10 +1146,29 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
         paired_terminal_return_supported_comparisons,
         paired_terminal_return_censored_comparisons,
         paired_terminal_return_in_progress,
+        paired_terminal_return_exact_outcomes,
+        paired_terminal_return_policy_wins,
+        paired_terminal_return_control_wins,
+        paired_terminal_return_ties,
+        paired_terminal_return_policy_ticks_to_terminal,
+        paired_terminal_return_control_ticks_to_terminal,
         paired_terminal_return_authority_violations,
         causal_chain_ready_for_matched_evaluation: first_incomplete_link.is_none(),
         first_incomplete_link,
         outcome_effect_requires_matched_control: learning_expected,
+    }
+}
+
+fn record_exact_terminal_ticks(slot: &mut Option<u64>, ticks: u64, budget: u64) -> bool {
+    if ticks == 0 || ticks > budget {
+        return false;
+    }
+    match slot {
+        Some(recorded) => *recorded == ticks,
+        None => {
+            *slot = Some(ticks);
+            true
+        }
     }
 }
 
@@ -1305,6 +1435,12 @@ mod tests {
         for decision in route.seeds[0].trace.iter_mut().take(2) {
             decision.learner_snapshot_sha256 = frozen;
         }
+        route.seeds[0].trace[0].source_route_ticks = 20;
+        route.seeds[0].trace[0].route_suffix_ticks = 24;
+        route.seeds[0].trace[0].terminal = true;
+        route.seeds[0].trace[1].source_route_ticks = 21;
+        route.seeds[0].trace[1].route_suffix_ticks = 26;
+        route.seeds[0].trace[1].terminal = true;
         route.seeds[0].trace[0].paired_terminal_return =
             Some(NativeTacticPairedTerminalReturnTrace {
                 schema: NATIVE_TACTIC_PAIRED_TERMINAL_RETURN_SCHEMA_V1.into(),
@@ -1347,6 +1483,15 @@ mod tests {
         let supported = causal_summary(&route);
         assert_eq!(supported.paired_terminal_return_supported_comparisons, 1);
         assert_eq!(supported.paired_terminal_return_censored_comparisons, 0);
+        assert_eq!(supported.paired_terminal_return_exact_outcomes, 1);
+        assert_eq!(supported.paired_terminal_return_policy_wins, 1);
+        assert_eq!(supported.paired_terminal_return_control_wins, 0);
+        assert_eq!(supported.paired_terminal_return_ties, 0);
+        assert_eq!(supported.paired_terminal_return_policy_ticks_to_terminal, 4);
+        assert_eq!(
+            supported.paired_terminal_return_control_ticks_to_terminal,
+            6
+        );
 
         let paired = route.seeds[0].trace[1]
             .paired_terminal_return
