@@ -464,7 +464,28 @@ impl GoalConditionedTacticFeatureEncoder {
         {
             return Err(TacticFeatureError::InvalidEncoder);
         }
-        let mut output = self.base.encode(facts)?;
+        let base = self.base.encode(facts)?;
+        self.encode_from_base(facts, &base)
+    }
+
+    /// Append target-relative columns to an already encoded route-agnostic
+    /// observation. Achieved-goal relabeling uses this after authenticating the
+    /// transition and computing each before/after base exactly once.
+    pub(crate) fn encode_from_base(
+        &self,
+        facts: &FactSnapshot,
+        base: &[f32],
+    ) -> Result<Vec<f32>, TacticFeatureError> {
+        if self.schema != GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V6
+            || self.schema_sha256 != goal_conditioned_feature_schema_digest(self.base.schema_sha256)
+            || self.feature_names.len() != self.base.feature_width() + GOAL_FEATURE_NAMES.len()
+            || base.len() != self.base.feature_width()
+            || base.iter().any(|value| !value.is_finite())
+        {
+            return Err(TacticFeatureError::InvalidEncoder);
+        }
+        let mut output = Vec::with_capacity(self.feature_width());
+        output.extend_from_slice(base);
         let player = finite_vec3(facts.player.position_f32_bits)?;
         let target = self.target_coordinate_f32_bits.map(f32::from_bits);
         if target.iter().any(|value| !value.is_finite()) {
@@ -1278,6 +1299,9 @@ mod tests {
         let target = [player[0] + 30.0, player[1] + 7.0, player[2] + 40.0];
         let encoder = GoalConditionedTacticFeatureEncoder::new(target).unwrap();
         let encoded = encoder.encode(&facts).unwrap();
+        let base = TacticFeatureEncoder::new().encode(&facts).unwrap();
+
+        assert_eq!(encoded, encoder.encode_from_base(&facts, &base).unwrap());
 
         assert_eq!(
             encoded.len(),

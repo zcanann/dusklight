@@ -1,4 +1,5 @@
 use super::*;
+use crate::tactic_features::TacticFeatureEncoder;
 use std::collections::{BTreeMap, VecDeque};
 
 const MAX_ACHIEVED_GOAL_TARGETS: usize = 32;
@@ -50,6 +51,25 @@ pub(super) fn fit(
     {
         return Err(GeneralizedTacticValueError::FeatureWidth);
     }
+
+    // Goal relabeling changes only the final target-relative columns. The
+    // route-agnostic observation is identical for every sampled target, so
+    // compute its actor/flag/history/trajectory projection once per physical
+    // boundary instead of once per (transition, target) pair.
+    let base_encoder = TacticFeatureEncoder::new();
+    let base_features = transitions
+        .iter()
+        .map(|transition| {
+            Ok((
+                base_encoder.encode(&transition.before).map_err(|error| {
+                    GeneralizedTacticValueError::InvalidFacts(error.to_string())
+                })?,
+                base_encoder.encode(&transition.after).map_err(|error| {
+                    GeneralizedTacticValueError::InvalidFacts(error.to_string())
+                })?,
+            ))
+        })
+        .collect::<Result<Vec<_>, GeneralizedTacticValueError>>()?;
 
     let edges = transitions
         .iter()
@@ -112,11 +132,12 @@ pub(super) fn fit(
             if samples.len() == MAX_GENERALIZED_TACTIC_SAMPLES {
                 break 'targets;
             }
+            let (before_base, after_base) = &base_features[transition_index];
             let state_features = encoder
-                .encode(&transition.before)
+                .encode_from_base(&transition.before, before_base)
                 .map_err(|error| GeneralizedTacticValueError::InvalidFacts(error.to_string()))?;
             let next_features = encoder
-                .encode(&transition.after)
+                .encode_from_base(&transition.after, after_base)
                 .map_err(|error| GeneralizedTacticValueError::InvalidFacts(error.to_string()))?;
             let duration = transition.value_sample.duration_ticks as f32;
             let mut outcome =

@@ -113,6 +113,21 @@ The 229-tick route then passed two cold replays with identical first-hit tick,
 controller tape, and terminal boundary fingerprint
 `0f3f6ab4888746792e01a15f18465d8e`.
 
+The first matched growing-corpus optimization (2026-08-05) stopped reloading,
+rehashing, and revalidating every durable transition and tape during each
+learner refit. The replay authority now retains its already authenticated
+in-memory corpus and supplies the recorded transition identities directly.
+This preserved the 229-tick result and 34.5-second terminal discovery, reduced
+persistence from 77.5 to 47.2 seconds, but increased useful expansions only
+from 702 to 718 (1.117 to 1.144 per second). That 2.3% capacity gain is not
+material and does not satisfy the throughput task. Model fitting still consumed
+215.8 seconds and graph scheduling 120.8 seconds. Inspection then found that
+achieved-goal fitting recomputed the complete route-agnostic observation for
+every `(transition, sampled goal)` pair even though only eight goal-relative
+columns change. The exact feature path now computes each physical boundary's
+base observation once per refit and appends only those goal-relative columns;
+matched native measurement is pending.
+
 Exit: a bounded production campaign either learns a cold-replayable route or
 produces enough evidence to name and fix the specific learning subsystem that
 failed. Raw throughput is not allowed to conceal a search or learning failure.
