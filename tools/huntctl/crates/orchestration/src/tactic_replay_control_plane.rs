@@ -5,7 +5,8 @@
 //! references; full transitions and routes live in the campaign content store.
 
 use crate::tactic_q_campaign::{
-    TacticQLearnerSnapshot, TacticQTrainingCorpus, validate_training_corpus,
+    TacticQLearnerSnapshot, TacticQTrainingCorpus, training_replay_sha256_from_identities,
+    validate_training_corpus,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use dusklight_automation_contracts::artifact::Digest;
@@ -137,6 +138,13 @@ pub struct TacticReplaySnapshot {
     pub schema: String,
     pub version: TacticReplaySnapshotVersion,
     pub corpus: TacticQTrainingCorpus,
+    training_replay_sha256: Digest,
+}
+
+impl TacticReplaySnapshot {
+    pub(crate) fn training_replay_sha256(&self) -> Digest {
+        self.training_replay_sha256
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -267,6 +275,7 @@ pub struct TacticReplayControlPlane {
     journal: File,
     content_store: TacticQContentStore,
     entries: Vec<StoredTacticReplayAdmission>,
+    materialized_corpus: TacticQTrainingCorpus,
     transition_sequences: BTreeMap<Digest, u64>,
     replay_snapshot: TacticReplaySnapshotVersion,
     invocation_metrics: TacticReplayAdmissionMetrics,
@@ -327,12 +336,14 @@ impl TacticReplayControlPlane {
         journal.write_all(&header).map_err(io_error)?;
         journal.sync_all().map_err(io_error)?;
         let replay_snapshot = initial_snapshot_version(&identity)?;
+        let materialized_corpus = empty_training_corpus(&identity);
         Ok(Self {
             identity,
             journal_path,
             journal,
             content_store,
             entries: Vec::new(),
+            materialized_corpus,
             transition_sequences: BTreeMap::new(),
             replay_snapshot,
             invocation_metrics: TacticReplayAdmissionMetrics::default(),
@@ -397,6 +408,7 @@ impl TacticReplayControlPlane {
         }
 
         let mut entries = Vec::new();
+        let mut materialized_corpus = empty_training_corpus(expected_identity);
         let mut transition_sequences = BTreeMap::new();
         let mut replay_snapshot = initial_snapshot_version(&identity)?;
         let mut valid_len = (JOURNAL_HEADER_BYTES + identity_len) as u64;
@@ -447,7 +459,7 @@ impl TacticReplayControlPlane {
             }
             let entry: StoredTacticReplayAdmission =
                 decode_cbor(&raw).map_err(serialization_error)?;
-            validate_stored_entry(
+            let (transition, route) = validate_stored_entry(
                 &identity,
                 &content_store,
                 &entry,
@@ -466,6 +478,9 @@ impl TacticReplayControlPlane {
                 revision: entry.sequence + 1,
                 sha256: entry.replay_snapshot_sha256,
             };
+            materialized_corpus.transitions.push(transition);
+            materialized_corpus.routes.push(route);
+            materialized_corpus.episode_groups.push(entry.episode_group);
             entries.push(entry);
             valid_len = valid_len.saturating_add(record_bytes as u64);
         }
@@ -480,6 +495,7 @@ impl TacticReplayControlPlane {
             journal,
             content_store,
             entries,
+            materialized_corpus,
             transition_sequences,
             replay_snapshot,
             invocation_metrics: TacticReplayAdmissionMetrics::default(),
@@ -610,6 +626,11 @@ impl TacticReplayControlPlane {
         };
         self.transition_sequences
             .insert(transition_identity_sha256, sequence);
+        self.materialized_corpus
+            .transitions
+            .push(transition.clone());
+        self.materialized_corpus.routes.push(route.clone());
+        self.materialized_corpus.episode_groups.push(episode_group);
         self.entries.push(entry);
         timing.bookkeeping_micros = elapsed_micros(bookkeeping_started);
         let elapsed_micros = elapsed_micros(started);
@@ -737,18 +758,33 @@ impl TacticReplayControlPlane {
         let mut transitions = Vec::with_capacity(entries.len());
         let mut routes = Vec::with_capacity(entries.len());
         let mut episode_groups = Vec::with_capacity(entries.len());
+        let mut transition_identities = Vec::with_capacity(entries.len());
         for entry in entries {
+            let index = usize::try_from(entry.sequence).map_err(|_| {
+                TacticReplayControlPlaneError::Invalid(
+                    "replay admission sequence overflows materialized corpus",
+                )
+            })?;
             transitions.push(
-                self.content_store
-                    .load_option_transition(entry.transition)
-                    .map_err(store_error)?,
+                self.materialized_corpus
+                    .transitions
+                    .get(index)
+                    .ok_or(TacticReplayControlPlaneError::Invalid(
+                        "replay admission is absent from materialized corpus",
+                    ))?
+                    .clone(),
             );
             routes.push(
-                self.content_store
-                    .load_tape(entry.route)
-                    .map_err(store_error)?,
+                self.materialized_corpus
+                    .routes
+                    .get(index)
+                    .ok_or(TacticReplayControlPlaneError::Invalid(
+                        "replay route is absent from materialized corpus",
+                    ))?
+                    .clone(),
             );
             episode_groups.push(entry.episode_group);
+            transition_identities.push(entry.transition_identity_sha256);
         }
         let corpus = TacticQTrainingCorpus {
             execution_authority_sha256: self.identity.execution_authority_sha256,
@@ -759,11 +795,14 @@ impl TacticReplayControlPlane {
             routes,
             episode_groups,
         };
-        validate_training_corpus(&corpus).map_err(domain_error)?;
+        let training_replay_sha256 =
+            training_replay_sha256_from_identities(&transition_identities, &corpus.episode_groups)
+                .map_err(domain_error)?;
         Ok(TacticReplaySnapshot {
             schema: TACTIC_REPLAY_SNAPSHOT_SCHEMA_V1.into(),
             version,
             corpus,
+            training_replay_sha256,
         })
     }
 
@@ -800,7 +839,7 @@ fn validate_stored_entry(
     entry: &StoredTacticReplayAdmission,
     expected_sequence: u64,
     expected_parent_snapshot: Digest,
-) -> Result<(), TacticReplayControlPlaneError> {
+) -> Result<(OptionTransitionSample, InputTape), TacticReplayControlPlaneError> {
     if entry.schema != TACTIC_REPLAY_ADMISSION_SCHEMA_V2
         || entry.sequence != expected_sequence
         || entry.learner_snapshot_sha256 == Digest::ZERO
@@ -829,7 +868,7 @@ fn validate_stored_entry(
         objective_sha256: identity.objective_sha256,
         root_checkpoint_sha256: identity.root_checkpoint_sha256,
         transitions: vec![transition.clone()],
-        routes: vec![route],
+        routes: vec![route.clone()],
         episode_groups: vec![entry.episode_group],
     };
     validate_training_corpus(&corpus).map_err(domain_error)?;
@@ -840,7 +879,19 @@ fn validate_stored_entry(
             "stored replay transition identity is detached",
         ));
     }
-    Ok(())
+    Ok((transition, route))
+}
+
+fn empty_training_corpus(identity: &TacticReplayControlPlaneIdentity) -> TacticQTrainingCorpus {
+    TacticQTrainingCorpus {
+        execution_authority_sha256: identity.execution_authority_sha256,
+        feature_schema_sha256: identity.feature_schema_sha256,
+        objective_sha256: identity.objective_sha256,
+        root_checkpoint_sha256: identity.root_checkpoint_sha256,
+        transitions: Vec::new(),
+        routes: Vec::new(),
+        episode_groups: Vec::new(),
+    }
 }
 
 fn validate_learner_snapshot_identity(
@@ -1155,6 +1206,14 @@ mod tests {
         assert_eq!(snapshot.corpus.transitions, vec![transition]);
         assert_eq!(snapshot.corpus.routes, vec![route]);
         assert_eq!(snapshot.corpus.episode_groups, vec![11]);
+        assert_eq!(
+            snapshot.training_replay_sha256(),
+            crate::tactic_q_campaign::training_replay_sha256(
+                &snapshot.corpus.transitions,
+                &snapshot.corpus.episode_groups,
+            )
+            .unwrap()
+        );
         assert!(matches!(
             reopened
                 .publish(

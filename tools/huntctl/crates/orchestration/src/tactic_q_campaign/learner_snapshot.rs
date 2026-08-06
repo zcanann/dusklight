@@ -166,9 +166,64 @@ impl TacticQImmutableLearnerSnapshot {
         prior_calibration: Option<&GoalReachabilityCalibration>,
     ) -> Result<Self, TacticQCampaignError> {
         validate_training_corpus(&corpus)?;
+        let training_replay_sha256 =
+            training_replay_sha256(&corpus.transitions, &corpus.episode_groups)?;
+        Self::fit_verified_replay_inner(
+            corpus,
+            replay_revision,
+            model_revision,
+            model_config,
+            goal_distance_feature,
+            value_treatment,
+            prior_calibration,
+            training_replay_sha256,
+        )
+    }
+
+    /// Fits a replay snapshot that was already authenticated, deduplicated,
+    /// and identity-bound by the durable replay control plane.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn fit_verified_replay_with_prior_goal_reachability_calibration(
+        corpus: TacticQTrainingCorpus,
+        replay_revision: u64,
+        model_revision: u64,
+        model_config: OptionValueConfig,
+        goal_distance_feature: usize,
+        value_treatment: TacticValueTreatment,
+        prior_calibration: Option<&GoalReachabilityCalibration>,
+        training_replay_sha256: Digest,
+    ) -> Result<Self, TacticQCampaignError> {
+        Self::fit_verified_replay_inner(
+            corpus,
+            replay_revision,
+            model_revision,
+            model_config,
+            goal_distance_feature,
+            value_treatment,
+            prior_calibration,
+            training_replay_sha256,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn fit_verified_replay_inner(
+        corpus: TacticQTrainingCorpus,
+        replay_revision: u64,
+        model_revision: u64,
+        model_config: OptionValueConfig,
+        goal_distance_feature: usize,
+        value_treatment: TacticValueTreatment,
+        prior_calibration: Option<&GoalReachabilityCalibration>,
+        training_replay_sha256: Digest,
+    ) -> Result<Self, TacticQCampaignError> {
         if replay_revision != corpus.transitions.len() as u64 {
             return Err(TacticQCampaignError::InvalidState(
                 "learner snapshot replay revision does not match its corpus",
+            ));
+        }
+        if training_replay_sha256 == Digest::ZERO {
+            return Err(TacticQCampaignError::InvalidState(
+                "learner snapshot replay identity is absent",
             ));
         }
         let model = replay_model(
@@ -295,10 +350,7 @@ impl TacticQImmutableLearnerSnapshot {
             objective_sha256: corpus.objective_sha256,
             root_checkpoint_sha256: corpus.root_checkpoint_sha256,
             training_replay_rows: corpus.transitions.len() as u64,
-            training_replay_sha256: training_replay_sha256(
-                &corpus.transitions,
-                &corpus.episode_groups,
-            )?,
+            training_replay_sha256,
             model_revision,
             model_config,
             model_sha256,

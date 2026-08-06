@@ -394,11 +394,27 @@ pub(crate) fn training_replay_sha256(
             "learner snapshot replay shape is invalid",
         ));
     }
+    let identities = transitions
+        .iter()
+        .map(OptionTransitionSample::replay_identity_sha256)
+        .collect::<Result<Vec<_>, _>>()?;
+    training_replay_sha256_from_identities(&identities, episode_groups)
+}
+
+pub(crate) fn training_replay_sha256_from_identities(
+    transition_identities: &[Digest],
+    episode_groups: &[u64],
+) -> Result<Digest, TacticQCampaignError> {
+    if transition_identities.len() != episode_groups.len() {
+        return Err(TacticQCampaignError::InvalidState(
+            "learner snapshot replay identity shape is invalid",
+        ));
+    }
     let mut hasher = Sha256::new();
     hasher.update(b"dusklight.tactic-q-learner-replay/v1\0");
-    hasher.update((transitions.len() as u64).to_le_bytes());
-    for (transition, episode_group) in transitions.iter().zip(episode_groups) {
-        hasher.update(transition.replay_identity_sha256()?.0);
+    hasher.update((transition_identities.len() as u64).to_le_bytes());
+    for (transition_identity, episode_group) in transition_identities.iter().zip(episode_groups) {
+        hasher.update(transition_identity.0);
         hasher.update(episode_group.to_le_bytes());
     }
     Ok(Digest(hasher.finalize().into()))
