@@ -225,17 +225,31 @@ failed. Raw throughput is not allowed to conceal a search or learning failure.
 Exit: the framework reliably discovers substantially better-than-human Ordon
 routes on the local machine.
 
-Paired-return implementation (2026-08-05): the production runner now records a
+Paired-return activation proof (2026-08-05): the production runner records a
 durable pair identity at the exact source checkpoint, binds it to the original
 pre-outcome proposal order, and restores the control's exact graph node after
 the policy rollout finishes. Both rollouts keep the same immutable learner
 snapshot even while their experience is published globally. Recovery
 reconstructs an older frozen snapshot without moving the shared learner head
 backward. Decision journals reject detached control targets, option identities,
-learner authorities, and phase transitions. Campaign summaries count started,
-completed, supported, censored, in-progress, and invalid pairs. All 462
-orchestration tests pass; native paired evidence has not yet been acquired, so
-the causal treatment comparison remains open.
+learner authorities, and phase transitions.
+
+A bounded one-worker adaptive run on seed 104729 reached the real native
+terminal after 374.8 seconds, completed 81 decisions and 3,197 native ticks,
+and retained a 264-tick best route. It started two exact same-source pairs: one
+completed with both lineages terminal-supported, while the second remained
+in-progress and therefore censored at the campaign bound. The summary reported
+zero learner-authority violations and passed independent report/plan/summary
+validation. This proves native activation and recovery/accounting integration;
+one supported adaptive pair does not establish an action-ranking rate or a
+learned advantage. Frozen-policy and random-valid evidence, and at least eight
+supported opportunities per treatment, remain open above.
+
+The activation audit also closed a fail-open reporting hole: a malformed pair
+could previously increment the authority-violation count while still entering
+the supported total. Invalid pair identities are now retained as censored,
+excluded from supported evidence, and make the causal chain incomplete. All
+462 orchestration tests pass.
 
 ## P0 — prove learning and tactic discovery cause the result
 

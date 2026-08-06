@@ -32,6 +32,7 @@ pub enum NativeTacticCausalLink {
     LearnerUpdate,
     PolicyDeployment,
     PolicyEffect,
+    MatchedTerminalReturn,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -904,11 +905,18 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
         .filter(|probe| probe.selected_action_changed)
         .count() as u64;
     let mut paired_latest = BTreeMap::<Digest, &NativeTacticPairedTerminalReturnTrace>::new();
+    let mut invalid_paired_terminal_returns = BTreeSet::<Digest>::new();
     let mut paired_terminal_return_authority_violations = 0_u64;
     for seed in &route.seeds {
         if ActivePairedTerminalReturn::recover(&seed.trace).is_err() {
             paired_terminal_return_authority_violations =
                 paired_terminal_return_authority_violations.saturating_add(1);
+            invalid_paired_terminal_returns.extend(
+                seed.trace
+                    .iter()
+                    .filter_map(|decision| decision.paired_terminal_return.as_ref())
+                    .map(|paired| paired.pair_sha256),
+            );
         }
     }
     for decision in &traces {
@@ -929,6 +937,7 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
         {
             paired_terminal_return_authority_violations =
                 paired_terminal_return_authority_violations.saturating_add(1);
+            invalid_paired_terminal_returns.insert(paired.pair_sha256);
         }
         paired_latest.insert(paired.pair_sha256, paired);
     }
@@ -945,6 +954,7 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
             paired.status_after_decision == NativeTacticPairedTerminalReturnStatus::Complete
                 && paired.policy_terminal_supported
                 && paired.control_terminal_supported
+                && !invalid_paired_terminal_returns.contains(&paired.pair_sha256)
         })
         .count() as u64;
     let paired_terminal_return_censored_comparisons = paired_terminal_return_pairs_started
@@ -997,6 +1007,8 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
             || selected_action_changes_from_policy_update == 0)
     {
         Some(NativeTacticCausalLink::PolicyEffect)
+    } else if paired_terminal_return_authority_violations != 0 {
+        Some(NativeTacticCausalLink::MatchedTerminalReturn)
     } else {
         None
     };
@@ -1335,6 +1347,17 @@ mod tests {
         let supported = causal_summary(&route);
         assert_eq!(supported.paired_terminal_return_supported_comparisons, 1);
         assert_eq!(supported.paired_terminal_return_censored_comparisons, 0);
+
+        let paired = route.seeds[0].trace[1]
+            .paired_terminal_return
+            .as_mut()
+            .unwrap();
+        paired.source_state_sha256 = Digest([99; 32]);
+        let invalid = causal_summary(&route);
+        assert_eq!(invalid.paired_terminal_return_supported_comparisons, 0);
+        assert_eq!(invalid.paired_terminal_return_censored_comparisons, 1);
+        assert!(invalid.paired_terminal_return_authority_violations > 0);
+        assert!(!invalid.causal_chain_ready_for_matched_evaluation);
     }
 
     #[test]
