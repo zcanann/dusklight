@@ -1,5 +1,9 @@
 use super::*;
 
+fn model_guided_acquisition_allowed(policy: TacticProposalPolicy, calibration_ready: bool) -> bool {
+    policy.deploys_policy_updates() || calibration_ready
+}
+
 impl TacticQCampaign {
     pub fn decide<E, F>(
         &self,
@@ -249,19 +253,21 @@ impl TacticQCampaign {
             && terminal_support_acquisition)
             .then(|| self.terminal_action_calibration.clone())
             .flatten();
-        let terminal_action_deployment_ready = terminal_action_calibration
-            .as_ref()
-            .is_some_and(|calibration| calibration.deployment_ready);
-        // Preserve the policy action that existed before terminal-model
-        // augmentation until same-state held-out evidence grants that model
-        // control. Its candidate remains in the native sibling batch so the
-        // gate can accumulate evidence without converting evaluation into
-        // unproven behavior.
+        let terminal_action_acquisition_allowed = model_guided_acquisition_allowed(
+            policy,
+            terminal_action_calibration
+                .as_ref()
+                .is_some_and(|calibration| calibration.deployment_ready),
+        );
+        // A frozen treatment may not deploy behavior its sealed calibration
+        // did not authorize. Adaptive learning must be allowed to acquire
+        // evidence using its current estimate; otherwise a width-one policy
+        // can never generate the comparisons required to improve that model.
         let unproven_terminal_primary = (policy.uses_learned_selector()
             && self.value_treatment.uses_goal_relabeling()
             && native_terminal_supported
             && terminal_support_acquisition
-            && !terminal_action_deployment_ready)
+            && !terminal_action_acquisition_allowed)
             .then(|| proposals[0].clone());
         if policy.uses_learned_selector() {
             let context = GeneralizedTacticContext::from_facts(&self.current.snapshot)?;
@@ -278,11 +284,13 @@ impl TacticQCampaign {
             // demonstration or earlier route supplied terminal evidence.
             let goal_reachability_acquisition = self.value_treatment.uses_goal_relabeling()
                 && (!native_terminal_supported || !terminal_support_acquisition);
-            let goal_reachability_deployment_ready = goal_reachability_acquisition
-                && self
-                    .goal_reachability_calibration
-                    .as_ref()
-                    .is_some_and(|calibration| calibration.deployment_ready);
+            let goal_reachability_acquisition_allowed = goal_reachability_acquisition
+                && model_guided_acquisition_allowed(
+                    policy,
+                    self.goal_reachability_calibration
+                        .as_ref()
+                        .is_some_and(|calibration| calibration.deployment_ready),
+                );
             if goal_reachability_acquisition {
                 goal_reachability_calibration = self.goal_reachability_calibration.clone();
             }
@@ -367,7 +375,7 @@ impl TacticQCampaign {
                 };
                 if let Some(ranked_applicable) = ranked_applicable {
                     if goal_reachability_acquisition {
-                        if goal_reachability_deployment_ready {
+                        if goal_reachability_acquisition_allowed {
                             ensure_goal_reachability_acquisition(
                                 &ranked_applicable,
                                 acquisition_partition,
@@ -405,7 +413,7 @@ impl TacticQCampaign {
                 maximum_proposals,
                 &mut proposals,
             )?;
-            if goal_reachability_deployment_ready {
+            if goal_reachability_acquisition_allowed {
                 retain_goal_reachability_acquisition(&mut proposals)?;
             } else if unproven_terminal_primary.is_none() {
                 retain_generalized_value_acquisition(&mut proposals)?;
@@ -1116,6 +1124,22 @@ fn proposal_exploration_config(
 #[cfg(test)]
 mod proposal_exploration_tests {
     use super::*;
+
+    #[test]
+    fn adaptive_learning_can_acquire_with_current_models_but_frozen_policy_needs_calibration() {
+        assert!(model_guided_acquisition_allowed(
+            TacticProposalPolicy::Learned,
+            false
+        ));
+        assert!(!model_guided_acquisition_allowed(
+            TacticProposalPolicy::FrozenPolicy,
+            false
+        ));
+        assert!(model_guided_acquisition_allowed(
+            TacticProposalPolicy::FrozenPolicy,
+            true
+        ));
+    }
 
     #[test]
     fn discovery_epsilon_applies_to_support_and_ranked_acquisitions() {

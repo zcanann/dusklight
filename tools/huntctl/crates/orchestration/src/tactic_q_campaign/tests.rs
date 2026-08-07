@@ -16,7 +16,7 @@ use dusklight_learning::tactic_exploration::TacticSelectionReason;
 use std::fs;
 
 #[test]
-fn unproven_terminal_model_cannot_replace_the_policy_primary() {
+fn restoring_a_frozen_policy_primary_keeps_the_model_candidate_as_a_sibling() {
     let catalog = TacticAssetCatalog::new(vec![
         TacticCatalogEntry::new(
             "baseline",
@@ -1203,7 +1203,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             &[],
             Digest([9; 32]),
             &encode,
-            2,
+            1,
             0,
             TacticProposalPolicy::Learned,
             Some(0),
@@ -1225,7 +1225,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             &[],
             Digest([9; 32]),
             &encode,
-            2,
+            1,
             0,
             TacticProposalPolicy::Learned,
             Some(0),
@@ -1237,9 +1237,31 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         unproven_batch.goal_reachability_calibration,
         Some(calibration)
     );
-    assert_eq!(
+    assert_ne!(
         unproven_batch.proposals, blocked_control_batch.proposals,
-        "blocked reachability predictions must not alter any proposal slot"
+        "adaptive learning must act on its current estimate even with one proposal slot"
+    );
+    assert_eq!(unproven_batch.proposals.len(), 1);
+    assert_eq!(
+        unproven_batch.proposals[0].reason,
+        TacticSelectionReason::GoalReachability
+    );
+    let frozen_batch = unproven_goal_consumer
+        .decide_parameterized_batch_with_policy::<&'static str, _>(
+            &catalog,
+            &[],
+            Digest([9; 32]),
+            &encode,
+            1,
+            0,
+            TacticProposalPolicy::FrozenPolicy,
+            Some(0),
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        frozen_batch.proposals, blocked_control_batch.proposals,
+        "frozen evaluation must retain its sealed calibration gate"
     );
     let mut snapshot_consumer = TacticQCampaign::resume_without_model(checkpoint.clone()).unwrap();
     assert!(snapshot_consumer.model().is_none());

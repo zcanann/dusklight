@@ -888,7 +888,11 @@ fn goal_reachability_summary(
     }
 
     NativeTacticCampaignGoalReachabilitySummary {
-        calibration_authority_enforced: supports_current_route_report_schema(&route.schema),
+        // Calibration is deployment authority for a frozen evaluation.
+        // Learned runs may use uncalibrated predictions as explicitly labeled
+        // acquisition actions so they can gather corrective evidence.
+        calibration_authority_enforced: supports_current_route_report_schema(&route.schema)
+            && !route.proposal_policy.deploys_policy_updates(),
         calibration_decisions,
         deployment_ready_decisions,
         deployment_blocked_decisions,
@@ -1712,7 +1716,7 @@ mod tests {
     }
 
     #[test]
-    fn summary_rejects_reachability_policy_without_calibration_authority() {
+    fn summary_distinguishes_adaptive_acquisition_from_calibrated_deployment() {
         let (_, mut route, plan) = retained_report_and_plan();
         route.schema = NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V39.into();
         for decision in route.seeds.iter_mut().flat_map(|seed| &mut seed.trace) {
@@ -1764,7 +1768,14 @@ mod tests {
 
         route.seeds[0].trace[0].proposal_batch[0].selection_reason =
             TacticSelectionReason::GoalReachability;
-        assert!(NativeTacticCampaignSummary::build(&route, &plan).is_err());
+        let adaptive = NativeTacticCampaignSummary::build(&route, &plan).unwrap();
+        assert!(!adaptive.goal_reachability.calibration_authority_enforced);
+        assert_eq!(
+            adaptive
+                .goal_reachability
+                .unproven_action_policy_deployments,
+            1
+        );
         route.seeds[0].trace[0].proposal_batch[0].selection_reason =
             TacticSelectionReason::UnsupportedBootstrap;
         route.seeds[0].trace[0]
@@ -1772,6 +1783,12 @@ mod tests {
             .as_mut()
             .unwrap()
             .goal_reachability_supported = true;
-        assert!(NativeTacticCampaignSummary::build(&route, &plan).is_err());
+        let adaptive = NativeTacticCampaignSummary::build(&route, &plan).unwrap();
+        assert_eq!(
+            adaptive
+                .goal_reachability
+                .unproven_frontier_policy_deployments,
+            1
+        );
     }
 }

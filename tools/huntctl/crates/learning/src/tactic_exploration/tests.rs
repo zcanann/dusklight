@@ -1477,6 +1477,72 @@ fn goal_reachability_is_an_explicit_preterminal_primary() {
 }
 
 #[test]
+fn learned_model_replaces_an_unsupported_single_proposal_slot() {
+    let bootstrap = descriptor("unseen/bootstrap", OptionType::Move);
+    let predicted = descriptor("learned/predicted", OptionType::Roll);
+    let proposal = || SelectedTactic {
+        schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+        learner_snapshot_sha256: Digest([31; 32]),
+        decision_index: 7,
+        descriptor: bootstrap.clone(),
+        reason: TacticSelectionReason::UnsupportedBootstrap,
+        exploration_draw: 0,
+    };
+
+    let mut generalized = vec![proposal()];
+    ensure_generalized_value_acquisition(std::slice::from_ref(&predicted), 0, 1, &mut generalized)
+        .unwrap();
+    retain_generalized_value_acquisition(&mut generalized).unwrap();
+    assert_eq!(generalized.len(), 1);
+    assert_eq!(generalized[0].descriptor, predicted);
+    assert_eq!(
+        generalized[0].reason,
+        TacticSelectionReason::GeneralizedValue
+    );
+
+    let mut reachability = vec![proposal()];
+    ensure_goal_reachability_acquisition(std::slice::from_ref(&predicted), 0, 1, &mut reachability)
+        .unwrap();
+    retain_goal_reachability_acquisition(&mut reachability).unwrap();
+    assert_eq!(reachability.len(), 1);
+    assert_eq!(reachability[0].descriptor, predicted);
+    assert_eq!(
+        reachability[0].reason,
+        TacticSelectionReason::GoalReachability
+    );
+}
+
+#[test]
+fn learned_model_does_not_replace_epsilon_or_exact_greedy_in_a_single_slot() {
+    let selected = descriptor("selected", OptionType::Move);
+    let predicted = descriptor("learned/predicted", OptionType::Roll);
+    for reason in [
+        TacticSelectionReason::Epsilon,
+        TacticSelectionReason::Greedy,
+    ] {
+        let mut proposals = vec![SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: Digest([31; 32]),
+            decision_index: 7,
+            descriptor: selected.clone(),
+            reason,
+            exploration_draw: 0,
+        }];
+        ensure_generalized_value_acquisition(
+            std::slice::from_ref(&predicted),
+            0,
+            1,
+            &mut proposals,
+        )
+        .unwrap();
+        retain_generalized_value_acquisition(&mut proposals).unwrap();
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].descriptor, selected);
+        assert_eq!(proposals[0].reason, reason);
+    }
+}
+
+#[test]
 fn goal_reachability_keeps_the_top_prediction_across_worker_partitions() {
     let control = descriptor("known/control", OptionType::Neutral);
     let best = descriptor("predicted/best", OptionType::Move);

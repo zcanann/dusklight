@@ -888,7 +888,7 @@ pub fn ensure_goal_reachability_acquisition(
     maximum_proposals: usize,
     proposals: &mut Vec<SelectedTactic>,
 ) -> Result<(), TacticExplorationError> {
-    if maximum_proposals <= 1 || proposals.is_empty() || proposals.len() > maximum_proposals {
+    if maximum_proposals == 0 || proposals.is_empty() || proposals.len() > maximum_proposals {
         return if !proposals.is_empty() && proposals.len() <= maximum_proposals {
             Ok(())
         } else {
@@ -914,7 +914,7 @@ fn ensure_ranked_model_acquisition(
     reason: TacticSelectionReason,
     proposals: &mut Vec<SelectedTactic>,
 ) -> Result<(), TacticExplorationError> {
-    if maximum_proposals <= 1 || proposals.is_empty() || proposals.len() > maximum_proposals {
+    if maximum_proposals == 0 || proposals.is_empty() || proposals.len() > maximum_proposals {
         return if !proposals.is_empty() && proposals.len() <= maximum_proposals {
             Ok(())
         } else {
@@ -951,6 +951,19 @@ fn ensure_model_acquisition(
     let mut acquisition = proposals[0].clone();
     acquisition.descriptor = descriptor.clone();
     acquisition.reason = reason;
+    if maximum_proposals == 1 {
+        // Proposal width limits parallel sibling evaluation, not whether a
+        // learned policy can act. Preserve explicit epsilon exploration and
+        // an exact supported greedy choice, but let a state-action model
+        // replace an unsupported bootstrap even on a single-worker lane.
+        if !matches!(
+            proposals[0].reason,
+            TacticSelectionReason::Epsilon | TacticSelectionReason::Greedy
+        ) {
+            proposals[0] = acquisition;
+        }
+        return;
+    }
     proposals.insert(1, acquisition);
     proposals.truncate(maximum_proposals);
 }
