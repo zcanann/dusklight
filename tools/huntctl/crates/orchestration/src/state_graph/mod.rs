@@ -17,11 +17,11 @@ mod validation;
 pub(crate) use persistence::{StateGraphPersistenceHead, StateGraphPersistencePlan};
 pub use types::{
     ActionExpansion, ActionExpansionStatus, CompletedExpansionEvidence, ExactStateId,
-    ExpansionAdmission, ExpansionEvidenceAuthority, FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1,
-    FutureEquivalenceProof, GRAPH_RESTORATION_PLAN_SCHEMA_V1, GRAPH_RESTORATION_PLAN_SCHEMA_V2,
-    GraphRestorationPlan, NativeBoundaryLocator, ObservedSegment, RestorationLocator,
-    RestoredStateReceipt, RouteRecord, STATE_GRAPH_SCHEMA_V1, StateGraphIdentity, StateGraphNode,
-    TerminalPath,
+    ExactTerminalContinuation, ExpansionAdmission, ExpansionEvidenceAuthority,
+    FUTURE_EQUIVALENCE_PROOF_SCHEMA_V1, FutureEquivalenceProof, GRAPH_RESTORATION_PLAN_SCHEMA_V1,
+    GRAPH_RESTORATION_PLAN_SCHEMA_V2, GraphRestorationPlan, NativeBoundaryLocator, ObservedSegment,
+    RestorationLocator, RestoredStateReceipt, RouteRecord, STATE_GRAPH_SCHEMA_V1,
+    StateGraphIdentity, StateGraphNode, TerminalPath,
 };
 
 use dusklight_automation_contracts::artifact::Digest;

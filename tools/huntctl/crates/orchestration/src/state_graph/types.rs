@@ -256,6 +256,22 @@ pub struct TerminalPath {
     pub root_to_terminal_ticks: u64,
 }
 
+/// The shortest authenticated input continuation from one exact graph state
+/// to a terminal on the same route lineage.
+///
+/// Exact terminal return alone is not an actionable policy. This retains the
+/// raw continuation that produced that return so an environment may expose it
+/// as an experience-derived option without inventing route knowledge.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExactTerminalContinuation {
+    pub source: ExactStateId,
+    pub terminal: ExactStateId,
+    pub terminal_route_checkpoint_sha256: Digest,
+    pub source_prefix_ticks: u64,
+    pub ticks_to_terminal: u64,
+    pub tape: dusklight_automation_contracts::tape::InputTape,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExpansionAdmission {
     pub expansion_sha256: Digest,

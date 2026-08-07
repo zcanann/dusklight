@@ -614,6 +614,7 @@ fn forty_tick_option_exposes_and_executes_every_four_tick_counterfactual() {
 #[test]
 fn exact_terminal_returns_cover_route_specific_interior_nodes() {
     let (mut graph, mut transition, route) = graph_and_transition();
+    let terminal_route = route.clone();
     terminalize(&mut transition);
     graph
         .admit_completed_expansion(
@@ -629,6 +630,33 @@ fn exact_terminal_returns_cover_route_specific_interior_nodes() {
     for node in graph.nodes() {
         assert_eq!(returns.get(&node.id), Some(&(8 - node.root_ticks)));
     }
+
+    let interior = graph.nodes().find(|node| node.root_ticks == 4).unwrap().id;
+    let continuation = graph
+        .exact_terminal_continuation(interior)
+        .unwrap()
+        .unwrap();
+    assert_eq!(continuation.source, interior);
+    assert_eq!(continuation.source_prefix_ticks, 4);
+    assert_eq!(continuation.ticks_to_terminal, 4);
+    let source_frames = graph
+        .route(interior.route_checkpoint_sha256)
+        .unwrap()
+        .frames
+        .len();
+    assert_eq!(
+        continuation.tape.frames,
+        terminal_route.frames[source_frames..]
+    );
+    assert_eq!(
+        continuation.terminal_route_checkpoint_sha256,
+        graph.best_terminal_path().unwrap().route_checkpoint_sha256
+    );
+    assert!(
+        graph
+            .exact_terminal_continuation(graph.best_terminal_path().unwrap().terminal)
+            .is_err()
+    );
 }
 
 #[test]
@@ -716,6 +744,17 @@ fn optimization_schedules_interiors_from_every_authenticated_terminal_route() {
         .find(|node| node.root_ticks == 8 && !node.terminal)
         .unwrap()
         .id;
+    let alternate_continuation = graph
+        .exact_terminal_continuation(alternate_interior)
+        .unwrap()
+        .unwrap();
+    assert_eq!(alternate_continuation.source_prefix_ticks, 8);
+    assert_eq!(alternate_continuation.ticks_to_terminal, 4);
+    assert_eq!(alternate_continuation.tape.frames.len(), 4);
+    assert_ne!(
+        alternate_continuation.terminal_route_checkpoint_sha256,
+        graph.best_terminal_path().unwrap().route_checkpoint_sha256
+    );
     let scheduled = crate::scheduler::rank_schedulable_nodes(
         &graph,
         crate::scheduler::SearchRegime::Optimization,

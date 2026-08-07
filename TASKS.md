@@ -72,9 +72,13 @@ Ordon Springs is the first adequacy test. The real terminal is
   executable actions. The selected four-tick state is inside a 24-tick option:
   it has exact ticks-to-terminal but no action for the remaining option or
   incumbent suffix, so each branch starts relearning the remaining 315 ticks.
-  The next fix is an experience-derived executable continuation/residual action,
-  not another campaign or a rank-label change. Native proof that a restored
-  branch improves an incumbent remains open.
+  The state graph now returns the shortest exact raw terminal continuation for
+  any executable supported node, sliced from that node's route-specific
+  authenticated lineage; competing terminal routes cannot leak their suffixes
+  across exact identities. Wiring that evidence into the online action surface
+  as a guarded continuation/residual option is next, not another campaign or a
+  rank-label change. Native proof that a restored branch improves an incumbent
+  remains open.
 - The learner can discover the real terminal quickly, but its best authenticated
   route is 229 ticks. Two cold replays reproduced that route exactly.
 - The first terminal arrives in roughly 35 seconds; hundreds of later
