@@ -686,10 +686,30 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
         AdequacyState::VariantGoal
     );
 
-    let root_rows = campaign
-        .graph_learning_batch()
-        .unwrap()
-        .rows
+    let learning_rows = campaign.graph_learning_batch().unwrap().rows;
+    let exact_return = |state: AdequacyState, action: &str| {
+        learning_rows
+            .iter()
+            .find(|row| {
+                row.source_state.state_identity[0] == state.code() && row.action.option_id == action
+            })
+            .and_then(|row| row.exact_conditional_ticks_to_terminal)
+    };
+    assert_eq!(exact_return(AdequacyState::Start, "north"), Some(9));
+    assert_eq!(exact_return(AdequacyState::Detour(3), "north"), Some(6));
+    assert_eq!(exact_return(AdequacyState::VariantStart, "north"), Some(9));
+    for step in 0..=7 {
+        assert_eq!(
+            exact_return(AdequacyState::Optimal(step), optimal_action(step)),
+            Some(8 - u64::from(step))
+        );
+        assert_eq!(
+            exact_return(AdequacyState::VariantOptimal(step), optimal_action(step)),
+            Some(8 - u64::from(step))
+        );
+    }
+
+    let root_rows = learning_rows
         .into_iter()
         .filter(|row| row.source_state.state_identity[0] == AdequacyState::Start.code())
         .map(|row| {

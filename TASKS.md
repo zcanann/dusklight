@@ -72,6 +72,13 @@ Ordon Springs is the first adequacy test. The real terminal is
   checkpoint restore before a selected action can exceed the rollout budget.
   Tactic mining/promotion still lives in the native finalization adapter and
   remains the next extraction.
+- Exact graph backup covers every executable node on every authenticated
+  terminal tape, preserving route identity. The production adequacy gate now
+  asserts the exact countdown on both complete 9-tick lineages and the 10-tick
+  retained-interior shortcut. Separate production graph/learner coverage proves
+  open continuations remain right-censored while still teaching duration,
+  acceptance, prompted-action availability, next-state dynamics, uncertainty,
+  and prediction error.
 
 No task is blocked on design.
 
@@ -89,7 +96,7 @@ No task is blocked on design.
   discover a terminal, branch from retained intermediate states, converge to
   the shortest route, and then repeat on exact-state-disjoint variants. A toy
   scheduler or an exhaustively pre-trained snapshot does not satisfy this task.
-- [ ] Make successful rollouts teach multi-step terminal cost. Every transition
+- [x] Make successful rollouts teach multi-step terminal cost. Every transition
   on an authenticated terminal lineage receives exact ticks-to-terminal;
   repeated state/action evidence updates the policy used by later rollouts.
   Open rollouts remain censored rather than becoming fabricated failures, but
