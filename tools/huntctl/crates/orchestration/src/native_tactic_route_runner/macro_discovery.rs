@@ -164,6 +164,66 @@ pub(super) fn refresh_active_tactic_macros(
     }))
 }
 
+pub(super) fn discover_active_tactic_candidates(
+    output_root: &Path,
+    source_lane: TacticMacroSourceLane,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+    decision_index: u64,
+) -> Result<Vec<ImportedPromotedTactic>, NativeTacticRouteRunError> {
+    let candidate_root = output_root.join("tactic-macro-candidates").join(format!(
+        "seed-{:03}-{}-decision-{decision_index:06}",
+        source_lane.seed_index, source_lane.seed
+    ));
+    fs::create_dir_all(&candidate_root).map_err(route_error)?;
+    let registry_path =
+        candidate_root.join(format!("candidates.{TACTIC_MACRO_REGISTRY_EXTENSION}"));
+    if registry_path.is_file() {
+        let restored = read_tactic_macro_registry(&registry_path).map_err(route_error)?;
+        return candidate_tactic_entries(&restored.registry);
+    }
+    let mined =
+        mine_and_store_tactic_macros(output_root, &[source_lane], encoder, 1, registry_path)?;
+    candidate_tactic_entries(&mined.registry)
+}
+
+pub(super) fn load_active_tactic_candidates(
+    output_root: &Path,
+    source_lane: TacticMacroSourceLane,
+) -> Result<Vec<ImportedPromotedTactic>, NativeTacticRouteRunError> {
+    let candidate_root = output_root.join("tactic-macro-candidates");
+    if !candidate_root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let prefix = format!(
+        "seed-{:03}-{}-decision-",
+        source_lane.seed_index, source_lane.seed
+    );
+    let entries = fs::read_dir(candidate_root)
+        .map_err(route_error)?
+        .map(|entry| entry.map_err(route_error))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut registry_paths = entries
+        .into_iter()
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+        .map(|entry| {
+            entry
+                .path()
+                .join(format!("candidates.{TACTIC_MACRO_REGISTRY_EXTENSION}"))
+        })
+        .filter(|path| path.is_file())
+        .collect::<Vec<_>>();
+    registry_paths.sort();
+    let mut candidates = Vec::new();
+    for path in registry_paths {
+        let restored = read_tactic_macro_registry(&path).map_err(route_error)?;
+        merge_promoted_tactic_entries(
+            &mut candidates,
+            candidate_tactic_entries(&restored.registry)?,
+        )?;
+    }
+    Ok(candidates)
+}
+
 pub(super) fn absorb_active_tactic_macro_validation(
     final_report: &mut NativeTacticMacroDiscoveryReport,
     active_reports: &[NativeTacticMacroDiscoveryReport],

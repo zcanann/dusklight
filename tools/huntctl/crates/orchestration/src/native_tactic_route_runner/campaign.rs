@@ -75,6 +75,11 @@ pub(super) fn run_seed(
         resuming_seed,
         seed_root_preexisted,
     )?;
+    let source_lane = TacticMacroSourceLane { seed_index, seed };
+    let recovered_candidates = load_active_tactic_candidates(config.output_root, source_lane)?;
+    let mut active_tactics = promoted_tactics.to_vec();
+    let mut active_candidate_discovered = !recovered_candidates.is_empty();
+    merge_promoted_tactic_entries(&mut active_tactics, recovered_candidates)?;
     let performance = if resuming_seed {
         load_seed_performance(&seed_root, campaign.decision_index)?
     } else {
@@ -329,7 +334,7 @@ pub(super) fn run_seed(
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 parameterized_feedback_for_state(&campaign, &control_branch.state, encoder)?,
                 action_schema_sha256,
-                promoted_tactics,
+                &active_tactics,
             )?;
             record_orchestration_detail(
                 &mut timing,
@@ -364,6 +369,20 @@ pub(super) fn run_seed(
             decision_acquisition_rank
         };
         let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
+        if terminal_restart
+            && config.execution_plan.proposal_policy == TacticProposalPolicy::Learned
+            && active_paired_terminal_return.is_none()
+            && !active_candidate_discovered
+        {
+            let candidates = discover_active_tactic_candidates(
+                config.output_root,
+                source_lane,
+                encoder,
+                campaign.decision_index,
+            )?;
+            active_candidate_discovered = !candidates.is_empty();
+            merge_promoted_tactic_entries(&mut active_tactics, candidates)?;
+        }
         let mut policy_update_probes = Vec::new();
         if should_probe_policy_before_branch(terminal_restart)
             && active_paired_terminal_return.is_none()
@@ -384,7 +403,7 @@ pub(super) fn run_seed(
                     u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                     fixed_feedback,
                     action_schema_sha256,
-                    promoted_tactics,
+                    &active_tactics,
                 )?;
                 let fixed_catalog = Arc::new(fixed.catalog);
                 let fixed_blueprints = Arc::new(fixed.blueprints);
@@ -474,7 +493,7 @@ pub(super) fn run_seed(
                             encoder,
                             u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                             action_schema_sha256,
-                            promoted_tactics,
+                            &active_tactics,
                         )
                     },
                 )
@@ -518,7 +537,7 @@ pub(super) fn run_seed(
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
                 action_schema_sha256,
-                promoted_tactics,
+                &active_tactics,
             )?;
             record_orchestration_detail(
                 &mut timing,
@@ -572,7 +591,7 @@ pub(super) fn run_seed(
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 proposal_feedback,
                 action_schema_sha256,
-                promoted_tactics,
+                &active_tactics,
             )?;
             record_orchestration_detail(
                 &mut timing,
@@ -709,7 +728,7 @@ pub(super) fn run_seed(
                             encoder,
                             u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                             action_schema_sha256,
-                            promoted_tactics,
+                            &active_tactics,
                         )
                     },
                 )
@@ -750,7 +769,7 @@ pub(super) fn run_seed(
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
                 action_schema_sha256,
-                promoted_tactics,
+                &active_tactics,
             )?;
             record_orchestration_detail(
                 &mut timing,
@@ -1076,7 +1095,7 @@ pub(super) fn run_seed(
             u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
             None,
             action_schema_sha256,
-            promoted_tactics,
+            &active_tactics,
         )?;
         let next_action_catalog_micros = elapsed_micros(next_action_catalog_started.elapsed());
         record_orchestration_detail(

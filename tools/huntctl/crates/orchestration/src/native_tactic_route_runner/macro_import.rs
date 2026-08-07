@@ -66,6 +66,20 @@ pub(super) fn promoted_tactic_entries(
         .collect()
 }
 
+pub(super) fn candidate_tactic_entries(
+    registry: &TacticMacroPromotionRegistry,
+) -> Result<Vec<ImportedPromotedTactic>, NativeTacticRouteRunError> {
+    registry
+        .records()
+        .map(|record| {
+            Ok(ImportedPromotedTactic {
+                entry: record.candidate.catalog_entry().map_err(route_error)?,
+                condition: record.candidate.entry_condition().map_err(route_error)?,
+            })
+        })
+        .collect()
+}
+
 pub(super) fn merge_promoted_tactic_entries(
     active: &mut Vec<ImportedPromotedTactic>,
     discovered: Vec<ImportedPromotedTactic>,

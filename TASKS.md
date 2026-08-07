@@ -105,6 +105,12 @@ Ordon Springs is the first adequacy test. The real terminal is
   distinct held-out validation states may come from one seed. This removes the
   former blanket ban on tactic promotion in a single-seed campaign without
   relaxing the multi-state evidence requirement.
+  After a learned seed reaches a terminal, its durable journal is mined for the
+  strongest repeated exact sequence. That sequence enters the same seed's live
+  action catalog as an explicitly unpromoted candidate, survives resume through
+  its checksummed binary registry, and can gather ordinary policy evidence while
+  all primitive components remain selectable. Only the separate two-state
+  matched candidate-versus-primitive gate changes its status to promoted.
   The checksummed macro lifecycle artifact now records active refresh count,
   newly promoted option identities, and later decisions that actually selected
   those options; these fields are derived from durable decision journals rather
