@@ -87,15 +87,23 @@ target is 120.
   exact-state-disjoint world learns the same policy. Open rollouts remain absent
   from numeric terminal returns while their authentic transitions stay in the
   replay and graph for achieved-goal dynamics, availability, duration,
-  coverage, novelty, and uncertainty. The live exploitation/discovery balance
-  is now the first coherence gap.
+  coverage, novelty, and uncertainty.
 - From-scratch plans now default to the V4 goal-relabeled universal frontier
   treatment instead of V2. Cold-start discovery still learns from every
   achieved transition; after a real terminal, the retained-frontier policy also
   receives action-conditioned terminal value and ensemble uncertainty across
   parameterized tactic-family labels. Explicit older treatments and legacy
-  snapshot decoding remain available. A native run has not yet validated this
-  new default's exploitation/discovery behavior.
+  snapshot decoding remain available. A bounded 32-decision native run under
+  this default found the terminal in six seconds, then selected a retained
+  prefix using terminal mean Q `-191.17` and nonzero ensemble variance. Its
+  support continuation made four terminal-value-ranked decisions, while the
+  same policy kept unsupported discovery live for six decisions and 228
+  evaluated ticks through epsilon, reachability, and bootstrap coverage. The
+  cutoff arrived while work-based scheduling was still paying discovery back
+  against the preceding 632-tick support continuation; no decision-count phase
+  switched the policy. The sealed campaign summary and completion validate.
+  The state-aware simultaneous/variable-duration action surface is now the
+  first coherence gap.
 - Tactic mining, validation, promotion, binary persistence, and ordinary policy
   selection exist on the production path. No native campaign has yet shown a
   learner-discovered promoted tactic improving a route.
@@ -112,7 +120,7 @@ No task is blocked on design.
   states and propagate far enough to solve temporarily-worse moves around a
   corner. Open rollouts remain censored but still teach availability, dynamics,
   duration, novelty, and uncertainty.
-- [ ] Keep exploitation and discovery live without decision-count scripts or
+- [x] Keep exploitation and discovery live without decision-count scripts or
   forced route phases. Learned terminal value should revisit promising prefixes;
   uncertainty and state/action coverage should allocate unsupported trials.
 - [ ] Expose simultaneous and variable-duration primitives—including movement,
