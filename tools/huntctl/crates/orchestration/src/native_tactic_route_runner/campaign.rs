@@ -932,6 +932,10 @@ pub(super) fn run_seed(
             TacticQOnlineLeaseMode::PolicyEvaluation {
                 proposal_policy: config.execution_plan.proposal_policy,
             }
+        } else if active_incumbent_continuation
+            .is_some_and(ActiveIncumbentContinuation::should_execute_suffix)
+        {
+            TacticQOnlineLeaseMode::CommittedExploration
         } else {
             TacticQOnlineLeaseMode::Exploration
         };

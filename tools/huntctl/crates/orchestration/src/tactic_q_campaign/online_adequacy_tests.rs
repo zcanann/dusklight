@@ -696,6 +696,55 @@ fn learn_until_terminal_ticks(
 }
 
 #[test]
+fn committed_exploration_preserves_the_policy_selected_action() {
+    let (base, _) = base_facts();
+    let catalog = catalog();
+    let mut campaign = campaign_with_cold_primary(&base, &catalog, AdequacyState::Start, "east");
+    let mut online = TacticQOnlineLearningController::default();
+    let batch = decide_production_batch(&mut online, &campaign, &catalog, 1);
+    let committed = batch.proposals[0].clone();
+    assert_eq!(
+        batch
+            .ranking
+            .choices
+            .iter()
+            .filter(|choice| choice.applicable)
+            .count(),
+        2,
+        "the regression requires an uncommitted applicable alternative"
+    );
+
+    let leased = match online
+        .prepare_decision(
+            &mut campaign,
+            batch,
+            TacticQOnlineDecisionRequest {
+                suffix_ticks: 0,
+                horizon: 32,
+                maximum_proposals: 1,
+                learner_model_sha256: LEARNER_SNAPSHOT,
+                lease_mode: TacticQOnlineLeaseMode::CommittedExploration,
+            },
+        )
+        .unwrap()
+    {
+        TacticQOnlineDecisionPlan::Execute(leased) => leased,
+        TacticQOnlineDecisionPlan::RestoreCheckpoint { .. } => {
+            panic!("the committed one-tick action must fit the rollout horizon")
+        }
+    };
+
+    assert_eq!(leased.batch.proposals, vec![committed.clone()]);
+    assert_eq!(leased.leases.len(), 1);
+    assert_eq!(leased.leases[0].descriptor, committed.descriptor);
+    let scheduler = leased
+        .scheduler_decision
+        .expect("committed exploration must still use an authenticated graph lease");
+    assert_eq!(scheduler.ranked_source_queue.len(), 1);
+    assert_eq!(scheduler.evaluated_expansion_sha256.len(), 1);
+}
+
+#[test]
 fn production_campaign_learns_the_shorter_around_corner_route_online() {
     let (base, episode_shard_sha256) = base_facts();
     let catalog = catalog();

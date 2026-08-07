@@ -78,12 +78,19 @@ Ordon Springs is the first adequacy test. The real terminal is
   across exact identities. The native online runner now evaluates a supported
   checkpoint candidate as one ordinarily selected perturbation followed by the
   time-aligned remainder of that authenticated terminal tape. The remainder is
-  a content-identified, stage/room-guarded experience action, is graph-leased
-  and admitted like any other transition, and reconstructs its two-step state
-  from the durable decision journal after resume. A failed splice branches
-  after the incumbent-length budget instead of relearning the whole suffix.
-  The full orchestration suite passes 480 tests; native proof that a restored
-  splice improves an incumbent remains open.
+  a content-identified, stage/room-guarded experience action and reconstructs
+  its two-step state from the durable decision journal after resume. The first
+  native smoke exposed that the policy could commit this action while graph
+  scheduling registered every applicable action and substituted an unrelated
+  expansion. Committed exploration now registers and leases only descriptors
+  in the policy batch. In the repeated 20-decision seed-104729 smoke, decisions
+  16 and 18 executed 291- and 313-tick authenticated continuations through
+  one-entry scheduler queues after their perturbations; the latter came from a
+  directly restored intermediate checkpoint. Both complete splices missed the
+  terminal, correctly left the 318-tick incumbent unchanged, and branched after
+  the incumbent-length budget instead of relearning the suffix. The full
+  orchestration suite passes 481 tests; native proof that a restored splice
+  improves an incumbent remains open.
 - The learner can discover the real terminal quickly, but its best authenticated
   route is 229 ticks. Two cold replays reproduced that route exactly.
 - The first terminal arrives in roughly 35 seconds; hundreds of later
