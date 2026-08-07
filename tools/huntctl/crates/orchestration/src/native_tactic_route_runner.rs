@@ -877,6 +877,7 @@ fn run_native_tactic_route_with_optional_fleet(
                 generation_position,
                 config.execution_plan.generations.len(),
             ) {
+                let active_refresh_started = Instant::now();
                 let source_lanes = results
                     .iter()
                     .map(|(seed_index, _)| TacticMacroSourceLane {
@@ -913,12 +914,6 @@ fn run_native_tactic_route_with_optional_fleet(
                     active_macro_lifecycle.policy_evidence_admitted_rows = active_macro_lifecycle
                         .policy_evidence_admitted_rows
                         .saturating_add(policy_evidence.admitted_rows);
-                    campaign_phase_wall.generation_coordination_micros = campaign_phase_wall
-                        .generation_coordination_micros
-                        .checked_add(refresh.report.validation_wall_micros)
-                        .ok_or_else(|| {
-                            route_message("active tactic macro validation timing overflowed")
-                        })?;
                     campaign_phase_wall.active_macro_validation_micros = campaign_phase_wall
                         .active_macro_validation_micros
                         .checked_add(refresh.report.validation_wall_micros)
@@ -941,6 +936,17 @@ fn run_native_tactic_route_with_optional_fleet(
                         .validation_reports
                         .push(refresh.report);
                 }
+                // `generation_wall_micros` ends before active refresh. Charge
+                // the complete refresh wall here: mining, native validation,
+                // evidence publication, learner update, and bookkeeping. The
+                // exclusive projection later subtracts the measured native
+                // validation and model-update phases from this enclosing wall.
+                campaign_phase_wall.generation_coordination_micros = campaign_phase_wall
+                    .generation_coordination_micros
+                    .checked_add(elapsed_micros(active_refresh_started.elapsed()))
+                    .ok_or_else(|| {
+                        route_message("active tactic macro refresh timing overflowed")
+                    })?;
             }
         }
         campaign_phase_wall.campaign_finalization_started_micros =
