@@ -20,6 +20,22 @@ impl ActiveTerminalRefinementRollout {
     }
 }
 
+/// Use an acquisition partition to choose a new candidate, then let the
+/// learned policy own its continuation. Rotating broad-coverage partitions at
+/// every decision turns one rollout into an unrelated action chain and makes
+/// terminal return unable to guide completion.
+pub(super) fn active_rollout_acquisition_rank(
+    decision_acquisition_rank: u64,
+    paired_terminal_return: bool,
+    terminal_refinement_in_progress: bool,
+) -> u64 {
+    if paired_terminal_return || terminal_refinement_in_progress {
+        0
+    } else {
+        decision_acquisition_rank
+    }
+}
+
 pub(super) fn first_demonstration_intervention(
     coverage_pending: bool,
     prefer_root: bool,
@@ -58,6 +74,13 @@ mod terminal_refinement_tests {
         assert!(!rollout.has_remaining_budget(145));
         assert!(!rollout.has_remaining_budget(200));
         assert_eq!(ActiveTerminalRefinementRollout::new(20, None), None);
+    }
+
+    #[test]
+    fn terminal_refinement_uses_the_learned_policy_after_candidate_selection() {
+        assert_eq!(active_rollout_acquisition_rank(17, false, false), 17);
+        assert_eq!(active_rollout_acquisition_rank(17, false, true), 0);
+        assert_eq!(active_rollout_acquisition_rank(17, true, false), 0);
     }
 
     #[test]

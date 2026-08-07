@@ -56,14 +56,20 @@ Ordon Springs is the first adequacy test. The real terminal is
   at decision 13 with no fallback, proving one real locality handoff. It did not
   improve the 318-tick diagnostic incumbent because optimization had ranked an
   untouched state one tick before terminal ahead of earlier states with route
-  improvement headroom. A same-seed comparison proved the graph selector then
-  chose a four-tick prefix, but the separate learned rank-zero selector still
-  chose the 318-tick prefix. Both selectors now rank earlier prefixes before
-  action value or coverage when exact authenticated terminal cost is equal, so
-  exploitation searches for removable route cost instead of merely revisiting
-  the largest known Q-to-go. The full orchestration suite passes 479 tests;
-  native proof of two direct branch restores and an incumbent improvement
-  remains open.
+  improvement headroom. Terminal-supported graph-node scheduling now ranks
+  earlier prefixes before coverage; the independent learned-frontier strategy
+  applies the same rule before action value when exact authenticated terminal
+  cost is equal. A 64-decision same-seed proof selected the four-tick prefix,
+  ran its candidate to the shared 320-tick horizon, then directly restored the
+  same nonconsecutive base for a sibling at decision 51. Together with the
+  decision-13 restore, this proves two genuine nonconsecutive direct restores.
+  Neither early-prefix rollout reached the terminal because acquisition ranks
+  intended to choose independent candidates were rotating inside each rollout
+  (0, 13, 14, 15, 0, 16, ...), producing an incoherent chain rather than a
+  learned continuation. Terminal-refinement candidates now use their branch
+  rank for the first action and learned rank zero thereafter. The full
+  orchestration suite passes 480 tests; native proof that the corrected
+  continuation improves an incumbent remains open.
 - The learner can discover the real terminal quickly, but its best authenticated
   route is 229 ticks. Two cold replays reproduced that route exactly.
 - The first terminal arrives in roughly 35 seconds; hundreds of later
