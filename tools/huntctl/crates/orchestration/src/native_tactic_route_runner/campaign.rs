@@ -1,6 +1,7 @@
 pub(super) use super::campaign_schedule::{
     ActiveIncumbentContinuation, ActiveTerminalRefinementRollout, first_demonstration_intervention,
-    should_probe_policy_before_branch, should_start_paired_terminal_return,
+    select_incumbent_rejoin_offset, should_probe_policy_before_branch,
+    should_start_paired_terminal_return,
 };
 use super::paired_terminal_returns::{ActivePairedTerminalReturn, PairedTerminalReturnSeed};
 use super::*;
@@ -72,16 +73,51 @@ fn recover_incumbent_continuation(
 fn incumbent_continuation_suffix(
     campaign: &TacticQCampaign,
     continuation: ActiveIncumbentContinuation,
+    encoder: &GoalConditionedTacticFeatureEncoder,
 ) -> Result<Option<InputTape>, NativeTacticRouteRunError> {
-    let terminal_route = campaign
-        .state_graph()
-        .map_err(route_error)?
+    let graph = campaign.state_graph().map_err(route_error)?;
+    let terminal_route = graph
         .route(continuation.terminal_route_checkpoint_sha256())
         .ok_or_else(|| route_message("incumbent continuation terminal route disappeared"))?;
     let current_frames = campaign.route_tape.frames.len();
-    let Some(frames) = terminal_route.frames.get(current_frames..) else {
+    if current_frames >= terminal_route.frames.len() {
         return Ok(None);
-    };
+    }
+    let query = encoder
+        .encode(&campaign.current.snapshot)
+        .map_err(route_error)?;
+    let candidates = graph
+        .nodes()
+        .filter(|node| node.restoration.executable && !node.terminal)
+        .filter(|node| {
+            node.state.world.stage == campaign.current.snapshot.world.stage
+                && node.state.world.room == campaign.current.snapshot.world.room
+        })
+        .filter_map(|node| {
+            let route = graph.route(node.id.route_checkpoint_sha256)?;
+            let offset = route.frames.len();
+            (offset >= current_frames
+                && offset < terminal_route.frames.len()
+                && route.boot == terminal_route.boot
+                && route.tick_rate_numerator == terminal_route.tick_rate_numerator
+                && route.tick_rate_denominator == terminal_route.tick_rate_denominator
+                && terminal_route.frames.starts_with(&route.frames))
+            .then_some((offset, node))
+        })
+        .map(|(offset, node)| {
+            encoder
+                .encode(&node.state)
+                .map(|features| (offset, features))
+                .map_err(route_error)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let rejoin_offset =
+        select_incumbent_rejoin_offset(&query, &candidates, &encoder.distance_weights())
+            .unwrap_or(current_frames);
+    let frames = terminal_route
+        .frames
+        .get(rejoin_offset..)
+        .ok_or_else(|| route_message("incumbent rejoin offset exceeds its terminal route"))?;
     if frames.is_empty() {
         return Ok(None);
     }
@@ -564,6 +600,7 @@ pub(super) fn run_seed(
             && incumbent_continuation_suffix(
                 &campaign,
                 active_incumbent_continuation.expect("checked incumbent continuation"),
+                encoder,
             )?
             .is_none()
         {
@@ -704,6 +741,7 @@ pub(super) fn run_seed(
                 let tape = incumbent_continuation_suffix(
                     &campaign,
                     active_incumbent_continuation.expect("checked incumbent continuation"),
+                    encoder,
                 )?
                 .ok_or_else(|| route_message("incumbent continuation suffix disappeared"))?;
                 let (proposals, descriptor) = with_experience_terminal_continuation(

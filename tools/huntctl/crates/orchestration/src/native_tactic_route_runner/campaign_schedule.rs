@@ -6,10 +6,12 @@ pub(super) struct ActiveTerminalRefinementRollout {
     incumbent_ticks_to_go: u64,
 }
 
-/// One local perturbation followed by the time-aligned authenticated
-/// incumbent suffix. The suffix is exposed as an ordinary action and admitted
-/// as ordinary experience; this state only makes the two-decision candidate
-/// resumable and prevents unrelated actions from replacing its continuation.
+/// One local perturbation followed by an authenticated incumbent suffix. The
+/// suffix rejoins at the most similar future state on the incumbent rather
+/// than assuming equal elapsed time means equal route progress. It is exposed
+/// as an ordinary action and admitted as ordinary experience; this state only
+/// makes the two-decision candidate resumable and prevents unrelated actions
+/// from replacing its continuation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct ActiveIncumbentContinuation {
     terminal_route_checkpoint_sha256: Digest,
@@ -46,6 +48,78 @@ impl ActiveIncumbentContinuation {
             .ok_or("incumbent continuation action count overflowed")?;
         Ok(())
     }
+}
+
+/// Pick the future incumbent boundary most similar to the post-perturbation
+/// state. Features are normalized over this candidate cohort and weighted by
+/// the same semantic-family weights used by generalized tactic learning. Route
+/// headroom is only a tie-breaker, so a distant future state cannot win merely
+/// because it would produce a shorter candidate.
+pub(super) fn select_incumbent_rejoin_offset(
+    query: &[f32],
+    candidates: &[(usize, Vec<f32>)],
+    weights: &[f32],
+) -> Option<usize> {
+    let width = query.len();
+    if width == 0
+        || weights.len() != width
+        || query.iter().any(|value| !value.is_finite())
+        || weights
+            .iter()
+            .any(|weight| !weight.is_finite() || *weight <= 0.0)
+        || candidates.is_empty()
+        || candidates.iter().any(|(_, features)| {
+            features.len() != width || features.iter().any(|value| !value.is_finite())
+        })
+    {
+        return None;
+    }
+
+    let mut minimum = query.to_vec();
+    let mut maximum = query.to_vec();
+    for (_, features) in candidates {
+        for index in 0..width {
+            minimum[index] = minimum[index].min(features[index]);
+            maximum[index] = maximum[index].max(features[index]);
+        }
+    }
+    let ranges = minimum
+        .iter()
+        .zip(&maximum)
+        .map(|(minimum, maximum)| maximum - minimum)
+        .collect::<Vec<_>>();
+
+    candidates
+        .iter()
+        .map(|(offset, features)| {
+            let mut total = 0.0_f32;
+            let mut active_weight = 0.0_f32;
+            for index in 0..width {
+                if ranges[index] <= 1.0e-6
+                    && (query[index] - minimum[index]).abs() <= 1.0e-6
+                    && (features[index] - minimum[index]).abs() <= 1.0e-6
+                {
+                    continue;
+                }
+                let delta = (query[index] - features[index]) / ranges[index];
+                total += delta.clamp(-4.0, 4.0).powi(2) * weights[index];
+                active_weight += weights[index];
+            }
+            let distance = if active_weight <= f32::EPSILON {
+                0.0
+            } else {
+                total / active_weight
+            };
+            (*offset, distance)
+        })
+        .min_by(
+            |(left_offset, left_distance), (right_offset, right_distance)| {
+                left_distance
+                    .total_cmp(right_distance)
+                    .then_with(|| right_offset.cmp(left_offset))
+            },
+        )
+        .map(|(offset, _)| offset)
 }
 
 impl ActiveTerminalRefinementRollout {
@@ -118,6 +192,29 @@ mod terminal_refinement_tests {
         assert!(!rollout.should_execute_suffix());
         assert!(rollout.candidate_completed());
         assert!(ActiveIncumbentContinuation::new(Digest::ZERO, 0).is_none());
+    }
+
+    #[test]
+    fn incumbent_rejoin_prefers_state_similarity_then_shortcut_headroom() {
+        let candidates = vec![
+            (10, vec![0.0, 0.0]),
+            (20, vec![1.0, 0.0]),
+            (30, vec![4.0, 0.0]),
+        ];
+        assert_eq!(
+            select_incumbent_rejoin_offset(&[0.9, 0.0], &candidates, &[1.0, 1.0]),
+            Some(20)
+        );
+        assert_eq!(
+            select_incumbent_rejoin_offset(
+                &[1.0, 0.0],
+                &[(20, vec![1.0, 0.0]), (24, vec![1.0, 0.0])],
+                &[1.0, 1.0],
+            ),
+            Some(24),
+            "equal state matches should retain the larger shortcut"
+        );
+        assert_eq!(select_incumbent_rejoin_offset(&[], &candidates, &[]), None);
     }
 
     #[test]
