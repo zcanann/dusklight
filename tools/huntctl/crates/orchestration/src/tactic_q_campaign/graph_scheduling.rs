@@ -1299,5 +1299,6 @@ fn selection_reason_code(reason: TacticSelectionReason) -> u8 {
         TacticSelectionReason::RandomBaseline => 10,
         TacticSelectionReason::StructuredBaseline => 11,
         TacticSelectionReason::BatchDiversity => 12,
+        TacticSelectionReason::ExactTerminalReturn => 13,
     }
 }

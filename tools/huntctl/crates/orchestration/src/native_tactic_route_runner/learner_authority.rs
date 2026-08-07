@@ -1,5 +1,7 @@
 use super::*;
 
+use super::macro_policy_evidence::TACTIC_MACRO_POLICY_EVIDENCE_PUBLISHER_LANE;
+
 pub(super) type SharedTacticLearnerAuthority = Arc<Mutex<CampaignTacticLearnerAuthority>>;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -204,7 +206,9 @@ impl CampaignTacticLearnerAuthority {
         let admissions = replay.admissions();
         let completed_decisions = admissions
             .iter()
-            .filter(|admission| admission.publisher_lane != u32::MAX)
+            .filter(|admission| {
+                admission.publisher_lane < TACTIC_MACRO_POLICY_EVIDENCE_PUBLISHER_LANE
+            })
             .map(|admission| (admission.publisher_lane, admission.publisher_decision))
             .collect::<BTreeSet<_>>();
         let admission_snapshot_sha256s = admissions
@@ -898,7 +902,7 @@ mod tests {
         );
         assert_eq!(
             policy_update_probe.after_selection_reason,
-            TacticSelectionReason::Greedy
+            TacticSelectionReason::ExactTerminalReturn
         );
         assert_eq!(
             learned_decision.ranking.learner_snapshot_sha256, campaign.current.snapshot_sha256,
@@ -908,7 +912,7 @@ mod tests {
         assert!(learned_decision.ranking.values.unsupported.is_empty());
         assert_eq!(
             learned_decision.selected.reason,
-            TacticSelectionReason::Greedy
+            TacticSelectionReason::ExactTerminalReturn
         );
 
         assert!(

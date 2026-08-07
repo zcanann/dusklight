@@ -892,6 +892,27 @@ fn run_native_tactic_route_with_optional_fleet(
                     &source_lanes,
                     generation.generation_index,
                 )? {
+                    if refresh.promoted_tactics.is_empty() != refresh.policy_evidence.is_empty() {
+                        return Err(route_message(
+                            "active tactic promotion is detached from its policy evidence",
+                        ));
+                    }
+                    let policy_evidence = publish_tactic_macro_policy_evidence(
+                        &mut learner,
+                        &refresh.policy_evidence,
+                    )?;
+                    campaign_phase_wall.generation_model_update_micros = campaign_phase_wall
+                        .generation_model_update_micros
+                        .checked_add(policy_evidence.update.update_micros)
+                        .ok_or_else(|| {
+                            route_message("native tactic macro policy update timing overflowed")
+                        })?;
+                    active_macro_lifecycle.policy_evidence_rows = active_macro_lifecycle
+                        .policy_evidence_rows
+                        .saturating_add(refresh.policy_evidence.len() as u64);
+                    active_macro_lifecycle.policy_evidence_admitted_rows = active_macro_lifecycle
+                        .policy_evidence_admitted_rows
+                        .saturating_add(policy_evidence.admitted_rows);
                     campaign_phase_wall.generation_coordination_micros = campaign_phase_wall
                         .generation_coordination_micros
                         .checked_add(refresh.report.validation_wall_micros)
@@ -1352,6 +1373,11 @@ use macro_discovery::{
     ActiveTacticMacroLifecycle, TacticMacroSourceLane, count_active_tactic_selections,
     finalize_tactic_macro_discovery, refresh_active_tactic_macros,
     should_refresh_active_tactic_macros,
+};
+mod macro_policy_evidence;
+use macro_policy_evidence::{
+    TacticMacroPolicyEvidence, capture_tactic_macro_policy_evidence,
+    publish_tactic_macro_policy_evidence,
 };
 mod macro_lineage_mining;
 #[cfg(test)]

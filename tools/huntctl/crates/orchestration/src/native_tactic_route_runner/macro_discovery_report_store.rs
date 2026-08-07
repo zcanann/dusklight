@@ -63,6 +63,8 @@ impl StoredMacroDiscoveryReport {
                 && self.report.active_refresh_count == 0)
             || (self.report.active_selected_decisions > 0
                 && self.report.active_promoted_option_ids.is_empty())
+            || self.report.active_policy_evidence_admitted_rows
+                > self.report.active_policy_evidence_rows
             || self.expected_content_sha256()? != self.content_sha256
         {
             return Err(route_message(
@@ -198,6 +200,8 @@ mod tests {
             active_refresh_count: 1,
             active_promoted_option_ids: vec!["promoted/001122".into()],
             active_selected_decisions: 2,
+            active_policy_evidence_rows: 2,
+            active_policy_evidence_admitted_rows: 2,
             observation_count: 3,
             high_value_observation_count: 1,
             mined_observation_count: 2,

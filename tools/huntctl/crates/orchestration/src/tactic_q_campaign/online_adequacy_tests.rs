@@ -787,7 +787,7 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
     assert_eq!(learned.proposals[0].descriptor.option_id, "north");
     assert_eq!(
         learned.proposals[0].reason,
-        dusklight_learning::tactic_exploration::TacticSelectionReason::Greedy
+        dusklight_learning::tactic_exploration::TacticSelectionReason::ExactTerminalReturn
     );
     assert!(campaign.model_revision() > 0);
 
@@ -825,7 +825,7 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
     assert_eq!(generalized.proposals[0].descriptor.option_id, "north");
     assert_eq!(
         generalized.proposals[0].reason,
-        dusklight_learning::tactic_exploration::TacticSelectionReason::Greedy
+        dusklight_learning::tactic_exploration::TacticSelectionReason::ExactTerminalReturn
     );
     assert!(variant_campaign.model_revision() > 0);
 
@@ -993,4 +993,102 @@ fn promoted_composition_reduces_online_policy_decisions() {
     assert_eq!(primitive_campaign.route_tape, macro_campaign.route_tape);
     assert_eq!(primitive_campaign.decision_index, 2);
     assert_eq!(primitive_campaign.training_replay_len(), 2);
+
+    let remaining = run_to_terminal(
+        &mut macro_controller,
+        &mut macro_campaign,
+        &promoted_catalog,
+        episode_shard_sha256,
+    );
+    assert!(!remaining.is_empty());
+    let primitive_remaining = run_to_terminal(
+        &mut primitive_controller,
+        &mut primitive_campaign,
+        &primitive_catalog,
+        episode_shard_sha256,
+    );
+    assert!(!primitive_remaining.is_empty());
+    assert!(
+        macro_campaign
+            .import_training_corpora_without_refit(&[primitive_campaign.training_corpus()])
+            .unwrap()
+            > 0
+    );
+    let root = macro_campaign
+        .sample_root_and_frontier(0, 0, &[], usize::MAX)
+        .unwrap()[0]
+        .clone();
+    macro_campaign
+        .restore_branch(
+            &root,
+            1,
+            &FactRegistry::canonical(),
+            &promoted_catalog,
+            &[],
+            |description| {
+                AdequacyState::Start.applicable(&description.option.option_id)
+                    || description.option.option_id == candidate.option_id
+            },
+        )
+        .unwrap();
+    let learned =
+        decide_production_batch(&mut macro_controller, &macro_campaign, &promoted_catalog, 2);
+    assert_eq!(
+        learned.proposals[0].descriptor.option_id,
+        candidate.option_id
+    );
+    assert_eq!(
+        learned.proposals[0].reason,
+        TacticSelectionReason::ExactTerminalReturn
+    );
+    assert!(
+        learned
+            .ranking
+            .values
+            .ranked
+            .iter()
+            .any(|ranked| { ranked.descriptor.option_id == candidate.option_id })
+    );
+    assert!(
+        !learned
+            .ranking
+            .values
+            .unsupported
+            .iter()
+            .any(|descriptor| descriptor.option_id == candidate.option_id)
+    );
+    let exact_root_returns = macro_campaign
+        .graph_learning_batch()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|row| row.source.state_sha256 == root.logical_frontier.state_sha256)
+        .filter_map(|row| {
+            row.exact_conditional_ticks_to_terminal
+                .map(|ticks| (row.action.option_id, ticks))
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(exact_root_returns.get("north"), Some(&9));
+    assert_eq!(
+        exact_root_returns.get(&candidate.option_id),
+        Some(&9),
+        "equal native cost must expose policy-decision compression as a tie break"
+    );
+    assert!(macro_campaign.model_revision() > 0);
+
+    macro_campaign.exploration.epsilon_per_million = 1_000_000;
+    let exploratory = macro_campaign
+        .decide_batch(&promoted_catalog, &[], &encode, 2)
+        .unwrap();
+    assert_eq!(
+        exploratory.proposals[0].reason,
+        TacticSelectionReason::Epsilon,
+        "exact objective support must not disable explicit exploration"
+    );
+    assert!(
+        exploratory
+            .proposals
+            .iter()
+            .any(|proposal| proposal.descriptor.option_id == candidate.option_id)
+    );
 }

@@ -112,6 +112,7 @@ impl TacticQCampaign {
             maximum_proposals,
         )?;
         ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
+        self.ensure_exact_terminal_incumbent(&ranking, maximum_proposals, &mut proposals)?;
         Ok(TacticQProposalBatch {
             ranking,
             proposals,
@@ -463,6 +464,9 @@ impl TacticQCampaign {
         if let Some(primary) = forced_primary {
             restore_primary_proposal(&mut proposals, primary, maximum_proposals);
         }
+        if policy.uses_learned_selector() {
+            self.ensure_exact_terminal_incumbent(&ranking, maximum_proposals, &mut proposals)?;
+        }
         if proposals.iter().any(|proposal| {
             !ranking.choices.iter().any(|choice| {
                 choice.applicable
@@ -481,6 +485,86 @@ impl TacticQCampaign {
             goal_reachability_calibration,
             terminal_action_calibration,
         })
+    }
+
+    /// Give exact native objective evidence authority over an interpolated
+    /// critic at the same executable boundary.
+    ///
+    /// Epsilon remains the behavior policy when it fires. With a wider batch,
+    /// the exact incumbent is retained beside that exploratory action as its
+    /// matched control. Equal-tick continuations prefer the action that spans
+    /// more native ticks because it realizes the same objective path with
+    /// fewer policy decisions.
+    fn ensure_exact_terminal_incumbent(
+        &self,
+        ranking: &LiveTacticRanking,
+        maximum_proposals: usize,
+        proposals: &mut Vec<SelectedTactic>,
+    ) -> Result<(), TacticQCampaignError> {
+        if proposals.is_empty() || maximum_proposals == 0 {
+            return Err(TacticQCampaignError::InvalidState(
+                "exact terminal policy received an empty proposal batch",
+            ));
+        }
+        if !self.native_terminal_supported() || self.state_graph.is_none() {
+            return Ok(());
+        }
+        let source = ExactStateId {
+            route_checkpoint_sha256: route_checkpoint(
+                self.root_checkpoint_sha256,
+                &self.route_tape,
+            )?,
+            state_sha256: self.current.snapshot_sha256,
+        };
+        let applicable = ranking
+            .choices
+            .iter()
+            .filter(|choice| choice.applicable)
+            .map(|choice| &choice.descriptor)
+            .collect::<Vec<_>>();
+        let incumbent = self
+            .graph_learning_batch()?
+            .rows
+            .into_iter()
+            .filter(|row| {
+                row.source == source
+                    && applicable
+                        .iter()
+                        .any(|descriptor| **descriptor == row.action)
+            })
+            .filter_map(|row| {
+                row.exact_conditional_ticks_to_terminal
+                    .map(|ticks| (ticks, row.realized_duration_ticks, row.action))
+            })
+            .min_by(|left, right| {
+                left.0
+                    .cmp(&right.0)
+                    .then_with(|| right.1.cmp(&left.1))
+                    .then_with(|| left.2.option_id.cmp(&right.2.option_id))
+            });
+        let Some((_, _, descriptor)) = incumbent else {
+            return Ok(());
+        };
+        let exact = SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: ranking.learner_snapshot_sha256,
+            decision_index: self.decision_index,
+            descriptor: descriptor.clone(),
+            reason: TacticSelectionReason::ExactTerminalReturn,
+            exploration_draw: proposals[0].exploration_draw,
+        };
+        if proposals[0].reason != TacticSelectionReason::Epsilon {
+            restore_primary_proposal(proposals, exact, maximum_proposals);
+        } else if proposals[0].descriptor == descriptor {
+            // The exploratory draw independently chose the exact incumbent.
+            // Preserve its epsilon provenance rather than relabeling behavior.
+            return Ok(());
+        } else if maximum_proposals > 1 {
+            proposals.retain(|proposal| proposal.descriptor != descriptor);
+            proposals.insert(1, exact);
+            proposals.truncate(maximum_proposals);
+        }
+        Ok(())
     }
 
     /// Score and capture a native proposal without mutating the retained

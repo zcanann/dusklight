@@ -254,6 +254,14 @@ pub struct NativeTacticMacroDiscoveryReport {
     /// Later policy decisions that actually selected one of those tactics.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub active_selected_decisions: u64,
+    /// Authenticated held-out macro executions made available as ordinary
+    /// replay after their candidate cleared promotion.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub active_policy_evidence_rows: u64,
+    /// Newly admitted rows from `active_policy_evidence_rows`; the remainder
+    /// were exact replay duplicates.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub active_policy_evidence_admitted_rows: u64,
     pub observation_count: u64,
     pub high_value_observation_count: u64,
     pub mined_observation_count: u64,

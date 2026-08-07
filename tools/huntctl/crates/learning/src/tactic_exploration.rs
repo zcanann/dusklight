@@ -63,6 +63,10 @@ impl Default for TacticExplorationConfig {
 #[serde(rename_all = "snake_case")]
 pub enum TacticSelectionReason {
     Greedy,
+    /// Follow the shortest authenticated terminal continuation already
+    /// present in the exact execution graph. Learned estimates still rank
+    /// unsupported alternatives, but may not displace known objective value.
+    ExactTerminalReturn,
     Epsilon,
     UnsupportedBootstrap,
     BatchUncertainty,

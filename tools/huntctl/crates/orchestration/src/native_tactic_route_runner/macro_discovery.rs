@@ -8,11 +8,13 @@ pub(super) struct MinedTacticMacros {
 pub(super) struct ValidatedTacticMacros {
     registry: TacticMacroPromotionRegistry,
     report: NativeTacticMacroDiscoveryReport,
+    policy_evidence: Vec<TacticMacroPolicyEvidence>,
 }
 
 pub(super) struct ActiveTacticMacroRefresh {
     pub(super) promoted_tactics: Vec<ImportedPromotedTactic>,
     pub(super) report: NativeTacticMacroDiscoveryReport,
+    pub(super) policy_evidence: Vec<TacticMacroPolicyEvidence>,
 }
 
 #[derive(Default)]
@@ -20,6 +22,8 @@ pub(super) struct ActiveTacticMacroLifecycle {
     pub(super) validation_reports: Vec<NativeTacticMacroDiscoveryReport>,
     pub(super) promoted_option_ids: BTreeSet<String>,
     pub(super) selected_decisions: u64,
+    pub(super) policy_evidence_rows: u64,
+    pub(super) policy_evidence_admitted_rows: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -111,6 +115,8 @@ pub(super) fn finalize_tactic_macro_discovery(
         u64::try_from(active.validation_reports.len()).map_err(route_error)?;
     report.active_promoted_option_ids = active.promoted_option_ids.iter().cloned().collect();
     report.active_selected_decisions = active.selected_decisions;
+    report.active_policy_evidence_rows = active.policy_evidence_rows;
+    report.active_policy_evidence_admitted_rows = active.policy_evidence_admitted_rows;
     write_macro_discovery_report(
         config.output_root,
         execution_plan_sha256,
@@ -161,6 +167,7 @@ pub(super) fn refresh_active_tactic_macros(
     Ok(Some(ActiveTacticMacroRefresh {
         promoted_tactics,
         report: validated.report,
+        policy_evidence: validated.policy_evidence,
     }))
 }
 
@@ -371,6 +378,8 @@ pub(super) fn mine_and_store_tactic_macros(
             active_refresh_count: 0,
             active_promoted_option_ids: Vec::new(),
             active_selected_decisions: 0,
+            active_policy_evidence_rows: 0,
+            active_policy_evidence_admitted_rows: 0,
             observation_count,
             high_value_observation_count,
             mined_observation_count: observations.len() as u64,
@@ -557,7 +566,14 @@ struct TacticMacroValidationResult {
     frontier_state_sha256: Digest,
     candidate_outcome: TacticMacroMeasuredOutcome,
     primitive_outcome: TacticMacroMeasuredOutcome,
+    policy_evidence: TacticMacroPolicyEvidence,
     accounting: TacticMacroValidationAccounting,
+}
+
+struct TacticMacroExecutedOutcome {
+    option_id: String,
+    measured: TacticMacroMeasuredOutcome,
+    native: NativeTacticWorkerOutcome,
 }
 
 enum TacticMacroValidationOutcome {
@@ -581,6 +597,7 @@ pub(super) fn validate_and_store_tactic_macros(
 ) -> Result<ValidatedTacticMacros, NativeTacticRouteRunError> {
     let started = Instant::now();
     let validation_attempt_root = reserve_macro_validation_attempt_root(&validation_root)?;
+    let execution_authority_sha256 = config.execution_plan.identity()?;
     let validated_path = validation_attempt_root.join(
         validated_path
             .file_name()
@@ -675,7 +692,15 @@ pub(super) fn validate_and_store_tactic_macros(
             .into_iter()
             .map(|job| {
                 let pool = pool.clone();
-                scope.spawn(move || run_tactic_macro_validation_job(&pool, encoder, job))
+                scope.spawn(move || {
+                    run_tactic_macro_validation_job(
+                        &pool,
+                        encoder,
+                        root_checkpoint_sha256,
+                        execution_authority_sha256,
+                        job,
+                    )
+                })
             })
             .collect::<Vec<_>>();
         handles
@@ -732,6 +757,22 @@ pub(super) fn validate_and_store_tactic_macros(
             rejected_candidates,
         )
         .map_err(route_error)?;
+    let promoted_candidates = mined
+        .registry
+        .promoted()
+        .map(|record| record.candidate.candidate_sha256)
+        .collect::<BTreeSet<_>>();
+    let policy_evidence = results
+        .iter()
+        .filter_map(|outcome| match outcome {
+            TacticMacroValidationOutcome::Compared(result)
+                if promoted_candidates.contains(&result.candidate_sha256) =>
+            {
+                Some(result.policy_evidence.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
     let validation_state_count = results.len() as u64;
     let comparison_count = results
         .iter()
@@ -788,6 +829,7 @@ pub(super) fn validate_and_store_tactic_macros(
     Ok(ValidatedTacticMacros {
         registry: mined.registry,
         report: mined.report,
+        policy_evidence,
     })
 }
 
@@ -828,6 +870,8 @@ pub(super) fn tactic_macro_entry_distance(
 fn run_tactic_macro_validation_job(
     pool: &NativeTacticProposalPool,
     encoder: &GoalConditionedTacticFeatureEncoder,
+    root_checkpoint_sha256: Digest,
+    execution_authority_sha256: Digest,
     job: TacticMacroValidationJob,
 ) -> Result<TacticMacroValidationOutcome, NativeTacticRouteRunError> {
     let candidate_entry = job.candidate.catalog_entry().map_err(route_error)?;
@@ -846,7 +890,7 @@ fn run_tactic_macro_validation_job(
         })
         .collect::<Vec<_>>();
     let mut accounting = TacticMacroValidationAccounting::default();
-    let outcomes = evaluate_tactic_macro_validation_batch(
+    let mut outcomes = evaluate_tactic_macro_validation_batch(
         pool,
         candidate_catalog,
         Arc::new(Vec::new()),
@@ -856,12 +900,15 @@ fn run_tactic_macro_validation_job(
         &job.output_root,
         &mut accounting,
     )?;
-    let [(option_id, candidate_outcome)] = outcomes.as_slice() else {
+    if outcomes.len() != 1 {
         return Err(route_message(
             "macro validation candidate batch did not produce one outcome",
         ));
-    };
-    if option_id != &job.candidate.option_id {
+    }
+    let candidate_outcome = outcomes
+        .pop()
+        .expect("one checked macro validation outcome");
+    if candidate_outcome.option_id != job.candidate.option_id {
         return Err(route_message(
             "macro validation candidate outcome identity is detached",
         ));
@@ -876,7 +923,7 @@ fn run_tactic_macro_validation_job(
     )?;
     if !macro_validation_inputs_match(
         &job.candidate.tape,
-        &candidate_outcome.emitted_raw_actions,
+        &candidate_outcome.measured.emitted_raw_actions,
         &primitive_outcome.emitted_raw_actions,
     ) {
         return Ok(TacticMacroValidationOutcome::Rejected {
@@ -884,13 +931,22 @@ fn run_tactic_macro_validation_job(
             accounting,
         });
     }
+    let policy_evidence = capture_tactic_macro_policy_evidence(
+        job.candidate.candidate_sha256,
+        &job.frontier,
+        &candidate_outcome.native,
+        encoder,
+        root_checkpoint_sha256,
+        execution_authority_sha256,
+    )?;
     Ok(TacticMacroValidationOutcome::Compared(
         TacticMacroValidationResult {
             candidate_sha256: job.candidate.candidate_sha256,
             frontier_seed: job.frontier.seed,
             frontier_state_sha256: job.frontier.state_sha256,
-            candidate_outcome: candidate_outcome.clone(),
+            candidate_outcome: candidate_outcome.measured,
             primitive_outcome,
+            policy_evidence,
             accounting,
         },
     ))
@@ -1154,7 +1210,7 @@ pub(super) fn exact_realized_macro_tape(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn evaluate_tactic_macro_validation_batch(
+fn evaluate_tactic_macro_validation_batch(
     pool: &NativeTacticProposalPool,
     catalog: Arc<TacticAssetCatalog>,
     blueprints: Arc<Vec<TacticBlueprint>>,
@@ -1163,7 +1219,7 @@ pub(super) fn evaluate_tactic_macro_validation_batch(
     encoder: &GoalConditionedTacticFeatureEncoder,
     output_root: &Path,
     accounting: &mut TacticMacroValidationAccounting,
-) -> Result<Vec<(String, TacticMacroMeasuredOutcome)>, NativeTacticRouteRunError> {
+) -> Result<Vec<TacticMacroExecutedOutcome>, NativeTacticRouteRunError> {
     fs::create_dir_all(output_root).map_err(route_error)?;
     let work = pool.execute_batch(
         proposals,
@@ -1185,15 +1241,17 @@ pub(super) fn evaluate_tactic_macro_validation_batch(
             let after_distance = encoder
                 .encode(&evaluated.outcome.next_facts)
                 .map_err(route_error)?[encoder.goal_distance_feature()];
-            Ok((
-                evaluated.outcome.selected.descriptor.option_id,
-                TacticMacroMeasuredOutcome {
-                    terminal: evaluated.outcome.terminal,
+            let native = evaluated.outcome;
+            Ok(TacticMacroExecutedOutcome {
+                option_id: native.selected.descriptor.option_id.clone(),
+                measured: TacticMacroMeasuredOutcome {
+                    terminal: native.terminal,
                     progress: before_distance - after_distance,
                     ticks,
-                    emitted_raw_actions: evaluated.outcome.execution.emitted_raw_actions,
+                    emitted_raw_actions: native.execution.emitted_raw_actions.clone(),
                 },
-            ))
+                native,
+            })
         })
         .collect()
 }
