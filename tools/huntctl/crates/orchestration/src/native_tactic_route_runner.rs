@@ -30,11 +30,11 @@ use crate::tactic_q_campaign::{
     TACTIC_Q_DEMONSTRATION_EPISODE_GROUP, TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5,
     TacticCampaignDiagnostics, TacticCampaignGraphProjection, TacticCampaignGraphProjectionEdge,
     TacticCampaignGraphProjectionNode, TacticExpansionLease, TacticFrontierAcquisition,
-    TacticGraphSchedulingTiming, TacticQCampaign, TacticQCampaignCheckpoint, TacticQCampaignError,
-    TacticQDecision, TacticQFinalResult, TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot,
-    TacticQLearnerSnapshotKind, TacticQProposalBatch, TacticQTrainingCorpus,
-    TacticRestorationContract, TacticSchedulerDecisionTrace, has_no_progress_loop,
-    route_checkpoint, validate_training_corpus,
+    TacticGraphSchedulingTiming, TacticPolicyEvaluationDecisionTrace, TacticQCampaign,
+    TacticQCampaignCheckpoint, TacticQCampaignError, TacticQDecision, TacticQFinalResult,
+    TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot, TacticQLearnerSnapshotKind,
+    TacticQProposalBatch, TacticQTrainingCorpus, TacticRestorationContract,
+    TacticSchedulerDecisionTrace, has_no_progress_loop, route_checkpoint, validate_training_corpus,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use crate::tactic_replay_control_plane::{

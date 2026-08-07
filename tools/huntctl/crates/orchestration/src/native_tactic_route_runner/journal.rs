@@ -494,6 +494,7 @@ pub(super) fn decision_record(
         duplicate_training_transitions: trace.duplicate_training_transitions,
         training_replay_rows: trace.training_replay_rows,
         scheduler_decision: trace.scheduler_decision.clone(),
+        policy_evaluation_decision: trace.policy_evaluation_decision.clone(),
         branch_acquisition: trace.branch_acquisition.clone(),
         paired_terminal_return: trace.paired_terminal_return.clone(),
         frontier_cells: trace.frontier_cells,
@@ -663,6 +664,46 @@ pub(super) fn project_tactic_decision_record(
             ));
         }
     }
+    if record.scheduler_decision.is_some() && record.policy_evaluation_decision.is_some() {
+        return Err(route_message(
+            "tactic decision has conflicting scheduler and policy-evaluation authority",
+        ));
+    }
+    if let Some(evaluation) = &record.policy_evaluation_decision {
+        evaluation.validate().map_err(route_error)?;
+        let evaluated_expansions = record
+            .proposal_batch
+            .iter()
+            .map(|proposal| {
+                let transition = journal_transition(
+                    store,
+                    proposal.transition,
+                    proposal.inline_transition.as_ref(),
+                )?;
+                crate::state_graph::action_expansion_identity(
+                    crate::state_graph::ExactStateId {
+                        route_checkpoint_sha256: transition.source_checkpoint_sha256,
+                        state_sha256: transition.before_state_sha256,
+                    },
+                    &transition.value_sample.action,
+                )
+                .map_err(route_error)
+            })
+            .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
+        let selection_reasons = proposal_batch
+            .iter()
+            .map(|proposal| proposal.selection_reason)
+            .collect::<Vec<_>>();
+        if evaluation.learner_model_sha256 != record.learner_snapshot_sha256
+            || evaluation.generation != record.decision_index
+            || evaluation.evaluated_expansion_sha256 != evaluated_expansions
+            || evaluation.selection_reasons != selection_reasons
+        {
+            return Err(route_message(
+                "tactic policy-evaluation authority is detached from its proposal batch",
+            ));
+        }
+    }
     for probe in &record.policy_update_probes {
         probe.validate()?;
     }
@@ -754,6 +795,7 @@ pub(super) fn project_tactic_decision_record(
         duplicate_training_transitions: record.duplicate_training_transitions,
         training_replay_rows: record.training_replay_rows,
         scheduler_decision: record.scheduler_decision,
+        policy_evaluation_decision: record.policy_evaluation_decision,
         branch_acquisition: record.branch_acquisition,
         paired_terminal_return: record.paired_terminal_return,
         frontier_cells: record.frontier_cells,

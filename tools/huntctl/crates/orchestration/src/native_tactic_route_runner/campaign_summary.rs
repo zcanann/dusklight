@@ -1014,8 +1014,22 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
         let Some(paired) = decision.paired_terminal_return.as_ref() else {
             continue;
         };
+        let policy_evaluation_authorized = decision
+            .policy_evaluation_decision
+            .as_ref()
+            .is_some_and(|evaluation| {
+                evaluation.validate().is_ok()
+                    && decision.scheduler_decision.is_none()
+                    && evaluation.learner_model_sha256 == paired.frozen_learner_snapshot_sha256
+                    && evaluation.generation == decision.decision_index
+                    && evaluation.proposal_policy == route.proposal_policy
+                    && evaluation.selection_reasons.first().is_some_and(|reason| {
+                        selection_reason_matches_policy(*reason, route.proposal_policy)
+                    })
+            });
         if super::paired_terminal_returns::validate_paired_terminal_return_trace(paired).is_err()
             || decision.learner_snapshot_sha256 != paired.frozen_learner_snapshot_sha256
+            || !policy_evaluation_authorized
             || paired.pair_sha256
                 != super::paired_terminal_returns::paired_terminal_return_identity(
                     decision.execution_plan_sha256,
@@ -1248,6 +1262,24 @@ fn causal_summary(route: &NativeTacticRouteReport) -> NativeTacticCampaignCausal
         causal_chain_ready_for_matched_evaluation: first_incomplete_link.is_none(),
         first_incomplete_link,
         outcome_effect_requires_matched_control: learning_expected,
+    }
+}
+
+fn selection_reason_matches_policy(
+    reason: TacticSelectionReason,
+    policy: TacticProposalPolicy,
+) -> bool {
+    match policy {
+        TacticProposalPolicy::Learned | TacticProposalPolicy::FrozenPolicy => !matches!(
+            reason,
+            TacticSelectionReason::GraphScheduler
+                | TacticSelectionReason::RandomBaseline
+                | TacticSelectionReason::StructuredBaseline
+        ),
+        TacticProposalPolicy::RandomValid => reason == TacticSelectionReason::RandomBaseline,
+        TacticProposalPolicy::StructuredNonLearning => {
+            reason == TacticSelectionReason::StructuredBaseline
+        }
     }
 }
 
@@ -1562,6 +1594,24 @@ mod tests {
         completed.role = NativeTacticPairedTerminalReturnRole::Control;
         completed.status_after_decision = NativeTacticPairedTerminalReturnStatus::Complete;
         route.seeds[0].trace[1].paired_terminal_return = Some(completed.clone());
+
+        let contaminated = causal_summary(&route);
+        assert_eq!(contaminated.paired_terminal_return_invalid_completions, 1);
+        assert!(contaminated.paired_terminal_return_authority_violations > 0);
+        let proposal_policy = route.proposal_policy;
+        for (index, decision) in route.seeds[0].trace.iter_mut().take(2).enumerate() {
+            decision.scheduler_decision = None;
+            decision.policy_evaluation_decision = Some(
+                TacticPolicyEvaluationDecisionTrace::new(
+                    frozen,
+                    decision.decision_index,
+                    proposal_policy,
+                    vec![Digest([40 + index as u8; 32])],
+                    vec![TacticSelectionReason::Greedy],
+                )
+                .unwrap(),
+            );
+        }
 
         let censored = causal_summary(&route);
         assert_eq!(censored.paired_terminal_return_pairs_started, 1);

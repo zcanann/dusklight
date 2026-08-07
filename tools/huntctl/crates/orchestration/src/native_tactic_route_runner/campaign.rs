@@ -215,12 +215,17 @@ pub(super) fn run_seed(
         let completed_expansions_by_decision = trace
             .iter()
             .filter_map(|decision| {
-                decision.scheduler_decision.as_ref().map(|scheduler| {
-                    (
-                        decision.decision_index,
-                        scheduler.evaluated_expansion_sha256.clone(),
-                    )
-                })
+                decision
+                    .scheduler_decision
+                    .as_ref()
+                    .map(|scheduler| scheduler.evaluated_expansion_sha256.clone())
+                    .or_else(|| {
+                        decision
+                            .policy_evaluation_decision
+                            .as_ref()
+                            .map(|evaluation| evaluation.evaluated_expansion_sha256.clone())
+                    })
+                    .map(|expansions| (decision.decision_index, expansions))
             })
             .collect::<BTreeMap<_, _>>();
         lease_ledger.reconcile_unresolved(&completed_expansions_by_decision)?;
@@ -855,23 +860,74 @@ pub(super) fn run_seed(
             })
             .map(|choice| choice.descriptor.clone())
             .collect::<Vec<_>>();
-        let leased_batch = campaign
-            .lease_current_parameterized_batch(
-                proposal_batch,
-                &eligible_descriptors,
-                config.execution_plan.proposal_width_per_decision,
-                consumed_learner_snapshot.sha256,
-            )
+        let source_snapshot = campaign.current.snapshot.clone();
+        let source_snapshot_sha256 = source_snapshot.content_sha256().map_err(route_error)?;
+        let source_route_tape = campaign.route_tape.clone();
+        let restoration = campaign
+            .current_restoration_contract()
             .map_err(route_error)?;
+        let paired_terminal_return_seed = if active_paired_terminal_return.is_none() {
+            PairedTerminalReturnSeed::from_pre_execution_proposals(
+                execution_plan_sha256,
+                campaign.decision_index,
+                restoration.plan.route.route_checkpoint_sha256,
+                source_snapshot_sha256,
+                branch_acquisition.as_ref(),
+                consumed_learner_snapshot.sha256,
+                consumed_learner_snapshot.replay_revision,
+                &proposal_batch.proposals,
+            )
+        } else {
+            None
+        };
+        let causal_policy_evaluation =
+            active_paired_terminal_return.is_some() || paired_terminal_return_seed.is_some();
+        let (
+            proposal_batch,
+            proposal_leases,
+            scheduler_decision,
+            policy_evaluation_decision,
+            graph_scheduling_timing,
+        ) = if causal_policy_evaluation {
+            let evaluated_batch = campaign
+                .authorize_current_policy_evaluation_batch(
+                    proposal_batch,
+                    &eligible_descriptors,
+                    config.execution_plan.proposal_width_per_decision,
+                    consumed_learner_snapshot.sha256,
+                    config.execution_plan.proposal_policy,
+                )
+                .map_err(route_error)?;
+            (
+                evaluated_batch.batch,
+                evaluated_batch.leases,
+                None,
+                Some(evaluated_batch.evaluation_decision),
+                evaluated_batch.timing,
+            )
+        } else {
+            let leased_batch = campaign
+                .lease_current_parameterized_batch(
+                    proposal_batch,
+                    &eligible_descriptors,
+                    config.execution_plan.proposal_width_per_decision,
+                    consumed_learner_snapshot.sha256,
+                )
+                .map_err(route_error)?;
+            (
+                leased_batch.batch,
+                leased_batch.leases,
+                Some(leased_batch.scheduler_decision),
+                None,
+                leased_batch.timing,
+            )
+        };
         if let Some(breakdown) = timing.orchestration_breakdown.as_mut() {
             breakdown.graph_scheduling_breakdown = breakdown
                 .graph_scheduling_breakdown
-                .checked_merge(leased_batch.timing)
+                .checked_merge(graph_scheduling_timing)
                 .ok_or_else(|| route_message("graph scheduling timing overflowed"))?;
         }
-        let proposal_batch = leased_batch.batch;
-        let proposal_leases = leased_batch.leases;
-        let scheduler_decision = leased_batch.scheduler_decision;
         let lease_batch_sha256 = lease_ledger.issue(
             execution_plan_sha256,
             campaign.decision_index,
@@ -900,26 +956,6 @@ pub(super) fn run_seed(
             .join("native")
             .join(format!("decision-{decision_index:06}"));
         fs::create_dir_all(&paths_root).map_err(route_error)?;
-        let source_snapshot = campaign.current.snapshot.clone();
-        let source_snapshot_sha256 = source_snapshot.content_sha256().map_err(route_error)?;
-        let source_route_tape = campaign.route_tape.clone();
-        let restoration = campaign
-            .current_restoration_contract()
-            .map_err(route_error)?;
-        let paired_terminal_return_seed = if active_paired_terminal_return.is_none() {
-            PairedTerminalReturnSeed::from_pre_execution_proposals(
-                execution_plan_sha256,
-                campaign.decision_index,
-                restoration.plan.route.route_checkpoint_sha256,
-                source_snapshot_sha256,
-                branch_acquisition.as_ref(),
-                consumed_learner_snapshot.sha256,
-                consumed_learner_snapshot.replay_revision,
-                &proposal_batch.proposals,
-            )
-        } else {
-            None
-        };
         let freeze_policy_for_paired_return = paired_terminal_return_seed.is_some()
             || active_paired_terminal_return
                 .as_ref()
@@ -1480,7 +1516,8 @@ pub(super) fn run_seed(
             newly_admitted_training_rows,
             duplicate_training_transitions,
             training_replay_rows: campaign.training_replay_len() as u64,
-            scheduler_decision: Some(scheduler_decision),
+            scheduler_decision,
+            policy_evaluation_decision,
             branch_acquisition: branch_acquisition.take(),
             paired_terminal_return,
             frontier_cells,

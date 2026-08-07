@@ -955,8 +955,11 @@ mod graph_projection;
 mod graph_scheduling;
 pub use graph_scheduling::TacticRestorationContract;
 pub use graph_scheduling::{
-    LeasedTacticQProposalBatch, TACTIC_SCHEDULER_DECISION_SCHEMA_V1, TacticExpansionLease,
-    TacticGraphSchedulingTiming, TacticScheduledExpansionEvidence, TacticSchedulerDecisionTrace,
+    EvaluatedTacticQProposalBatch, LeasedTacticQProposalBatch,
+    TACTIC_POLICY_EVALUATION_DECISION_SCHEMA_V1, TACTIC_SCHEDULER_DECISION_SCHEMA_V1,
+    TacticExpansionLease, TacticExpansionLeaseKind, TacticGraphSchedulingTiming,
+    TacticPolicyEvaluationDecisionTrace, TacticScheduledExpansionEvidence,
+    TacticSchedulerDecisionTrace,
 };
 mod persistence;
 mod value_treatment;

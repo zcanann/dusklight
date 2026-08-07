@@ -10,6 +10,8 @@ use crate::scheduler::{
 use std::time::Instant;
 
 pub const TACTIC_SCHEDULER_DECISION_SCHEMA_V1: &str = "dusklight-tactic-scheduler-decision/v1";
+pub const TACTIC_POLICY_EVALUATION_DECISION_SCHEMA_V1: &str =
+    "dusklight-tactic-policy-evaluation-decision/v1";
 
 /// Inclusive subphase timings for the graph-scheduling call. The surrounding
 /// route timing also includes horizon filtering, branch restoration, and lease
@@ -181,6 +183,13 @@ pub struct TacticExpansionLease {
     pub expansion_sha256: Digest,
     pub lease_sha256: Digest,
     pub descriptor: OptionActionDescriptor,
+    pub kind: TacticExpansionLeaseKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TacticExpansionLeaseKind {
+    GraphExploration,
+    PolicyEvaluation,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -188,6 +197,90 @@ pub struct LeasedTacticQProposalBatch {
     pub batch: TacticQProposalBatch,
     pub leases: Vec<TacticExpansionLease>,
     pub scheduler_decision: TacticSchedulerDecisionTrace,
+    pub timing: TacticGraphSchedulingTiming,
+}
+
+/// Durable proof that native workers received the policy-ranked batch itself.
+/// Unlike a graph-scheduler decision, this authority may repeat a completed
+/// expansion and must never substitute a different untried action.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticPolicyEvaluationDecisionTrace {
+    pub schema: String,
+    pub learner_model_sha256: Digest,
+    pub generation: u64,
+    pub proposal_policy: TacticProposalPolicy,
+    pub evaluated_expansion_sha256: Vec<Digest>,
+    pub selection_reasons: Vec<TacticSelectionReason>,
+    pub decision_sha256: Digest,
+}
+
+impl TacticPolicyEvaluationDecisionTrace {
+    pub fn new(
+        learner_model_sha256: Digest,
+        generation: u64,
+        proposal_policy: TacticProposalPolicy,
+        evaluated_expansion_sha256: Vec<Digest>,
+        selection_reasons: Vec<TacticSelectionReason>,
+    ) -> Result<Self, TacticQCampaignError> {
+        let decision_sha256 = tactic_policy_evaluation_decision_sha256(
+            learner_model_sha256,
+            generation,
+            proposal_policy,
+            &evaluated_expansion_sha256,
+            &selection_reasons,
+        );
+        let trace = Self {
+            schema: TACTIC_POLICY_EVALUATION_DECISION_SCHEMA_V1.into(),
+            learner_model_sha256,
+            generation,
+            proposal_policy,
+            evaluated_expansion_sha256,
+            selection_reasons,
+            decision_sha256,
+        };
+        trace.validate()?;
+        Ok(trace)
+    }
+
+    pub fn validate(&self) -> Result<(), TacticQCampaignError> {
+        if self.schema != TACTIC_POLICY_EVALUATION_DECISION_SCHEMA_V1
+            || self.learner_model_sha256 == Digest::ZERO
+            || self.evaluated_expansion_sha256.is_empty()
+            || self.evaluated_expansion_sha256.len() != self.selection_reasons.len()
+            || self
+                .evaluated_expansion_sha256
+                .iter()
+                .any(|identity| *identity == Digest::ZERO)
+            || self
+                .evaluated_expansion_sha256
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .len()
+                != self.evaluated_expansion_sha256.len()
+            || self.decision_sha256
+                != tactic_policy_evaluation_decision_sha256(
+                    self.learner_model_sha256,
+                    self.generation,
+                    self.proposal_policy,
+                    &self.evaluated_expansion_sha256,
+                    &self.selection_reasons,
+                )
+        {
+            return Err(TacticQCampaignError::InvalidState(
+                "tactic policy-evaluation decision trace is invalid",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EvaluatedTacticQProposalBatch {
+    pub batch: TacticQProposalBatch,
+    pub leases: Vec<TacticExpansionLease>,
+    pub evaluation_decision: TacticPolicyEvaluationDecisionTrace,
     pub timing: TacticGraphSchedulingTiming,
 }
 
@@ -354,6 +447,134 @@ impl TacticQCampaign {
             state: node.state.as_ref().clone(),
             route_tape: route.clone(),
             descriptor: None,
+        })
+    }
+
+    /// Authorize the exact policy-ranked batch for causal evaluation without
+    /// passing it through the unique-expansion search scheduler. Completed
+    /// actions remain completed and can receive another deterministic native
+    /// observation; untried actions are registered but are not graph-leased.
+    pub fn authorize_current_policy_evaluation_batch(
+        &mut self,
+        mut batch: TacticQProposalBatch,
+        eligible: &[OptionActionDescriptor],
+        maximum_proposals: usize,
+        learner_model_sha256: Digest,
+        proposal_policy: TacticProposalPolicy,
+    ) -> Result<EvaluatedTacticQProposalBatch, TacticQCampaignError> {
+        let mut timing_boundary = Instant::now();
+        let mut timing = TacticGraphSchedulingTiming::default();
+        if maximum_proposals == 0
+            || eligible.is_empty()
+            || learner_model_sha256 == Digest::ZERO
+            || batch.ranking.learner_snapshot_sha256 != self.current.snapshot_sha256
+            || batch.proposals.is_empty()
+        {
+            return Err(TacticQCampaignError::InvalidState(
+                "policy evaluation requires an eligible current-state ranking",
+            ));
+        }
+        batch.proposals.truncate(maximum_proposals);
+        let eligible_identities = eligible
+            .iter()
+            .map(OptionActionDescriptor::content_sha256)
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        let proposal_identities = batch
+            .proposals
+            .iter()
+            .map(|proposal| proposal.descriptor.content_sha256())
+            .collect::<Result<Vec<_>, _>>()?;
+        if batch
+            .proposals
+            .iter()
+            .zip(&proposal_identities)
+            .any(|(proposal, identity)| {
+                proposal.learner_snapshot_sha256 != self.current.snapshot_sha256
+                    || proposal.decision_index != self.decision_index
+                    || !eligible_identities.contains(identity)
+            })
+            || proposal_identities
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .len()
+                != batch.proposals.len()
+        {
+            return Err(TacticQCampaignError::InvalidState(
+                "policy evaluation batch is detached or duplicated",
+            ));
+        }
+
+        let source_route_checkpoint =
+            route_checkpoint(self.root_checkpoint_sha256, &self.route_tape)?;
+        let source = crate::state_graph::ExactStateId {
+            route_checkpoint_sha256: source_route_checkpoint,
+            state_sha256: self.current.snapshot_sha256,
+        };
+        let mut graph = self
+            .state_graph
+            .clone()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "policy evaluation requires a bound state graph",
+            ))?;
+        let source_node = graph
+            .node(source)
+            .ok_or(TacticQCampaignError::InvalidState(
+                "policy evaluation source is absent from the state graph",
+            ))?;
+        if source_node.state.as_ref() != &self.current.snapshot
+            || source_node.terminal
+            || !source_node.restoration.executable
+            || graph.route(source_route_checkpoint) != Some(&self.route_tape)
+        {
+            return Err(TacticQCampaignError::InvalidState(
+                "policy evaluation source is not executable",
+            ));
+        }
+
+        let mut leases = Vec::with_capacity(batch.proposals.len());
+        for (slot, proposal) in batch.proposals.iter().enumerate() {
+            let expansion_sha256 =
+                graph.register_action_expansion(source, proposal.descriptor.clone())?;
+            leases.push(TacticExpansionLease {
+                expansion_sha256,
+                lease_sha256: policy_evaluation_lease_sha256(
+                    self,
+                    learner_model_sha256,
+                    expansion_sha256,
+                    slot as u64,
+                ),
+                descriptor: proposal.descriptor.clone(),
+                kind: TacticExpansionLeaseKind::PolicyEvaluation,
+            });
+        }
+        timing.registration_micros = scheduling_lap_micros(&mut timing_boundary);
+        self.validated_graph_mutation(&graph)?;
+        timing.graph_validation_micros = scheduling_lap_micros(&mut timing_boundary);
+
+        let evaluated_expansion_sha256 = leases
+            .iter()
+            .map(|lease| lease.expansion_sha256)
+            .collect::<Vec<_>>();
+        let selection_reasons = batch
+            .proposals
+            .iter()
+            .map(|proposal| proposal.reason)
+            .collect::<Vec<_>>();
+        let evaluation_decision = TacticPolicyEvaluationDecisionTrace::new(
+            learner_model_sha256,
+            self.decision_index,
+            proposal_policy,
+            evaluated_expansion_sha256,
+            selection_reasons,
+        )?;
+        timing.leasing_and_validation_micros = scheduling_lap_micros(&mut timing_boundary);
+        self.state_graph = Some(graph);
+        Ok(EvaluatedTacticQProposalBatch {
+            batch,
+            leases,
+            evaluation_decision,
+            timing,
         })
     }
 
@@ -615,6 +836,7 @@ impl TacticQCampaign {
                 expansion_sha256: scheduled.expansion_sha256,
                 lease_sha256,
                 descriptor,
+                kind: TacticExpansionLeaseKind::GraphExploration,
             });
         }
         let evaluated_expansion_sha256 = leases
@@ -800,4 +1022,69 @@ fn expansion_lease_sha256(
     hasher.update(expansion_sha256.0);
     hasher.update(slot.to_le_bytes());
     Digest(hasher.finalize().into())
+}
+
+fn policy_evaluation_lease_sha256(
+    campaign: &TacticQCampaign,
+    learner_model_sha256: Digest,
+    expansion_sha256: Digest,
+    slot: u64,
+) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-tactic-policy-evaluation-lease/v1");
+    hasher.update(campaign.execution_authority_sha256.0);
+    hasher.update(campaign.root_checkpoint_sha256.0);
+    hasher.update(campaign.decision_index.to_le_bytes());
+    hasher.update(campaign.episode_group.to_le_bytes());
+    hasher.update(learner_model_sha256.0);
+    hasher.update(expansion_sha256.0);
+    hasher.update(slot.to_le_bytes());
+    Digest(hasher.finalize().into())
+}
+
+fn tactic_policy_evaluation_decision_sha256(
+    learner_model_sha256: Digest,
+    generation: u64,
+    proposal_policy: TacticProposalPolicy,
+    evaluated_expansion_sha256: &[Digest],
+    selection_reasons: &[TacticSelectionReason],
+) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(TACTIC_POLICY_EVALUATION_DECISION_SCHEMA_V1.as_bytes());
+    hasher.update(learner_model_sha256.0);
+    hasher.update(generation.to_le_bytes());
+    hasher.update([proposal_policy_code(proposal_policy)]);
+    hasher.update((evaluated_expansion_sha256.len() as u64).to_le_bytes());
+    for (expansion, reason) in evaluated_expansion_sha256.iter().zip(selection_reasons) {
+        hasher.update(expansion.0);
+        hasher.update([selection_reason_code(*reason)]);
+    }
+    Digest(hasher.finalize().into())
+}
+
+fn proposal_policy_code(policy: TacticProposalPolicy) -> u8 {
+    match policy {
+        TacticProposalPolicy::Learned => 0,
+        TacticProposalPolicy::FrozenPolicy => 1,
+        TacticProposalPolicy::RandomValid => 2,
+        TacticProposalPolicy::StructuredNonLearning => 3,
+    }
+}
+
+fn selection_reason_code(reason: TacticSelectionReason) -> u8 {
+    match reason {
+        TacticSelectionReason::Greedy => 0,
+        TacticSelectionReason::Epsilon => 1,
+        TacticSelectionReason::UnsupportedBootstrap => 2,
+        TacticSelectionReason::BatchUncertainty => 3,
+        TacticSelectionReason::BatchValue => 4,
+        TacticSelectionReason::BatchCoverage => 5,
+        TacticSelectionReason::GeneralizedValue => 6,
+        TacticSelectionReason::GoalReachability => 7,
+        TacticSelectionReason::TerminalCostRefinement => 8,
+        TacticSelectionReason::GraphScheduler => 9,
+        TacticSelectionReason::RandomBaseline => 10,
+        TacticSelectionReason::StructuredBaseline => 11,
+        TacticSelectionReason::BatchDiversity => 12,
+    }
 }

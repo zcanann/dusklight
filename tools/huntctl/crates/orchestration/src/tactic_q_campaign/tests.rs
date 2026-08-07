@@ -904,6 +904,52 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             .status,
         crate::state_graph::ActionExpansionStatus::Completed { .. }
     ));
+    let policy_evaluation = restarted_scheduled
+        .authorize_current_policy_evaluation_batch(
+            TacticQProposalBatch {
+                ranking: decision.ranking.clone(),
+                proposals: vec![decision.selected.clone()],
+                goal_reachability_estimates: Vec::new(),
+                goal_reachability_calibration: None,
+                terminal_action_calibration: None,
+            },
+            std::slice::from_ref(&decision.selected.descriptor),
+            1,
+            learner_model_sha256,
+            TacticProposalPolicy::Learned,
+        )
+        .unwrap();
+    assert_eq!(
+        policy_evaluation.leases[0].kind,
+        TacticExpansionLeaseKind::PolicyEvaluation
+    );
+    assert_eq!(
+        policy_evaluation
+            .evaluation_decision
+            .evaluated_expansion_sha256,
+        vec![leased_expansion]
+    );
+    policy_evaluation.evaluation_decision.validate().unwrap();
+    assert!(matches!(
+        restarted_scheduled
+            .state_graph
+            .as_ref()
+            .unwrap()
+            .expansion(leased_expansion)
+            .unwrap()
+            .status,
+        crate::state_graph::ActionExpansionStatus::Completed { .. }
+    ));
+    assert_eq!(
+        restarted_scheduled
+            .admit_leased_evaluated_replay(
+                std::slice::from_ref(&evaluated),
+                &[restarted_scheduled.episode_group],
+                &policy_evaluation.leases,
+            )
+            .unwrap(),
+        0
+    );
     assert_eq!(campaign.decision_index, 0);
     assert!(campaign.replay.is_empty());
     let episode_group = campaign.episode_group;

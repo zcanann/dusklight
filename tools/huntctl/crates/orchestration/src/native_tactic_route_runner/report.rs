@@ -1018,6 +1018,10 @@ pub struct NativeTacticDecisionTrace {
     /// Legacy journals did not retain this scheduler provenance.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scheduler_decision: Option<TacticSchedulerDecisionTrace>,
+    /// Present instead of `scheduler_decision` when causal evaluation executes
+    /// the policy-ranked batch without graph-scheduler substitution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_evaluation_decision: Option<TacticPolicyEvaluationDecisionTrace>,
     #[serde(default)]
     pub branch_acquisition: Option<TacticFrontierAcquisition>,
     /// Durable equal-budget comparison rooted at one authenticated
@@ -1265,6 +1269,8 @@ pub(super) struct NativeTacticDecisionRecord {
     pub(super) training_replay_rows: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) scheduler_decision: Option<TacticSchedulerDecisionTrace>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) policy_evaluation_decision: Option<TacticPolicyEvaluationDecisionTrace>,
     #[serde(default)]
     pub(super) branch_acquisition: Option<TacticFrontierAcquisition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

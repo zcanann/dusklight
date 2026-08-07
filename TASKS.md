@@ -201,6 +201,13 @@ failed. Raw throughput is not allowed to conceal a search or learning failure.
   ticks-to-go; freeze their learner snapshot, preserve both graph lineages,
   recover unfinished pairs exactly, and prevent observed outcomes from changing
   the selected pair.
+- [x] Separate causal policy evaluation from unique graph-expansion search.
+  A paired lineage must execute the exact pre-scheduler treatment batch even
+  when its action was already completed in the state graph; graph scheduling,
+  or substitution from a different treatment may not masquerade as the policy
+  decision. Journal epsilon/bootstrap/value selection reasons explicitly so an
+  adaptive behavior-policy result cannot be misreported as a learned-value
+  choice, and reject legacy or malformed pairs that lack treatment authority.
 - [ ] Acquire paired native evidence for the adaptive, frozen-policy, and
   random-valid treatments. Report completed, in-progress, terminal-supported,
   and censored pairs. Every valid completed pair contributes its binary
@@ -227,57 +234,33 @@ failed. Raw throughput is not allowed to conceal a search or learning failure.
 Exit: the framework reliably discovers substantially better-than-human Ordon
 routes on the local machine.
 
-Paired-return activation proof (2026-08-05): the production runner records a
-durable pair identity at the exact source checkpoint, binds it to the original
-pre-outcome proposal order, and restores the control's exact graph node after
-the policy rollout finishes. Both rollouts keep the same immutable learner
-snapshot even while their experience is published globally. Recovery
-reconstructs an older frozen snapshot without moving the shared learner head
-backward. Decision journals reject detached control targets, option identities,
-learner authorities, and phase transitions.
+Causal audit correction (2026-08-05): the earlier 81-decision and 492-decision
+adaptive runs do **not** supply learned-policy comparisons. The state-graph
+scheduler replaced their pre-scheduler primary actions with untried expansions,
+including `graph_scheduler`, `unsupported_bootstrap`, and other acquisition
+choices, while the report still labeled the retained branch as the policy
+lineage. Their reported 89-versus-53 tick comparison and six completed outcomes
+remain useful search observations but are invalid causal learning evidence.
+Consequently there are currently zero valid paired native outcomes for the
+adaptive, frozen-policy, or random-valid treatments.
 
-A bounded one-worker adaptive run on seed 104729 reached the real native
-terminal after 374.8 seconds, completed 81 decisions and 3,197 native ticks,
-and retained a 264-tick best route. It started two exact same-source pairs: one
-completed with both lineages terminal-supported, while the second remained
-in-progress and therefore censored at the campaign bound. The summary reported
-zero learner-authority violations and passed independent report/plan/summary
-validation. This proves native activation and recovery/accounting integration;
-the exact matched return was 89 ticks for the learned policy lineage versus 53
-for its deterministic control, a 36-tick control win. One supported adaptive
-pair does not establish an action-ranking rate, but it is specifically evidence
-against claiming a learned advantage from this run. Frozen-policy and
-random-valid evidence, and at least eight supported opportunities per
-treatment, remain open above.
+The runner now uses a distinct policy-evaluation authority for every paired
+decision. It registers the exact policy-ranked actions without leasing or
+substituting graph-search work, permits deterministic repeat observation of an
+already-completed expansion without reopening its lifecycle, binds the exact
+batch/treatment/reasons into the decision journal, and reconstructs those
+dispatches during crash recovery. Summaries exclude every pair lacking that
+authority and make the causal chain incomplete. Focused repeat-evaluation and
+legacy-contamination tests pass, as do all 462 orchestration tests. A bounded
+native activation/recovery check under this corrected authority is required
+before acquiring the treatment sample above.
 
-The activation audit also closed a fail-open reporting hole: a malformed pair
-could previously increment the authority-violation count while still entering
-the supported total. Invalid pair identities are now retained as censored,
-excluded from supported evidence, and make the causal chain incomplete.
-Campaign summaries now reconstruct exact ticks-to-terminal for both lineages
-and report exact-outcome count, policy wins, control wins, ties, and aggregate
-ticks rather than treating two terminal booleans as an outcome comparison. The
-retained native report reprojects and validates under that stronger contract.
-All 462 orchestration tests pass.
-
-Larger adaptive acquisition (2026-08-05): the optimized campaign profile
-reached the first terminal in 37.6 seconds and retained 492 decisions before
-the fifteen-minute wall. It improved the best route only from 264 to 261 ticks.
-Seven pairs started and six completed: one had both lineages terminal, one was
-policy-only terminal, four had neither lineage terminal, and one remained in
-progress. The exact dual-terminal pair was a 53-tick control continuation
-against the policy's 89 ticks. Counting all information from the equal-budget
-outcomes therefore gives one policy win, one control win, and four matched
-terminal-rate ties--no observed adaptive advantage yet, and far too few
-decisive pairs for inference.
-
-That campaign initially failed finalization because `seed-result.json`
-duplicated the already durable decision trace and crossed its 64 MiB compact
-JSON bound. Seed results and route reports are now small manifests: the full
-trace remains once in checksummed binary decision-journal segments and readers
-rehydrate it for analysis. Recovery finalized the existing 492 decisions
-without rerunning native work; the seed manifest is 10 KiB and the route report
-is 24 KiB, and the rehydrated report/plan/summary chain validates.
+The 492-decision campaign also exposed duplicate trace serialization:
+`seed-result.json` crossed its compact JSON bound despite the decision journal
+already owning the same data. Seed results and route reports are now small
+manifests referencing checksummed binary journal segments; the recovered seed
+manifest is 10 KiB and route report 24 KiB. This storage fix does not rehabilitate
+the campaign's contaminated causal comparisons.
 
 ## P0 — prove learning and tactic discovery cause the result
 

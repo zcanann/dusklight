@@ -535,6 +535,11 @@ impl TacticQCampaign {
         if evaluated.is_empty()
             || evaluated.len() != episode_groups.len()
             || leases.is_some_and(|leases| leases.len() != evaluated.len())
+            || leases.is_some_and(|leases| {
+                leases
+                    .first()
+                    .is_some_and(|first| leases.iter().any(|lease| lease.kind != first.kind))
+            })
             || episode_groups[0] != self.episode_group
             || episode_groups[1..].contains(&self.episode_group)
             || episode_groups
@@ -587,13 +592,23 @@ impl TacticQCampaign {
                         "evaluated tactic replay is detached from its graph lease",
                     ));
                 }
-                let admission = state_graph.admit_leased_authenticated_completed_expansion(
-                    evaluated.transition.clone(),
-                    evaluated.outcome.route_tape.clone(),
-                    *episode_group,
-                    authority,
-                    lease.lease_sha256,
-                )?;
+                let admission = match lease.kind {
+                    TacticExpansionLeaseKind::GraphExploration => state_graph
+                        .admit_leased_authenticated_completed_expansion(
+                            evaluated.transition.clone(),
+                            evaluated.outcome.route_tape.clone(),
+                            *episode_group,
+                            authority,
+                            lease.lease_sha256,
+                        )?,
+                    TacticExpansionLeaseKind::PolicyEvaluation => state_graph
+                        .admit_authenticated_completed_expansion(
+                            evaluated.transition.clone(),
+                            evaluated.outcome.route_tape.clone(),
+                            *episode_group,
+                            authority,
+                        )?,
+                };
                 if admission.expansion_sha256 != lease.expansion_sha256 {
                     return Err(TacticQCampaignError::InvalidState(
                         "completed graph lease names a different expansion",
