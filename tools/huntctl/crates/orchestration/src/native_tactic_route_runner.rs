@@ -33,10 +33,10 @@ use crate::tactic_q_campaign::{
     TacticGraphSchedulingTiming, TacticPolicyEvaluationDecisionTrace, TacticQCampaign,
     TacticQCampaignCheckpoint, TacticQCampaignError, TacticQFinalResult,
     TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot, TacticQLearnerSnapshotKind,
-    TacticQOnlineBranchRequest, TacticQOnlineFrontierStrategy, TacticQOnlineLeaseMode,
-    TacticQOnlinePolicyUpdate, TacticQProposalBatch, TacticQTrainingCorpus,
+    TacticQOnlineBranchRequest, TacticQOnlineContinuationRequest, TacticQOnlineFrontierStrategy,
+    TacticQOnlineLeaseMode, TacticQOnlinePolicyUpdate, TacticQProposalBatch, TacticQTrainingCorpus,
     TacticRestorationContract, TacticSchedulerDecisionTrace, has_no_progress_loop,
-    route_checkpoint, validate_training_corpus,
+    plan_online_continuation, route_checkpoint, validate_training_corpus,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use crate::tactic_replay_control_plane::{

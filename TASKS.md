@@ -65,8 +65,11 @@ Ordon Springs is the first adequacy test. The real terminal is
   alternative, keeps the pre-execution policy winner authoritative, backs up
   exact terminal cost, advances or freezes the policy as requested, projects
   authenticated terminal candidates, and reports the best graph terminal.
-  Rollout-continuation cadence, horizon handling, and tactic promotion still
-  live partly in the native adapter and remain the next extraction.
+  The shared continuation planner now also owns periodic versus terminal
+  branching, terminal-refinement continuity, acquisition partitions, learned
+  versus broad frontier use, root refresh, and forced horizon branches. The
+  action-duration horizon preview and tactic promotion still live partly in the
+  native adapter and remain the next extraction.
 
 No task is blocked on design.
 

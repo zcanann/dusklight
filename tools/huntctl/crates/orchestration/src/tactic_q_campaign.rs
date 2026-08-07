@@ -993,6 +993,7 @@ mod online_adequacy_tests;
 mod online_learning;
 pub use online_learning::{
     TacticQOnlineAdmission, TacticQOnlineAdmissionTiming, TacticQOnlineBranchRequest,
-    TacticQOnlineBranchSelection, TacticQOnlineFrontierStrategy, TacticQOnlineLeaseMode,
-    TacticQOnlinePolicyUpdate, TacticQOnlineProposalLease,
+    TacticQOnlineBranchSelection, TacticQOnlineContinuationPlan, TacticQOnlineContinuationRequest,
+    TacticQOnlineFrontierStrategy, TacticQOnlineLeaseMode, TacticQOnlinePolicyUpdate,
+    TacticQOnlineProposalLease, plan_online_continuation,
 };

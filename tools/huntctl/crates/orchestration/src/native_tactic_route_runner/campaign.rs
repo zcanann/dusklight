@@ -1,10 +1,6 @@
-#[cfg(test)]
-pub(super) use super::campaign_schedule::should_schedule_branch;
 pub(super) use super::campaign_schedule::{
     ActiveTerminalRefinementRollout, first_demonstration_intervention,
-    next_branch_acquisition_rank, prefer_root_for_periodic_branch, scheduled_branch_acquisition,
-    should_probe_policy_before_branch, should_rank_frontier_with_live_model,
-    should_schedule_branch_with_terminal_refinement, should_start_paired_terminal_return,
+    should_probe_policy_before_branch, should_start_paired_terminal_return,
 };
 use super::paired_terminal_returns::{ActivePairedTerminalReturn, PairedTerminalReturnSeed};
 use super::*;
@@ -417,10 +413,11 @@ pub(super) fn run_seed(
                 elapsed_micros(learner_refresh_started.elapsed()),
             )?;
         }
-        let next_branch_acquisition_rank = next_branch_acquisition_rank(lane.acquisition, episode)
+        let next_episode = episode
+            .checked_add(1)
             .ok_or_else(|| route_message("episode counter overflowed"))?;
-        let terminal_support_acquisition =
-            campaign.native_terminal_supported() && next_branch_acquisition_rank == 0;
+        let next_branch_acquisition_rank = lane.acquisition.rank(next_episode);
+        let native_terminal_supported = campaign.native_terminal_supported();
         let demonstration_coverage_pending = demonstration_curriculum
             && covered_demonstration_frontiers.len() < demonstration_frontier_states.len();
         let current_route_ticks = u64::try_from(campaign.route_tape.frames.len())
@@ -432,60 +429,38 @@ pub(super) fn run_seed(
             active_terminal_refinement = None;
         }
         let terminal_refinement_in_progress = active_terminal_refinement.is_some();
-        let scheduled_branch = should_schedule_branch_with_terminal_refinement(
-            campaign.decision_index,
-            config.execution_plan.branch_every_decisions,
+        let continuation = plan_online_continuation(TacticQOnlineContinuationRequest {
+            decision_index: campaign.decision_index,
+            branch_every_decisions: config.execution_plan.branch_every_decisions,
+            force_branch: false,
             terminal_restart,
-            terminal_support_acquisition,
+            native_terminal_supported,
+            next_acquisition_rank: next_branch_acquisition_rank,
             demonstration_coverage_pending,
             terminal_refinement_in_progress,
             terminal_refinement_completed,
-        );
-        if !campaign.replay().is_empty() && scheduled_branch {
+            root_refresh_due: lane
+                .root_refresh_due(next_episode, config.execution_plan.root_refresh_cadence),
+            goal_relabeling_enabled: config.execution_plan.value_treatment.uses_goal_relabeling(),
+            terminal_frontier_action_value_enabled: config
+                .execution_plan
+                .value_treatment
+                .uses_terminal_frontier_action_value(),
+        })
+        .map_err(route_error)?;
+        if !campaign.replay().is_empty()
+            && let Some(branch_acquisition_context) = continuation
+        {
             let branch_started = Instant::now();
-            episode = episode
-                .checked_add(1)
-                .ok_or_else(|| route_message("episode counter overflowed"))?;
-            let branch_acquisition_context = scheduled_branch_acquisition(
-                lane.acquisition,
-                episode,
-                terminal_restart,
-                campaign.native_terminal_supported(),
-                demonstration_coverage_pending,
-            );
-            if branch_acquisition_context.terminal_support != terminal_support_acquisition
-                || lane.acquisition.rank(episode) != next_branch_acquisition_rank
-            {
-                return Err(route_message("branch acquisition changed while scheduling"));
-            }
-            active_acquisition_rank = branch_acquisition_context.rank;
+            episode = next_episode;
+            active_acquisition_rank = branch_acquisition_context.acquisition_rank;
             let maximum_frontier_frames = usize::try_from(
                 source_frame.saturating_add(horizon.saturating_sub(maximum_tactic_ticks)),
             )
             .map_err(route_error)?;
             let graph_scheduling_started = Instant::now();
             let demonstration_branch = branch_acquisition_context.demonstration;
-            let learned_exploitation_acquisition = branch_acquisition_context.rank == 0;
-            let ranked_frontier_branch = should_rank_frontier_with_live_model(
-                demonstration_branch,
-                campaign.native_terminal_supported(),
-                branch_acquisition_context.terminal_support,
-                learned_exploitation_acquisition,
-                config.execution_plan.value_treatment.uses_goal_relabeling(),
-                config
-                    .execution_plan
-                    .value_treatment
-                    .uses_terminal_frontier_action_value(),
-            );
-            let prefer_root = prefer_root_for_periodic_branch(
-                terminal_restart
-                    || branch_acquisition_context.terminal_support
-                    || (!campaign.native_terminal_supported()
-                        && learned_exploitation_acquisition
-                        && config.execution_plan.value_treatment.uses_goal_relabeling()),
-                lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
-            );
-            let strategy = if ranked_frontier_branch {
+            let strategy = if branch_acquisition_context.use_learned_frontier {
                 TacticQOnlineFrontierStrategy::LearnedRanked {
                     demonstration_curriculum: demonstration_branch,
                     goal_distance_feature: encoder.goal_distance_feature(),
@@ -498,9 +473,9 @@ pub(super) fn run_seed(
                     TacticQOnlineBranchRequest {
                         seed,
                         round: frontier_sampling_round(episode),
-                        acquisition_rank: branch_acquisition_context.rank,
+                        acquisition_rank: branch_acquisition_context.acquisition_rank,
                         maximum_route_frames: maximum_frontier_frames,
-                        prefer_root,
+                        prefer_root: branch_acquisition_context.prefer_root,
                         strategy,
                     },
                     &[],
@@ -532,7 +507,7 @@ pub(super) fn run_seed(
                     .contains(&selected_branch.logical_frontier.state_sha256);
             demonstration_intervention_pending = first_demonstration_intervention(
                 demonstration_coverage_pending,
-                prefer_root,
+                branch_acquisition_context.prefer_root,
                 selected_uncovered_demonstration_frontier,
             );
             branch_acquisition = selected_branch.acquisition.clone();
@@ -716,14 +691,31 @@ pub(super) fn run_seed(
                 .checked_add(1)
                 .ok_or_else(|| route_message("episode counter overflowed"))?;
             let branch_terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
-            let branch_acquisition_context = scheduled_branch_acquisition(
-                lane.acquisition,
-                episode,
-                branch_terminal_restart,
-                campaign.native_terminal_supported(),
-                demonstration_coverage_pending,
-            );
-            active_acquisition_rank = branch_acquisition_context.rank;
+            let branch_acquisition_context =
+                plan_online_continuation(TacticQOnlineContinuationRequest {
+                    decision_index: campaign.decision_index,
+                    branch_every_decisions: config.execution_plan.branch_every_decisions,
+                    force_branch: true,
+                    terminal_restart: branch_terminal_restart,
+                    native_terminal_supported: campaign.native_terminal_supported(),
+                    next_acquisition_rank: lane.acquisition.rank(episode),
+                    demonstration_coverage_pending,
+                    terminal_refinement_in_progress: false,
+                    terminal_refinement_completed: false,
+                    root_refresh_due: lane
+                        .root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
+                    goal_relabeling_enabled: config
+                        .execution_plan
+                        .value_treatment
+                        .uses_goal_relabeling(),
+                    terminal_frontier_action_value_enabled: config
+                        .execution_plan
+                        .value_treatment
+                        .uses_terminal_frontier_action_value(),
+                })
+                .map_err(route_error)?
+                .ok_or_else(|| route_message("forced horizon branch was not scheduled"))?;
+            active_acquisition_rank = branch_acquisition_context.acquisition_rank;
             let maximum_frontier_frames = usize::try_from(
                 source_frame
                     .saturating_add(horizon.saturating_sub(u64::from(selected_maximum_ticks))),
@@ -731,27 +723,7 @@ pub(super) fn run_seed(
             .map_err(route_error)?;
             let graph_scheduling_started = Instant::now();
             let demonstration_branch = branch_acquisition_context.demonstration;
-            let learned_exploitation_acquisition = branch_acquisition_context.rank == 0;
-            let ranked_frontier_branch = should_rank_frontier_with_live_model(
-                demonstration_branch,
-                campaign.native_terminal_supported(),
-                branch_acquisition_context.terminal_support,
-                learned_exploitation_acquisition,
-                config.execution_plan.value_treatment.uses_goal_relabeling(),
-                config
-                    .execution_plan
-                    .value_treatment
-                    .uses_terminal_frontier_action_value(),
-            );
-            let prefer_root = prefer_root_for_periodic_branch(
-                branch_terminal_restart
-                    || branch_acquisition_context.terminal_support
-                    || (!campaign.native_terminal_supported()
-                        && learned_exploitation_acquisition
-                        && config.execution_plan.value_treatment.uses_goal_relabeling()),
-                lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
-            );
-            let strategy = if ranked_frontier_branch {
+            let strategy = if branch_acquisition_context.use_learned_frontier {
                 TacticQOnlineFrontierStrategy::LearnedRanked {
                     demonstration_curriculum: demonstration_branch,
                     goal_distance_feature: encoder.goal_distance_feature(),
@@ -764,9 +736,9 @@ pub(super) fn run_seed(
                     TacticQOnlineBranchRequest {
                         seed,
                         round: frontier_sampling_round(episode),
-                        acquisition_rank: branch_acquisition_context.rank,
+                        acquisition_rank: branch_acquisition_context.acquisition_rank,
                         maximum_route_frames: maximum_frontier_frames,
-                        prefer_root,
+                        prefer_root: branch_acquisition_context.prefer_root,
                         strategy,
                     },
                     &[],
@@ -798,7 +770,7 @@ pub(super) fn run_seed(
                     .contains(&selected_branch.logical_frontier.state_sha256);
             demonstration_intervention_pending = first_demonstration_intervention(
                 demonstration_coverage_pending,
-                prefer_root,
+                branch_acquisition_context.prefer_root,
                 selected_uncovered_demonstration_frontier,
             );
             branch_acquisition = selected_branch.acquisition.clone();

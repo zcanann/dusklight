@@ -53,101 +53,16 @@ fn unassisted_learning_requires_declared_generous_discovery_capacity() {
 }
 
 #[test]
-fn graph_branch_schedule_prioritizes_terminal_support_and_retains_discovery_cadence() {
-    assert!(!campaign::should_schedule_branch(0, 8, false, false, false));
-    assert!(!campaign::should_schedule_branch(7, 8, false, false, false));
-    assert!(campaign::should_schedule_branch(8, 8, false, false, false));
-    assert!(campaign::should_schedule_branch(
-        256, 8, false, false, false
-    ));
-    assert!(campaign::should_schedule_branch(3, 8, true, false, false));
-    assert!(campaign::should_schedule_branch(3, 8, false, true, false));
-    assert!(
-        (0..32).all(|decision| campaign::should_schedule_branch(decision, 8, false, true, false))
-    );
-    assert!(
-        (0..32).all(|decision| campaign::should_schedule_branch(decision, 8, false, false, true))
-    );
-    assert!(!campaign::prefer_root_for_periodic_branch(true, false));
-    assert!(!campaign::prefer_root_for_periodic_branch(true, true));
-    assert!(!campaign::prefer_root_for_periodic_branch(false, false));
-    assert!(campaign::prefer_root_for_periodic_branch(false, true));
-}
-
-#[test]
 fn branch_acquisition_rank_does_not_alias_the_decision_cadence() {
     let acquisition = NativeTacticAcquisitionPlan::CyclicSupportAndRanks {
         cycle_width: 4,
         ranked_lanes_per_cycle: 3,
     };
     assert_eq!(acquisition.rank(4), 0);
-    assert_eq!(
-        campaign::next_branch_acquisition_rank(acquisition, 0),
-        Some(1)
-    );
-    assert_eq!(
-        campaign::next_branch_acquisition_rank(acquisition, 1),
-        Some(2)
-    );
-    assert_eq!(
-        campaign::next_branch_acquisition_rank(acquisition, 2),
-        Some(3)
-    );
-    assert_eq!(
-        campaign::next_branch_acquisition_rank(acquisition, 3),
-        Some(0)
-    );
-    assert_eq!(
-        campaign::next_branch_acquisition_rank(acquisition, u64::MAX),
-        None
-    );
-}
-
-#[test]
-fn terminal_support_owns_rank_zero_before_demonstration_coverage() {
-    let acquisition = NativeTacticAcquisitionPlan::CyclicSupportAndRanks {
-        cycle_width: 4,
-        ranked_lanes_per_cycle: 3,
-    };
-    let discovery = campaign::scheduled_branch_acquisition(acquisition, 3, false, true, true);
-    assert_eq!(discovery.rank, 3);
-    assert!(!discovery.terminal_support);
-    assert!(discovery.demonstration);
-
-    let optimization = campaign::scheduled_branch_acquisition(acquisition, 4, false, true, true);
-    assert_eq!(optimization.rank, 0);
-    assert!(optimization.terminal_support);
-    assert!(!optimization.demonstration);
-
-    let restart = campaign::scheduled_branch_acquisition(acquisition, 5, true, true, true);
-    assert_eq!(restart.rank, 0);
-    assert!(!restart.terminal_support);
-    assert!(!restart.demonstration);
-}
-
-#[test]
-fn preterminal_learning_and_rank_zero_optimization_use_the_live_frontier_model() {
-    assert!(campaign::should_rank_frontier_with_live_model(
-        true, false, false, false, false, false,
-    ));
-    assert!(campaign::should_rank_frontier_with_live_model(
-        false, false, false, true, true, false,
-    ));
-    assert!(!campaign::should_rank_frontier_with_live_model(
-        false, false, false, false, true, false,
-    ));
-    assert!(!campaign::should_rank_frontier_with_live_model(
-        false, false, false, true, false, false,
-    ));
-    assert!(campaign::should_rank_frontier_with_live_model(
-        false, true, true, true, true, true,
-    ));
-    assert!(!campaign::should_rank_frontier_with_live_model(
-        false, true, true, true, true, false,
-    ));
-    assert!(!campaign::should_rank_frontier_with_live_model(
-        false, true, false, true, true, true,
-    ));
+    assert_eq!(acquisition.rank(1), 1);
+    assert_eq!(acquisition.rank(2), 2);
+    assert_eq!(acquisition.rank(3), 3);
+    assert_eq!(acquisition.rank(4), 0);
 }
 
 #[test]

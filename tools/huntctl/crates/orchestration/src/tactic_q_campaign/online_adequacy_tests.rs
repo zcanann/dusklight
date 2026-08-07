@@ -499,14 +499,30 @@ fn restore_next_scheduled_frontier(
     catalog: &TacticAssetCatalog,
     episode_group: u64,
 ) -> AdequacyState {
+    let continuation = plan_online_continuation(TacticQOnlineContinuationRequest {
+        decision_index: campaign.decision_index,
+        branch_every_decisions: 8,
+        force_branch: false,
+        terminal_restart: true,
+        native_terminal_supported: campaign.native_terminal_supported(),
+        next_acquisition_rank: 0,
+        demonstration_coverage_pending: false,
+        terminal_refinement_in_progress: false,
+        terminal_refinement_completed: false,
+        root_refresh_due: false,
+        goal_relabeling_enabled: false,
+        terminal_frontier_action_value_enabled: false,
+    })
+    .unwrap()
+    .expect("a terminal rollout must schedule another checkpoint");
     let selected = campaign
         .select_online_branch(
             TacticQOnlineBranchRequest {
                 seed: 0,
                 round: episode_group,
-                acquisition_rank: 0,
+                acquisition_rank: continuation.acquisition_rank,
                 maximum_route_frames: usize::MAX,
-                prefer_root: false,
+                prefer_root: continuation.prefer_root,
                 strategy: TacticQOnlineFrontierStrategy::Graph,
             },
             &[],

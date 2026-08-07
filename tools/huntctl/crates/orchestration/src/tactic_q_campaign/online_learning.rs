@@ -44,6 +44,31 @@ pub struct TacticQOnlineProposalLease {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TacticQOnlineContinuationRequest {
+    pub decision_index: u64,
+    pub branch_every_decisions: u64,
+    pub force_branch: bool,
+    pub terminal_restart: bool,
+    pub native_terminal_supported: bool,
+    pub next_acquisition_rank: u64,
+    pub demonstration_coverage_pending: bool,
+    pub terminal_refinement_in_progress: bool,
+    pub terminal_refinement_completed: bool,
+    pub root_refresh_due: bool,
+    pub goal_relabeling_enabled: bool,
+    pub terminal_frontier_action_value_enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TacticQOnlineContinuationPlan {
+    pub acquisition_rank: u64,
+    pub terminal_support: bool,
+    pub demonstration: bool,
+    pub prefer_root: bool,
+    pub use_learned_frontier: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TacticQOnlinePolicyUpdate {
     Adaptive { refit_model: bool },
     Frozen,
@@ -65,6 +90,55 @@ pub struct TacticQOnlineAdmission {
     pub evaluated_native_ticks: u64,
     pub best_authenticated_terminal_ticks: Option<u64>,
     pub timing: TacticQOnlineAdmissionTiming,
+}
+
+pub fn plan_online_continuation(
+    request: TacticQOnlineContinuationRequest,
+) -> Result<Option<TacticQOnlineContinuationPlan>, TacticQCampaignError> {
+    if request.branch_every_decisions == 0 {
+        return Err(TacticQCampaignError::InvalidState(
+            "online continuation branch cadence is zero",
+        ));
+    }
+    let terminal_support = request.native_terminal_supported && request.next_acquisition_rank == 0;
+    let periodic_branch = request.demonstration_coverage_pending
+        || request.terminal_restart
+        || terminal_support
+        || (request.decision_index > 0
+            && request.decision_index % request.branch_every_decisions == 0);
+    let should_restore = request.force_branch
+        || request.terminal_restart
+        || request.terminal_refinement_completed
+        || (!request.terminal_refinement_in_progress && periodic_branch);
+    if !should_restore {
+        return Ok(None);
+    }
+
+    let acquisition_rank = if request.terminal_restart || terminal_support {
+        0
+    } else {
+        request.next_acquisition_rank
+    };
+    let demonstration =
+        request.demonstration_coverage_pending && !request.terminal_restart && !terminal_support;
+    let learned_exploitation = acquisition_rank == 0;
+    let force_scheduled_frontier = request.terminal_restart
+        || terminal_support
+        || (!request.native_terminal_supported
+            && learned_exploitation
+            && request.goal_relabeling_enabled);
+    let use_learned_frontier = demonstration
+        || (!request.native_terminal_supported
+            && learned_exploitation
+            && request.goal_relabeling_enabled)
+        || (terminal_support && request.terminal_frontier_action_value_enabled);
+    Ok(Some(TacticQOnlineContinuationPlan {
+        acquisition_rank,
+        terminal_support,
+        demonstration,
+        prefer_root: !force_scheduled_frontier && request.root_refresh_due,
+        use_learned_frontier,
+    }))
 }
 
 impl TacticQCampaign {
@@ -274,4 +348,104 @@ impl TacticQCampaign {
 
 fn elapsed_micros(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod continuation_tests {
+    use super::*;
+
+    fn request() -> TacticQOnlineContinuationRequest {
+        TacticQOnlineContinuationRequest {
+            decision_index: 1,
+            branch_every_decisions: 8,
+            force_branch: false,
+            terminal_restart: false,
+            native_terminal_supported: false,
+            next_acquisition_rank: 1,
+            demonstration_coverage_pending: false,
+            terminal_refinement_in_progress: false,
+            terminal_refinement_completed: false,
+            root_refresh_due: false,
+            goal_relabeling_enabled: false,
+            terminal_frontier_action_value_enabled: false,
+        }
+    }
+
+    #[test]
+    fn continuation_keeps_a_rollout_until_a_real_branch_boundary() {
+        assert_eq!(plan_online_continuation(request()).unwrap(), None);
+        let mut due = request();
+        due.decision_index = 8;
+        assert!(plan_online_continuation(due).unwrap().is_some());
+        let mut refinement = due;
+        refinement.terminal_refinement_in_progress = true;
+        assert_eq!(plan_online_continuation(refinement).unwrap(), None);
+    }
+
+    #[test]
+    fn terminal_support_owns_rank_zero_and_cannot_be_replaced_by_root_refresh() {
+        let mut terminal = request();
+        terminal.native_terminal_supported = true;
+        terminal.next_acquisition_rank = 0;
+        terminal.root_refresh_due = true;
+        terminal.terminal_frontier_action_value_enabled = true;
+        assert_eq!(
+            plan_online_continuation(terminal).unwrap().unwrap(),
+            TacticQOnlineContinuationPlan {
+                acquisition_rank: 0,
+                terminal_support: true,
+                demonstration: false,
+                prefer_root: false,
+                use_learned_frontier: true,
+            }
+        );
+    }
+
+    #[test]
+    fn forced_horizon_branch_still_preserves_discovery_partition() {
+        let mut forced = request();
+        forced.force_branch = true;
+        forced.next_acquisition_rank = 3;
+        forced.root_refresh_due = true;
+        assert_eq!(
+            plan_online_continuation(forced).unwrap().unwrap(),
+            TacticQOnlineContinuationPlan {
+                acquisition_rank: 3,
+                terminal_support: false,
+                demonstration: false,
+                prefer_root: true,
+                use_learned_frontier: false,
+            }
+        );
+    }
+
+    #[test]
+    fn learned_frontiers_are_limited_to_curriculum_and_exploitation_partitions() {
+        let mut preterminal = request();
+        preterminal.force_branch = true;
+        preterminal.next_acquisition_rank = 0;
+        preterminal.goal_relabeling_enabled = true;
+        preterminal.root_refresh_due = true;
+        let preterminal = plan_online_continuation(preterminal).unwrap().unwrap();
+        assert!(preterminal.use_learned_frontier);
+        assert!(!preterminal.prefer_root);
+
+        let mut curriculum = request();
+        curriculum.demonstration_coverage_pending = true;
+        let curriculum = plan_online_continuation(curriculum).unwrap().unwrap();
+        assert!(curriculum.demonstration);
+        assert!(curriculum.use_learned_frontier);
+
+        let mut broad = request();
+        broad.force_branch = true;
+        broad.native_terminal_supported = true;
+        broad.next_acquisition_rank = 2;
+        broad.terminal_frontier_action_value_enabled = true;
+        assert!(
+            !plan_online_continuation(broad)
+                .unwrap()
+                .unwrap()
+                .use_learned_frontier
+        );
+    }
 }
