@@ -1,7 +1,51 @@
+use dusklight_automation_contracts::artifact::Digest;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct ActiveTerminalRefinementRollout {
     source_prefix_ticks: u64,
     incumbent_ticks_to_go: u64,
+}
+
+/// One local perturbation followed by the time-aligned authenticated
+/// incumbent suffix. The suffix is exposed as an ordinary action and admitted
+/// as ordinary experience; this state only makes the two-decision candidate
+/// resumable and prevents unrelated actions from replacing its continuation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ActiveIncumbentContinuation {
+    terminal_route_checkpoint_sha256: Digest,
+    executed_actions: u64,
+}
+
+impl ActiveIncumbentContinuation {
+    pub(super) fn new(
+        terminal_route_checkpoint_sha256: Digest,
+        executed_actions: u64,
+    ) -> Option<Self> {
+        (terminal_route_checkpoint_sha256 != Digest::ZERO).then_some(Self {
+            terminal_route_checkpoint_sha256,
+            executed_actions,
+        })
+    }
+
+    pub(super) fn terminal_route_checkpoint_sha256(self) -> Digest {
+        self.terminal_route_checkpoint_sha256
+    }
+
+    pub(super) fn should_execute_suffix(self) -> bool {
+        self.executed_actions == 1
+    }
+
+    pub(super) fn candidate_completed(self) -> bool {
+        self.executed_actions >= 2
+    }
+
+    pub(super) fn record_executed_action(&mut self) -> Result<(), &'static str> {
+        self.executed_actions = self
+            .executed_actions
+            .checked_add(1)
+            .ok_or("incumbent continuation action count overflowed")?;
+        Ok(())
+    }
 }
 
 impl ActiveTerminalRefinementRollout {
@@ -58,6 +102,22 @@ mod terminal_refinement_tests {
         assert!(!rollout.has_remaining_budget(145));
         assert!(!rollout.has_remaining_budget(200));
         assert_eq!(ActiveTerminalRefinementRollout::new(20, None), None);
+    }
+
+    #[test]
+    fn incumbent_continuation_is_one_perturbation_then_one_suffix() {
+        let route = Digest([7; 32]);
+        let mut rollout = ActiveIncumbentContinuation::new(route, 0).unwrap();
+        assert_eq!(rollout.terminal_route_checkpoint_sha256(), route);
+        assert!(!rollout.should_execute_suffix());
+        assert!(!rollout.candidate_completed());
+        rollout.record_executed_action().unwrap();
+        assert!(rollout.should_execute_suffix());
+        assert!(!rollout.candidate_completed());
+        rollout.record_executed_action().unwrap();
+        assert!(!rollout.should_execute_suffix());
+        assert!(rollout.candidate_completed());
+        assert!(ActiveIncumbentContinuation::new(Digest::ZERO, 0).is_none());
     }
 
     #[test]

@@ -66,7 +66,10 @@ use dusklight_learning::parameterized_tactic_proposals::{
 use dusklight_learning::reward_shaping::{
     TACTIC_REWARD_SPEC_SCHEMA_V2, TacticRewardBreakdown, TacticRewardSpec,
 };
-use dusklight_learning::tactic_asset::{TacticAssetCatalog, TacticAssetSource, TacticCatalogEntry};
+use dusklight_learning::tactic_asset::{
+    GuardedRecordedTape, GuardedTapeStageRoom, TacticAssetCatalog, TacticAssetSource,
+    TacticCatalogEntry,
+};
 use dusklight_learning::tactic_blueprint::TacticBlueprint;
 use dusklight_learning::tactic_exploration::{
     SelectedTactic, TACTIC_EXPLORATION_SCHEMA_V1, TacticExplorationConfig, TacticProposalPolicy,
@@ -1378,7 +1381,7 @@ use worker_pool::{
     RetainedNativeTacticFrontiers, load_or_capture_demonstration,
     parameterized_action_surface_for_state, parameterized_catalog_for_state,
     parameterized_catalog_for_state_with_promoted, parameterized_feedback_for_state,
-    run_seed_coordinator,
+    run_seed_coordinator, with_experience_terminal_continuation,
 };
 mod action_surface_audit;
 pub use action_surface_audit::{

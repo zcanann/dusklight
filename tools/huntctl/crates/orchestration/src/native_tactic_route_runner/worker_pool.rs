@@ -300,12 +300,44 @@ pub(super) fn parameterized_catalog_for_state_with_promoted(
     Ok(proposals)
 }
 
+pub(super) fn with_experience_terminal_continuation(
+    mut proposals: ParameterizedTacticProposalCatalog,
+    state: &FactSnapshot,
+    tape: InputTape,
+) -> Result<(ParameterizedTacticProposalCatalog, OptionActionDescriptor), NativeTacticRouteRunError>
+{
+    let tape_sha256 = Digest(Sha256::digest(tape.encode().map_err(route_error)?).into());
+    let tape_identity = tape_sha256.to_string();
+    let option_id = format!("experience/terminal-continuation/{}", &tape_identity[..20]);
+    let guarded = GuardedRecordedTape::new(
+        tape,
+        vec![GuardedTapeStageRoom {
+            stage: state.world.stage.clone(),
+            room: state.world.room,
+        }],
+    )
+    .map_err(route_error)?;
+    let entry = TacticCatalogEntry::new(option_id, TacticAssetSource::GuardedRecordedTape(guarded))
+        .map_err(route_error)?;
+    let descriptor = entry.description().option.clone();
+    let mut entries = proposals.catalog.entries().to_vec();
+    entries.push(entry);
+    proposals.catalog = TacticAssetCatalog::new(entries).map_err(route_error)?;
+    validate_parameterized_policy_catalog(&proposals.catalog)?;
+    Ok((proposals, descriptor))
+}
+
 pub(super) fn validate_parameterized_policy_catalog(
     catalog: &TacticAssetCatalog,
 ) -> Result<(), NativeTacticRouteRunError> {
     if let Some(entry) = catalog.entries().iter().find(|entry| {
         !entry.option_id().starts_with("family/")
             && !(entry.option_id().starts_with("promoted/")
+                && entry.description().kind
+                    == dusklight_learning::tactic_asset::TacticAssetKind::GuardedRecordedTape)
+            && !(entry
+                .option_id()
+                .starts_with("experience/terminal-continuation/")
                 && entry.description().kind
                     == dusklight_learning::tactic_asset::TacticAssetKind::GuardedRecordedTape)
     }) {

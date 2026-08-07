@@ -1826,6 +1826,36 @@ fn promoted_guarded_tactics_join_without_removing_primitive_actions() {
             .iter()
             .any(|entry| entry.option_id().starts_with("promoted/"))
     );
+    let continuation_tape = InputTape {
+        frames: vec![InputFrame::default(); 3],
+        ..InputTape::default()
+    };
+    let primitive =
+        parameterized_catalog_for_state(11, 3, &snapshot, &encoder, 40, None, Digest([8; 32]))
+            .unwrap();
+    let (with_continuation, continuation_descriptor) =
+        with_experience_terminal_continuation(primitive, &snapshot, continuation_tape.clone())
+            .unwrap();
+    assert!(
+        continuation_descriptor
+            .option_id
+            .starts_with("experience/terminal-continuation/")
+    );
+    let continuation_entry = with_continuation
+        .catalog
+        .entry(&continuation_descriptor.option_id)
+        .unwrap();
+    assert_eq!(
+        continuation_entry.description().kind,
+        dusklight_learning::tactic_asset::TacticAssetKind::GuardedRecordedTape
+    );
+    let TacticAssetSource::GuardedRecordedTape(guarded) = continuation_entry.source() else {
+        panic!("experience continuation must use the guarded tape executor");
+    };
+    assert_eq!(guarded.tape, continuation_tape);
+    assert_eq!(guarded.allowed_stage_rooms.len(), 1);
+    assert_eq!(guarded.allowed_stage_rooms[0].stage, snapshot.world.stage);
+    assert_eq!(guarded.allowed_stage_rooms[0].room, snapshot.world.room);
     let mut wrong_room = snapshot.clone();
     wrong_room.world.room = wrong_room.world.room.saturating_add(1);
     let wrong_room_primitive_descriptors =
