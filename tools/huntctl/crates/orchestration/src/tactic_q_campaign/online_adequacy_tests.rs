@@ -195,6 +195,16 @@ fn input_frame(action: &str) -> InputFrame {
     frame
 }
 
+fn action_from_input(frame: &InputFrame) -> &'static str {
+    match (frame.pads[0].stick_x, frame.pads[0].stick_y) {
+        (0, 127) => "north",
+        (127, 0) => "east",
+        (0, -127) => "south",
+        (-127, 0) => "west",
+        _ => panic!("adequacy tactic emitted an unknown input"),
+    }
+}
+
 fn catalog() -> TacticAssetCatalog {
     TacticAssetCatalog::new(
         ["east", "north", "south", "west"]
@@ -210,6 +220,39 @@ fn catalog() -> TacticAssetCatalog {
                 .unwrap()
             })
             .collect(),
+    )
+    .unwrap()
+}
+
+fn two_north_candidate(
+    catalog: &TacticAssetCatalog,
+    base_start: &FactSnapshot,
+    variant_start: &FactSnapshot,
+) -> DiscoveredMacroCandidate {
+    let component =
+        TacticMacroComponent::from_catalog_entry(catalog.entry("north").unwrap()).unwrap();
+    let source = |snapshot: &FactSnapshot, transition: u8| MacroSourceProvenance {
+        seed: 7,
+        frontier_state_sha256: snapshot.content_sha256().unwrap(),
+        transition_sha256s: vec![
+            Digest([transition; 32]),
+            Digest([transition.wrapping_add(1); 32]),
+        ],
+        entry: MacroEntryObservation {
+            stage: snapshot.world.stage.clone(),
+            room: snapshot.world.room,
+            player_procedure: snapshot.player.procedure,
+            player_contacts: snapshot.player.contacts,
+            goal_distance_f32_bits: 3.0_f32.to_bits(),
+        },
+    };
+    replay_macro_candidate(
+        InputTape {
+            frames: vec![input_frame("north"), input_frame("north")],
+            ..InputTape::default()
+        },
+        vec![component.clone(), component],
+        vec![source(base_start, 0x81), source(variant_start, 0x82)],
     )
     .unwrap()
 }
@@ -236,7 +279,7 @@ fn facts_at(base: &FactSnapshot, state: AdequacyState, tape_frame: u64) -> FactS
     facts.simulation_tick = tape_frame;
     facts.tape_frame = tape_frame;
     facts.state_identity = [state.code(); 16];
-    facts.world.stage = "online-adequacy".into();
+    facts.world.stage = "ADEQ".into();
     facts.world.room = 0;
     facts.world.point = Some(if state.variant() { 1 } else { 0 });
     facts.player.position_f32_bits = state.position().map(f32::to_bits);
@@ -284,10 +327,11 @@ fn encode(facts: &FactSnapshot) -> Result<Vec<f32>, &'static str> {
     Ok(vec![x - origin_x, y])
 }
 
-fn campaign_with_cold_east_primary(
+fn campaign_with_cold_primary(
     base: &FactSnapshot,
     catalog: &TacticAssetCatalog,
     root_state: AdequacyState,
+    primary_option_id: &str,
 ) -> TacticQCampaign {
     for seed in 0..10_000 {
         let root = facts_at(base, root_state, base.tape_frame);
@@ -296,7 +340,10 @@ fn campaign_with_cold_east_primary(
             &FactRegistry::canonical(),
             catalog,
             &[],
-            |description| root_state.applicable(&description.option.option_id),
+            |description| {
+                root_state.applicable(&description.option.option_id)
+                    || description.option.option_id == primary_option_id
+            },
         )
         .unwrap();
         let mut campaign = TacticQCampaign::new(
@@ -323,12 +370,12 @@ fn campaign_with_cold_east_primary(
         if decide_production_batch(&mut online, &campaign, catalog, 2).proposals[0]
             .descriptor
             .option_id
-            == "east"
+            == primary_option_id
         {
             return campaign;
         }
     }
-    panic!("no deterministic cold-start seed selected the detour")
+    panic!("no deterministic cold-start seed selected the requested primary")
 }
 
 fn reward_spec() -> TacticRewardSpec {
@@ -385,35 +432,52 @@ fn decide_production_batch(
 
 fn execute_selected(
     campaign: &TacticQCampaign,
+    catalog: &TacticAssetCatalog,
     selected: &SelectedTactic,
     episode_shard_sha256: Digest,
 ) -> NativeTacticWorkerOutcome {
-    let source = state_from_facts(&campaign.current.snapshot);
-    let target = source
-        .execute(&selected.descriptor.option_id)
-        .expect("the production action mask must expose only executable fixture actions");
+    let frames = match catalog
+        .entry(&selected.descriptor.option_id)
+        .expect("selected adequacy tactic must exist in its catalog")
+        .source()
+    {
+        TacticAssetSource::RecordedTape(tape) => tape.frames.clone(),
+        TacticAssetSource::GuardedRecordedTape(guarded) => guarded.tape.frames.clone(),
+        _ => panic!("adequacy tactic must be an exact recorded input sequence"),
+    };
+    let target = frames.iter().fold(
+        state_from_facts(&campaign.current.snapshot),
+        |state, frame| {
+            state
+                .execute(action_from_input(frame))
+                .expect("the production action mask must expose only executable fixture actions")
+        },
+    );
     let mut route_tape = campaign.route_tape.clone();
-    route_tape
-        .frames
-        .push(input_frame(&selected.descriptor.option_id));
+    route_tape.frames.extend(frames.iter().cloned());
     let start_frame = campaign.current.snapshot.tape_frame;
+    let realized_ticks = u32::try_from(frames.len()).unwrap();
     let execution = OptionExecution::capture(
         selected.descriptor.option_id.clone(),
         selected.descriptor.option_type.clone(),
         selected.descriptor.parameters.clone(),
-        1,
-        1,
+        realized_ticks,
+        realized_ticks,
         OptionCondition::DurationElapsed,
         Vec::new(),
         OptionEndReason::Completed,
         &route_tape,
         TapeRange {
             start_frame,
-            end_frame_exclusive: start_frame + 1,
+            end_frame_exclusive: start_frame + u64::from(realized_ticks),
         },
     )
     .unwrap();
-    let next_facts = facts_at(&campaign.current.snapshot, target, start_frame + 1);
+    let next_facts = facts_at(
+        &campaign.current.snapshot,
+        target,
+        start_frame + u64::from(realized_ticks),
+    );
     NativeTacticWorkerOutcome {
         schema: crate::native_tactic_worker::NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V2.into(),
         source_checkpoint_sha256: ROOT_CHECKPOINT,
@@ -464,7 +528,7 @@ fn run_one_step(
         Some(campaign.decision_index)
     );
     let selected = leased.batch.proposals[0].clone();
-    let outcome = execute_selected(campaign, &selected, episode_shard_sha256);
+    let outcome = execute_selected(campaign, catalog, &selected, episode_shard_sha256);
     let evaluated = campaign
         .evaluate_rewarded_outcome(outcome.clone(), &encode, &reward_spec())
         .unwrap();
@@ -634,7 +698,7 @@ fn learn_until_terminal_ticks(
 fn production_campaign_learns_the_shorter_around_corner_route_online() {
     let (base, episode_shard_sha256) = base_facts();
     let catalog = catalog();
-    let mut campaign = campaign_with_cold_east_primary(&base, &catalog, AdequacyState::Start);
+    let mut campaign = campaign_with_cold_primary(&base, &catalog, AdequacyState::Start, "east");
     let mut online = TacticQOnlineLearningController::default();
 
     let rollouts = learn_until_terminal_ticks(
@@ -672,7 +736,7 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
     assert!(campaign.model_revision() > 0);
 
     let mut variant_campaign =
-        campaign_with_cold_east_primary(&base, &catalog, AdequacyState::VariantStart);
+        campaign_with_cold_primary(&base, &catalog, AdequacyState::VariantStart, "east");
     let variant_rollouts = learn_until_terminal_ticks(
         &mut online,
         &mut variant_campaign,
@@ -765,4 +829,112 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
         .collect::<BTreeMap<_, _>>();
     assert_eq!(root_rows.get("east"), Some(&Some(10)));
     assert_eq!(root_rows.get("north"), Some(&Some(9)));
+}
+
+#[test]
+fn promoted_composition_reduces_online_policy_decisions() {
+    let (base, episode_shard_sha256) = base_facts();
+    let primitive_catalog = catalog();
+    let base_start = facts_at(&base, AdequacyState::Start, base.tape_frame);
+    let variant_start = facts_at(&base, AdequacyState::VariantStart, base.tape_frame);
+    let candidate = two_north_candidate(&primitive_catalog, &base_start, &variant_start);
+
+    let mut registry = TacticMacroPromotionRegistry::default();
+    let mut lifecycle = TacticQOnlineLearningController::default();
+    let proposed = lifecycle
+        .update_tactics(
+            &mut registry,
+            [candidate.clone()],
+            Vec::<MacroComparisonEvidence>::new(),
+        )
+        .unwrap();
+    assert_eq!(proposed.proposed_count, 1);
+    let comparisons = [
+        base_start.content_sha256().unwrap(),
+        variant_start.content_sha256().unwrap(),
+    ]
+    .into_iter()
+    .map(|state| {
+        MacroComparisonEvidence::new(
+            candidate.candidate_sha256,
+            7,
+            state,
+            false,
+            2.0,
+            2,
+            false,
+            2.0,
+            2,
+        )
+        .unwrap()
+    })
+    .collect::<Vec<_>>();
+    let promoted = lifecycle
+        .update_tactics(
+            &mut registry,
+            Vec::<DiscoveredMacroCandidate>::new(),
+            comparisons,
+        )
+        .unwrap();
+    assert_eq!(promoted.promoted_count, 1);
+    assert_eq!(promoted.newly_promoted, vec![candidate.candidate_sha256]);
+
+    let mut entries = primitive_catalog.entries().to_vec();
+    entries.push(candidate.catalog_entry().unwrap());
+    let promoted_catalog = TacticAssetCatalog::new(entries).unwrap();
+    for primitive in ["north", "east", "south", "west"] {
+        assert!(promoted_catalog.entry(primitive).is_some());
+    }
+
+    let mut macro_campaign = campaign_with_cold_primary(
+        &base,
+        &promoted_catalog,
+        AdequacyState::Start,
+        &candidate.option_id,
+    );
+    let mut macro_controller = TacticQOnlineLearningController::default();
+    assert_eq!(
+        run_one_step(
+            &mut macro_controller,
+            &mut macro_campaign,
+            &promoted_catalog,
+            episode_shard_sha256,
+        ),
+        candidate.option_id
+    );
+    assert_eq!(
+        state_from_facts(&macro_campaign.current.snapshot),
+        AdequacyState::Optimal(1)
+    );
+    assert_eq!(macro_campaign.decision_index, 1);
+    assert_eq!(macro_campaign.training_replay_len(), 1);
+
+    let mut primitive_campaign =
+        campaign_with_cold_primary(&base, &primitive_catalog, AdequacyState::Start, "north");
+    let mut primitive_controller = TacticQOnlineLearningController::default();
+    assert_eq!(
+        run_one_step(
+            &mut primitive_controller,
+            &mut primitive_campaign,
+            &primitive_catalog,
+            episode_shard_sha256,
+        ),
+        "north"
+    );
+    assert_eq!(
+        run_one_step(
+            &mut primitive_controller,
+            &mut primitive_campaign,
+            &primitive_catalog,
+            episode_shard_sha256,
+        ),
+        "north"
+    );
+    assert_eq!(
+        primitive_campaign.current.snapshot.state_identity,
+        macro_campaign.current.snapshot.state_identity
+    );
+    assert_eq!(primitive_campaign.route_tape, macro_campaign.route_tape);
+    assert_eq!(primitive_campaign.decision_index, 2);
+    assert_eq!(primitive_campaign.training_replay_len(), 2);
 }

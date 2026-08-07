@@ -116,6 +116,12 @@ Ordon Springs is the first adequacy test. The real terminal is
   its checksummed binary registry, and can gather ordinary policy evidence while
   all primitive components remain selectable. Only the separate two-state
   matched candidate-versus-primitive gate changes its status to promoted.
+  The production controller adequacy environment now promotes a two-input
+  composition from matched evidence at two exact-state-disjoint compatible
+  states, installs it beside every primitive, selects it through the ordinary
+  leased decision path, and admits its transition. The promoted option emits
+  the identical two-frame tape and reaches the identical exact state in one
+  policy decision versus two primitive decisions.
   The checksummed macro lifecycle artifact now records active refresh count,
   newly promoted option identities, and later decisions that actually selected
   those options; these fields are derived from durable decision journals rather
@@ -161,7 +167,7 @@ No task is blocked on design.
   supported choices; uncertainty, state/action coverage, and seeded exploration
   allocate trials to unsupported choices. Neither a growing fresh-state queue
   nor repeated polishing of one lineage may starve the other partition.
-- [ ] Mine repeated useful action subsequences into candidate tactics and test
+- [x] Mine repeated useful action subsequences into candidate tactics and test
   them against their primitive realization from matched checkpoints. Promote
   only when they improve terminal rate, terminal ticks, or sample efficiency
   across multiple compatible states. Primitive actions must remain selectable.

@@ -60,6 +60,10 @@ use dusklight_learning::tactic_macro_promotion::{
     DiscoveredMacroCandidate, MacroComparisonEvidence, MacroPromotionStatus,
     TacticMacroPromotionRegistry,
 };
+#[cfg(test)]
+use dusklight_learning::tactic_macro_promotion::{
+    MacroEntryObservation, MacroSourceProvenance, TacticMacroComponent, replay_macro_candidate,
+};
 use dusklight_learning::tactic_value_treatment::{
     ContinuousTacticDoubleQModel, ContinuousTacticValueModel, TacticValueTreatment,
 };
