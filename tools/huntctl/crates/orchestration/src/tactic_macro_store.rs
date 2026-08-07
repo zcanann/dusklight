@@ -17,8 +17,11 @@ use std::path::Path;
 
 pub const TACTIC_MACRO_REGISTRY_EXTENSION: &str = "dtmr";
 const TACTIC_MACRO_REGISTRY_SCHEMA_V4: &str = "dusklight-tactic-macro-registry/v4";
-const TACTIC_MACRO_REGISTRY_MAGIC: &[u8; 8] = b"DSKTMAC4";
-const TACTIC_MACRO_REGISTRY_VERSION: u16 = 4;
+const TACTIC_MACRO_REGISTRY_SCHEMA_V5: &str = "dusklight-tactic-macro-registry/v5";
+const TACTIC_MACRO_REGISTRY_MAGIC_V4: &[u8; 8] = b"DSKTMAC4";
+const TACTIC_MACRO_REGISTRY_MAGIC_V5: &[u8; 8] = b"DSKTMAC5";
+const TACTIC_MACRO_REGISTRY_VERSION_V4: u16 = 4;
+const TACTIC_MACRO_REGISTRY_VERSION_V5: u16 = 5;
 const TACTIC_MACRO_REGISTRY_HEADER_BYTES: usize = 8 + 2 + 2 + 8 + 8 + 32;
 const TACTIC_MACRO_REGISTRY_COMPRESSION_LEVEL: i32 = 3;
 const MAXIMUM_TACTIC_MACRO_REGISTRY_BYTES: usize = 64 * 1024 * 1024;
@@ -47,6 +50,8 @@ struct StoredRecord {
     sources: Vec<StoredSource>,
     comparisons: Vec<StoredComparison>,
     status: StoredStatus,
+    #[serde(default)]
+    rejected: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -92,8 +97,18 @@ pub fn write_tactic_macro_registry(
     if path.extension().and_then(|value| value.to_str()) != Some(TACTIC_MACRO_REGISTRY_EXTENSION) {
         return Err(store_error("tactic macro registry extension is invalid"));
     }
+    if path.is_file() {
+        let existing = read_tactic_macro_registry(path)?;
+        return if existing.registry == *registry {
+            Ok(existing.content_sha256)
+        } else {
+            Err(store_error(
+                "tactic macro registry path contains different immutable content",
+            ))
+        };
+    }
     let stored = StoredRegistry {
-        schema: TACTIC_MACRO_REGISTRY_SCHEMA_V4.into(),
+        schema: TACTIC_MACRO_REGISTRY_SCHEMA_V5.into(),
         discovery_schema: TACTIC_MACRO_DISCOVERY_SCHEMA_V4.into(),
         records: registry
             .records()
@@ -139,6 +154,10 @@ pub fn write_tactic_macro_registry(
                         })
                         .collect(),
                     status: record.status.into(),
+                    rejected: record.history.last().is_some_and(|event| {
+                        event.status == MacroPromotionStatus::Demoted
+                            && event.supporting_comparisons.is_empty()
+                    }),
                 })
             })
             .collect::<Result<Vec<_>, TacticMacroStoreError>>()?,
@@ -164,16 +183,24 @@ pub fn read_tactic_macro_registry(
         ));
     }
     let bytes = fs::read(path).map_err(TacticMacroStoreError::io)?;
-    let (content_sha256, raw) = decode_registry(&bytes)?;
+    let (content_sha256, raw, version) = decode_registry(&bytes)?;
     let stored: StoredRegistry =
         serde_cbor::from_slice(&raw).map_err(TacticMacroStoreError::domain)?;
-    if stored.schema != TACTIC_MACRO_REGISTRY_SCHEMA_V4
+    let expected_schema = match version {
+        TACTIC_MACRO_REGISTRY_VERSION_V4 => TACTIC_MACRO_REGISTRY_SCHEMA_V4,
+        TACTIC_MACRO_REGISTRY_VERSION_V5 => TACTIC_MACRO_REGISTRY_SCHEMA_V5,
+        _ => return Err(store_error("tactic macro registry version is invalid")),
+    };
+    if stored.schema != expected_schema
         || stored.discovery_schema != TACTIC_MACRO_DISCOVERY_SCHEMA_V4
     {
         return Err(store_error("tactic macro registry schema is invalid"));
     }
     let mut registry = TacticMacroPromotionRegistry::default();
     for record in stored.records {
+        let stored_status = record.status;
+        let rejected = record.rejected;
+        let candidate_sha256 = record.candidate_sha256;
         let decoded = InputTape::decode(&record.tape)
             .map_err(TacticMacroStoreError::domain)?
             .tape;
@@ -222,11 +249,16 @@ pub fn read_tactic_macro_registry(
                 .observe(comparison)
                 .map_err(TacticMacroStoreError::domain)?;
         }
+        if rejected {
+            registry
+                .reject(candidate_sha256)
+                .map_err(TacticMacroStoreError::domain)?;
+        }
         let restored = registry
             .records()
-            .find(|candidate| candidate.candidate.candidate_sha256 == record.candidate_sha256)
+            .find(|candidate| candidate.candidate.candidate_sha256 == candidate_sha256)
             .ok_or_else(|| store_error("restored macro record is absent"))?;
-        if restored.status != record.status.into() {
+        if restored.status != stored_status.into() {
             return Err(store_error(
                 "stored macro lifecycle status is detached from its evidence",
             ));
@@ -239,6 +271,18 @@ pub fn read_tactic_macro_registry(
 }
 
 fn encode_registry(raw: &[u8]) -> Result<(Digest, Vec<u8>), TacticMacroStoreError> {
+    encode_registry_envelope(
+        raw,
+        TACTIC_MACRO_REGISTRY_MAGIC_V5,
+        TACTIC_MACRO_REGISTRY_VERSION_V5,
+    )
+}
+
+fn encode_registry_envelope(
+    raw: &[u8],
+    magic: &[u8; 8],
+    version: u16,
+) -> Result<(Digest, Vec<u8>), TacticMacroStoreError> {
     if raw.is_empty() || raw.len() > MAXIMUM_TACTIC_MACRO_REGISTRY_BYTES {
         return Err(store_error("tactic macro registry payload is invalid"));
     }
@@ -246,8 +290,8 @@ fn encode_registry(raw: &[u8]) -> Result<(Digest, Vec<u8>), TacticMacroStoreErro
         .map_err(TacticMacroStoreError::domain)?;
     let content_sha256 = sha256(raw);
     let mut envelope = Vec::with_capacity(TACTIC_MACRO_REGISTRY_HEADER_BYTES + compressed.len());
-    envelope.extend_from_slice(TACTIC_MACRO_REGISTRY_MAGIC);
-    envelope.extend_from_slice(&TACTIC_MACRO_REGISTRY_VERSION.to_le_bytes());
+    envelope.extend_from_slice(magic);
+    envelope.extend_from_slice(&version.to_le_bytes());
     envelope.extend_from_slice(&0_u16.to_le_bytes());
     envelope.extend_from_slice(&(raw.len() as u64).to_le_bytes());
     envelope.extend_from_slice(&(compressed.len() as u64).to_le_bytes());
@@ -256,12 +300,19 @@ fn encode_registry(raw: &[u8]) -> Result<(Digest, Vec<u8>), TacticMacroStoreErro
     Ok((content_sha256, envelope))
 }
 
-fn decode_registry(bytes: &[u8]) -> Result<(Digest, Vec<u8>), TacticMacroStoreError> {
-    if bytes.len() < TACTIC_MACRO_REGISTRY_HEADER_BYTES
-        || &bytes[..8] != TACTIC_MACRO_REGISTRY_MAGIC
-        || u16::from_le_bytes([bytes[8], bytes[9]]) != TACTIC_MACRO_REGISTRY_VERSION
-        || u16::from_le_bytes([bytes[10], bytes[11]]) != 0
-    {
+fn decode_registry(bytes: &[u8]) -> Result<(Digest, Vec<u8>, u16), TacticMacroStoreError> {
+    if bytes.len() < TACTIC_MACRO_REGISTRY_HEADER_BYTES {
+        return Err(store_error("tactic macro registry envelope is invalid"));
+    }
+    let version = u16::from_le_bytes([bytes[8], bytes[9]]);
+    let valid_identity = matches!(
+        (&bytes[..8], version),
+        (magic, TACTIC_MACRO_REGISTRY_VERSION_V4) if magic == TACTIC_MACRO_REGISTRY_MAGIC_V4
+    ) || matches!(
+        (&bytes[..8], version),
+        (magic, TACTIC_MACRO_REGISTRY_VERSION_V5) if magic == TACTIC_MACRO_REGISTRY_MAGIC_V5
+    );
+    if !valid_identity || u16::from_le_bytes([bytes[10], bytes[11]]) != 0 {
         return Err(store_error("tactic macro registry envelope is invalid"));
     }
     let raw_len = u64::from_le_bytes(bytes[12..20].try_into().unwrap()) as usize;
@@ -282,7 +333,7 @@ fn decode_registry(bytes: &[u8]) -> Result<(Digest, Vec<u8>), TacticMacroStoreEr
             "tactic macro registry content identity is detached",
         ));
     }
-    Ok((expected, raw))
+    Ok((expected, raw, version))
 }
 
 fn install_new(path: &Path, bytes: &[u8]) -> Result<(), TacticMacroStoreError> {
@@ -443,6 +494,86 @@ mod tests {
         let restored = read_tactic_macro_registry(&path).unwrap();
         assert_eq!(restored.content_sha256, written);
         assert_eq!(restored.registry, registry);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn binary_registry_round_trips_permanent_native_rejection() {
+        let candidate =
+            discover_replay_macros(&[observation(17, 3), observation(19, 4)]).unwrap()[0].clone();
+        let mut registry = TacticMacroPromotionRegistry::default();
+        registry.propose(candidate.clone()).unwrap();
+        registry
+            .observe(
+                MacroComparisonEvidence::new(
+                    candidate.candidate_sha256,
+                    23,
+                    Digest([5; 32]),
+                    false,
+                    2.0,
+                    8,
+                    false,
+                    1.0,
+                    8,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        registry.reject(candidate.candidate_sha256).unwrap();
+
+        let root = std::env::temp_dir().join(format!(
+            "dusklight-tactic-macro-rejected-{}-{}",
+            std::process::id(),
+            candidate.option_id.replace('/', "-")
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join(format!("registry.{TACTIC_MACRO_REGISTRY_EXTENSION}"));
+        let written = write_tactic_macro_registry(&path, &registry).unwrap();
+        let restored = read_tactic_macro_registry(&path).unwrap();
+
+        assert_eq!(restored.content_sha256, written);
+        assert_eq!(restored.registry, registry);
+        assert_eq!(
+            restored.registry.records().next().unwrap().status,
+            MacroPromotionStatus::Demoted
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn semantically_identical_v4_registry_is_reused_without_rewriting() {
+        let candidate =
+            discover_replay_macros(&[observation(29, 6), observation(31, 7)]).unwrap()[0].clone();
+        let mut registry = TacticMacroPromotionRegistry::default();
+        registry.propose(candidate.clone()).unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "dusklight-tactic-macro-v4-reuse-{}-{}",
+            std::process::id(),
+            candidate.option_id.replace('/', "-")
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let v5_path = root.join(format!("v5.{TACTIC_MACRO_REGISTRY_EXTENSION}"));
+        write_tactic_macro_registry(&v5_path, &registry).unwrap();
+        let (_, raw, _) = decode_registry(&fs::read(&v5_path).unwrap()).unwrap();
+        let mut stored: StoredRegistry = serde_cbor::from_slice(&raw).unwrap();
+        stored.schema = TACTIC_MACRO_REGISTRY_SCHEMA_V4.into();
+        let raw_v4 = serde_cbor::to_vec(&stored).unwrap();
+        let (v4_sha256, v4_bytes) = encode_registry_envelope(
+            &raw_v4,
+            TACTIC_MACRO_REGISTRY_MAGIC_V4,
+            TACTIC_MACRO_REGISTRY_VERSION_V4,
+        )
+        .unwrap();
+        let v4_path = root.join(format!("v4.{TACTIC_MACRO_REGISTRY_EXTENSION}"));
+        fs::write(&v4_path, &v4_bytes).unwrap();
+
+        assert_eq!(
+            write_tactic_macro_registry(&v4_path, &registry).unwrap(),
+            v4_sha256
+        );
+        assert_eq!(fs::read(&v4_path).unwrap(), v4_bytes);
         fs::remove_dir_all(root).unwrap();
     }
 

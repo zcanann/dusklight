@@ -754,6 +754,12 @@ pub(super) fn validate_and_store_tactic_macros(
     mut mined: MinedTacticMacros,
 ) -> Result<ValidatedTacticMacros, NativeTacticRouteRunError> {
     let started = Instant::now();
+    let validation_attempt_root = reserve_macro_validation_attempt_root(&validation_root)?;
+    let validated_path = validation_attempt_root.join(
+        validated_path
+            .file_name()
+            .ok_or_else(|| route_message("validated tactic macro registry has no file name"))?,
+    );
     let candidates = mined
         .registry
         .records()
@@ -819,7 +825,7 @@ pub(super) fn validate_and_store_tactic_macros(
             ) {
                 continue;
             }
-            let job_output_root = validation_root
+            let job_output_root = validation_attempt_root
                 .join(candidate.candidate_sha256.to_string())
                 .join(format!(
                     "seed-{}-comparison-{comparison_index:02}",
@@ -922,6 +928,7 @@ pub(super) fn validate_and_store_tactic_macros(
             &validation_frontiers,
             &mined.registry,
             registry_sha256,
+            &validation_attempt_root.join("reuse"),
             &mut accounting,
         )?
     } else {
@@ -956,6 +963,23 @@ pub(super) fn validate_and_store_tactic_macros(
         registry: mined.registry,
         report: mined.report,
     })
+}
+
+fn reserve_macro_validation_attempt_root(
+    validation_root: &Path,
+) -> Result<PathBuf, NativeTacticRouteRunError> {
+    fs::create_dir_all(validation_root).map_err(route_error)?;
+    for index in 0..MAX_ROUTE_ATTEMPTS {
+        let attempt = validation_root.join(format!("attempt-{index:04}"));
+        match fs::create_dir(&attempt) {
+            Ok(()) => return Ok(attempt),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(route_error(error)),
+        }
+    }
+    Err(route_message(
+        "tactic macro validation attempt capacity is exhausted",
+    ))
 }
 
 pub(super) fn tactic_macro_entry_distance(
@@ -1148,6 +1172,7 @@ pub(super) fn reuse_promoted_tactic_macro(
     validation_frontiers: &[TacticMacroValidationFrontier],
     registry: &TacticMacroPromotionRegistry,
     registry_sha256: Digest,
+    reuse_root: &Path,
     accounting: &mut TacticMacroValidationAccounting,
 ) -> Result<Option<NativeTacticMacroReuseReport>, NativeTacticRouteRunError> {
     let Some(promoted) = registry.promoted().next() else {
@@ -1191,10 +1216,7 @@ pub(super) fn reuse_promoted_tactic_macro(
         reason: TacticSelectionReason::Greedy,
         exploration_draw: 0,
     };
-    let reuse_root = config
-        .output_root
-        .join("tactic-macro-reuse")
-        .join(promoted.candidate.candidate_sha256.to_string());
+    let reuse_root = reuse_root.join(promoted.candidate.candidate_sha256.to_string());
     fs::create_dir_all(&reuse_root).map_err(route_error)?;
     let mut work = pool.execute_batch(
         std::slice::from_ref(&selected),
@@ -1504,6 +1526,29 @@ pub(super) fn insert_tactic_macro_validation_frontier(
 #[cfg(test)]
 mod input_equivalence_tests {
     use super::*;
+
+    #[test]
+    fn interrupted_validation_reserves_a_new_attempt_without_removing_evidence() {
+        let root = std::env::temp_dir().join(format!(
+            "dusklight-macro-validation-resume-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("legacy-partial-evidence")).unwrap();
+
+        let first = reserve_macro_validation_attempt_root(&root).unwrap();
+        fs::write(first.join("completed-result"), b"evidence").unwrap();
+        let second = reserve_macro_validation_attempt_root(&root).unwrap();
+
+        assert_eq!(first.file_name().unwrap(), "attempt-0000");
+        assert_eq!(second.file_name().unwrap(), "attempt-0001");
+        assert_eq!(
+            fs::read(first.join("completed-result")).unwrap(),
+            b"evidence"
+        );
+        assert!(root.join("legacy-partial-evidence").is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn native_input_mismatch_rejects_only_the_candidate() {

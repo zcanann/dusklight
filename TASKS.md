@@ -39,6 +39,14 @@ Ordon Springs is the first adequacy test. The real terminal is
   Post-hoc inspection of the retained v4-v6 reports found 774 decisions labeled
   as process-local restores and zero whose source differed from the immediately
   preceding endpoint; the old count was entirely continuation reuse.
+  A 96-decision width-one diagnostic against the corrected adapter selected six
+  nonconsecutive branches, but all six still used authenticated root replay and
+  zero used a nonconsecutive process-local restore. Ninety-four decisions used
+  distinct frontier states: post-terminal scheduling rotated across exact
+  interior states produced inside long options, while native retention covered
+  only option endpoints or the branch currently being materialized. The next
+  fix is scheduler-visible checkpoint locality and/or retention of the branch
+  boundaries the scheduler actually chooses, not additional campaign volume.
 - The learner can discover the real terminal quickly, but its best authenticated
   route is 229 ticks. Two cold replays reproduced that route exactly.
 - The first terminal arrives in roughly 35 seconds; hundreds of later
