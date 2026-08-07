@@ -521,6 +521,28 @@ impl TacticMacroPromotionRegistry {
         Ok(record.status)
     }
 
+    /// Permanently reject a candidate whose composed native execution does not
+    /// realize the primitive sequence it claims to replace. An empty-support
+    /// demotion event is distinct from an evidence-driven demotion and cannot
+    /// be promoted by later outcome measurements for the same invalid identity.
+    pub fn reject(&mut self, candidate_sha256: Digest) -> Result<(), &'static str> {
+        let record = self
+            .records
+            .get_mut(&candidate_sha256)
+            .ok_or("rejected macro candidate is unknown")?;
+        if record.history.last().is_some_and(|event| {
+            event.status == MacroPromotionStatus::Demoted && event.supporting_comparisons.is_empty()
+        }) {
+            return Ok(());
+        }
+        record.status = MacroPromotionStatus::Demoted;
+        record.history.push(MacroPromotionEvent {
+            status: MacroPromotionStatus::Demoted,
+            supporting_comparisons: Vec::new(),
+        });
+        Ok(())
+    }
+
     pub fn records(&self) -> impl ExactSizeIterator<Item = &MacroPromotionRecord> {
         self.records.values()
     }
@@ -533,6 +555,11 @@ impl TacticMacroPromotionRegistry {
 }
 
 fn lifecycle_status(record: &MacroPromotionRecord) -> MacroPromotionStatus {
+    if record.history.last().is_some_and(|event| {
+        event.status == MacroPromotionStatus::Demoted && event.supporting_comparisons.is_empty()
+    }) {
+        return MacroPromotionStatus::Demoted;
+    }
     let comparisons = &record.comparisons;
     let distinct_states = comparisons
         .iter()
@@ -1103,5 +1130,50 @@ mod tests {
             ]
         );
         assert_eq!(record.candidate.sources.len(), 2);
+    }
+
+    #[test]
+    fn native_equivalence_rejection_is_permanent_and_idempotent() {
+        let candidate = discover_replay_macros(&[observation(11, 1, 3), observation(13, 2, 4)])
+            .unwrap()[0]
+            .clone();
+        let mut registry = TacticMacroPromotionRegistry::default();
+        registry.propose(candidate.clone()).unwrap();
+        registry.reject(candidate.candidate_sha256).unwrap();
+        registry.reject(candidate.candidate_sha256).unwrap();
+
+        for (seed, state) in [(17, 7), (19, 8)] {
+            registry
+                .observe(
+                    MacroComparisonEvidence::new(
+                        candidate.candidate_sha256,
+                        seed,
+                        Digest([state; 32]),
+                        true,
+                        1.0,
+                        4,
+                        false,
+                        0.0,
+                        8,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+
+        let record = registry.records().next().unwrap();
+        assert_eq!(record.status, MacroPromotionStatus::Demoted);
+        assert_eq!(
+            record
+                .history
+                .iter()
+                .filter(|event| {
+                    event.status == MacroPromotionStatus::Demoted
+                        && event.supporting_comparisons.is_empty()
+                })
+                .count(),
+            1
+        );
+        assert_eq!(registry.promoted().count(), 0);
     }
 }

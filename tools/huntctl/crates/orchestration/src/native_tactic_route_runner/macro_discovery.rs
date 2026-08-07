@@ -734,6 +734,14 @@ struct TacticMacroValidationResult {
     accounting: TacticMacroValidationAccounting,
 }
 
+enum TacticMacroValidationOutcome {
+    Compared(TacticMacroValidationResult),
+    Rejected {
+        candidate_sha256: Digest,
+        accounting: TacticMacroValidationAccounting,
+    },
+}
+
 pub(super) fn validate_and_store_tactic_macros(
     config: &NativeTacticRouteRunConfig<'_>,
     pool: &NativeTacticProposalPool,
@@ -850,30 +858,53 @@ pub(super) fn validate_and_store_tactic_macros(
     let mut accounting = TacticMacroValidationAccounting::default();
     let comparisons = results
         .iter()
-        .map(|result| {
-            MacroComparisonEvidence::new(
-                result.candidate_sha256,
-                result.frontier_seed,
-                result.frontier_state_sha256,
-                result.candidate_outcome.terminal,
-                result.candidate_outcome.progress,
-                result.candidate_outcome.ticks,
-                result.primitive_outcome.terminal,
-                result.primitive_outcome.progress,
-                result.primitive_outcome.ticks,
-            )
-            .map_err(route_error)
+        .filter_map(|outcome| match outcome {
+            TacticMacroValidationOutcome::Compared(result) => Some(
+                MacroComparisonEvidence::new(
+                    result.candidate_sha256,
+                    result.frontier_seed,
+                    result.frontier_state_sha256,
+                    result.candidate_outcome.terminal,
+                    result.candidate_outcome.progress,
+                    result.candidate_outcome.ticks,
+                    result.primitive_outcome.terminal,
+                    result.primitive_outcome.progress,
+                    result.primitive_outcome.ticks,
+                )
+                .map_err(route_error),
+            ),
+            TacticMacroValidationOutcome::Rejected { .. } => None,
         })
         .collect::<Result<Vec<_>, _>>()?;
-    for result in &results {
-        accounting.merge(&result.accounting);
+    let rejected_candidates = results
+        .iter()
+        .filter_map(|outcome| match outcome {
+            TacticMacroValidationOutcome::Rejected {
+                candidate_sha256, ..
+            } => Some(*candidate_sha256),
+            TacticMacroValidationOutcome::Compared(_) => None,
+        })
+        .collect::<BTreeSet<_>>();
+    for outcome in &results {
+        accounting.merge(match outcome {
+            TacticMacroValidationOutcome::Compared(result) => &result.accounting,
+            TacticMacroValidationOutcome::Rejected { accounting, .. } => accounting,
+        });
     }
     let mut online = TacticQOnlineLearningController::default();
     let tactic_update = online
-        .update_tactics(&mut mined.registry, std::iter::empty(), comparisons)
+        .update_tactics_with_rejections(
+            &mut mined.registry,
+            std::iter::empty(),
+            comparisons,
+            rejected_candidates,
+        )
         .map_err(route_error)?;
     let validation_state_count = results.len() as u64;
-    let comparison_count = results.len() as u64;
+    let comparison_count = results
+        .iter()
+        .filter(|outcome| matches!(outcome, TacticMacroValidationOutcome::Compared(_)))
+        .count() as u64;
     let executed_component_baseline_count = results.len() as u64;
     let registry_sha256 =
         write_tactic_macro_registry(&validated_path, &mined.registry).map_err(route_error)?;
@@ -948,7 +979,7 @@ fn run_tactic_macro_validation_job(
     pool: &NativeTacticProposalPool,
     encoder: &GoalConditionedTacticFeatureEncoder,
     job: TacticMacroValidationJob,
-) -> Result<TacticMacroValidationResult, NativeTacticRouteRunError> {
+) -> Result<TacticMacroValidationOutcome, NativeTacticRouteRunError> {
     let candidate_entry = job.candidate.catalog_entry().map_err(route_error)?;
     let candidate_catalog =
         Arc::new(TacticAssetCatalog::new(vec![candidate_entry]).map_err(route_error)?);
@@ -993,20 +1024,35 @@ fn run_tactic_macro_validation_job(
         &job.output_root.join("primitive-components"),
         &mut accounting,
     )?;
-    exact_realized_macro_tape(&job.candidate.tape, &candidate_outcome.emitted_raw_actions)?;
-    if candidate_outcome.emitted_raw_actions != primitive_outcome.emitted_raw_actions {
-        return Err(route_message(
-            "macro validation candidate and primitive sequence emitted different inputs",
-        ));
+    if !macro_validation_inputs_match(
+        &job.candidate.tape,
+        &candidate_outcome.emitted_raw_actions,
+        &primitive_outcome.emitted_raw_actions,
+    ) {
+        return Ok(TacticMacroValidationOutcome::Rejected {
+            candidate_sha256: job.candidate.candidate_sha256,
+            accounting,
+        });
     }
-    Ok(TacticMacroValidationResult {
-        candidate_sha256: job.candidate.candidate_sha256,
-        frontier_seed: job.frontier.seed,
-        frontier_state_sha256: job.frontier.state_sha256,
-        candidate_outcome: candidate_outcome.clone(),
-        primitive_outcome,
-        accounting,
-    })
+    Ok(TacticMacroValidationOutcome::Compared(
+        TacticMacroValidationResult {
+            candidate_sha256: job.candidate.candidate_sha256,
+            frontier_seed: job.frontier.seed,
+            frontier_state_sha256: job.frontier.state_sha256,
+            candidate_outcome: candidate_outcome.clone(),
+            primitive_outcome,
+            accounting,
+        },
+    ))
+}
+
+fn macro_validation_inputs_match(
+    candidate: &InputTape,
+    candidate_emitted: &[InputFrame],
+    primitive_emitted: &[InputFrame],
+) -> bool {
+    exact_realized_macro_tape(candidate, candidate_emitted).is_ok()
+        && candidate_emitted == primitive_emitted
 }
 
 fn tactic_macro_component_maximum_ticks(
@@ -1452,5 +1498,37 @@ pub(super) fn insert_tactic_macro_validation_frontier(
             frontiers.insert(identity, frontier);
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod input_equivalence_tests {
+    use super::*;
+
+    #[test]
+    fn native_input_mismatch_rejects_only_the_candidate() {
+        let first = InputFrame::default();
+        let mut second = InputFrame::default();
+        second.pads[0].buttons = 1;
+        let candidate = InputTape {
+            frames: vec![first.clone(), second.clone()],
+            ..InputTape::default()
+        };
+
+        assert!(macro_validation_inputs_match(
+            &candidate,
+            &[first.clone(), second.clone()],
+            &[first.clone(), second]
+        ));
+        assert!(!macro_validation_inputs_match(
+            &candidate,
+            std::slice::from_ref(&first),
+            &[InputFrame::default(), InputFrame::default()]
+        ));
+        assert!(!macro_validation_inputs_match(
+            &candidate,
+            &[InputFrame::default(), InputFrame::default()],
+            &[InputFrame::default(), InputFrame::default()]
+        ));
     }
 }

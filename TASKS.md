@@ -36,6 +36,9 @@ Ordon Springs is the first adequacy test. The real terminal is
   cover multiple exact bindings, eviction, stale-handle fallback, and
   sibling-first live rearming. An end-to-end native search has not yet proved
   two nonconsecutive restores, so the checkpoint-rollout task remains open.
+  Post-hoc inspection of the retained v4-v6 reports found 774 decisions labeled
+  as process-local restores and zero whose source differed from the immediately
+  preceding endpoint; the old count was entirely continuation reuse.
 - The learner can discover the real terminal quickly, but its best authenticated
   route is 229 ticks. Two cold replays reproduced that route exactly.
 - The first terminal arrives in roughly 35 seconds; hundreds of later

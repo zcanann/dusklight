@@ -304,6 +304,18 @@ impl TacticQOnlineLearningController {
         candidates: impl IntoIterator<Item = DiscoveredMacroCandidate>,
         comparisons: impl IntoIterator<Item = MacroComparisonEvidence>,
     ) -> Result<TacticQOnlineTacticUpdate, TacticQCampaignError> {
+        self.update_tactics_with_rejections(registry, candidates, comparisons, std::iter::empty())
+    }
+
+    /// Apply lifecycle evidence, including native equivalence failures that
+    /// permanently reject an invalid composed action without aborting learning.
+    pub fn update_tactics_with_rejections(
+        &mut self,
+        registry: &mut TacticMacroPromotionRegistry,
+        candidates: impl IntoIterator<Item = DiscoveredMacroCandidate>,
+        comparisons: impl IntoIterator<Item = MacroComparisonEvidence>,
+        rejected_candidates: impl IntoIterator<Item = Digest>,
+    ) -> Result<TacticQOnlineTacticUpdate, TacticQCampaignError> {
         self.require_planning()?;
         let previously_promoted = registry
             .promoted()
@@ -317,6 +329,11 @@ impl TacticQOnlineLearningController {
         for comparison in comparisons {
             registry
                 .observe(comparison)
+                .map_err(|error| TacticQCampaignError::TacticLifecycle(error.into()))?;
+        }
+        for candidate_sha256 in rejected_candidates {
+            registry
+                .reject(candidate_sha256)
                 .map_err(|error| TacticQCampaignError::TacticLifecycle(error.into()))?;
         }
         let mut update = TacticQOnlineTacticUpdate::default();
