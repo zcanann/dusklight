@@ -161,10 +161,89 @@ fn incumbent_continuation_suffix(
     Ok(Some(tape))
 }
 
+pub(super) fn simplify_incumbent_rejoin_coordinates(
+    current: [f32; 3],
+    lineage: &[[f32; 3]],
+) -> Vec<[f32; 3]> {
+    const MAXIMUM_COORDINATES: usize =
+        dusklight_control::controller_program::MAX_SEEK_COORDINATE_SEQUENCE_POINTS;
+    let mut points = Vec::with_capacity(lineage.len().saturating_add(1));
+    points.push(current);
+    for point in lineage {
+        if points
+            .last()
+            .is_none_or(|previous| (previous[0] - point[0]).hypot(previous[2] - point[2]) > 1.0e-3)
+        {
+            points.push(*point);
+        }
+    }
+    if points.len() <= 1 {
+        return Vec::new();
+    }
+
+    let mut selected = vec![0, points.len() - 1];
+    while selected.len() < MAXIMUM_COORDINATES.saturating_add(1) {
+        selected.sort_unstable();
+        let mut best: Option<(f32, usize)> = None;
+        for endpoints in selected.windows(2) {
+            let start_index = endpoints[0];
+            let end_index = endpoints[1];
+            let start = points[start_index];
+            let end = points[end_index];
+            let dx = end[0] - start[0];
+            let dz = end[2] - start[2];
+            let length_squared = dx * dx + dz * dz;
+            for index in start_index + 1..end_index {
+                let point = points[index];
+                let progress = if length_squared > 0.0 {
+                    (((point[0] - start[0]) * dx + (point[2] - start[2]) * dz) / length_squared)
+                        .clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let nearest_x = start[0] + dx * progress;
+                let nearest_z = start[2] + dz * progress;
+                let distance_squared =
+                    (point[0] - nearest_x).powi(2) + (point[2] - nearest_z).powi(2);
+                if best.is_none_or(|(best_distance, best_index)| {
+                    distance_squared > best_distance
+                        || (distance_squared == best_distance && index < best_index)
+                }) {
+                    best = Some((distance_squared, index));
+                }
+            }
+        }
+        let Some((distance_squared, index)) = best else {
+            break;
+        };
+        if distance_squared <= 1.0e-6 {
+            break;
+        }
+        selected.push(index);
+    }
+    selected.sort_unstable();
+    selected
+        .into_iter()
+        .skip(1)
+        .map(|index| points[index])
+        .collect()
+}
+
+fn incumbent_rejoin_intermediate_tolerance(current: [f32; 3], coordinates: &[[f32; 3]]) -> f32 {
+    let mut previous = current;
+    let minimum_spacing = coordinates
+        .iter()
+        .fold(f32::INFINITY, |minimum, coordinate| {
+            let spacing = (coordinate[0] - previous[0]).hypot(coordinate[2] - previous[2]);
+            previous = *coordinate;
+            minimum.min(spacing)
+        });
+    (minimum_spacing * 0.25).clamp(8.0, 96.0)
+}
+
 fn incumbent_rejoin_targets(
     campaign: &TacticQCampaign,
     continuation: ActiveIncumbentContinuation,
-    maximum_tactic_ticks: u64,
 ) -> Result<Vec<IncumbentRejoinTarget>, NativeTacticRouteRunError> {
     let graph = campaign.state_graph().map_err(route_error)?;
     let terminal_route = graph
@@ -202,7 +281,6 @@ fn incumbent_rejoin_targets(
         })
         .collect::<Vec<_>>();
     lineage.sort_by_key(|(offset, _)| *offset);
-    let maximum_tactic_ticks = usize::try_from(maximum_tactic_ticks).map_err(route_error)?;
     let mut ranked = lineage
         .iter()
         .enumerate()
@@ -221,13 +299,22 @@ fn incumbent_rejoin_targets(
             let tolerance = (boundary_spacing * 0.25).clamp(8.0, 32.0);
             let maximum_ticks = headroom
                 .saturating_sub(1)
-                .min(maximum_tactic_ticks)
-                .min(u32::MAX as usize) as u32;
+                .min(dusklight_learning::native_generic_tactic::MAX_NATIVE_TACTIC_TICKS as usize)
+                as u32;
+            let path = lineage[..=index]
+                .iter()
+                .filter(|(candidate_offset, _)| *candidate_offset > current_frames)
+                .map(|(_, coordinate)| *coordinate)
+                .collect::<Vec<_>>();
+            let coordinates = simplify_incumbent_rejoin_coordinates(current_position, &path);
+            let intermediate_tolerance =
+                incumbent_rejoin_intermediate_tolerance(current_position, &coordinates);
             (maximum_ticks > 0).then_some((
                 planar_distance / headroom as f32,
                 headroom,
                 IncumbentRejoinTarget {
-                    coordinate: *position,
+                    coordinates,
+                    intermediate_tolerance,
                     tolerance,
                     maximum_ticks,
                 },
@@ -239,9 +326,11 @@ fn incumbent_rejoin_targets(
             .total_cmp(&right.0)
             .then_with(|| right.1.cmp(&left.1))
             .then_with(|| {
-                left.2.coordinate[0]
-                    .total_cmp(&right.2.coordinate[0])
-                    .then_with(|| left.2.coordinate[2].total_cmp(&right.2.coordinate[2]))
+                let left_coordinate = left.2.coordinates.last().expect("ranked rejoin target");
+                let right_coordinate = right.2.coordinates.last().expect("ranked rejoin target");
+                left_coordinate[0]
+                    .total_cmp(&right_coordinate[0])
+                    .then_with(|| left_coordinate[2].total_cmp(&right_coordinate[2]))
             })
     });
     ranked.truncate(16);
@@ -748,7 +837,6 @@ pub(super) fn run_seed(
             && incumbent_rejoin_targets(
                 &campaign,
                 active_incumbent_continuation.expect("checked incumbent continuation"),
-                maximum_tactic_ticks,
             )?
             .is_empty()
         {
@@ -910,7 +998,6 @@ pub(super) fn run_seed(
                 let targets = incumbent_rejoin_targets(
                     &campaign,
                     active_incumbent_continuation.expect("checked incumbent continuation"),
-                    maximum_tactic_ticks,
                 )?;
                 let (proposals, descriptors) =
                     with_experience_incumbent_rejoins(proposals, &targets)?;

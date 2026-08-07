@@ -118,12 +118,22 @@ Ordon Springs is the first adequacy test. The real terminal is
   made 11 direct process-local restores, and retained 53 useful transitions.
   It still left the 318-tick diagnostic incumbent unchanged: all eight
   incumbent-rejoin actions missed their native target, including six that used
-  their full 40-tick allowance. Candidate construction and closed-loop control,
-  not checkpoint scheduling or additional volume, is therefore the next
-  measured bottleneck. The full orchestration suite passes 486 tests; native
-  proof that a restored splice improves an incumbent remains open.
-- The learner can discover the real terminal quickly, but its best authenticated
-  route is 229 ticks. Two cold replays reproduced that route exactly.
+  their full 40-tick allowance. The rejoin action now simplifies the learner's
+  own authenticated incumbent trajectory into a bounded, closed-loop coordinate
+  sequence instead of driving straight through intervening geometry. It receives
+  only observed lineage states, not authored route coordinates, and its duration
+  remains strictly below the incumbent ticks it proposes to skip. In a bounded
+  20-decision seed-104729 campaign, one ordinary perturbation followed by this
+  learned rejoin and the authenticated terminal continuation improved the
+  incumbent from 318 to 210 ticks. Two independent cold replays hit the real
+  terminal at tick 210 with identical terminal identity and boundary evidence.
+  That winning episode began at the authenticated root; its later process-local
+  restores were consecutive continuations, so proof that a nonconsecutive
+  intermediate restore causes an incumbent improvement remains open. The full
+  orchestration suite passes 486 tests.
+- The learner's previous best authenticated route was 229 ticks. The current
+  best is 210 ticks, reproduced exactly by two cold replays. This is a real
+  route-learning improvement but remains far short of the 124-tick gate.
 - The first terminal arrives in roughly 35 seconds; hundreds of later
   expansions have not produced a competitive route. Discovery is no longer the
   primary failure. Route learning and optimization are.

@@ -327,9 +327,10 @@ pub(super) fn with_experience_terminal_continuation(
     Ok((proposals, descriptor))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct IncumbentRejoinTarget {
-    pub coordinate: [f32; 3],
+    pub coordinates: Vec<[f32; 3]>,
+    pub intermediate_tolerance: f32,
     pub tolerance: f32,
     pub maximum_ticks: u32,
 }
@@ -348,9 +349,18 @@ pub(super) fn with_experience_incumbent_rejoins(
         || targets.len() > 16
         || targets.iter().any(|target| {
             target.maximum_ticks == 0
+                || target.coordinates.is_empty()
+                || target.coordinates.len()
+                    > dusklight_control::controller_program::MAX_SEEK_COORDINATE_SEQUENCE_POINTS
+                || !target.intermediate_tolerance.is_finite()
+                || target.intermediate_tolerance <= 0.0
                 || !target.tolerance.is_finite()
                 || target.tolerance <= 0.0
-                || target.coordinate.iter().any(|value| !value.is_finite())
+                || target
+                    .coordinates
+                    .iter()
+                    .flatten()
+                    .any(|value| !value.is_finite())
         })
     {
         return Err(route_message("incumbent rejoin targets are invalid"));
@@ -358,12 +368,29 @@ pub(super) fn with_experience_incumbent_rejoins(
     let mut entries = proposals.catalog.entries().to_vec();
     let mut descriptors = Vec::with_capacity(targets.len());
     for target in targets {
-        let source = TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan::new(
+        let tactic = if target.coordinates.len() == 1 {
             GenericTactic::SeekCoordinate {
-                coordinate_f32_bits: target.coordinate.map(f32::to_bits),
+                coordinate_f32_bits: target.coordinates[0].map(f32::to_bits),
                 tolerance_f32_bits: target.tolerance.to_bits(),
                 magnitude: 127,
-            },
+            }
+        } else {
+            GenericTactic::SeekCoordinateSequence {
+                coordinates_f32_bits: target
+                    .coordinates
+                    .iter()
+                    .map(|coordinate| coordinate.map(f32::to_bits))
+                    .collect(),
+                intermediate_tolerance_f32_bits: target.intermediate_tolerance.to_bits(),
+                final_tolerance_f32_bits: target.tolerance.to_bits(),
+                stall_grace_ticks: target.maximum_ticks,
+                stationary_window_ticks: target.maximum_ticks.min(16),
+                stationary_window_distance_f32_bits: 1.0_f32.to_bits(),
+                magnitude: 127,
+            }
+        };
+        let source = TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan::new(
+            tactic,
             target.maximum_ticks,
         ));
         let canonical = source.canonical_bytes().map_err(route_error)?;

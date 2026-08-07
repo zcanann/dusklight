@@ -1877,12 +1877,17 @@ fn promoted_guarded_tactics_join_without_removing_primitive_actions() {
             .unwrap();
     let targets = [
         IncumbentRejoinTarget {
-            coordinate: [target[0] + 10.0, target[1], target[2]],
+            coordinates: vec![[target[0] + 10.0, target[1], target[2]]],
+            intermediate_tolerance: 24.0,
             tolerance: 8.0,
             maximum_ticks: 5,
         },
         IncumbentRejoinTarget {
-            coordinate: [target[0] + 20.0, target[1], target[2]],
+            coordinates: vec![
+                [target[0] + 10.0, target[1], target[2] - 20.0],
+                [target[0] + 20.0, target[1], target[2]],
+            ],
+            intermediate_tolerance: 24.0,
             tolerance: 12.0,
             maximum_ticks: 9,
         },
@@ -1890,7 +1895,7 @@ fn promoted_guarded_tactics_join_without_removing_primitive_actions() {
     let (with_rejoins, rejoin_descriptors) =
         with_experience_incumbent_rejoins(primitive, &targets).unwrap();
     assert_eq!(rejoin_descriptors.len(), 2);
-    for (descriptor, expected) in rejoin_descriptors.iter().zip(targets) {
+    for (index, (descriptor, expected)) in rejoin_descriptors.iter().zip(&targets).enumerate() {
         assert!(
             descriptor
                 .option_id
@@ -1905,16 +1910,52 @@ fn promoted_guarded_tactics_join_without_removing_primitive_actions() {
             panic!("experience rejoin must use the state-reactive native executor");
         };
         assert_eq!(plan.maximum_ticks, expected.maximum_ticks);
-        assert!(matches!(
-            plan.tactic,
-            GenericTactic::SeekCoordinate {
-                coordinate_f32_bits,
-                tolerance_f32_bits,
-                magnitude: 127,
-            } if coordinate_f32_bits == expected.coordinate.map(f32::to_bits)
-                && tolerance_f32_bits == expected.tolerance.to_bits()
-        ));
+        if index == 0 {
+            assert!(matches!(
+                plan.tactic,
+                GenericTactic::SeekCoordinate {
+                    coordinate_f32_bits,
+                    tolerance_f32_bits,
+                    magnitude: 127,
+                } if coordinate_f32_bits == expected.coordinates[0].map(f32::to_bits)
+                    && tolerance_f32_bits == expected.tolerance.to_bits()
+            ));
+        } else {
+            assert!(matches!(
+                &plan.tactic,
+                GenericTactic::SeekCoordinateSequence {
+                    coordinates_f32_bits,
+                    intermediate_tolerance_f32_bits,
+                    final_tolerance_f32_bits,
+                    stall_grace_ticks: 9,
+                    stationary_window_ticks: 9,
+                    magnitude: 127,
+                    ..
+                } if coordinates_f32_bits == &expected.coordinates
+                    .iter()
+                    .map(|coordinate| coordinate.map(f32::to_bits))
+                    .collect::<Vec<_>>()
+                    && *intermediate_tolerance_f32_bits == expected.intermediate_tolerance.to_bits()
+                    && *final_tolerance_f32_bits == expected.tolerance.to_bits()
+            ));
+        }
     }
+
+    let simplified = campaign::simplify_incumbent_rejoin_coordinates(
+        [0.0, 0.0, 0.0],
+        &[
+            [100.0, 0.0, 0.0],
+            [200.0, 0.0, 0.0],
+            [200.0, 0.0, 100.0],
+            [200.0, 0.0, 200.0],
+            [300.0, 0.0, 200.0],
+            [400.0, 0.0, 200.0],
+        ],
+    );
+    assert!(simplified.len() <= 4);
+    assert!(simplified.contains(&[200.0, 0.0, 0.0]));
+    assert!(simplified.contains(&[200.0, 0.0, 200.0]));
+    assert_eq!(simplified.last(), Some(&[400.0, 0.0, 200.0]));
     let mut wrong_room = snapshot.clone();
     wrong_room.world.room = wrong_room.world.room.saturating_add(1);
     let wrong_room_primitive_descriptors =
