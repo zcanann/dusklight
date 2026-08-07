@@ -1,0 +1,446 @@
+use super::*;
+use dusklight_automation_contracts::tape::{InputFrame, RawPadState};
+use dusklight_control::option_execution::{OptionCondition, OptionEndReason, TapeRange};
+use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
+use dusklight_learning::fact_snapshot::{FactPhase, FactTerminalReason};
+use dusklight_learning::reward_shaping::{TACTIC_REWARD_SPEC_SCHEMA_V2, TacticRewardSpec};
+use dusklight_learning::tactic_asset::{TacticAssetSource, TacticCatalogEntry};
+
+const ROOT_CHECKPOINT: Digest = Digest([0x71; 32]);
+const EXECUTION_AUTHORITY: Digest = Digest([0x72; 32]);
+const FEATURE_SCHEMA: Digest = Digest([0x73; 32]);
+const OBJECTIVE: Digest = Digest([0x74; 32]);
+const LEARNER_SNAPSHOT: Digest = Digest([0x75; 32]);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AdequacyState {
+    Start,
+    Detour(u8),
+    Optimal(u8),
+    Goal,
+}
+
+impl AdequacyState {
+    fn code(self) -> u8 {
+        match self {
+            Self::Start => 0,
+            Self::Detour(step) => 1 + step,
+            Self::Optimal(step) => 32 + step,
+            Self::Goal => 63,
+        }
+    }
+
+    fn position(self) -> [f32; 3] {
+        match self {
+            Self::Start => [0.0, 0.0, 0.0],
+            // The detour initially moves toward the goal, then winds around a
+            // longer corridor. Position is observation, not reward.
+            Self::Detour(step) => {
+                const POSITIONS: [[f32; 3]; 11] = [
+                    [1.0, 0.0, 0.0],
+                    [2.0, 0.0, 0.0],
+                    [2.0, 0.0, -1.0],
+                    [2.0, 0.0, -2.0],
+                    [3.0, 0.0, -2.0],
+                    [4.0, 0.0, -2.0],
+                    [4.0, 0.0, -1.0],
+                    [4.0, 0.0, 0.0],
+                    [4.0, 0.0, 1.0],
+                    [3.0, 0.0, 1.0],
+                    [3.0, 0.0, 0.5],
+                ];
+                POSITIONS[step as usize]
+            }
+            // The optimal route must move away from the goal for three ticks
+            // before it can turn the corner.
+            Self::Optimal(step) => {
+                const POSITIONS: [[f32; 3]; 8] = [
+                    [0.0, 0.0, 1.0],
+                    [0.0, 0.0, 2.0],
+                    [0.0, 0.0, 3.0],
+                    [1.0, 0.0, 3.0],
+                    [2.0, 0.0, 3.0],
+                    [3.0, 0.0, 3.0],
+                    [3.0, 0.0, 2.0],
+                    [3.0, 0.0, 1.0],
+                ];
+                POSITIONS[step as usize]
+            }
+            Self::Goal => [3.0, 0.0, 0.0],
+        }
+    }
+
+    fn applicable(self, action: &str) -> bool {
+        match self {
+            Self::Start => matches!(action, "east" | "north"),
+            Self::Detour(step) => action == detour_action(step),
+            Self::Optimal(step) => action == optimal_action(step),
+            Self::Goal => false,
+        }
+    }
+
+    fn execute(self, action: &str) -> Option<Self> {
+        if !self.applicable(action) {
+            return None;
+        }
+        match self {
+            Self::Start if action == "east" => Some(Self::Detour(0)),
+            Self::Start if action == "north" => Some(Self::Optimal(0)),
+            Self::Detour(10) => Some(Self::Goal),
+            Self::Detour(step) => Some(Self::Detour(step + 1)),
+            Self::Optimal(7) => Some(Self::Goal),
+            Self::Optimal(step) => Some(Self::Optimal(step + 1)),
+            _ => None,
+        }
+    }
+}
+
+fn detour_action(step: u8) -> &'static str {
+    [
+        "east", "south", "south", "east", "east", "north", "north", "north", "west", "south",
+        "south",
+    ][step as usize]
+}
+
+fn optimal_action(step: u8) -> &'static str {
+    [
+        "north", "north", "east", "east", "east", "south", "south", "south",
+    ][step as usize]
+}
+
+fn input_frame(action: &str) -> InputFrame {
+    let (stick_x, stick_y) = match action {
+        "north" => (0, 127),
+        "east" => (127, 0),
+        "south" => (0, -127),
+        "west" => (-127, 0),
+        _ => unreachable!(),
+    };
+    let mut frame = InputFrame {
+        owned_ports: 1,
+        ..InputFrame::default()
+    };
+    frame.pads[0] = RawPadState {
+        stick_x,
+        stick_y,
+        connected: true,
+        ..RawPadState::default()
+    };
+    frame
+}
+
+fn catalog() -> TacticAssetCatalog {
+    TacticAssetCatalog::new(
+        ["east", "north", "south", "west"]
+            .into_iter()
+            .map(|action| {
+                TacticCatalogEntry::new(
+                    action,
+                    TacticAssetSource::RecordedTape(InputTape {
+                        frames: vec![input_frame(action)],
+                        ..InputTape::default()
+                    }),
+                )
+                .unwrap()
+            })
+            .collect(),
+    )
+    .unwrap()
+}
+
+fn base_facts() -> (FactSnapshot, Digest) {
+    let shard = NativeEpisodeShard::decode(include_bytes!(
+        "../../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+    ))
+    .unwrap();
+    let facts = FactSnapshot::from_native_learning(
+        &shard.episodes[0].steps[0].pre_input,
+        &[],
+        None,
+        Vec::new(),
+    )
+    .unwrap();
+    (facts, shard.content_sha256)
+}
+
+fn facts_at(base: &FactSnapshot, state: AdequacyState, tape_frame: u64) -> FactSnapshot {
+    let mut facts = base.clone();
+    facts.phase = FactPhase::PreInput;
+    facts.boundary_index = tape_frame;
+    facts.simulation_tick = tape_frame;
+    facts.tape_frame = tape_frame;
+    facts.state_identity = [state.code(); 16];
+    facts.world.stage = "online-adequacy".into();
+    facts.world.room = 0;
+    facts.player.position_f32_bits = state.position().map(f32::to_bits);
+    facts.player.procedure = Some(u16::from(state.code()));
+    facts.player.velocity_f32_bits = Some([0.0_f32.to_bits(); 3]);
+    facts.player.forward_speed_f32_bits = Some(0.0_f32.to_bits());
+    facts.recent_history.clear();
+    facts.recent_option = None;
+    let terminal = state == AdequacyState::Goal;
+    facts.terminal.configured = Some(true);
+    facts.terminal.reached = Some(terminal);
+    facts.terminal.reason = if terminal {
+        FactTerminalReason::GoalReached
+    } else {
+        FactTerminalReason::None
+    };
+    facts.terminal.first_hit_tick = terminal.then_some(tape_frame);
+    facts.validate().unwrap();
+    facts
+}
+
+fn state_from_facts(facts: &FactSnapshot) -> AdequacyState {
+    match facts.state_identity[0] {
+        0 => AdequacyState::Start,
+        1..=11 => AdequacyState::Detour(facts.state_identity[0] - 1),
+        32..=39 => AdequacyState::Optimal(facts.state_identity[0] - 32),
+        63 => AdequacyState::Goal,
+        _ => panic!("unknown adequacy state"),
+    }
+}
+
+fn encode(facts: &FactSnapshot) -> Result<Vec<f32>, &'static str> {
+    let [x, _, y] = facts.player.position_f32_bits.map(f32::from_bits);
+    Ok(vec![x, y, 3.0 - x, -y, f32::from(facts.state_identity[0])])
+}
+
+fn campaign_with_cold_east_primary(
+    base: &FactSnapshot,
+    catalog: &TacticAssetCatalog,
+) -> TacticQCampaign {
+    for seed in 0..10_000 {
+        let root = facts_at(base, AdequacyState::Start, base.tape_frame);
+        let current =
+            LearnerState::build(root, &FactRegistry::canonical(), catalog, &[], |_| true).unwrap();
+        let mut campaign = TacticQCampaign::new(
+            FEATURE_SCHEMA,
+            OBJECTIVE,
+            ROOT_CHECKPOINT,
+            0,
+            current,
+            InputTape {
+                frames: vec![InputFrame::default(); base.tape_frame as usize],
+                ..InputTape::default()
+            },
+            OptionValueConfig::default(),
+            TacticExplorationConfig {
+                seed,
+                epsilon_per_million: 0,
+            },
+        )
+        .unwrap();
+        campaign
+            .bind_execution_authority(EXECUTION_AUTHORITY)
+            .unwrap();
+        if campaign
+            .decide_batch(catalog, &[], &encode, 2)
+            .unwrap()
+            .proposals[0]
+            .descriptor
+            .option_id
+            == "east"
+        {
+            return campaign;
+        }
+    }
+    panic!("no deterministic cold-start seed selected the detour")
+}
+
+fn reward_spec() -> TacticRewardSpec {
+    TacticRewardSpec {
+        schema: TACTIC_REWARD_SPEC_SCHEMA_V2.into(),
+        terminal_reward: 100.0,
+        tick_cost: 1.0,
+        novelty_reward: 0.0,
+        per_tick_discount: 1.0,
+        potential: None,
+        motion_cost: None,
+    }
+}
+
+fn execute_selected(
+    campaign: &TacticQCampaign,
+    selected: &SelectedTactic,
+    episode_shard_sha256: Digest,
+) -> NativeTacticWorkerOutcome {
+    let source = state_from_facts(&campaign.current.snapshot);
+    let target = source
+        .execute(&selected.descriptor.option_id)
+        .expect("the production action mask must expose only executable fixture actions");
+    let mut route_tape = campaign.route_tape.clone();
+    route_tape
+        .frames
+        .push(input_frame(&selected.descriptor.option_id));
+    let start_frame = campaign.current.snapshot.tape_frame;
+    let execution = OptionExecution::capture(
+        selected.descriptor.option_id.clone(),
+        selected.descriptor.option_type.clone(),
+        selected.descriptor.parameters.clone(),
+        1,
+        1,
+        OptionCondition::DurationElapsed,
+        Vec::new(),
+        OptionEndReason::Completed,
+        &route_tape,
+        TapeRange {
+            start_frame,
+            end_frame_exclusive: start_frame + 1,
+        },
+    )
+    .unwrap();
+    let next_facts = facts_at(&campaign.current.snapshot, target, start_frame + 1);
+    NativeTacticWorkerOutcome {
+        schema: crate::native_tactic_worker::NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V2.into(),
+        source_checkpoint_sha256: ROOT_CHECKPOINT,
+        checkpoint_identity: format!("online-adequacy-{}", start_frame + 1),
+        episode_shard_sha256,
+        selected: selected.clone(),
+        execution,
+        native_queries: Vec::new(),
+        route_tape,
+        next_facts,
+        state_extraction_micros: 1,
+        intermediate_boundaries: Vec::new(),
+        terminal: target == AdequacyState::Goal,
+        retained_native_checkpoint: None,
+        retained_native_boundary_fingerprint: None,
+    }
+}
+
+fn run_to_terminal(
+    campaign: &mut TacticQCampaign,
+    catalog: &TacticAssetCatalog,
+    episode_shard_sha256: Digest,
+) -> Vec<String> {
+    let registry = FactRegistry::canonical();
+    let mut actions = Vec::new();
+    while campaign.current.snapshot.terminal.reached != Some(true) {
+        let batch = campaign.decide_batch(catalog, &[], &encode, 4).unwrap();
+        let eligible = batch
+            .ranking
+            .choices
+            .iter()
+            .filter(|choice| choice.applicable)
+            .map(|choice| choice.descriptor.clone())
+            .collect::<Vec<_>>();
+        let leased = campaign
+            .lease_current_parameterized_batch(batch, &eligible, 1, LEARNER_SNAPSHOT)
+            .unwrap();
+        let selected = leased.batch.proposals[0].clone();
+        let outcome = execute_selected(campaign, &selected, episode_shard_sha256);
+        let evaluated = campaign
+            .evaluate_rewarded_outcome(outcome.clone(), &encode, &reward_spec())
+            .unwrap();
+        campaign
+            .admit_leased_evaluated_replay(&[evaluated], &[campaign.episode_group], &leased.leases)
+            .unwrap();
+        let target = state_from_facts(&outcome.next_facts);
+        campaign
+            .retain_and_refit_rewarded(
+                TacticQDecision {
+                    ranking: leased.batch.ranking,
+                    selected: selected.clone(),
+                },
+                outcome,
+                catalog,
+                &[],
+                &registry,
+                &encode,
+                |description| target.applicable(&description.option.option_id),
+                &reward_spec(),
+                true,
+            )
+            .unwrap();
+        actions.push(selected.descriptor.option_id);
+        assert!(
+            actions.len() <= 32,
+            "production rollout failed to terminate"
+        );
+    }
+    actions
+}
+
+#[test]
+fn production_campaign_learns_the_shorter_around_corner_route_online() {
+    let (base, episode_shard_sha256) = base_facts();
+    let catalog = catalog();
+    let mut campaign = campaign_with_cold_east_primary(&base, &catalog);
+
+    let first = run_to_terminal(&mut campaign, &catalog, episode_shard_sha256);
+    assert_eq!(first.len(), 12);
+    assert_eq!(first[0], "east");
+    assert_eq!(
+        campaign
+            .best_graph_terminal_path()
+            .unwrap()
+            .unwrap()
+            .root_to_terminal_ticks,
+        12
+    );
+
+    let root = campaign
+        .sample_root_and_frontier(0, 0, &[], usize::MAX)
+        .unwrap()[0]
+        .clone();
+    campaign
+        .restore_branch(
+            &root,
+            1,
+            &FactRegistry::canonical(),
+            &catalog,
+            &[],
+            |description| AdequacyState::Start.applicable(&description.option.option_id),
+        )
+        .unwrap();
+    let improved = run_to_terminal(&mut campaign, &catalog, episode_shard_sha256);
+    assert_eq!(improved.len(), 9);
+    assert_eq!(improved[0], "north");
+    assert_eq!(
+        campaign
+            .best_graph_terminal_path()
+            .unwrap()
+            .unwrap()
+            .root_to_terminal_ticks,
+        9
+    );
+
+    let root = campaign
+        .sample_root_and_frontier(0, 1, &[], usize::MAX)
+        .unwrap()[0]
+        .clone();
+    campaign
+        .restore_branch(
+            &root,
+            2,
+            &FactRegistry::canonical(),
+            &catalog,
+            &[],
+            |description| AdequacyState::Start.applicable(&description.option.option_id),
+        )
+        .unwrap();
+    let learned = campaign.decide_batch(&catalog, &[], &encode, 2).unwrap();
+    assert_eq!(learned.proposals[0].descriptor.option_id, "north");
+    assert_eq!(
+        learned.proposals[0].reason,
+        dusklight_learning::tactic_exploration::TacticSelectionReason::Greedy
+    );
+    assert!(campaign.model_revision() > 0);
+
+    let root_rows = campaign
+        .graph_learning_batch()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|row| row.source_state.state_identity[0] == AdequacyState::Start.code())
+        .map(|row| {
+            (
+                row.action.option_id,
+                row.exact_conditional_ticks_to_terminal,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(root_rows.get("east"), Some(&Some(12)));
+    assert_eq!(root_rows.get("north"), Some(&Some(9)));
+}

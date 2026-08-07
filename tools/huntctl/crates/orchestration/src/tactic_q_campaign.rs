@@ -986,3 +986,7 @@ pub use error::TacticQCampaignError;
 #[cfg(test)]
 #[path = "tactic_q_campaign/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tactic_q_campaign/online_adequacy_tests.rs"]
+mod online_adequacy_tests;
