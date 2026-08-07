@@ -110,16 +110,14 @@ pub fn plan_online_continuation(
         return Ok(None);
     }
 
-    let acquisition_rank = if request.terminal_restart || terminal_support {
-        0
-    } else {
-        request.next_acquisition_rank
-    };
+    // Reaching a terminal forces a restore, not a change of acquisition
+    // partition. Otherwise every successful rollout restarts from rank zero
+    // and can permanently starve the broad-discovery ranks.
+    let acquisition_rank = request.next_acquisition_rank;
     let demonstration =
         request.demonstration_coverage_pending && !request.terminal_restart && !terminal_support;
     let learned_exploitation = acquisition_rank == 0;
-    let force_scheduled_frontier = request.terminal_restart
-        || terminal_support
+    let force_scheduled_frontier = terminal_support
         || (!request.native_terminal_supported
             && learned_exploitation
             && request.goal_relabeling_enabled);
@@ -436,6 +434,26 @@ mod continuation_tests {
                 demonstration: false,
                 prefer_root: false,
                 use_learned_frontier: true,
+            }
+        );
+    }
+
+    #[test]
+    fn terminal_restart_preserves_the_scheduled_discovery_partition() {
+        let mut terminal = request();
+        terminal.terminal_restart = true;
+        terminal.native_terminal_supported = true;
+        terminal.next_acquisition_rank = 2;
+        terminal.root_refresh_due = true;
+        terminal.terminal_frontier_action_value_enabled = true;
+        assert_eq!(
+            plan_online_continuation(terminal).unwrap().unwrap(),
+            TacticQOnlineContinuationPlan {
+                acquisition_rank: 2,
+                terminal_support: false,
+                demonstration: false,
+                prefer_root: true,
+                use_learned_frontier: false,
             }
         );
     }

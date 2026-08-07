@@ -526,12 +526,13 @@ fn restore_next_scheduled_frontier(
     campaign: &mut TacticQCampaign,
     catalog: &TacticAssetCatalog,
     episode_group: u64,
+    acquisition_rank: u64,
 ) -> AdequacyState {
     let continuation = plan_online_continuation(TacticQOnlineContinuationRequest {
         force_branch: false,
         terminal_restart: true,
         native_terminal_supported: campaign.native_terminal_supported(),
-        next_acquisition_rank: 0,
+        next_acquisition_rank: acquisition_rank,
         demonstration_coverage_pending: false,
         terminal_refinement_in_progress: false,
         terminal_refinement_completed: false,
@@ -599,7 +600,7 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
     );
 
     assert_eq!(
-        restore_next_scheduled_frontier(&mut campaign, &catalog, 1),
+        restore_next_scheduled_frontier(&mut campaign, &catalog, 1, 1),
         AdequacyState::Detour(3),
         "the production scheduler must branch from the retained path's untried shortcut"
     );
@@ -616,7 +617,7 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
     );
 
     assert_eq!(
-        restore_next_scheduled_frontier(&mut campaign, &catalog, 2),
+        restore_next_scheduled_frontier(&mut campaign, &catalog, 2, 2),
         AdequacyState::Start,
         "the production scheduler must return to the root's untried action"
     );
@@ -633,7 +634,7 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
     );
 
     assert_eq!(
-        restore_next_scheduled_frontier(&mut campaign, &catalog, 3),
+        restore_next_scheduled_frontier(&mut campaign, &catalog, 3, 3),
         AdequacyState::Start,
         "the production scheduler must revisit the learned root boundary"
     );

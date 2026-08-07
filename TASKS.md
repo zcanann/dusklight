@@ -75,6 +75,14 @@ Ordon Springs is the first adequacy test. The real terminal is
   decision-count branch cadence. The shared horizon planner filters executable
   proposal batches and forces a checkpoint restore before a selected action can
   exceed the rollout budget.
+- Terminal completion no longer rewrites every scheduled acquisition to rank
+  zero. A terminal forces a restore while preserving the lane's sealed
+  acquisition partition: rank zero exploits authenticated terminal paths and
+  nonzero ranks continue broad graph discovery. Root refresh may replace a
+  scheduled broad restore but cannot replace rank-zero terminal support. The
+  production adequacy path now performs its 12-to-10-to-9 improvement through
+  successive discovery ranks 1, 2, and 3, while the single-lane plan still
+  reserves every fourth episode for exploitation.
 - Tactic discovery no longer waits until campaign finalization. Between learned
   generations, the production runner mines the strongest repeated connected
   sequence from completed journals, validates it against its full primitive
@@ -131,7 +139,7 @@ No task is blocked on design.
   each candidate until terminal or a shared native-tick budget. Retain every
   intermediate boundary as future branch material. Immediately replace the
   incumbent when a faster authenticated terminal route appears.
-- [ ] Keep both exploitation and discovery alive. Learned terminal cost ranks
+- [x] Keep both exploitation and discovery alive. Learned terminal cost ranks
   supported choices; uncertainty, state/action coverage, and seeded exploration
   allocate trials to unsupported choices. Neither a growing fresh-state queue
   nor repeated polishing of one lineage may starve the other partition.
