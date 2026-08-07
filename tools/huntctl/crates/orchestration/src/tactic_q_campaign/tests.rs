@@ -320,7 +320,7 @@ fn equal_terminal_cost_prefers_the_less_expanded_frontier() {
 }
 
 #[test]
-fn equal_exact_terminal_cost_uses_action_value_before_coverage_when_estimated() {
+fn equal_exact_terminal_cost_builds_coverage_before_using_action_value() {
     let high_value = TacticFrontierAcquisition {
         expansion_count: 4,
         terminal: false,
@@ -351,7 +351,7 @@ fn equal_exact_terminal_cost_uses_action_value_before_coverage_when_estimated() 
     };
 
     assert_eq!(
-        compare_frontier_acquisition(&high_value, &fresh_low_value),
+        compare_frontier_acquisition(&fresh_low_value, &high_value),
         std::cmp::Ordering::Less
     );
 }
@@ -393,7 +393,7 @@ fn equal_exact_terminal_cost_keeps_coverage_order_without_action_uncertainty() {
 }
 
 #[test]
-fn equal_exact_terminal_cost_prefers_route_improvement_headroom() {
+fn equal_exact_terminal_cost_starts_reverse_curriculum_near_the_terminal() {
     let earlier = TacticFrontierAcquisition {
         expansion_count: 4,
         terminal: false,
@@ -424,7 +424,7 @@ fn equal_exact_terminal_cost_prefers_route_improvement_headroom() {
     };
 
     assert_eq!(
-        compare_frontier_acquisition(&earlier, &late_fresh_high_value),
+        compare_frontier_acquisition(&late_fresh_high_value, &earlier),
         std::cmp::Ordering::Less
     );
 }

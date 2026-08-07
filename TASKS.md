@@ -60,8 +60,18 @@ target is 120.
   fell to 37.5%. Uncalibrated adaptive estimates are now bounded acquisitions:
   they require at least eight rows, above-chance held-out progress sign, and a
   one-in-four probe cadence until calibration grants full authority. All 453
-  learning and 486 orchestration tests pass. Native restored-branch improvement
-  remains the required revalidation.
+  learning tests pass. A matched throttled run reduced model-guided choices to
+  3 of 64 and recovered the best route from 898 to 406 ticks, but remained
+  worse than the 318-tick control. Its first terminal arrived in 21.4 seconds;
+  it then directly restored a near-terminal checkpoint with 45 exact ticks to
+  go and reconfirmed the terminal, but rank-zero optimization next jumped to
+  the four-tick prefix with 403 ticks to rediscover. The scheduler explicitly
+  preferred maximum theoretical headroom before coverage, defeating the
+  purpose of save-state branching. Terminal optimization now builds a reverse
+  curriculum: expand the nearest fresh authenticated terminal boundary, then
+  move backward as alternatives accumulate. All 487 orchestration tests pass,
+  including the production around-corner learner. Native restored-branch
+  improvement remains the required revalidation.
 - Tactic mining, validation, promotion, binary persistence, and ordinary policy
   selection exist on the production path. No native campaign has yet shown a
   learner-discovered promoted tactic improving a route.

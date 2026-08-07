@@ -118,12 +118,16 @@ pub(super) fn compare_frontier_acquisition(
             let right_action_value = has_action_conditioned_frontier_value(right);
             return left_ticks
                 .cmp(&right_ticks)
-                // Equal exact totals are points on the same-cost terminal
-                // lineage. Q-to-go is naturally largest near the terminal,
-                // but those late states cannot remove much route cost. Prefer
-                // the earlier prefix before action value or coverage so this
-                // exploitation lane searches for actual incumbent savings.
-                .then_with(|| left.replayed_prefix_ticks.cmp(&right.replayed_prefix_ticks))
+                // Equal exact totals lie on an authenticated terminal basin.
+                // Establish alternative actions at its nearest fresh states,
+                // then move the frontier backward as coverage accumulates.
+                // Jumping immediately to the earliest prefix discards the
+                // only useful consequence of retained checkpoints.
+                .then_with(|| left.expansion_count.cmp(&right.expansion_count))
+                .then_with(|| {
+                    left.exact_terminal_ticks_to_go
+                        .cmp(&right.exact_terminal_ticks_to_go)
+                })
                 .then_with(|| right_action_value.cmp(&left_action_value))
                 .then_with(|| {
                     if left_action_value && right_action_value {
@@ -141,7 +145,7 @@ pub(super) fn compare_frontier_acquisition(
                         std::cmp::Ordering::Equal
                     }
                 })
-                .then_with(|| left.expansion_count.cmp(&right.expansion_count));
+                .then_with(|| right.replayed_prefix_ticks.cmp(&left.replayed_prefix_ticks));
         }
         (Some(_), None) => return std::cmp::Ordering::Less,
         (None, Some(_)) => return std::cmp::Ordering::Greater,

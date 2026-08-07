@@ -576,12 +576,17 @@ fn compare_scheduled_node(
             .exact_terminal_ticks_to_go
             .is_none()
             .cmp(&right.exact_terminal_ticks_to_go.is_none())
-            // A fresh state one tick before the known terminal has almost no
-            // route-improvement headroom. Prefer earlier supported branch
-            // points before coverage so optimization can replace a costly
-            // suffix rather than exhaustively perturbing its final frames.
-            .then_with(|| left.root_ticks.cmp(&right.root_ticks))
-            .then_with(coverage),
+            // Build a reverse curriculum from authenticated success. Trying
+            // to replace the whole route immediately turns a retained
+            // checkpoint back into a cold-root episode. Expand the nearest
+            // untried supported boundary first, then move backward as those
+            // boundaries acquire alternatives.
+            .then_with(coverage)
+            .then_with(|| {
+                left.exact_terminal_ticks_to_go
+                    .cmp(&right.exact_terminal_ticks_to_go)
+            })
+            .then_with(|| right.root_ticks.cmp(&left.root_ticks)),
     };
     ordering
         .then_with(|| left.tie_rank.cmp(&right.tie_rank))
@@ -1084,7 +1089,7 @@ mod tests {
     }
 
     #[test]
-    fn node_optimization_prefers_earlier_headroom_over_fresh_terminal_tail() {
+    fn node_optimization_starts_at_the_fresh_terminal_tail() {
         let mut earlier = node_entry(2, 3, Some(80));
         earlier.root_ticks = 8;
         earlier.registered_expansions = 3;
@@ -1093,7 +1098,20 @@ mod tests {
         terminal_tail.root_ticks = 87;
 
         assert_eq!(
-            compare_scheduled_node(SearchRegime::Optimization, &earlier, &terminal_tail),
+            compare_scheduled_node(SearchRegime::Optimization, &terminal_tail, &earlier),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn node_optimization_moves_backward_after_the_tail_has_more_trials() {
+        let mut predecessor = node_entry(2, 0, Some(8));
+        predecessor.root_ticks = 80;
+        let mut terminal_tail = node_entry(3, 1, Some(1));
+        terminal_tail.root_ticks = 87;
+
+        assert_eq!(
+            compare_scheduled_node(SearchRegime::Optimization, &predecessor, &terminal_tail),
             Ordering::Less
         );
     }
