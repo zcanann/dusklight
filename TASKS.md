@@ -41,7 +41,15 @@ target is 120.
   injection have been removed. Active checkpoint refinement now keeps ordinary
   learner-selected actions on the restored branch until terminal or its shared
   tick budget, and ordinary catalogs reject privileged continuation entries.
-  All 483 orchestration tests pass.
+- A 64-decision native diagnostic then restored the four-tick prefix and spent
+  its complete 315-tick refinement budget, but stalled at the around-corner
+  local optimum. Its policy had selected one proposal while the graph scheduler
+  registered more than 100 merely applicable alternatives and repeatedly
+  substituted an unsupported `seek-target` estimate despite maximum prediction
+  error. Ordinary graph leasing now admits only the policy-selected batch, and
+  conditional ticks-to-go receive optimization authority only with learned
+  terminal-support evidence. All 484 orchestration tests pass; native
+  revalidation of this correction remains open.
 - Tactic mining, validation, promotion, binary persistence, and ordinary policy
   selection exist on the production path. No native campaign has yet shown a
   learner-discovered promoted tactic improving a route.

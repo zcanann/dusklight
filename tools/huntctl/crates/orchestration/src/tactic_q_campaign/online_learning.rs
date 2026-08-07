@@ -29,11 +29,6 @@ pub struct TacticQOnlineBranchSelection {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TacticQOnlineLeaseMode {
     Exploration,
-    /// Register and graph-lease only the descriptors already committed by the
-    /// policy batch. This is used for an experience-derived continuation whose
-    /// identity is part of the candidate being evaluated; substituting another
-    /// applicable action would evaluate a different candidate.
-    CommittedExploration,
     PolicyEvaluation {
         proposal_policy: TacticProposalPolicy,
     },
@@ -495,26 +490,22 @@ impl TacticQCampaign {
                 });
             }
         };
-        let committed = matches!(
-            request.lease_mode,
-            TacticQOnlineLeaseMode::CommittedExploration
-        )
-        .then(|| {
-            batch
-                .proposals
-                .iter()
-                .map(|proposal| &proposal.descriptor)
-                .collect::<Vec<_>>()
-        });
+        // Action selection belongs to the policy. The graph scheduler may
+        // order and lease the selected alternatives, but it must never replace
+        // them with another merely-applicable action. Doing so bypasses epsilon,
+        // learned ranking, and the declared proposal width.
+        let selected = batch
+            .proposals
+            .iter()
+            .map(|proposal| &proposal.descriptor)
+            .collect::<Vec<_>>();
         let eligible = batch
             .ranking
             .choices
             .iter()
             .filter(|choice| {
                 choice.applicable
-                    && committed
-                        .as_ref()
-                        .is_none_or(|descriptors| descriptors.contains(&&choice.descriptor))
+                    && selected.contains(&&choice.descriptor)
                     && online_tactic_fits_horizon(
                         request.suffix_ticks,
                         choice.duration.maximum_ticks,
@@ -765,7 +756,7 @@ impl TacticQCampaign {
         mode: TacticQOnlineLeaseMode,
     ) -> Result<TacticQOnlineProposalLease, TacticQCampaignError> {
         match mode {
-            TacticQOnlineLeaseMode::Exploration | TacticQOnlineLeaseMode::CommittedExploration => {
+            TacticQOnlineLeaseMode::Exploration => {
                 let leased = self.lease_current_parameterized_batch(
                     batch,
                     eligible,

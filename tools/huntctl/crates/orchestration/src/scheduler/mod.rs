@@ -531,16 +531,18 @@ fn compare_scheduled(
     let ordering = match regime {
         SearchRegime::Discovery => discovery(),
         SearchRegime::Optimization => {
-            let total_ticks = |entry: &ScheduledExpansion| {
+            let supported_total_ticks = |entry: &ScheduledExpansion| {
                 entry
                     .learned
-                    .conditional_ticks_to_go
+                    .terminal_support_per_million
+                    .filter(|support| *support > 0)
+                    .and_then(|_| entry.learned.conditional_ticks_to_go)
                     .map(|ticks| entry.source_root_ticks.saturating_add(ticks))
             };
-            total_ticks(left)
+            supported_total_ticks(left)
                 .is_none()
-                .cmp(&total_ticks(right).is_none())
-                .then_with(|| total_ticks(left).cmp(&total_ticks(right)))
+                .cmp(&supported_total_ticks(right).is_none())
+                .then_with(|| supported_total_ticks(left).cmp(&supported_total_ticks(right)))
                 .then_with(|| {
                     right
                         .learned
@@ -1092,6 +1094,50 @@ mod tests {
 
         assert_eq!(
             compare_scheduled_node(SearchRegime::Optimization, &earlier, &terminal_tail),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn optimization_does_not_treat_unsupported_ticks_as_terminal_evidence() {
+        let unsupported_optimism = entry(
+            1,
+            20,
+            LearnedExpansionPriority {
+                conditional_ticks_to_go: Some(1),
+                prediction_error_millionths: 1_000_000,
+                ..Default::default()
+            },
+        );
+        let policy_choice = entry(
+            2,
+            20,
+            LearnedExpansionPriority {
+                policy_rank: Some(0),
+                uncertainty_millionths: u64::MAX,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            compare_scheduled(
+                SearchRegime::Optimization,
+                &policy_choice,
+                &unsupported_optimism,
+            ),
+            Ordering::Less
+        );
+
+        let supported = entry(
+            3,
+            20,
+            LearnedExpansionPriority {
+                terminal_support_per_million: Some(500_000),
+                conditional_ticks_to_go: Some(30),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            compare_scheduled(SearchRegime::Optimization, &supported, &policy_choice),
             Ordering::Less
         );
     }
