@@ -203,7 +203,6 @@ pub struct NativeTacticExecutionPlanRequest {
     pub promoted_tactic_registry_sha256: Option<Digest>,
     pub lanes_per_generation: usize,
     pub proposal_width_per_decision: usize,
-    pub branch_every_decisions: u64,
     pub refit_every_decisions: u64,
     pub root_refresh_cadence: u32,
     pub epsilon_per_million: u32,
@@ -223,6 +222,9 @@ pub struct NativeTacticExecutionPlan {
     pub execution_strategy: NativeGenericExecutionStrategy,
     pub promoted_tactic_registry_sha256: Option<Digest>,
     pub proposal_width_per_decision: usize,
+    /// Legacy serialized identity retained until the next plan-format cleanup.
+    /// Full checkpoint rollouts no longer branch on decision count; new plans
+    /// seal this to the complete per-lane decision budget.
     pub branch_every_decisions: u64,
     pub refit_every_decisions: u64,
     pub root_refresh_cadence: u32,
@@ -249,10 +251,8 @@ impl NativeTacticExecutionPlan {
             || request.lanes_per_generation > request.seeds.len()
             || request.proposal_width_per_decision == 0
             || request.proposal_width_per_decision > MAX_TACTIC_PROPOSALS_PER_DECISION
-            || request.branch_every_decisions == 0
             || request.refit_every_decisions == 0
             || request.root_refresh_cadence == 0
-            || request.branch_every_decisions > request.budgets.decisions_per_lane
             || request.refit_every_decisions > request.budgets.decisions_per_lane
             || request.budgets.decisions_per_lane == 0
             || !request.budgets.native_ticks.is_valid()
@@ -357,7 +357,7 @@ impl NativeTacticExecutionPlan {
             execution_strategy: request.execution_strategy,
             promoted_tactic_registry_sha256: request.promoted_tactic_registry_sha256,
             proposal_width_per_decision: request.proposal_width_per_decision,
-            branch_every_decisions: request.branch_every_decisions,
+            branch_every_decisions: request.budgets.decisions_per_lane,
             refit_every_decisions: request.refit_every_decisions,
             root_refresh_cadence: request.root_refresh_cadence,
             demonstration_chunk_ticks: request.demonstration_chunk_ticks,
@@ -477,7 +477,6 @@ mod tests {
             promoted_tactic_registry_sha256: None,
             lanes_per_generation: 4,
             proposal_width_per_decision: 4,
-            branch_every_decisions: 8,
             refit_every_decisions: 4,
             root_refresh_cadence: 4,
             epsilon_per_million: 350_000,
@@ -747,9 +746,6 @@ mod tests {
         variants.push(changed);
         let mut changed = plan.clone();
         changed.proposal_width_per_decision += 1;
-        variants.push(changed);
-        let mut changed = plan.clone();
-        changed.branch_every_decisions += 1;
         variants.push(changed);
         let mut changed = plan.clone();
         changed.refit_every_decisions += 1;

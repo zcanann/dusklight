@@ -3,7 +3,7 @@
 This diagnostic isolates action-ranking policy. The learned,
 scheduler-only-coverage, and random-valid cells must use the same optimization
 request, native execution binding, seeds, workers, proposal width, decision and
-tick horizons, wall and memory limits, branch/refit cadence, action schema,
+tick horizons, wall and memory limits, refit cadence, action schema,
 feature schema, checkpoint policy, and graph-node acquisition schedule.
 
 Run the three cells with identical arguments except `--proposal-policy` and
@@ -18,7 +18,6 @@ huntctl learn tactic-route \
   --workers 8 \
   --decisions-per-seed 256 \
   --proposals-per-decision 4 \
-  --branch-every 8 \
   --refit-every 4 \
   --memory-bytes 8589934592 \
   --wall-micros 900000000
@@ -31,7 +30,6 @@ huntctl learn tactic-route \
   --workers 8 \
   --decisions-per-seed 256 \
   --proposals-per-decision 4 \
-  --branch-every 8 \
   --refit-every 4 \
   --memory-bytes 8589934592 \
   --wall-micros 900000000
@@ -44,7 +42,6 @@ huntctl learn tactic-route \
   --workers 8 \
   --decisions-per-seed 256 \
   --proposals-per-decision 4 \
-  --branch-every 8 \
   --refit-every 4 \
   --memory-bytes 8589934592 \
   --wall-micros 900000000

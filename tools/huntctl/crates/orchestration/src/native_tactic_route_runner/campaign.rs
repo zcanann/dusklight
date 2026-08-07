@@ -430,8 +430,6 @@ pub(super) fn run_seed(
         }
         let terminal_refinement_in_progress = active_terminal_refinement.is_some();
         let continuation = plan_online_continuation(TacticQOnlineContinuationRequest {
-            decision_index: campaign.decision_index,
-            branch_every_decisions: config.execution_plan.branch_every_decisions,
             force_branch: false,
             terminal_restart,
             native_terminal_supported,
@@ -674,8 +672,6 @@ pub(super) fn run_seed(
             let branch_terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
             let branch_acquisition_context =
                 plan_online_continuation(TacticQOnlineContinuationRequest {
-                    decision_index: campaign.decision_index,
-                    branch_every_decisions: config.execution_plan.branch_every_decisions,
                     force_branch: true,
                     terminal_restart: branch_terminal_restart,
                     native_terminal_supported: campaign.native_terminal_supported(),

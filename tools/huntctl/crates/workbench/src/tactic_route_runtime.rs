@@ -28,7 +28,6 @@ const TACTIC_ROUTE_CANCEL_MARKER_SCHEMA: &str =
 const TACTIC_ROUTE_DECISION_DETAIL_SCHEMA: &str =
     "dusklight.route-workbench.tactic-route-decision-detail.v1";
 const TACTIC_ROUTE_DECISIONS_PER_SEED: u64 = 256;
-const TACTIC_ROUTE_BRANCH_EVERY_DECISIONS: u64 = 8;
 const TACTIC_ROUTE_REFIT_EVERY_DECISIONS: u64 = 32;
 const TACTIC_ROUTE_EPSILON_PER_MILLION: u32 = 600_000;
 
@@ -150,7 +149,6 @@ pub(super) fn tactic_route_learning_projection(
         source_boundary_index: optimization.route.source_boundary_index,
         exploration_seeds: seeds.clone(),
         decisions_per_seed: TACTIC_ROUTE_DECISIONS_PER_SEED,
-        branch_every_decisions: TACTIC_ROUTE_BRANCH_EVERY_DECISIONS,
         refit_every_decisions: TACTIC_ROUTE_REFIT_EVERY_DECISIONS,
         epsilon_per_million: TACTIC_ROUTE_EPSILON_PER_MILLION,
         completed_seeds: 0,
@@ -400,7 +398,6 @@ fn launch_tactic_route_learning(
                         .min(4)
                         .max(1),
                     proposal_width_per_decision: 4,
-                    branch_every_decisions: TACTIC_ROUTE_BRANCH_EVERY_DECISIONS,
                     refit_every_decisions: TACTIC_ROUTE_REFIT_EVERY_DECISIONS,
                     root_refresh_cadence: 4,
                     epsilon_per_million: TACTIC_ROUTE_EPSILON_PER_MILLION,

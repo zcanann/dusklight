@@ -56,20 +56,25 @@ Ordon Springs is the first adequacy test. The real terminal is
   checkpoint and improves the 12-tick incumbent to 10 ticks. It then executes
   the complete 9-tick policy through a translated corridor and terminal whose
   exact state identities are disjoint from training but whose normalized
-  observations are equivalent. This exposed and fixed scheduler admission of
-  exhausted interior nodes; rollout-loop extraction and autonomous repetition
-  across multiple environment variants remain open in P0 below.
+  observations are equivalent. The first 12-decision production rollout now
+  remains coherent through the former eight-decision interruption point and
+  runs to the terminal; ordinary rollouts branch only at a terminal, explicit
+  curriculum/refinement boundary, or shared native-tick horizon. This exposed
+  and fixed scheduler admission of exhausted interior nodes; rollout-loop
+  extraction and autonomous repetition across multiple environment variants
+  remain open in P0 below.
 - Native execution and the deterministic adequacy gate now share one online
   frontier selector, production parameterized proposal path, graph/policy lease
   authority, and batch-commit operation. The commit admits every executed
   alternative, keeps the pre-execution policy winner authoritative, backs up
   exact terminal cost, advances or freezes the policy as requested, projects
   authenticated terminal candidates, and reports the best graph terminal.
-  The shared continuation planner now also owns periodic versus terminal
-  branching, terminal-refinement continuity, acquisition partitions, learned
-  versus broad frontier use, root refresh, and forced horizon branches. The
-  shared horizon planner also filters executable proposal batches and forces a
-  checkpoint restore before a selected action can exceed the rollout budget.
+  The shared continuation planner now also owns terminal, curriculum, and
+  forced-horizon branching, terminal-refinement continuity, acquisition
+  partitions, learned versus broad frontier use, and root refresh. There is no
+  decision-count branch cadence. The shared horizon planner filters executable
+  proposal batches and forces a checkpoint restore before a selected action can
+  exceed the rollout budget.
 - Tactic discovery no longer waits until campaign finalization. Between learned
   generations, the production runner mines the strongest repeated connected
   sequence from completed journals, validates it against its full primitive
@@ -121,7 +126,7 @@ No task is blocked on design.
   Open rollouts remain censored rather than becoming fabricated failures, but
   their states, actions, availability, dynamics, and novelty remain usable
   exploration evidence.
-- [ ] Make checkpoint rollouts the unit of optimization. Restore any useful
+- [x] Make checkpoint rollouts the unit of optimization. Restore any useful
   incumbent or off-incumbent boundary, try alternative actions, and continue
   each candidate until terminal or a shared native-tick budget. Retain every
   intermediate boundary as future branch material. Immediately replace the

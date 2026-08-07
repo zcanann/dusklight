@@ -213,7 +213,6 @@ pub struct GraphTacticRouteLearning {
     pub source_boundary_index: u64,
     pub exploration_seeds: Vec<u64>,
     pub decisions_per_seed: u64,
-    pub branch_every_decisions: u64,
     pub refit_every_decisions: u64,
     pub epsilon_per_million: u32,
     pub completed_seeds: u64,

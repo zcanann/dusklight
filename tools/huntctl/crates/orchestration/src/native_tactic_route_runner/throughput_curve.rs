@@ -1428,11 +1428,6 @@ fn validate_curve_config(
         || config.execution_plan.budgets.decisions_per_lane
             < config
                 .execution_plan
-                .branch_every_decisions
-                .saturating_mul(2)
-        || config.execution_plan.budgets.decisions_per_lane
-            < config
-                .execution_plan
                 .refit_every_decisions
                 .saturating_mul(2)
         || config

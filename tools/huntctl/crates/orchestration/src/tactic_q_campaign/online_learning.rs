@@ -45,8 +45,6 @@ pub struct TacticQOnlineProposalLease {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TacticQOnlineContinuationRequest {
-    pub decision_index: u64,
-    pub branch_every_decisions: u64,
     pub force_branch: bool,
     pub terminal_restart: bool,
     pub native_terminal_supported: bool,
@@ -101,21 +99,13 @@ pub struct TacticQOnlineAdmission {
 pub fn plan_online_continuation(
     request: TacticQOnlineContinuationRequest,
 ) -> Result<Option<TacticQOnlineContinuationPlan>, TacticQCampaignError> {
-    if request.branch_every_decisions == 0 {
-        return Err(TacticQCampaignError::InvalidState(
-            "online continuation branch cadence is zero",
-        ));
-    }
     let terminal_support = request.native_terminal_supported && request.next_acquisition_rank == 0;
-    let periodic_branch = request.demonstration_coverage_pending
-        || request.terminal_restart
-        || terminal_support
-        || (request.decision_index > 0
-            && request.decision_index % request.branch_every_decisions == 0);
+    let scheduled_branch =
+        request.demonstration_coverage_pending || request.terminal_restart || terminal_support;
     let should_restore = request.force_branch
         || request.terminal_restart
         || request.terminal_refinement_completed
-        || (!request.terminal_refinement_in_progress && periodic_branch);
+        || (!request.terminal_refinement_in_progress && scheduled_branch);
     if !should_restore {
         return Ok(None);
     }
@@ -409,8 +399,6 @@ mod continuation_tests {
 
     fn request() -> TacticQOnlineContinuationRequest {
         TacticQOnlineContinuationRequest {
-            decision_index: 1,
-            branch_every_decisions: 8,
             force_branch: false,
             terminal_restart: false,
             native_terminal_supported: false,
@@ -425,14 +413,12 @@ mod continuation_tests {
     }
 
     #[test]
-    fn continuation_keeps_a_rollout_until_a_real_branch_boundary() {
+    fn unforced_nonterminal_rollout_continues_until_terminal_or_horizon() {
         assert_eq!(plan_online_continuation(request()).unwrap(), None);
-        let mut due = request();
-        due.decision_index = 8;
-        assert!(plan_online_continuation(due).unwrap().is_some());
-        let mut refinement = due;
+        let mut refinement = request();
+        refinement.force_branch = true;
         refinement.terminal_refinement_in_progress = true;
-        assert_eq!(plan_online_continuation(refinement).unwrap(), None);
+        assert!(plan_online_continuation(refinement).unwrap().is_some());
     }
 
     #[test]

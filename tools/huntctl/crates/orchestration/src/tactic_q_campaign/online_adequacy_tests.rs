@@ -492,6 +492,28 @@ fn run_to_terminal(
     let mut actions = Vec::new();
     while campaign.current.snapshot.terminal.reached != Some(true) {
         actions.push(run_one_step(campaign, catalog, episode_shard_sha256));
+        if campaign.current.snapshot.terminal.reached != Some(true) {
+            assert_eq!(
+                plan_online_continuation(TacticQOnlineContinuationRequest {
+                    force_branch: false,
+                    terminal_restart: false,
+                    native_terminal_supported: campaign.native_terminal_supported(),
+                    // Broad exploration must finish its selected continuation;
+                    // terminal-focused acquisition is tested by the explicit
+                    // retained-frontier restore below.
+                    next_acquisition_rank: 1,
+                    demonstration_coverage_pending: false,
+                    terminal_refinement_in_progress: false,
+                    terminal_refinement_completed: false,
+                    root_refresh_due: false,
+                    goal_relabeling_enabled: false,
+                    terminal_frontier_action_value_enabled: false,
+                })
+                .unwrap(),
+                None,
+                "a nonterminal production rollout must continue until terminal or horizon"
+            );
+        }
         assert!(
             actions.len() <= 32,
             "production rollout failed to terminate"
@@ -506,8 +528,6 @@ fn restore_next_scheduled_frontier(
     episode_group: u64,
 ) -> AdequacyState {
     let continuation = plan_online_continuation(TacticQOnlineContinuationRequest {
-        decision_index: campaign.decision_index,
-        branch_every_decisions: 8,
         force_branch: false,
         terminal_restart: true,
         native_terminal_supported: campaign.native_terminal_supported(),

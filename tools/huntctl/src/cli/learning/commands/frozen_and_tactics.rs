@@ -712,8 +712,6 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 "1".into(),
                 "--proposals-per-decision".into(),
                 "1".into(),
-                "--branch-every".into(),
-                "1".into(),
                 "--refit-every".into(),
                 "1".into(),
                 "--memory-bytes".into(),

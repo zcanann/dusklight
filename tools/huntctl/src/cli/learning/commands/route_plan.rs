@@ -9,7 +9,7 @@ use dusklight_orchestration::{
 };
 use std::error::Error;
 
-const SEALED_PLAN_SHAPING_OPTIONS: [&str; 15] = [
+const SEALED_PLAN_SHAPING_OPTIONS: [&str; 14] = [
     "--seed",
     "--proposal-policy",
     "--value-treatment",
@@ -17,7 +17,6 @@ const SEALED_PLAN_SHAPING_OPTIONS: [&str; 15] = [
     "--decisions-per-seed",
     "--proposals-per-decision",
     "--lanes-per-generation",
-    "--branch-every",
     "--refit-every",
     "--epsilon-per-million",
     "--demonstration-chunk-ticks",
@@ -76,7 +75,6 @@ pub(super) fn native_tactic_execution_plan(
             default_lanes_per_generation,
         )?,
         proposal_width_per_decision,
-        branch_every_decisions: u64_option(learn_args, "--branch-every", 8)?,
         refit_every_decisions,
         root_refresh_cadence: 4,
         epsilon_per_million: option(learn_args, "--epsilon-per-million")

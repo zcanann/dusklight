@@ -1280,7 +1280,6 @@ mod tests {
             promoted_tactic_registry_sha256: None,
             lanes_per_generation: 1,
             proposal_width_per_decision: 4,
-            branch_every_decisions: 8,
             refit_every_decisions: 4,
             root_refresh_cadence: 4,
             epsilon_per_million: 350_000,
