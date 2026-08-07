@@ -102,8 +102,16 @@ target is 120.
   cutoff arrived while work-based scheduling was still paying discovery back
   against the preceding 632-tick support continuation; no decision-count phase
   switched the policy. The sealed campaign summary and completion validate.
-  The state-aware simultaneous/variable-duration action surface is now the
-  first coherence gap.
+  The same bounded native run exercised the state-aware action surface rather
+  than merely enumerating it: selected actions included ordinary movement,
+  four-tick rolls, a generic prompted action, camera-lock-forward, and
+  camera-lock-roll-forward with multiple durations. The proposal family covers
+  direction-plus-L+A on one frame, direction then L+A, and the fully staggered
+  direction/L/A sequence; camera-lock-forward covers same-frame and staggered
+  direction/L before holding raw forward. Focused tests prove that all sixteen
+  headings receive 4/8/16/40-tick movement choices and that native `do_status`
+  drives the matching prompt/roll observation features and legal action mask.
+  Tactic mining and promotion is now the first coherence gap.
 - Tactic mining, validation, promotion, binary persistence, and ordinary policy
   selection exist on the production path. No native campaign has yet shown a
   learner-discovered promoted tactic improving a route.
@@ -123,7 +131,7 @@ No task is blocked on design.
 - [x] Keep exploitation and discovery live without decision-count scripts or
   forced route phases. Learned terminal value should revisit promising prefixes;
   uncertainty and state/action coverage should allocate unsupported trials.
-- [ ] Expose simultaneous and variable-duration primitives—including movement,
+- [x] Expose simultaneous and variable-duration primitives—including movement,
   camera lock, roll, and their legal compositions—through the same state-aware
   action interface. Availability must come from native state, not a route script.
 - [ ] Mine repeated useful subsequences, validate them against their primitive
