@@ -2178,5 +2178,42 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         optimization_acquisition.exact_total_terminal_ticks,
         Some(best_graph_terminal_path.root_to_terminal_ticks)
     );
+    let best_lineage_target = crate::state_graph::ExactStateId {
+        route_checkpoint_sha256: optimization_frontier.logical_frontier.identity_sha256,
+        state_sha256: optimization_frontier.logical_frontier.state_sha256,
+    };
+    assert_eq!(
+        uninterrupted
+            .acquisition_eligible_restoration_targets(true, &[best_lineage_target])
+            .unwrap(),
+        vec![best_lineage_target]
+    );
+    let cached_support = uninterrupted
+        .exact_terminal_frontier_branch(best_lineage_target)
+        .unwrap();
+    assert_eq!(
+        cached_support
+            .acquisition
+            .as_ref()
+            .unwrap()
+            .exact_total_terminal_ticks,
+        Some(best_graph_terminal_path.root_to_terminal_ticks)
+    );
+    let detached_target = crate::state_graph::ExactStateId {
+        route_checkpoint_sha256: Digest([0xa5; 32]),
+        state_sha256: Digest([0x5a; 32]),
+    };
+    assert!(
+        uninterrupted
+            .acquisition_eligible_restoration_targets(true, &[detached_target])
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        uninterrupted
+            .acquisition_eligible_restoration_targets(false, &[detached_target])
+            .unwrap(),
+        vec![detached_target]
+    );
     fs::remove_dir_all(incremental_directory).unwrap();
 }

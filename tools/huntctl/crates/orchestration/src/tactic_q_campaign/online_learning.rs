@@ -416,13 +416,6 @@ pub fn plan_online_continuation(
     }))
 }
 
-fn acquisition_eligible_restoration_targets(
-    terminal_support: bool,
-    preferred: &[ExactStateId],
-) -> &[ExactStateId] {
-    if terminal_support { &[] } else { preferred }
-}
-
 pub fn online_tactic_fits_horizon(
     suffix_ticks: u64,
     selected_maximum_ticks: u32,
@@ -653,14 +646,13 @@ impl TacticQCampaign {
             TacticQOnlineFrontierStrategy::Graph
         };
         // A process-local checkpoint is an execution optimization, not a new
-        // acquisition policy. In particular, an arbitrary cached frontier may
-        // not replace rank-zero terminal support. The globally selected
-        // terminal frontier can still use its matching native cache handle
-        // when the environment executes the returned branch.
-        let preferred_restoration_targets = acquisition_eligible_restoration_targets(
+        // acquisition policy. Rank-zero support may reuse a cached source only
+        // when that exact source belongs to the best authenticated terminal
+        // total; broad acquisition keeps its ordinary locality hints.
+        let preferred_restoration_targets = self.acquisition_eligible_restoration_targets(
             continuation.terminal_support,
             preferred_restoration_targets,
-        );
+        )?;
         let selection = self.select_online_branch(
             TacticQOnlineBranchRequest {
                 seed: request.seed,
@@ -671,7 +663,7 @@ impl TacticQCampaign {
                 strategy,
             },
             reference,
-            preferred_restoration_targets,
+            &preferred_restoration_targets,
             encode,
             applicable_actions,
         )?;
@@ -680,6 +672,23 @@ impl TacticQCampaign {
             branch: selection.branch,
             selected_root: selection.selected_root,
         }))
+    }
+
+    pub(super) fn acquisition_eligible_restoration_targets(
+        &self,
+        terminal_support: bool,
+        preferred: &[ExactStateId],
+    ) -> Result<Vec<ExactStateId>, TacticQCampaignError> {
+        if !terminal_support {
+            return Ok(preferred.to_vec());
+        }
+        let mut eligible = Vec::new();
+        for target in preferred.iter().copied() {
+            if self.exact_frontier_matches_best_terminal_total(target)? {
+                eligible.push(target);
+            }
+        }
+        Ok(eligible)
     }
 
     /// Select the next executable checkpoint through the same acquisition
@@ -701,11 +710,14 @@ impl TacticQCampaign {
         A: Fn(&FactSnapshot) -> Result<Vec<OptionActionDescriptor>, AE>,
     {
         if !request.prefer_root {
+            let terminal_support =
+                request.acquisition_rank == 0 && self.native_terminal_supported();
             for target in preferred_restoration_targets {
                 if let Some(branch) = self.exact_schedulable_frontier_branch(
                     *target,
                     request.round,
                     request.maximum_route_frames,
+                    terminal_support,
                     applicable_actions,
                 )? {
                     return Ok(TacticQOnlineBranchSelection {
@@ -1063,21 +1075,5 @@ mod continuation_tests {
         broad.terminal_refinement_in_progress = false;
         broad.active_acquisition_rank = 0;
         assert_eq!(plan_online_continuation(broad).unwrap(), None);
-    }
-
-    #[test]
-    fn terminal_support_cannot_be_replaced_by_a_locality_hint() {
-        let target = ExactStateId {
-            route_checkpoint_sha256: Digest([1; 32]),
-            state_sha256: Digest([2; 32]),
-        };
-        assert_eq!(
-            acquisition_eligible_restoration_targets(true, &[target]),
-            &[]
-        );
-        assert_eq!(
-            acquisition_eligible_restoration_targets(false, &[target]),
-            &[target]
-        );
     }
 }

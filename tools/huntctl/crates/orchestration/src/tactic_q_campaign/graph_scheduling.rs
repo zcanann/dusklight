@@ -495,6 +495,7 @@ impl TacticQCampaign {
         target: crate::state_graph::ExactStateId,
         generation: u64,
         maximum_route_frames: usize,
+        terminal_support: bool,
         applicable_actions: &A,
     ) -> Result<Option<TacticCampaignBranch>, TacticQCampaignError>
     where
@@ -531,7 +532,34 @@ impl TacticQCampaign {
         if !schedulable {
             return Ok(None);
         }
-        self.exact_frontier_branch(target).map(Some)
+        let branch = if terminal_support {
+            self.exact_terminal_frontier_branch(target)?
+        } else {
+            self.exact_frontier_branch(target)?
+        };
+        Ok(Some(branch))
+    }
+
+    /// A locality hint may accelerate rank-zero optimization only when its
+    /// exact route lineage has the current best authenticated total cost. This
+    /// permits one bounded cache reuse without allowing restore locality to
+    /// turn into a competing acquisition policy.
+    pub(crate) fn exact_frontier_matches_best_terminal_total(
+        &self,
+        target: crate::state_graph::ExactStateId,
+    ) -> Result<bool, TacticQCampaignError> {
+        let validated = self.validated_state_graph()?;
+        let graph = validated.graph();
+        let Some(best) = graph.best_terminal_path() else {
+            return Ok(false);
+        };
+        let Some(node) = graph.node(target) else {
+            return Ok(false);
+        };
+        let exact_returns = validated.exact_terminal_returns()?;
+        Ok(exact_returns.get(&target).is_some_and(|ticks_to_go| {
+            node.root_ticks.saturating_add(*ticks_to_go) == best.root_to_terminal_ticks
+        }))
     }
 
     /// Materialize one exact executable graph node without ranking it against
@@ -578,6 +606,61 @@ impl TacticQCampaign {
             route_tape: route.clone(),
             descriptor: None,
         })
+    }
+
+    pub(crate) fn exact_terminal_frontier_branch(
+        &self,
+        target: crate::state_graph::ExactStateId,
+    ) -> Result<TacticCampaignBranch, TacticQCampaignError> {
+        let graph = self.state_graph()?;
+        let node = graph
+            .node(target)
+            .ok_or(TacticQCampaignError::InvalidState(
+                "terminal-support locality target is absent",
+            ))?;
+        let exact_returns = graph.validated()?.exact_terminal_returns()?;
+        let ticks_to_go =
+            exact_returns
+                .get(&target)
+                .copied()
+                .ok_or(TacticQCampaignError::InvalidState(
+                    "terminal-support locality target lacks an exact return",
+                ))?;
+        let completed_expansions = node
+            .outgoing_expansions
+            .iter()
+            .filter(|identity| {
+                graph.expansion(**identity).is_some_and(|expansion| {
+                    matches!(
+                        expansion.status,
+                        crate::state_graph::ActionExpansionStatus::Completed { .. }
+                    )
+                })
+            })
+            .count() as u64;
+        let mut branch = self.exact_frontier_branch(target)?;
+        let replayed_prefix_ticks = branch.logical_frontier.replayed_prefix_ticks;
+        branch.acquisition = Some(TacticFrontierAcquisition {
+            expansion_count: completed_expansions,
+            terminal: false,
+            terminal_value_supported: true,
+            achieved_goal_value_supported: false,
+            goal_reachability_supported: false,
+            goal_reachability_evidence_available: false,
+            reward: 0.0,
+            best_mean_q: None,
+            best_goal_progress_per_tick: None,
+            predicted_terminal_ticks_to_go: None,
+            predicted_total_terminal_ticks: None,
+            exact_terminal_ticks_to_go: Some(ticks_to_go),
+            exact_total_terminal_ticks: Some(replayed_prefix_ticks.saturating_add(ticks_to_go)),
+            maximum_ensemble_variance: None,
+            generalized_nearest_distance: None,
+            discovery_spatial_novelty: None,
+            novelty_rank: 0,
+            replayed_prefix_ticks,
+        });
+        Ok(branch)
     }
 
     /// Authorize the exact policy-ranked batch for causal evaluation without

@@ -57,8 +57,10 @@ target is 120.
   fresh suffixes from slower 286--320 tick successes displaced already-expanded
   boundaries on the best 275-tick graph lineage. Graph scheduling now compares
   authenticated total route cost before coverage, matching the learned-frontier
-  scheduler. All 489 orchestration and 453 learning tests pass. A native
-  restored-branch improvement remains the required revalidation.
+  scheduler. A cached rank-zero source may receive one immediate reuse only
+  when it belongs to that best authenticated total, and it retains the exact
+  incumbent ticks-to-go bound. All 488 orchestration and 453 learning tests
+  pass. A native restored-branch improvement remains the required revalidation.
 - Tactic mining, validation, promotion, binary persistence, and ordinary policy
   selection exist on the production path. No native campaign has yet shown a
   learner-discovered promoted tactic improving a route.
