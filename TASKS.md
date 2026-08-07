@@ -168,15 +168,13 @@ No task is blocked on design.
   their states, actions, availability, dynamics, and novelty remain usable
   exploration evidence.
 - [ ] Make native checkpoint rollouts the unit of optimization. The logical
-  graph already selects incumbent and off-incumbent boundaries, but the native
-  adapter currently remembers only one restorable frontier and root-replays
-  every older branch. Keep a bounded, eviction-aware registry of native restore
-  handles attached to their exact graph states, schedule useful cached branches,
-  restore them without replay, and retain their resulting boundaries for later
-  branching. Prove a native search restores at least two nonconsecutive
-  intermediate boundaries and improves an incumbent from one of them. Continue
-  each candidate until terminal or a shared native-tick budget, and immediately
-  replace the incumbent when a faster authenticated terminal route appears.
+  graph and native adapter now retain bounded, eviction-aware restore handles
+  attached to exact graph states while keeping the selected live endpoint
+  separate. Prove the production scheduler actually restores at least two
+  nonconsecutive intermediate boundaries without root replay and improves an
+  incumbent from one of them. Continue each candidate until terminal or a
+  shared native-tick budget, and immediately replace the incumbent when a faster
+  authenticated terminal route appears.
 - [x] Keep both exploitation and discovery alive. Learned terminal cost ranks
   supported choices; uncertainty, state/action coverage, and seeded exploration
   allocate trials to unsupported choices. Neither a growing fresh-state queue
