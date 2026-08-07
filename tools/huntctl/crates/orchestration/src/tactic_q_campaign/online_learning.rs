@@ -66,6 +66,22 @@ pub struct TacticQOnlineContinuationPlan {
     pub use_learned_frontier: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TacticQOnlineContinuationSelectionRequest {
+    pub continuation: TacticQOnlineContinuationRequest,
+    pub seed: u64,
+    pub round: u64,
+    pub maximum_route_frames: usize,
+    pub goal_distance_feature: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TacticQOnlineContinuationSelection {
+    pub continuation: TacticQOnlineContinuationPlan,
+    pub branch: TacticCampaignBranch,
+    pub selected_root: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum TacticQOnlineHorizonPlan {
     Execute(TacticQProposalBatch),
@@ -183,6 +199,54 @@ pub fn plan_online_horizon(
 }
 
 impl TacticQCampaign {
+    /// Decide whether the current rollout must branch and, when it must,
+    /// select the exact executable frontier through the matching acquisition
+    /// partition. Environments restore the returned branch; they do not
+    /// reinterpret terminal, curriculum, exploitation, or discovery policy.
+    pub fn select_online_continuation<E, AE, F, A>(
+        &self,
+        request: TacticQOnlineContinuationSelectionRequest,
+        reference: &[TacticEndpointDescriptor],
+        encode: &F,
+        applicable_actions: &A,
+    ) -> Result<Option<TacticQOnlineContinuationSelection>, TacticQCampaignError>
+    where
+        E: fmt::Display,
+        AE: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+        A: Fn(&FactSnapshot) -> Result<Vec<OptionActionDescriptor>, AE>,
+    {
+        let Some(continuation) = plan_online_continuation(request.continuation)? else {
+            return Ok(None);
+        };
+        let strategy = if continuation.use_learned_frontier {
+            TacticQOnlineFrontierStrategy::LearnedRanked {
+                demonstration_curriculum: continuation.demonstration,
+                goal_distance_feature: request.goal_distance_feature,
+            }
+        } else {
+            TacticQOnlineFrontierStrategy::Graph
+        };
+        let selection = self.select_online_branch(
+            TacticQOnlineBranchRequest {
+                seed: request.seed,
+                round: request.round,
+                acquisition_rank: continuation.acquisition_rank,
+                maximum_route_frames: request.maximum_route_frames,
+                prefer_root: continuation.prefer_root,
+                strategy,
+            },
+            reference,
+            encode,
+            applicable_actions,
+        )?;
+        Ok(Some(TacticQOnlineContinuationSelection {
+            continuation,
+            branch: selection.branch,
+            selected_root: selection.selected_root,
+        }))
+    }
+
     /// Select the next executable checkpoint through the same acquisition
     /// policy regardless of which environment will restore and execute it.
     /// The action-surface callback prevents a fixed or prompted action library

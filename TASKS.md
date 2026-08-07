@@ -71,10 +71,12 @@ Ordon Springs is the first adequacy test. The real terminal is
   authenticated terminal candidates, and reports the best graph terminal.
   The shared continuation planner now also owns terminal, curriculum, and
   forced-horizon branching, terminal-refinement continuity, acquisition
-  partitions, learned versus broad frontier use, and root refresh. There is no
-  decision-count branch cadence. The shared horizon planner filters executable
-  proposal batches and forces a checkpoint restore before a selected action can
-  exceed the rollout budget.
+  partitions, learned versus broad frontier use, root refresh, and exact
+  frontier selection as one environment-independent operation. Native execution
+  and the deterministic adequacy environment restore the returned branch rather
+  than recomposing that policy. There is no decision-count branch cadence. The
+  shared horizon planner filters executable proposal batches and forces a
+  checkpoint restore before a selected action can exceed the rollout budget.
 - Terminal completion no longer rewrites every scheduled acquisition to rank
   zero. A terminal forces a restore while preserving the lane's sealed
   acquisition partition: rank zero exploits authenticated terminal paths and

@@ -429,7 +429,7 @@ pub(super) fn run_seed(
             active_terminal_refinement = None;
         }
         let terminal_refinement_in_progress = active_terminal_refinement.is_some();
-        let continuation = plan_online_continuation(TacticQOnlineContinuationRequest {
+        let continuation_request = TacticQOnlineContinuationRequest {
             force_branch: false,
             terminal_restart,
             native_terminal_supported,
@@ -444,37 +444,23 @@ pub(super) fn run_seed(
                 .execution_plan
                 .value_treatment
                 .uses_terminal_frontier_action_value(),
-        })
+        };
+        let maximum_frontier_frames = usize::try_from(
+            source_frame.saturating_add(horizon.saturating_sub(maximum_tactic_ticks)),
+        )
         .map_err(route_error)?;
-        if !campaign.replay().is_empty()
-            && let Some(branch_acquisition_context) = continuation
-        {
-            let branch_started = Instant::now();
-            episode = next_episode;
-            active_acquisition_rank = branch_acquisition_context.acquisition_rank;
-            let maximum_frontier_frames = usize::try_from(
-                source_frame.saturating_add(horizon.saturating_sub(maximum_tactic_ticks)),
-            )
-            .map_err(route_error)?;
-            let graph_scheduling_started = Instant::now();
-            let demonstration_branch = branch_acquisition_context.demonstration;
-            let strategy = if branch_acquisition_context.use_learned_frontier {
-                TacticQOnlineFrontierStrategy::LearnedRanked {
-                    demonstration_curriculum: demonstration_branch,
-                    goal_distance_feature: encoder.goal_distance_feature(),
-                }
-            } else {
-                TacticQOnlineFrontierStrategy::Graph
-            };
-            let selected_branch = campaign
-                .select_online_branch(
-                    TacticQOnlineBranchRequest {
+        let graph_scheduling_started = Instant::now();
+        let continuation = if campaign.replay().is_empty() {
+            None
+        } else {
+            campaign
+                .select_online_continuation(
+                    TacticQOnlineContinuationSelectionRequest {
+                        continuation: continuation_request,
                         seed,
-                        round: frontier_sampling_round(episode),
-                        acquisition_rank: branch_acquisition_context.acquisition_rank,
+                        round: frontier_sampling_round(next_episode),
                         maximum_route_frames: maximum_frontier_frames,
-                        prefer_root: branch_acquisition_context.prefer_root,
-                        strategy,
+                        goal_distance_feature: encoder.goal_distance_feature(),
                     },
                     &[],
                     &encode,
@@ -493,7 +479,14 @@ pub(super) fn run_seed(
                     },
                 )
                 .map_err(route_error)?
-                .branch;
+        };
+        if let Some(continuation) = continuation {
+            let branch_started = Instant::now();
+            episode = next_episode;
+            let branch_acquisition_context = continuation.continuation;
+            active_acquisition_rank = branch_acquisition_context.acquisition_rank;
+            let demonstration_branch = branch_acquisition_context.demonstration;
+            let selected_branch = continuation.branch;
             record_orchestration_detail(
                 &mut timing,
                 OrchestrationPhase::GraphSchedulingAndLeasing,
@@ -670,53 +663,39 @@ pub(super) fn run_seed(
                 .checked_add(1)
                 .ok_or_else(|| route_message("episode counter overflowed"))?;
             let branch_terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
-            let branch_acquisition_context =
-                plan_online_continuation(TacticQOnlineContinuationRequest {
-                    force_branch: true,
-                    terminal_restart: branch_terminal_restart,
-                    native_terminal_supported: campaign.native_terminal_supported(),
-                    next_acquisition_rank: lane.acquisition.rank(episode),
-                    demonstration_coverage_pending,
-                    terminal_refinement_in_progress: false,
-                    terminal_refinement_completed: false,
-                    root_refresh_due: lane
-                        .root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
-                    goal_relabeling_enabled: config
-                        .execution_plan
-                        .value_treatment
-                        .uses_goal_relabeling(),
-                    terminal_frontier_action_value_enabled: config
-                        .execution_plan
-                        .value_treatment
-                        .uses_terminal_frontier_action_value(),
-                })
-                .map_err(route_error)?
-                .ok_or_else(|| route_message("forced horizon branch was not scheduled"))?;
-            active_acquisition_rank = branch_acquisition_context.acquisition_rank;
+            let continuation_request = TacticQOnlineContinuationRequest {
+                force_branch: true,
+                terminal_restart: branch_terminal_restart,
+                native_terminal_supported: campaign.native_terminal_supported(),
+                next_acquisition_rank: lane.acquisition.rank(episode),
+                demonstration_coverage_pending,
+                terminal_refinement_in_progress: false,
+                terminal_refinement_completed: false,
+                root_refresh_due: lane
+                    .root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
+                goal_relabeling_enabled: config
+                    .execution_plan
+                    .value_treatment
+                    .uses_goal_relabeling(),
+                terminal_frontier_action_value_enabled: config
+                    .execution_plan
+                    .value_treatment
+                    .uses_terminal_frontier_action_value(),
+            };
             let maximum_frontier_frames = usize::try_from(
                 source_frame
                     .saturating_add(horizon.saturating_sub(u64::from(selected_maximum_ticks))),
             )
             .map_err(route_error)?;
             let graph_scheduling_started = Instant::now();
-            let demonstration_branch = branch_acquisition_context.demonstration;
-            let strategy = if branch_acquisition_context.use_learned_frontier {
-                TacticQOnlineFrontierStrategy::LearnedRanked {
-                    demonstration_curriculum: demonstration_branch,
-                    goal_distance_feature: encoder.goal_distance_feature(),
-                }
-            } else {
-                TacticQOnlineFrontierStrategy::Graph
-            };
-            let selected_branch = campaign
-                .select_online_branch(
-                    TacticQOnlineBranchRequest {
+            let continuation = campaign
+                .select_online_continuation(
+                    TacticQOnlineContinuationSelectionRequest {
+                        continuation: continuation_request,
                         seed,
                         round: frontier_sampling_round(episode),
-                        acquisition_rank: branch_acquisition_context.acquisition_rank,
                         maximum_route_frames: maximum_frontier_frames,
-                        prefer_root: branch_acquisition_context.prefer_root,
-                        strategy,
+                        goal_distance_feature: encoder.goal_distance_feature(),
                     },
                     &[],
                     &encode,
@@ -735,7 +714,11 @@ pub(super) fn run_seed(
                     },
                 )
                 .map_err(route_error)?
-                .branch;
+                .ok_or_else(|| route_message("forced horizon branch was not scheduled"))?;
+            let branch_acquisition_context = continuation.continuation;
+            active_acquisition_rank = branch_acquisition_context.acquisition_rank;
+            let demonstration_branch = branch_acquisition_context.demonstration;
+            let selected_branch = continuation.branch;
             record_orchestration_detail(
                 &mut timing,
                 OrchestrationPhase::GraphSchedulingAndLeasing,
