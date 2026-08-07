@@ -123,8 +123,21 @@ target is 120.
   sequence. Exact repetition across independent entry states remains sufficient
   to propose a candidate. One authenticated successful lineage may propose at
   most eight multi-action candidates, but each still needs two independent
-  held-out native comparisons before promotion. No native campaign has yet
-  shown a learner-discovered promoted tactic improving a route.
+  held-out native comparisons before promotion. A bounded three-generation
+  native campaign mined 32 candidates from 191 authentic proposal outcomes.
+  Final validation found 31 candidates with compatible held-out frontiers,
+  performed four matched native comparisons, and promoted two; an explicit
+  held-out reuse probe executed one four-component macro as one exact 44-tick
+  action. This proves graph-lineage mining, comparative validation, promotion,
+  persistence, and executable reuse. It does not yet prove ordinary policy
+  adoption: each of the two inter-generation refreshes had only one compatible
+  held-out state, so no candidate cleared the two-state promotion gate early
+  enough to enter a later generation. The campaign therefore reported no
+  active promoted option IDs and zero ordinary promoted-tactic selections. Its
+  best route remained 274 ticks. Recovery also exposed and fixed two reporting
+  defects: inherited shared-replay terminal support was rejected as if it were
+  unexplained local discovery, and summary validation conflated one
+  terminal-producing seed with all three seeds carrying terminal support.
 
 No task is blocked on design.
 
@@ -144,9 +157,12 @@ No task is blocked on design.
 - [x] Expose simultaneous and variable-duration primitives—including movement,
   camera lock, roll, and their legal compositions—through the same state-aware
   action interface. Availability must come from native state, not a route script.
-- [ ] Mine repeated useful subsequences, validate them against their primitive
-  realization from matched retained states, and promote only improvements that
-  generalize across compatible states. Primitives remain available.
+- [ ] Complete the learned-option loop: mine useful connected subsequences,
+  validate them against their primitive realization from matched retained
+  states, promote only improvements that generalize across compatible states,
+  and give the ordinary policy evidence with which to rank and select the
+  promoted option in a later decision. Demonstrate a real selection that saves
+  policy decisions or native route ticks. Primitives remain available.
 
 Exit: the production learner, without a privileged route continuation, learns
 the shortest solutions in deterministic checkpoint worlds and improves a native

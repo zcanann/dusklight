@@ -1,8 +1,8 @@
-use super::*;
 use super::macro_discovery::{
     compare_tactic_macro_candidate_priority, macro_entry_observation,
     tactic_macro_component_for_transition,
 };
+use super::*;
 
 const MAX_TERMINAL_LINEAGE_OCCURRENCES: usize = MAX_DISCOVERY_OBSERVATIONS;
 const MAX_SINGLE_SOURCE_TERMINAL_LINEAGE_CANDIDATES: usize = 8;
@@ -54,10 +54,9 @@ pub(super) fn mine_terminal_lineage_tactic_macro_compositions(
                 .transitions
                 .get(index)
                 .ok_or_else(|| route_message("macro lineage selected transition is absent"))?;
-            let source_frame = usize::try_from(
-                first_transition.execution.realized_tape_range.start_frame,
-            )
-            .map_err(route_error)?;
+            let source_frame =
+                usize::try_from(first_transition.execution.realized_tape_range.start_frame)
+                    .map_err(route_error)?;
             if source_frame > selected_route.frames.len() {
                 return Err(route_message(
                     "macro lineage source frame exceeds its authenticated route",
@@ -123,11 +122,15 @@ fn collect_terminal_lineage_edge(
     retained_component: Option<&TacticMacroComponent>,
     source_route: &InputTape,
 ) -> Result<(), NativeTacticRouteRunError> {
-    if !transition.value_sample.action.option_id.starts_with("family/") {
+    if !transition
+        .value_sample
+        .action
+        .option_id
+        .starts_with("family/")
+    {
         return Ok(());
     }
-    if source_route.frames.len() as u64
-        != transition.execution.realized_tape_range.start_frame
+    if source_route.frames.len() as u64 != transition.execution.realized_tape_range.start_frame
         || route_checkpoint(root_checkpoint_sha256, source_route).map_err(route_error)?
             != transition.source_checkpoint_sha256
     {
@@ -260,10 +263,7 @@ fn extend_terminal_lineage_path<'a>(
         let source = MacroSourceProvenance {
             seed: first.seed,
             frontier_state_sha256: first.before_state_sha256,
-            transition_sha256s: path
-                .iter()
-                .map(|edge| edge.transition_sha256)
-                .collect(),
+            transition_sha256s: path.iter().map(|edge| edge.transition_sha256).collect(),
             entry: first.entry.clone(),
         };
         let key = connected_macro_occurrence_key(&tape, &components)?;
@@ -294,13 +294,7 @@ fn extend_terminal_lineage_path<'a>(
             continue;
         }
         path.push(next);
-        extend_terminal_lineage_path(
-            path,
-            by_start,
-            terminal_route,
-            occurrences,
-            admitted,
-        )?;
+        extend_terminal_lineage_path(path, by_start, terminal_route, occurrences, admitted)?;
         path.pop();
         if *admitted >= MAX_TERMINAL_LINEAGE_OCCURRENCES {
             break;
@@ -333,6 +327,7 @@ fn connected_macro_occurrence_key(
     Ok(key)
 }
 
+#[cfg(test)]
 pub(super) fn connected_macro_candidates(
     occurrences: ConnectedMacroOccurrences,
 ) -> Result<Vec<DiscoveredMacroCandidate>, NativeTacticRouteRunError> {
@@ -414,7 +409,13 @@ mod tests {
         let (start, end, before, after, option_id) = if first {
             (0, 4, state, state.saturating_add(1), "family/first")
         } else {
-            (4, 8, state.saturating_add(1), state.saturating_add(2), "family/second")
+            (
+                4,
+                8,
+                state.saturating_add(1),
+                state.saturating_add(2),
+                "family/second",
+            )
         };
         let source_route = InputTape {
             frames: complete.frames[..start].to_vec(),

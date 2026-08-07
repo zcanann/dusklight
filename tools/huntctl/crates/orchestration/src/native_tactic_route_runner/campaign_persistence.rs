@@ -315,67 +315,125 @@ fn validate_completed_seed_result(
         .find(|decision| decision.best_authenticated_tick_after_decision.is_some());
     let has_authenticated_tick_timeline = first_authenticated_tick.is_some();
     let authenticated_terminal_origin_matches = authenticated_terminal_origin_matches(
-        imported_demonstration,
+        imported_demonstration || result.imported_training_replay_rows != 0,
         first_authenticated_tick.map(|decision| decision.decision_index),
         result.first_terminal_decision_index,
     );
-    if result.execution_plan_sha256 != execution_plan_sha256
-        || result.seed != seed
-        || result.decisions > decisions_per_seed
-        || result.useful_decisions > result.decisions
-        || result.terminal_discovered != result.best_authenticated_tick.is_some()
-        || result.terminal_discovered != result.best_terminal_state_sha256.is_some()
-        || result.terminal_discovered != result.best_terminal_route_checkpoint_sha256.is_some()
-        || result.terminal_discovered != result.best_terminal_tape.is_some()
-        || result.terminal_discovered != result.best_terminal_result.is_some()
-        || (result.success && !result.terminal_discovered)
-        || result.success != result.successful_tape.is_some()
-        || result.success != result.final_result.is_some()
-        || result.final_checkpoint.is_empty()
-        || result.state_graph_sha256 == Digest::ZERO
-        || (!result.terminal_discovered && result.timing.retained_candidate_artifact_micros != 0)
-        || result.trace.len() as u64 != result.decisions
-        || (has_graph_expansion_timeline
-            && (result
+    macro_rules! require_seed_result {
+        ($condition:expr, $reason:literal) => {
+            if !($condition) {
+                return Err(route_message(concat!(
+                    "completed tactic seed result is invalid: ",
+                    $reason
+                )));
+            }
+        };
+    }
+
+    require_seed_result!(
+        result.execution_plan_sha256 == execution_plan_sha256,
+        "execution-plan identity mismatch"
+    );
+    require_seed_result!(result.seed == seed, "seed identity mismatch");
+    require_seed_result!(
+        result.decisions <= decisions_per_seed,
+        "decision budget exceeded"
+    );
+    require_seed_result!(
+        result.useful_decisions <= result.decisions,
+        "useful decision count exceeded total decisions"
+    );
+    require_seed_result!(
+        result.terminal_discovered == result.best_authenticated_tick.is_some()
+            && result.terminal_discovered == result.best_terminal_state_sha256.is_some()
+            && result.terminal_discovered == result.best_terminal_route_checkpoint_sha256.is_some()
+            && result.terminal_discovered == result.best_terminal_tape.is_some()
+            && result.terminal_discovered == result.best_terminal_result.is_some(),
+        "terminal artifact presence is inconsistent"
+    );
+    require_seed_result!(
+        !result.success || result.terminal_discovered,
+        "success lacks a terminal route"
+    );
+    require_seed_result!(
+        result.success == result.successful_tape.is_some()
+            && result.success == result.final_result.is_some(),
+        "successful output artifact presence is inconsistent"
+    );
+    require_seed_result!(
+        !result.final_checkpoint.is_empty(),
+        "final checkpoint is absent"
+    );
+    require_seed_result!(
+        result.state_graph_sha256 != Digest::ZERO,
+        "state graph identity is absent"
+    );
+    require_seed_result!(
+        result.terminal_discovered || result.timing.retained_candidate_artifact_micros == 0,
+        "nonterminal seed reports retained terminal artifact time"
+    );
+    require_seed_result!(
+        result.trace.len() as u64 == result.decisions,
+        "durable trace length differs from decision count"
+    );
+    require_seed_result!(
+        !has_graph_expansion_timeline
+            || (result
                 .trace
                 .iter()
-                .any(|decision| decision.completed_executable_graph_expansions == 0)
-                || result.trace.windows(2).any(|pair| {
+                .all(|decision| decision.completed_executable_graph_expansions != 0)
+                && !result.trace.windows(2).any(|pair| {
                     pair[0].completed_executable_graph_expansions
                         > pair[1].completed_executable_graph_expansions
                 })
-                || result
+                && result
                     .trace
                     .last()
                     .map(|decision| decision.completed_executable_graph_expansions)
-                    != Some(result.unique_useful_graph_expansions)))
-        || (has_authenticated_tick_timeline
-            && (!authenticated_terminal_origin_matches
-                || result.trace.windows(2).any(|pair| {
-                    match (
-                        pair[0].best_authenticated_tick_after_decision,
-                        pair[1].best_authenticated_tick_after_decision,
-                    ) {
-                        (Some(_), None) => true,
-                        (Some(previous), Some(next)) => next > previous,
-                        _ => false,
-                    }
-                })
-                || result
-                    .trace
-                    .last()
-                    .and_then(|decision| decision.best_authenticated_tick_after_decision)
-                    != result.best_authenticated_tick))
-        || (has_durable_wall_timing
-            && (result.first_terminal_decision_index
-                != first_terminal.map(|decision| decision.decision_index)
-                || result.time_to_first_terminal_micros
-                    != first_terminal.map(|decision| decision.cumulative_wall_micros)
-                || result
+                    == Some(result.unique_useful_graph_expansions)),
+        "graph expansion timeline is invalid"
+    );
+    require_seed_result!(
+        !has_authenticated_tick_timeline || authenticated_terminal_origin_matches,
+        "authenticated terminal origin is inconsistent"
+    );
+    require_seed_result!(
+        !has_authenticated_tick_timeline
+            || !result.trace.windows(2).any(|pair| {
+                match (
+                    pair[0].best_authenticated_tick_after_decision,
+                    pair[1].best_authenticated_tick_after_decision,
+                ) {
+                    (Some(_), None) => true,
+                    (Some(previous), Some(next)) => next > previous,
+                    _ => false,
+                }
+            }),
+        "authenticated terminal quality regresses"
+    );
+    require_seed_result!(
+        !has_authenticated_tick_timeline
+            || result
+                .trace
+                .last()
+                .and_then(|decision| decision.best_authenticated_tick_after_decision)
+                == result.best_authenticated_tick,
+        "authenticated terminal timeline disagrees with final best tick"
+    );
+    require_seed_result!(
+        !has_durable_wall_timing
+            || (result.first_terminal_decision_index
+                == first_terminal.map(|decision| decision.decision_index)
+                && result.time_to_first_terminal_micros
+                    == first_terminal.map(|decision| decision.cumulative_wall_micros)
+                && !result
                     .trace
                     .windows(2)
-                    .any(|pair| pair[0].cumulative_wall_micros > pair[1].cumulative_wall_micros)))
-        || result.trace.iter().enumerate().any(|(index, decision)| {
+                    .any(|pair| pair[0].cumulative_wall_micros > pair[1].cumulative_wall_micros)),
+        "wall-time timeline is invalid"
+    );
+    require_seed_result!(
+        !result.trace.iter().enumerate().any(|(index, decision)| {
             decision.execution_plan_sha256 != execution_plan_sha256
                 || decision.decision_index != index as u64
                 || decision.learner_snapshot_sha256 == Digest::ZERO
@@ -402,18 +460,18 @@ fn validate_completed_seed_result(
                     .proposal_batch
                     .iter()
                     .any(|proposal| proposal.execution_plan_sha256 != execution_plan_sha256)
-        })
-        || result.native_ticks
-            != result
+        }),
+        "a decision is detached from its lane or execution authority"
+    );
+    require_seed_result!(
+        result.native_ticks
+            == result
                 .trace
                 .iter()
                 .map(decision_evaluated_ticks)
-                .sum::<u64>()
-    {
-        return Err(route_message(
-            "completed tactic seed result is invalid or belongs to another run",
-        ));
-    }
+                .sum::<u64>(),
+        "native tick total differs from durable decisions"
+    );
     Ok(())
 }
 
@@ -591,13 +649,13 @@ fn validate_completed_terminal_artifacts(
 }
 
 fn authenticated_terminal_origin_matches(
-    imported_demonstration: bool,
+    inherited_terminal_support: bool,
     first_authenticated_decision: Option<u64>,
     first_terminal_proposal_decision: Option<u64>,
 ) -> bool {
     match first_authenticated_decision {
         None => true,
-        Some(0) if imported_demonstration => true,
+        Some(0) if inherited_terminal_support => true,
         Some(decision) => Some(decision) == first_terminal_proposal_decision,
     }
 }

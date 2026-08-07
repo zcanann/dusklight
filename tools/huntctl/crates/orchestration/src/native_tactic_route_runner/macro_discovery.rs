@@ -332,10 +332,7 @@ pub(super) fn mine_and_store_tactic_macros(
                     )
                 }
                 .map_err(route_error)?;
-                deduplicated.insert(
-                    candidate.candidate_sha256,
-                    merged,
-                );
+                deduplicated.insert(candidate.candidate_sha256, merged);
             }
             None => {
                 deduplicated.insert(candidate.candidate_sha256, candidate);

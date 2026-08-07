@@ -220,11 +220,13 @@ pub use campaign_summary::{
     NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE, NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V1,
     NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V2, NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V3,
     NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4, NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V5,
-    NativeTacticCampaignCausalSummary, NativeTacticCampaignEfficiencySummary,
-    NativeTacticCampaignGoalReachabilitySummary, NativeTacticCampaignIdentities,
-    NativeTacticCampaignOutcomeSummary, NativeTacticCampaignResourceSummary,
-    NativeTacticCampaignSummary, NativeTacticCampaignTimingSummary,
-    NativeTacticCampaignTreatmentSummary, NativeTacticCampaignWorkSummary, NativeTacticCausalLink,
+    NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6, NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7,
+    NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V8, NativeTacticCampaignCausalSummary,
+    NativeTacticCampaignEfficiencySummary, NativeTacticCampaignGoalReachabilitySummary,
+    NativeTacticCampaignIdentities, NativeTacticCampaignOutcomeSummary,
+    NativeTacticCampaignResourceSummary, NativeTacticCampaignSummary,
+    NativeTacticCampaignTimingSummary, NativeTacticCampaignTreatmentSummary,
+    NativeTacticCampaignWorkSummary, NativeTacticCausalLink,
 };
 mod lease_journal;
 use lease_journal::NativeTacticLeaseLedger;
@@ -1352,9 +1354,9 @@ use macro_discovery::{
     should_refresh_active_tactic_macros,
 };
 mod macro_lineage_mining;
-use macro_lineage_mining::mine_terminal_lineage_tactic_macro_compositions;
 #[cfg(test)]
 use macro_lineage_mining::connected_macro_candidates;
+use macro_lineage_mining::mine_terminal_lineage_tactic_macro_compositions;
 mod macro_discovery_report_store;
 use macro_discovery_report_store::{
     NATIVE_TACTIC_MACRO_DISCOVERY_FILE, read_macro_discovery_report, write_macro_discovery_report,

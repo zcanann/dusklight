@@ -24,6 +24,8 @@ pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6: &str =
     "dusklight-native-tactic-campaign-summary/v6";
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7: &str =
     "dusklight-native-tactic-campaign-summary/v7";
+pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V8: &str =
+    "dusklight-native-tactic-campaign-summary/v8";
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_FILE: &str = "campaign-summary.json";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -80,6 +82,14 @@ pub struct NativeTacticCampaignOutcomeSummary {
     /// demonstration or an evaluated proposal. Proposal-only counts remain
     /// separate below so imported support cannot masquerade as discovery.
     pub terminal_seeds: u64,
+    /// Seeds that locally evaluated at least one authenticated terminal
+    /// proposal. This excludes support inherited through shared replay.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub terminal_producing_seeds: u64,
+    /// Seeds with authenticated terminal support but no locally evaluated
+    /// terminal proposal. This makes replay/demo inheritance explicit.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub terminal_support_only_seeds: u64,
     /// Authenticated terminal proposals evaluated across the campaign.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub terminal_proposals: u64,
@@ -340,14 +350,23 @@ impl NativeTacticCampaignSummary {
             .flat_map(|seed| &seed.trace)
             .map(|decision| decision.proposal_batch.len() as u64)
             .sum();
-        let (terminal_proposals, selected_terminal_decisions, selected_terminal_seeds) = if matches!(
+        let (
+            terminal_proposals,
+            terminal_producing_seeds,
+            selected_terminal_decisions,
+            selected_terminal_seeds,
+        ) = if matches!(
             route.schema.as_str(),
             NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44 | NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45
         ) {
             terminal_outcome_counts(route)
         } else {
-            (0, 0, 0)
+            (0, 0, 0, 0)
         };
+        let terminal_support_only_seeds = route
+            .terminal_seeds
+            .checked_sub(terminal_producing_seeds)
+            .ok_or_else(|| route_message("terminal-producing seeds exceed supported seeds"))?;
         let mut stop_reasons = BTreeMap::new();
         for reason in route
             .seeds
@@ -416,6 +435,8 @@ impl NativeTacticCampaignSummary {
             },
             outcome: NativeTacticCampaignOutcomeSummary {
                 terminal_seeds: route.terminal_seeds,
+                terminal_producing_seeds,
+                terminal_support_only_seeds,
                 terminal_proposals,
                 selected_terminal_decisions,
                 selected_terminal_seeds,
@@ -497,6 +518,7 @@ impl NativeTacticCampaignSummary {
                 | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V5
                 | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6
                 | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7
+                | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V8
         ) || self.content_sha256 == Digest::ZERO
             || self.route_report_sha256 == Digest::ZERO
             || self.identities.optimization_request_sha256 == Digest::ZERO
@@ -513,13 +535,20 @@ impl NativeTacticCampaignSummary {
             || self.treatment.decisions_per_seed == 0
             || self.outcome.seed_count != self.treatment.seeds.len() as u64
             || self.outcome.terminal_seeds > self.outcome.seed_count
-            || self.outcome.selected_terminal_seeds > self.outcome.terminal_seeds
+            || self.outcome.selected_terminal_seeds
+                > if self.schema == NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V8 {
+                    self.outcome.terminal_producing_seeds
+                } else {
+                    self.outcome.terminal_seeds
+                }
             || self.outcome.selected_terminal_decisions > self.outcome.terminal_proposals
             || self.outcome.selected_terminal_seeds > self.outcome.selected_terminal_decisions
             || self.outcome.selected_terminal_decisions > self.outcome.total_decisions
             || (!matches!(
                 self.schema.as_str(),
-                NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6 | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7
+                NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6
+                    | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7
+                    | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V8
             ) && (self.outcome.terminal_proposals != 0
                 || self.outcome.selected_terminal_decisions != 0
                 || self.outcome.selected_terminal_seeds != 0))
@@ -527,6 +556,8 @@ impl NativeTacticCampaignSummary {
                 &self.schema,
                 self.treatment.demonstration_transitions,
                 self.outcome.terminal_seeds,
+                self.outcome.terminal_producing_seeds,
+                self.outcome.terminal_support_only_seeds,
                 self.outcome.terminal_proposals,
             )
             || self.outcome.total_decisions < self.outcome.useful_decisions
@@ -627,6 +658,7 @@ impl NativeTacticCampaignSummary {
                 NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V5
                     | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6
                     | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7
+                    | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V8
             ) && self.causal_chain.learning_expected
                 && self.causal_chain.causal_chain_ready_for_matched_evaluation
                 && (self.causal_chain.policy_update_probes == 0
@@ -648,20 +680,22 @@ impl NativeTacticCampaignSummary {
                     .goal_reachability
                     .frontier_policy_authorized_decisions
                     .saturating_add(self.goal_reachability.frontier_policy_blocked_decisions)
-            || (self.schema == NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7
-                && (self.goal_reachability.terminal_frontier_value_decisions
-                    > self.goal_reachability.terminal_frontier_context_decisions
-                    || self
-                        .goal_reachability
-                        .terminal_frontier_uncertainty_decisions
-                        > self.goal_reachability.terminal_frontier_value_decisions
-                    || self
-                        .goal_reachability
-                        .selected_acquisition_rank_counts
-                        .values()
-                        .copied()
-                        .fold(0_u64, u64::saturating_add)
-                        != self.outcome.total_decisions))
+            || (matches!(
+                self.schema.as_str(),
+                NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7 | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V8
+            ) && (self.goal_reachability.terminal_frontier_value_decisions
+                > self.goal_reachability.terminal_frontier_context_decisions
+                || self
+                    .goal_reachability
+                    .terminal_frontier_uncertainty_decisions
+                    > self.goal_reachability.terminal_frontier_value_decisions
+                || self
+                    .goal_reachability
+                    .selected_acquisition_rank_counts
+                    .values()
+                    .copied()
+                    .fold(0_u64, u64::saturating_add)
+                    != self.outcome.total_decisions))
             || (self.goal_reachability.calibration_authority_enforced
                 && (self
                     .goal_reachability
@@ -711,7 +745,7 @@ impl NativeTacticCampaignSummary {
 
 fn summary_schema_for_route(route_schema: &str) -> &'static str {
     match route_schema {
-        NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45 => NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7,
+        NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45 => NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V8,
         NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V44 => NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6,
         _ => NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V4,
     }
@@ -721,23 +755,35 @@ fn valid_terminal_outcome_counts(
     schema: &str,
     demonstration_transitions: u64,
     terminal_seeds: u64,
+    terminal_producing_seeds: u64,
+    terminal_support_only_seeds: u64,
     terminal_proposals: u64,
 ) -> bool {
-    if !matches!(
-        schema,
-        NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6 | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7
-    ) {
-        return terminal_proposals == 0;
+    match schema {
+        NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V8 => {
+            terminal_producing_seeds <= terminal_seeds
+                && terminal_support_only_seeds <= terminal_seeds
+                && terminal_producing_seeds.saturating_add(terminal_support_only_seeds)
+                    == terminal_seeds
+                && terminal_producing_seeds <= terminal_proposals
+                && (terminal_producing_seeds == 0) == (terminal_proposals == 0)
+        }
+        NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6 | NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7 => {
+            terminal_producing_seeds == 0
+                && terminal_support_only_seeds == 0
+                && (demonstration_transitions != 0
+                    || (terminal_seeds <= terminal_proposals
+                        && (terminal_seeds == 0) == (terminal_proposals == 0)))
+        }
+        _ => {
+            terminal_producing_seeds == 0
+                && terminal_support_only_seeds == 0
+                && terminal_proposals == 0
+        }
     }
-    if terminal_proposals != 0 && terminal_seeds == 0 {
-        return false;
-    }
-    demonstration_transitions != 0
-        || (terminal_seeds <= terminal_proposals
-            && (terminal_seeds == 0) == (terminal_proposals == 0))
 }
 
-fn terminal_outcome_counts(route: &NativeTacticRouteReport) -> (u64, u64, u64) {
+fn terminal_outcome_counts(route: &NativeTacticRouteReport) -> (u64, u64, u64, u64) {
     let terminal_proposals = route
         .seeds
         .iter()
@@ -751,6 +797,16 @@ fn terminal_outcome_counts(route: &NativeTacticRouteReport) -> (u64, u64, u64) {
         .flat_map(|seed| &seed.trace)
         .filter(|decision| decision.terminal)
         .count() as u64;
+    let terminal_producing_seeds = route
+        .seeds
+        .iter()
+        .filter(|seed| {
+            seed.trace
+                .iter()
+                .flat_map(|decision| &decision.proposal_batch)
+                .any(|proposal| proposal.terminal)
+        })
+        .count() as u64;
     let selected_terminal_seeds = route
         .seeds
         .iter()
@@ -758,6 +814,7 @@ fn terminal_outcome_counts(route: &NativeTacticRouteReport) -> (u64, u64, u64) {
         .count() as u64;
     (
         terminal_proposals,
+        terminal_producing_seeds,
         selected_terminal_decisions,
         selected_terminal_seeds,
     )
@@ -1515,7 +1572,7 @@ mod tests {
         );
         assert_eq!(
             summary_schema_for_route(NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V45),
-            NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V7
+            NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V8
         );
 
         route
@@ -1540,7 +1597,7 @@ mod tests {
             .find(|proposal| !proposal.retained)
             .unwrap()
             .terminal = true;
-        assert_eq!(terminal_outcome_counts(&route), (1, 0, 0));
+        assert_eq!(terminal_outcome_counts(&route), (1, 1, 0, 0));
 
         route.seeds[0].trace[0].terminal = true;
         route.seeds[0].trace[0]
@@ -1549,7 +1606,7 @@ mod tests {
             .find(|proposal| proposal.retained)
             .unwrap()
             .terminal = true;
-        assert_eq!(terminal_outcome_counts(&route), (2, 1, 1));
+        assert_eq!(terminal_outcome_counts(&route), (2, 1, 1, 1));
     }
 
     #[test]
@@ -1676,11 +1733,29 @@ mod tests {
     }
 
     #[test]
-    fn imported_terminal_support_does_not_claim_a_native_proposal() {
+    fn terminal_producing_seeds_are_distinct_from_inherited_support() {
+        assert!(valid_terminal_outcome_counts(
+            NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V8,
+            0,
+            3,
+            1,
+            2,
+            1,
+        ));
+        assert!(!valid_terminal_outcome_counts(
+            NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V8,
+            0,
+            3,
+            0,
+            3,
+            1,
+        ));
         assert!(valid_terminal_outcome_counts(
             NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6,
             58,
             1,
+            0,
+            0,
             0,
         ));
         assert!(!valid_terminal_outcome_counts(
@@ -1688,11 +1763,15 @@ mod tests {
             0,
             1,
             0,
+            0,
+            0,
         ));
         assert!(valid_terminal_outcome_counts(
             NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V6,
             0,
             1,
+            0,
+            0,
             2,
         ));
     }
