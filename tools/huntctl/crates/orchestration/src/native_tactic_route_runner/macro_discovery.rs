@@ -135,9 +135,10 @@ pub(super) fn refresh_active_tactic_macros(
     source_lanes: &[TacticMacroSourceLane],
     generation_index: usize,
 ) -> Result<Option<ActiveTacticMacroRefresh>, NativeTacticRouteRunError> {
-    // Active promotion is deliberately narrow: validate the strongest new
-    // candidate between generations, then let the next generation provide the
-    // real reuse evidence. Finalization still audits the complete bounded set.
+    // Candidate priority is only a pre-validation heuristic. Validate the
+    // complete bounded discovery set so held-out compatibility and native
+    // comparison evidence, rather than one guessed ordering, determine what
+    // enters the next generation's ordinary action surface.
     let active_root = config
         .output_root
         .join("tactic-macro-active")
@@ -146,7 +147,7 @@ pub(super) fn refresh_active_tactic_macros(
         config.output_root,
         source_lanes,
         encoder,
-        1,
+        MAX_DISCOVERED_MACROS,
         active_root.join(format!("mined.{TACTIC_MACRO_REGISTRY_EXTENSION}")),
     )?;
     if mined.registry.records().len() == 0 {
