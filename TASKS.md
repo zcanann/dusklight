@@ -28,12 +28,14 @@ Ordon Springs is the first adequacy test. The real terminal is
 
 ## Authoritative current evidence
 
-- Direct binary save-state restoration works only for the runner's single most
-  recently retained native frontier. The logical graph retains older branch
-  states, but the native adapter forgets their process-local restore handles
-  and silently replays those prefixes from the authenticated root. Prior
-  "direct restore" counts therefore prove a fast continuation chain, not a
-  checkpoint-backed search frontier.
+- The former native adapter remembered only its most recent live endpoint and
+  silently root-replayed older logical branches. It now mirrors each worker's
+  bounded portable-image LRU, returns newly materialized branch-base handles to
+  the scheduler, and advances selected rollouts through a separate cheap live
+  endpoint so progress cannot evict its own branch base. Focused dispatch tests
+  cover multiple exact bindings, eviction, stale-handle fallback, and
+  sibling-first live rearming. An end-to-end native search has not yet proved
+  two nonconsecutive restores, so the checkpoint-rollout task remains open.
 - The learner can discover the real terminal quickly, but its best authenticated
   route is 229 ticks. Two cold replays reproduced that route exactly.
 - The first terminal arrives in roughly 35 seconds; hundreds of later

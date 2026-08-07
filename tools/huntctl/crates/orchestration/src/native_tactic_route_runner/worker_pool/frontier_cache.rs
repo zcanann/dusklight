@@ -165,6 +165,19 @@ mod tests {
     }
 
     #[test]
+    fn live_rollout_progress_does_not_evict_its_portable_branch_base() {
+        let mut retained = RetainedNativeTacticFrontiers::new(2);
+        retained.retain(frontier(0, "branch-base", 1));
+        let mut first_live = frontier(0, "live-one", 2);
+        first_live.source.storage = NativeTacticCheckpointStorage::LiveEndpoint;
+        retained.retain(first_live);
+        let mut second_live = frontier(0, "live-two", 3);
+        second_live.source.storage = NativeTacticCheckpointStorage::LiveEndpoint;
+        retained.retain(second_live);
+        assert_eq!(retained.identities(), vec!["branch-base", "live-two"]);
+    }
+
+    #[test]
     fn matching_requires_the_complete_logical_restore_binding() {
         let mut retained = RetainedNativeTacticFrontiers::new(2);
         let expected = frontier(0, "a", 7);

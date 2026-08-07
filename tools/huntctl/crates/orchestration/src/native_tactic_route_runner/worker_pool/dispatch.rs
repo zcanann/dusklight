@@ -76,10 +76,16 @@ impl NativeTacticProposalPool {
                 })
             {
                 // A live endpoint is single-use. When its owner also executes
-                // siblings, append the selected proposal to the owner's
-                // portable batch instead of evicting the live source and then
-                // replaying the same frontier again. Keeping it last rearms
-                // the owner at the selected endpoint.
+                // siblings, append the selected proposal after them so it
+                // rearms the worker at the selected endpoint. A portable base
+                // can directly back the whole sibling-first sequence; a live
+                // base is first rematerialized as a portable image.
+                if let Some(frontier) = primary_source
+                    && frontier.source.storage == NativeTacticCheckpointStorage::PortableImage
+                {
+                    dispatch.checkpoint_source = Some(frontier.source.clone());
+                    dispatch.materialize_frontier = false;
+                }
                 dispatch.proposal_indices.push(proposal_index);
                 continue;
             }

@@ -735,6 +735,7 @@ pub(super) struct IndexedNativeTacticProposal {
 pub(super) struct NativeTacticProposalWork {
     pub(super) execution_plan_sha256: Digest,
     pub(super) worker_slot: usize,
+    pub(super) materialized_checkpoint_source: Option<NativeTacticCheckpointSource>,
     pub(super) outcome: NativeTacticWorkerOutcome,
     pub(super) native_elapsed: Duration,
     pub(super) ipc_elapsed: Duration,
@@ -775,11 +776,10 @@ fn primary_checkpoint_retention(retain: bool) -> NativeTacticCheckpointRetention
     if !retain {
         NativeTacticCheckpointRetention::None
     } else {
-        // Search must be able to return to more than the immediately previous
-        // decision. A live endpoint is cheap, but every new endpoint overwrites
-        // the old one. Portable images occupy the worker's bounded two-entry
-        // cache and therefore form an actual branchable native frontier.
-        NativeTacticCheckpointRetention::PortableImage
+        // The selected branch base is materialized separately as a portable
+        // image. Advancing its rollout should replace only this cheap live
+        // endpoint, leaving the branch base available for another alternative.
+        NativeTacticCheckpointRetention::LiveEndpoint
     }
 }
 

@@ -135,7 +135,16 @@ impl NativeTacticProposalPool {
             self.execution_strategy,
         )
         .map_err(route_error)?;
-        let dispatches = if native_batch_compatible {
+        // A multi-candidate native batch can retain only a portable candidate
+        // image. The selected rollout endpoint must remain the worker's live
+        // endpoint while a separate portable branch base survives underneath
+        // it, so any dispatch containing the primary follows the sibling-first
+        // plan instead. Sibling-only dispatches may still batch natively.
+        let dispatches = if native_batch_compatible
+            && !matches!(
+                primary_retention,
+                NativeTacticCheckpointRetention::LiveEndpoint
+            ) {
             vec![self.batched_proposal_dispatch(
                 proposals.len(),
                 direct,
@@ -758,6 +767,18 @@ fn execute_compatible_job_batch<W: PersistentTacticBatchWorker>(
     if proposals.len() < 2 {
         return Ok(None);
     }
+    if matches!(
+        job.primary_retention,
+        NativeTacticCheckpointRetention::LiveEndpoint
+    ) && proposals
+        .iter()
+        .any(|proposal| proposal.proposal_index == 0)
+    {
+        // The sequential path executes siblings first and the selected primary
+        // last, preserving its live endpoint without replacing the portable
+        // branch base shared by the alternatives.
+        return Ok(None);
+    }
     for proposal in proposals {
         fs::create_dir_all(proposal_artifact_root(
             &job.paths_root,
@@ -839,6 +860,7 @@ fn execute_compatible_job_batch<W: PersistentTacticBatchWorker>(
             .map(|(index, outcome)| NativeTacticProposalWork {
                 execution_plan_sha256: job.execution_plan_sha256,
                 worker_slot,
+                materialized_checkpoint_source: None,
                 outcome,
                 native_elapsed: if index == 0 {
                     native_elapsed
@@ -919,6 +941,7 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
             return Err(error);
         }
         let _ = job.execution_started.send(());
+        let mut materialized_checkpoint_source = None;
         let checkpoint_source = if job.materialize_frontier {
             materialize_job_frontier(
                 &mut timed_worker,
@@ -927,7 +950,10 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
                 "frontier-source",
                 false,
             )
-            .map(Some)
+            .map(|source| {
+                materialized_checkpoint_source = Some(source.clone());
+                Some(source)
+            })
         } else {
             Ok(job.checkpoint_source.clone())
         };
@@ -976,7 +1002,10 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
                 "frontier-replay-fallback",
                 true,
             ) {
-                Ok(source) => Some(source),
+                Ok(source) => {
+                    materialized_checkpoint_source = Some(source.clone());
+                    Some(source)
+                }
                 Err(error) => {
                     batched = Err(error);
                     None
@@ -1000,7 +1029,10 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
             }
         }
         match batched {
-            Ok(Some(batched_work)) => {
+            Ok(Some(mut batched_work)) => {
+                for item in &mut batched_work {
+                    item.materialized_checkpoint_source = materialized_checkpoint_source.clone();
+                }
                 work = batched_work;
                 batch_executed = true;
             }
@@ -1081,7 +1113,10 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
                     "frontier-replay-fallback",
                     true,
                 ) {
-                    Ok(source) => Some(source),
+                    Ok(source) => {
+                        materialized_checkpoint_source = Some(source.clone());
+                        Some(source)
+                    }
                     Err(error) => {
                         failed = Some(route_error(error));
                         break;
@@ -1141,6 +1176,7 @@ pub(in crate::native_tactic_route_runner) fn run_tactic_proposal_worker(
                     work.push(NativeTacticProposalWork {
                         execution_plan_sha256: job.execution_plan_sha256,
                         worker_slot,
+                        materialized_checkpoint_source: materialized_checkpoint_source.clone(),
                         outcome,
                         native_elapsed,
                         ipc_elapsed,

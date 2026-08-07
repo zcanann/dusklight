@@ -119,10 +119,10 @@ fn missing_owner_checkpoint_is_counted_before_exact_replay_fallback() {
 }
 
 #[test]
-fn every_selected_decision_retains_a_branchable_portable_checkpoint() {
+fn every_selected_decision_advances_through_a_cheap_live_endpoint() {
     assert_eq!(
         primary_checkpoint_retention(true),
-        NativeTacticCheckpointRetention::PortableImage
+        NativeTacticCheckpointRetention::LiveEndpoint
     );
     assert_eq!(
         primary_checkpoint_retention(false),
@@ -272,6 +272,22 @@ fn sole_worker_replays_one_portable_batch_and_rearms_the_primary_last() {
     assert_eq!(dispatches[0].proposal_indices, vec![1, 2, 3, 0]);
     assert!(dispatches[0].materialize_frontier);
     assert_eq!(dispatches[0].checkpoint_source, None);
+}
+
+#[test]
+fn sole_worker_reuses_a_portable_branch_base_and_rearms_the_primary_last() {
+    let pool = proposal_pool(1);
+    let mut frontier = cached_frontier(0);
+    frontier.source.storage = NativeTacticCheckpointStorage::PortableImage;
+    let dispatches = pool.proposal_dispatches(4, Some(&frontier), true, 40);
+
+    assert_eq!(dispatches.len(), 1);
+    assert_eq!(dispatches[0].proposal_indices, vec![1, 2, 3, 0]);
+    assert!(!dispatches[0].materialize_frontier);
+    assert_eq!(
+        dispatches[0].checkpoint_source.as_ref(),
+        Some(&frontier.source)
+    );
 }
 
 #[test]

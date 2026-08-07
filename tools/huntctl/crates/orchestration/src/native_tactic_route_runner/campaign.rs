@@ -927,6 +927,18 @@ pub(super) fn run_seed(
                 cached_frontiers.touch(frontier.worker_slot, &frontier.source.restore_identity);
             }
         }
+        for work in &proposal_work {
+            if let Some(source) = work.materialized_checkpoint_source.as_ref() {
+                cached_frontiers.retain(CachedTacticFrontier {
+                    worker_slot: work.worker_slot,
+                    source: source.clone(),
+                    state_sha256: source_snapshot_sha256,
+                    route_frames: source_route_tape.frames.len(),
+                    route_checkpoint_sha256: restoration.plan.route.route_checkpoint_sha256,
+                    route_tape_sha256: restoration.plan.route.tape_sha256,
+                });
+            }
+        }
         inject_tactic_fault(
             config,
             NativeTacticFaultPoint::AfterNativeCompletion,
