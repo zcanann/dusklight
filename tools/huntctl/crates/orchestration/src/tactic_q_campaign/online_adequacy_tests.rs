@@ -319,7 +319,8 @@ fn campaign_with_cold_east_primary(
         campaign
             .bind_execution_authority(EXECUTION_AUTHORITY)
             .unwrap();
-        if decide_production_batch(&campaign, catalog, 2).proposals[0]
+        let mut online = TacticQOnlineLearningController::default();
+        if decide_production_batch(&mut online, &campaign, catalog, 2).proposals[0]
             .descriptor
             .option_id
             == "east"
@@ -343,6 +344,7 @@ fn reward_spec() -> TacticRewardSpec {
 }
 
 fn decide_production_batch(
+    online: &mut TacticQOnlineLearningController,
     campaign: &TacticQCampaign,
     catalog: &TacticAssetCatalog,
     maximum_proposals: usize,
@@ -363,17 +365,20 @@ fn decide_production_batch(
             .collect(),
     )
     .unwrap();
-    campaign
-        .decide_parameterized_batch_with_policy(
+    online
+        .select_action_batch(
+            campaign,
             &state_catalog,
             &[],
-            ACTION_SCHEMA,
             &encode,
-            maximum_proposals,
-            0,
-            TacticProposalPolicy::Learned,
-            None,
-            false,
+            TacticQOnlineActionSelectionRequest {
+                family_schema_sha256: ACTION_SCHEMA,
+                maximum_proposals,
+                acquisition_partition: 0,
+                policy: TacticProposalPolicy::Learned,
+                goal_distance_feature: None,
+                force_exploration: false,
+            },
         )
         .unwrap()
 }
@@ -428,14 +433,16 @@ fn execute_selected(
 }
 
 fn run_one_step(
+    online: &mut TacticQOnlineLearningController,
     campaign: &mut TacticQCampaign,
     catalog: &TacticAssetCatalog,
     episode_shard_sha256: Digest,
 ) -> String {
     let registry = FactRegistry::canonical();
-    let batch = decide_production_batch(campaign, catalog, 4);
-    let leased = match campaign
-        .prepare_online_decision(
+    let batch = decide_production_batch(online, campaign, catalog, 4);
+    let leased = match online
+        .prepare_decision(
+            campaign,
             batch,
             TacticQOnlineDecisionRequest {
                 suffix_ticks: 0,
@@ -452,6 +459,10 @@ fn run_one_step(
             panic!("one-tick adequacy actions must fit the rollout horizon")
         }
     };
+    assert_eq!(
+        online.pending_decision_index(),
+        Some(campaign.decision_index)
+    );
     let selected = leased.batch.proposals[0].clone();
     let outcome = execute_selected(campaign, &selected, episode_shard_sha256);
     let evaluated = campaign
@@ -459,8 +470,9 @@ fn run_one_step(
         .unwrap();
     let target = state_from_facts(&outcome.next_facts);
     let episode_group = campaign.episode_group;
-    let admission = campaign
-        .admit_online_batch(
+    let admission = online
+        .admit(
+            campaign,
             &leased.batch,
             &[evaluated],
             &[episode_group],
@@ -475,17 +487,24 @@ fn run_one_step(
         )
         .unwrap();
     assert_eq!(admission.newly_admitted_training_rows, 1);
+    assert_eq!(online.pending_decision_index(), None);
     selected.descriptor.option_id
 }
 
 fn run_to_terminal(
+    online: &mut TacticQOnlineLearningController,
     campaign: &mut TacticQCampaign,
     catalog: &TacticAssetCatalog,
     episode_shard_sha256: Digest,
 ) -> Vec<String> {
     let mut actions = Vec::new();
     while campaign.current.snapshot.terminal.reached != Some(true) {
-        actions.push(run_one_step(campaign, catalog, episode_shard_sha256));
+        actions.push(run_one_step(
+            online,
+            campaign,
+            catalog,
+            episode_shard_sha256,
+        ));
         if campaign.current.snapshot.terminal.reached != Some(true) {
             assert_eq!(
                 plan_online_continuation(TacticQOnlineContinuationRequest {
@@ -517,13 +536,15 @@ fn run_to_terminal(
 }
 
 fn restore_next_scheduled_frontier(
+    online: &mut TacticQOnlineLearningController,
     campaign: &mut TacticQCampaign,
     catalog: &TacticAssetCatalog,
     episode_group: u64,
     acquisition_rank: u64,
 ) -> AdequacyState {
-    let selected = campaign
-        .continue_online_rollout(
+    let selected = online
+        .continue_rollout(
+            campaign,
             TacticQOnlineRolloutRequest {
                 force_branch: false,
                 next_acquisition_rank: acquisition_rank,
@@ -579,6 +600,7 @@ struct AdequacyRollout {
 }
 
 fn learn_until_terminal_ticks(
+    online: &mut TacticQOnlineLearningController,
     campaign: &mut TacticQCampaign,
     catalog: &TacticAssetCatalog,
     episode_shard_sha256: Digest,
@@ -588,7 +610,7 @@ fn learn_until_terminal_ticks(
     let mut rollouts = Vec::new();
     loop {
         let start = state_from_facts(&campaign.current.snapshot);
-        let actions = run_to_terminal(campaign, catalog, episode_shard_sha256);
+        let actions = run_to_terminal(online, campaign, catalog, episode_shard_sha256);
         let best_terminal_ticks = campaign
             .best_graph_terminal_path()
             .unwrap()
@@ -603,7 +625,7 @@ fn learn_until_terminal_ticks(
             return rollouts;
         }
         episode += 1;
-        restore_next_scheduled_frontier(campaign, catalog, episode, episode);
+        restore_next_scheduled_frontier(online, campaign, catalog, episode, episode);
         assert!(episode <= 8, "online fixture failed to converge");
     }
 }
@@ -613,8 +635,15 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
     let (base, episode_shard_sha256) = base_facts();
     let catalog = catalog();
     let mut campaign = campaign_with_cold_east_primary(&base, &catalog, AdequacyState::Start);
+    let mut online = TacticQOnlineLearningController::default();
 
-    let rollouts = learn_until_terminal_ticks(&mut campaign, &catalog, episode_shard_sha256, 9);
+    let rollouts = learn_until_terminal_ticks(
+        &mut online,
+        &mut campaign,
+        &catalog,
+        episode_shard_sha256,
+        9,
+    );
     assert_eq!(rollouts.len(), 3);
     assert_eq!(rollouts[0].start, AdequacyState::Start);
     assert_eq!(rollouts[0].actions.len(), 12);
@@ -630,11 +659,11 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
     assert_eq!(rollouts[2].best_terminal_ticks, 9);
 
     assert_eq!(
-        restore_next_scheduled_frontier(&mut campaign, &catalog, 3, 3),
+        restore_next_scheduled_frontier(&mut online, &mut campaign, &catalog, 3, 3),
         AdequacyState::Start,
         "the production scheduler must revisit the learned root boundary"
     );
-    let learned = decide_production_batch(&campaign, &catalog, 2);
+    let learned = decide_production_batch(&mut online, &campaign, &catalog, 2);
     assert_eq!(learned.proposals[0].descriptor.option_id, "north");
     assert_eq!(
         learned.proposals[0].reason,
@@ -644,8 +673,13 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
 
     let mut variant_campaign =
         campaign_with_cold_east_primary(&base, &catalog, AdequacyState::VariantStart);
-    let variant_rollouts =
-        learn_until_terminal_ticks(&mut variant_campaign, &catalog, episode_shard_sha256, 9);
+    let variant_rollouts = learn_until_terminal_ticks(
+        &mut online,
+        &mut variant_campaign,
+        &catalog,
+        episode_shard_sha256,
+        9,
+    );
     assert!((2..=3).contains(&variant_rollouts.len()));
     assert_eq!(variant_rollouts[0].start, AdequacyState::VariantStart);
     assert_eq!(variant_rollouts[0].actions[0], "east");
@@ -658,6 +692,7 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
     let next_variant_episode = variant_rollouts.len() as u64;
     assert_eq!(
         restore_next_scheduled_frontier(
+            &mut online,
             &mut variant_campaign,
             &catalog,
             next_variant_episode,
@@ -666,7 +701,7 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
         AdequacyState::VariantStart,
         "the production scheduler must revisit the translated learned root boundary"
     );
-    let generalized = decide_production_batch(&variant_campaign, &catalog, 2);
+    let generalized = decide_production_batch(&mut online, &variant_campaign, &catalog, 2);
     assert_eq!(generalized.proposals[0].descriptor.option_id, "north");
     assert_eq!(
         generalized.proposals[0].reason,

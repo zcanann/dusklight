@@ -62,9 +62,7 @@ Ordon Springs is the first adequacy test. The real terminal is
   remains coherent through the former eight-decision interruption point and
   runs to the terminal; ordinary rollouts branch only at a terminal, explicit
   curriculum/refinement boundary, or shared native-tick horizon. This exposed
-  and fixed scheduler admission of exhausted interior nodes. Full lifecycle
-  extraction, including environment-independent tactic promotion, remains open
-  in P0 below.
+  and fixed scheduler admission of exhausted interior nodes.
 - Native execution and the deterministic adequacy gate now share one online
   frontier selector, production parameterized proposal path, graph/policy lease
   authority, and batch-commit operation. The commit admits every executed
@@ -79,7 +77,11 @@ Ordon Springs is the first adequacy test. The real terminal is
   terminal restart/support, restore the returned branch, filter the
   state-specific applicable action surface, enforce the rollout horizon, and
   lease executable proposals. They do not recompose those decisions. There is
-  no decision-count branch cadence.
+  no decision-count branch cadence. A stateful controller owns action ranking,
+  continuation, restore, horizon-safe leasing, admission, and tactic status
+  transitions; it records the outstanding decision index and refuses another
+  cycle until that exact lease is admitted. Native process execution,
+  persistence, timing, and reporting remain adapters around that controller.
 - Terminal completion no longer rewrites every scheduled acquisition to rank
   zero. A terminal forces a restore while preserving the lane's sealed
   acquisition partition: rank zero exploits authenticated terminal paths and
@@ -118,8 +120,8 @@ Ordon Springs is the first adequacy test. The real terminal is
   newly promoted option identities, and later decisions that actually selected
   those options; these fields are derived from durable decision journals rather
   than inferred from catalog membership.
-  Environment-independent lifecycle ownership and native evidence that a
-  same-campaign promoted tactic was selected and improved learning remain open.
+  Native evidence that a same-campaign promoted tactic was selected and
+  improved learning remains open.
 - Exact graph backup covers every executable node on every authenticated
   terminal tape, preserving route identity. The production adequacy gate now
   asserts the exact countdown on both complete 9-tick lineages and the 10-tick
@@ -132,12 +134,12 @@ No task is blocked on design.
 
 ## P0 - make the production learner learn
 
-- [ ] Extract one environment-independent learning/search loop from the native
+- [x] Extract one environment-independent learning/search loop from the native
   campaign. It must own frontier selection, action selection, rollout
   continuation, transition admission, terminal-cost backup, incumbent
   replacement, and tactic promotion through narrow interfaces. Native process,
   checkpoint, persistence, and reporting code remain adapters around that loop.
-- [ ] Drive that exact loop with a deterministic checkpoint environment. The
+- [x] Drive that exact loop with a deterministic checkpoint environment. The
   environment must include an around-corner local optimum in which greedy
   one-step goal progress fails and several temporarily worse actions are
   required. Starting with no learned return table, the production loop must:

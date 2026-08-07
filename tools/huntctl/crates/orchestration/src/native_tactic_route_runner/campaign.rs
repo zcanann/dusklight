@@ -123,6 +123,7 @@ pub(super) fn run_seed(
     let mut useful_decisions = traced_useful_decisions;
     let maximum_tactic_ticks = u64::from(maximum_tactic_ticks);
     let encode = |facts: &FactSnapshot| encoder.encode(facts);
+    let mut online = TacticQOnlineLearningController::default();
     let demonstration_curriculum = lane.role == NativeTacticLaneRole::TerminalSupport
         && lane.intervention == NativeTacticInterventionPlan::DemonstrationFrontierOnce
         && inherited_learner_snapshot
@@ -455,8 +456,9 @@ pub(super) fn run_seed(
         let continuation = if campaign.replay().is_empty() {
             None
         } else {
-            campaign
-                .continue_online_rollout(
+            online
+                .continue_rollout(
+                    &mut campaign,
                     TacticQOnlineRolloutRequest {
                         force_branch: false,
                         next_acquisition_rank: next_branch_acquisition_rank,
@@ -572,19 +574,22 @@ pub(super) fn run_seed(
             let proposal_catalog = Arc::new(proposals.catalog);
             let proposal_blueprints = Arc::new(proposals.blueprints);
             let selection_started = Instant::now();
-            let preview = campaign
-                .decide_parameterized_batch_with_policy(
+            let preview = online
+                .select_action_batch(
+                    &campaign,
                     &proposal_catalog,
                     &proposal_blueprints,
-                    action_schema_sha256,
                     &encode,
-                    config.execution_plan.proposal_width_per_decision,
-                    active_acquisition_rank,
-                    config.execution_plan.proposal_policy,
-                    Some(encoder.goal_distance_feature()),
-                    demonstration_intervention_pending
-                        && config.execution_plan.proposal_policy
-                            != TacticProposalPolicy::RandomValid,
+                    TacticQOnlineActionSelectionRequest {
+                        family_schema_sha256: action_schema_sha256,
+                        maximum_proposals: config.execution_plan.proposal_width_per_decision,
+                        acquisition_partition: active_acquisition_rank,
+                        policy: config.execution_plan.proposal_policy,
+                        goal_distance_feature: Some(encoder.goal_distance_feature()),
+                        force_exploration: demonstration_intervention_pending
+                            && config.execution_plan.proposal_policy
+                                != TacticProposalPolicy::RandomValid,
+                    },
                 )
                 .map_err(route_error)?;
             let selection_micros = elapsed_micros(selection_started.elapsed());
@@ -657,8 +662,9 @@ pub(super) fn run_seed(
             )
             .map_err(route_error)?;
             let graph_scheduling_started = Instant::now();
-            let continuation = campaign
-                .continue_online_rollout(
+            let continuation = online
+                .continue_rollout(
+                    &mut campaign,
                     TacticQOnlineRolloutRequest {
                         force_branch: true,
                         next_acquisition_rank: lane.acquisition.rank(episode),
@@ -773,8 +779,9 @@ pub(super) fn run_seed(
         } else {
             TacticQOnlineLeaseMode::Exploration
         };
-        let online_lease = match campaign
-            .prepare_online_decision(
+        let online_lease = match online
+            .prepare_decision(
+                &mut campaign,
                 proposal_batch,
                 TacticQOnlineDecisionRequest {
                     suffix_ticks,
@@ -1045,7 +1052,8 @@ pub(super) fn run_seed(
         } else {
             TacticQOnlinePolicyUpdate::Adaptive { refit_model: false }
         };
-        let online_admission = match campaign.admit_online_batch(
+        let online_admission = match online.admit(
+            &mut campaign,
             &proposal_batch,
             &evaluated,
             &evaluated_episode_groups,

@@ -26,6 +26,7 @@ pub enum TacticQCampaignError {
     StateGraph(StateGraphError),
     Scheduler(crate::scheduler::SchedulerError),
     GraphLearner(crate::learner::GraphLearnerError),
+    TacticLifecycle(String),
 }
 
 impl fmt::Display for TacticQCampaignError {
@@ -64,6 +65,9 @@ impl fmt::Display for TacticQCampaignError {
             Self::Scheduler(error) => write!(formatter, "tactic-Q scheduling failed: {error}"),
             Self::GraphLearner(error) => {
                 write!(formatter, "tactic-Q learner contract failed: {error}")
+            }
+            Self::TacticLifecycle(message) => {
+                write!(formatter, "tactic-Q tactic lifecycle failed: {message}")
             }
         }
     }

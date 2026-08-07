@@ -151,6 +151,194 @@ pub struct TacticQOnlineAdmission {
     pub timing: TacticQOnlineAdmissionTiming,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TacticQOnlineActionSelectionRequest {
+    pub family_schema_sha256: Digest,
+    pub maximum_proposals: usize,
+    pub acquisition_partition: u64,
+    pub policy: TacticProposalPolicy,
+    pub goal_distance_feature: Option<usize>,
+    pub force_exploration: bool,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TacticQOnlineTacticUpdate {
+    pub proposed_count: usize,
+    pub promoted_count: usize,
+    pub demoted_count: usize,
+    pub newly_promoted: Vec<Digest>,
+}
+
+/// Environment-independent owner of one online learning/search cycle. Native
+/// execution, deterministic fixtures, persistence, and reporting remain
+/// adapters around these decisions.
+#[derive(Clone, Debug, Default)]
+pub struct TacticQOnlineLearningController {
+    pending_decision_index: Option<u64>,
+}
+
+impl TacticQOnlineLearningController {
+    pub fn pending_decision_index(&self) -> Option<u64> {
+        self.pending_decision_index
+    }
+
+    fn require_planning(&self) -> Result<(), TacticQCampaignError> {
+        if self.pending_decision_index.is_some() {
+            return Err(TacticQCampaignError::InvalidState(
+                "online learning controller has an unadmitted decision",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn select_action_batch<E, F>(
+        &mut self,
+        campaign: &TacticQCampaign,
+        catalog: &TacticAssetCatalog,
+        blueprints: &[TacticBlueprint],
+        encode: &F,
+        request: TacticQOnlineActionSelectionRequest,
+    ) -> Result<TacticQProposalBatch, TacticQCampaignError>
+    where
+        E: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+    {
+        self.require_planning()?;
+        campaign.decide_parameterized_batch_with_policy(
+            catalog,
+            blueprints,
+            request.family_schema_sha256,
+            encode,
+            request.maximum_proposals,
+            request.acquisition_partition,
+            request.policy,
+            request.goal_distance_feature,
+            request.force_exploration,
+        )
+    }
+
+    pub fn continue_rollout<E, F, A>(
+        &mut self,
+        campaign: &mut TacticQCampaign,
+        request: TacticQOnlineRolloutRequest,
+        registry: &FactRegistry,
+        reference: &[TacticEndpointDescriptor],
+        encode: &F,
+        action_surface: &A,
+    ) -> Result<Option<TacticQOnlineContinuationSelection>, TacticQCampaignError>
+    where
+        E: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+        A: Fn(
+            &TacticQCampaign,
+            &FactSnapshot,
+        ) -> Result<TacticQOnlineActionSurface, TacticQCampaignError>,
+    {
+        self.require_planning()?;
+        campaign.continue_online_rollout(request, registry, reference, encode, action_surface)
+    }
+
+    pub fn prepare_decision(
+        &mut self,
+        campaign: &mut TacticQCampaign,
+        batch: TacticQProposalBatch,
+        request: TacticQOnlineDecisionRequest,
+    ) -> Result<TacticQOnlineDecisionPlan, TacticQCampaignError> {
+        self.require_planning()?;
+        let plan = campaign.prepare_online_decision(batch, request)?;
+        if matches!(plan, TacticQOnlineDecisionPlan::Execute(_)) {
+            self.pending_decision_index = Some(campaign.decision_index);
+        }
+        Ok(plan)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn admit<E, F, A>(
+        &mut self,
+        campaign: &mut TacticQCampaign,
+        batch: &TacticQProposalBatch,
+        evaluated: &[EvaluatedRewardedTacticOutcome],
+        episode_groups: &[u64],
+        leases: &[TacticExpansionLease],
+        next_catalog: &TacticAssetCatalog,
+        next_blueprints: &[TacticBlueprint],
+        registry: &FactRegistry,
+        encode: &F,
+        entry_applicable: A,
+        reward_spec: &TacticRewardSpec,
+        policy_update: TacticQOnlinePolicyUpdate,
+    ) -> Result<TacticQOnlineAdmission, TacticQCampaignError>
+    where
+        E: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+        A: Fn(&TacticAssetDescription) -> bool,
+    {
+        if self.pending_decision_index != Some(campaign.decision_index) {
+            return Err(TacticQCampaignError::InvalidState(
+                "online admission does not match the controller's pending decision",
+            ));
+        }
+        let admission = campaign.admit_online_batch(
+            batch,
+            evaluated,
+            episode_groups,
+            leases,
+            next_catalog,
+            next_blueprints,
+            registry,
+            encode,
+            entry_applicable,
+            reward_spec,
+            policy_update,
+        )?;
+        self.pending_decision_index = None;
+        Ok(admission)
+    }
+
+    /// Apply discovered candidates and matched environment comparisons to the
+    /// reusable tactic registry. Environments measure outcomes; this controller
+    /// owns the status transition and reports exactly what changed.
+    pub fn update_tactics(
+        &mut self,
+        registry: &mut TacticMacroPromotionRegistry,
+        candidates: impl IntoIterator<Item = DiscoveredMacroCandidate>,
+        comparisons: impl IntoIterator<Item = MacroComparisonEvidence>,
+    ) -> Result<TacticQOnlineTacticUpdate, TacticQCampaignError> {
+        self.require_planning()?;
+        let previously_promoted = registry
+            .promoted()
+            .map(|record| record.candidate.candidate_sha256)
+            .collect::<BTreeSet<_>>();
+        for candidate in candidates {
+            registry
+                .propose(candidate)
+                .map_err(|error| TacticQCampaignError::TacticLifecycle(error.into()))?;
+        }
+        for comparison in comparisons {
+            registry
+                .observe(comparison)
+                .map_err(|error| TacticQCampaignError::TacticLifecycle(error.into()))?;
+        }
+        let mut update = TacticQOnlineTacticUpdate::default();
+        for record in registry.records() {
+            match record.status {
+                MacroPromotionStatus::Proposed => update.proposed_count += 1,
+                MacroPromotionStatus::Promoted => {
+                    update.promoted_count += 1;
+                    if !previously_promoted.contains(&record.candidate.candidate_sha256) {
+                        update
+                            .newly_promoted
+                            .push(record.candidate.candidate_sha256);
+                    }
+                }
+                MacroPromotionStatus::Demoted => update.demoted_count += 1,
+            }
+        }
+        update.newly_promoted.sort();
+        Ok(update)
+    }
+}
+
 pub fn plan_online_continuation(
     request: TacticQOnlineContinuationRequest,
 ) -> Result<Option<TacticQOnlineContinuationPlan>, TacticQCampaignError> {

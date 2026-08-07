@@ -1653,6 +1653,43 @@ fn promoted_guarded_tactics_join_without_removing_primitive_actions() {
         ],
     )
     .unwrap();
+    let mut lifecycle_registry = TacticMacroPromotionRegistry::default();
+    let mut lifecycle = TacticQOnlineLearningController::default();
+    let proposed = lifecycle
+        .update_tactics(
+            &mut lifecycle_registry,
+            [candidate.clone()],
+            Vec::<MacroComparisonEvidence>::new(),
+        )
+        .unwrap();
+    assert_eq!(proposed.proposed_count, 1);
+    assert!(proposed.newly_promoted.is_empty());
+    let comparisons = [Digest([8; 32]), Digest([9; 32])]
+        .into_iter()
+        .map(|state| {
+            MacroComparisonEvidence::new(
+                candidate.candidate_sha256,
+                11,
+                state,
+                true,
+                1.0,
+                3,
+                true,
+                1.0,
+                4,
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let promoted = lifecycle
+        .update_tactics(
+            &mut lifecycle_registry,
+            Vec::<DiscoveredMacroCandidate>::new(),
+            comparisons,
+        )
+        .unwrap();
+    assert_eq!(promoted.promoted_count, 1);
+    assert_eq!(promoted.newly_promoted, vec![candidate.candidate_sha256]);
     let mut entries = generic.catalog.entries().to_vec();
     entries.push(candidate.catalog_entry().unwrap());
     let combined = TacticAssetCatalog::new(entries).unwrap();

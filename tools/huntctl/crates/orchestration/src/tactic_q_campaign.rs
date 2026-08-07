@@ -56,6 +56,10 @@ use dusklight_learning::tactic_exploration::{
     retain_goal_reachability_acquisition,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
+use dusklight_learning::tactic_macro_promotion::{
+    DiscoveredMacroCandidate, MacroComparisonEvidence, MacroPromotionStatus,
+    TacticMacroPromotionRegistry,
+};
 use dusklight_learning::tactic_value_treatment::{
     ContinuousTacticDoubleQModel, ContinuousTacticValueModel, TacticValueTreatment,
 };
@@ -992,12 +996,13 @@ mod tests;
 mod online_adequacy_tests;
 mod online_learning;
 pub use online_learning::{
-    TacticQOnlineActionSurface, TacticQOnlineAdmission, TacticQOnlineAdmissionTiming,
-    TacticQOnlineBranchRequest, TacticQOnlineBranchSelection, TacticQOnlineContinuationPlan,
-    TacticQOnlineContinuationRequest, TacticQOnlineContinuationSelection,
-    TacticQOnlineContinuationSelectionRequest, TacticQOnlineDecisionPlan,
-    TacticQOnlineDecisionRequest, TacticQOnlineFrontierStrategy, TacticQOnlineHorizonPlan,
-    TacticQOnlineLeaseMode, TacticQOnlinePolicyUpdate, TacticQOnlineProposalLease,
-    TacticQOnlineRolloutRequest, online_tactic_fits_horizon, plan_online_continuation,
+    TacticQOnlineActionSelectionRequest, TacticQOnlineActionSurface, TacticQOnlineAdmission,
+    TacticQOnlineAdmissionTiming, TacticQOnlineBranchRequest, TacticQOnlineBranchSelection,
+    TacticQOnlineContinuationPlan, TacticQOnlineContinuationRequest,
+    TacticQOnlineContinuationSelection, TacticQOnlineContinuationSelectionRequest,
+    TacticQOnlineDecisionPlan, TacticQOnlineDecisionRequest, TacticQOnlineFrontierStrategy,
+    TacticQOnlineHorizonPlan, TacticQOnlineLearningController, TacticQOnlineLeaseMode,
+    TacticQOnlinePolicyUpdate, TacticQOnlineProposalLease, TacticQOnlineRolloutRequest,
+    TacticQOnlineTacticUpdate, online_tactic_fits_horizon, plan_online_continuation,
     plan_online_horizon,
 };

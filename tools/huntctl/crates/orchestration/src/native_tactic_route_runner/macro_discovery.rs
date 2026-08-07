@@ -848,26 +848,30 @@ pub(super) fn validate_and_store_tactic_macros(
             .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()
     })?;
     let mut accounting = TacticMacroValidationAccounting::default();
+    let comparisons = results
+        .iter()
+        .map(|result| {
+            MacroComparisonEvidence::new(
+                result.candidate_sha256,
+                result.frontier_seed,
+                result.frontier_state_sha256,
+                result.candidate_outcome.terminal,
+                result.candidate_outcome.progress,
+                result.candidate_outcome.ticks,
+                result.primitive_outcome.terminal,
+                result.primitive_outcome.progress,
+                result.primitive_outcome.ticks,
+            )
+            .map_err(route_error)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     for result in &results {
         accounting.merge(&result.accounting);
-        mined
-            .registry
-            .observe(
-                MacroComparisonEvidence::new(
-                    result.candidate_sha256,
-                    result.frontier_seed,
-                    result.frontier_state_sha256,
-                    result.candidate_outcome.terminal,
-                    result.candidate_outcome.progress,
-                    result.candidate_outcome.ticks,
-                    result.primitive_outcome.terminal,
-                    result.primitive_outcome.progress,
-                    result.primitive_outcome.ticks,
-                )
-                .map_err(route_error)?,
-            )
-            .map_err(route_error)?;
     }
+    let mut online = TacticQOnlineLearningController::default();
+    let tactic_update = online
+        .update_tactics(&mut mined.registry, std::iter::empty(), comparisons)
+        .map_err(route_error)?;
     let validation_state_count = results.len() as u64;
     let comparison_count = results.len() as u64;
     let executed_component_baseline_count = results.len() as u64;
@@ -892,21 +896,9 @@ pub(super) fn validate_and_store_tactic_macros(
     } else {
         None
     };
-    let (proposed_count, promoted_count, demoted_count) =
-        mined
-            .registry
-            .records()
-            .fold((0_u64, 0_u64, 0_u64), |mut counts, record| {
-                match record.status {
-                    MacroPromotionStatus::Proposed => counts.0 += 1,
-                    MacroPromotionStatus::Promoted => counts.1 += 1,
-                    MacroPromotionStatus::Demoted => counts.2 += 1,
-                }
-                counts
-            });
-    mined.report.proposed_count = proposed_count;
-    mined.report.promoted_count = promoted_count;
-    mined.report.demoted_count = demoted_count;
+    mined.report.proposed_count = tactic_update.proposed_count as u64;
+    mined.report.promoted_count = tactic_update.promoted_count as u64;
+    mined.report.demoted_count = tactic_update.demoted_count as u64;
     mined.report.held_out_compatible_candidate_count = held_out_compatible_candidate_count;
     mined.report.source_state_exclusion_count = source_state_exclusion_count;
     mined.report.entry_incompatible_frontier_count = entry_incompatible_frontier_count;
