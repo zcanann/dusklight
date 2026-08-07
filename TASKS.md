@@ -67,9 +67,14 @@ target is 120.
   re-registered its own locality entitlement and consequently selected the
   same prefix-274, one-tick-to-go state roughly two dozen times. Consuming
   locality by exact graph target after all replacement images are admitted now
-  prevents that self-rearming loop. All 490 orchestration and 453 learning
-  tests pass. A native restored-branch improvement remains the required
-  revalidation.
+  prevents that self-rearming loop. The next bounded run advanced through the
+  best lineage and improved its authenticated incumbent from 274 to 251 ticks.
+  Nonconsecutive prefixes 274, 254, 212, and 44 restored directly without root
+  replay; after branching at prefix 212, decision 25 continued from the
+  process-local result of an ordinary four-tick action and reached the real
+  terminal with another ordinary learner action. All 490 orchestration and 453
+  learning tests pass. Terminal-value propagation, rather than checkpoint
+  execution, is now the first coherence gap.
 - Tactic mining, validation, promotion, binary persistence, and ordinary policy
   selection exist on the production path. No native campaign has yet shown a
   learner-discovered promoted tactic improving a route.
@@ -78,7 +83,7 @@ No task is blocked on design.
 
 ## P0 — make native checkpoint learning coherent
 
-- [ ] Make retained checkpoints the actual unit of optimization. Demonstrate in
+- [x] Make retained checkpoints the actual unit of optimization. Demonstrate in
   the production loop that at least two nonconsecutive intermediate states are
   restored without root replay and that ordinary subsequent decisions from one
   produce a faster authenticated terminal route.
