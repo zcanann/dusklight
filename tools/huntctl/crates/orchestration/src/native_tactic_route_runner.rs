@@ -33,10 +33,9 @@ use crate::tactic_q_campaign::{
     TacticGraphSchedulingTiming, TacticPolicyEvaluationDecisionTrace, TacticQCampaign,
     TacticQCampaignCheckpoint, TacticQCampaignError, TacticQFinalResult,
     TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot, TacticQLearnerSnapshotKind,
-    TacticQOnlineActionSurface, TacticQOnlineContinuationRequest,
-    TacticQOnlineContinuationSelectionRequest, TacticQOnlineDecisionPlan,
-    TacticQOnlineDecisionRequest, TacticQOnlineHorizonPlan, TacticQOnlineLeaseMode,
-    TacticQOnlinePolicyUpdate, TacticQProposalBatch, TacticQTrainingCorpus,
+    TacticQOnlineActionSurface, TacticQOnlineDecisionPlan, TacticQOnlineDecisionRequest,
+    TacticQOnlineHorizonPlan, TacticQOnlineLeaseMode, TacticQOnlinePolicyUpdate,
+    TacticQOnlineRolloutRequest, TacticQProposalBatch, TacticQTrainingCorpus,
     TacticRestorationContract, TacticSchedulerDecisionTrace, has_no_progress_loop,
     online_tactic_fits_horizon, plan_online_horizon, route_checkpoint, validate_training_corpus,
 };

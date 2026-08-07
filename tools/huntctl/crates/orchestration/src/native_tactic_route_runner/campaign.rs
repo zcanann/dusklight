@@ -436,7 +436,6 @@ pub(super) fn run_seed(
             .checked_add(1)
             .ok_or_else(|| route_message("episode counter overflowed"))?;
         let next_branch_acquisition_rank = lane.acquisition.rank(next_episode);
-        let native_terminal_supported = campaign.native_terminal_supported();
         let demonstration_coverage_pending = demonstration_curriculum
             && covered_demonstration_frontiers.len() < demonstration_frontier_states.len();
         let current_route_ticks = u64::try_from(campaign.route_tape.frames.len())
@@ -448,22 +447,6 @@ pub(super) fn run_seed(
             active_terminal_refinement = None;
         }
         let terminal_refinement_in_progress = active_terminal_refinement.is_some();
-        let continuation_request = TacticQOnlineContinuationRequest {
-            force_branch: false,
-            terminal_restart,
-            native_terminal_supported,
-            next_acquisition_rank: next_branch_acquisition_rank,
-            demonstration_coverage_pending,
-            terminal_refinement_in_progress,
-            terminal_refinement_completed,
-            root_refresh_due: lane
-                .root_refresh_due(next_episode, config.execution_plan.root_refresh_cadence),
-            goal_relabeling_enabled: config.execution_plan.value_treatment.uses_goal_relabeling(),
-            terminal_frontier_action_value_enabled: config
-                .execution_plan
-                .value_treatment
-                .uses_terminal_frontier_action_value(),
-        };
         let maximum_frontier_frames = usize::try_from(
             source_frame.saturating_add(horizon.saturating_sub(maximum_tactic_ticks)),
         )
@@ -473,15 +456,31 @@ pub(super) fn run_seed(
             None
         } else {
             campaign
-                .restore_online_continuation(
-                    TacticQOnlineContinuationSelectionRequest {
-                        continuation: continuation_request,
+                .continue_online_rollout(
+                    TacticQOnlineRolloutRequest {
+                        force_branch: false,
+                        next_acquisition_rank: next_branch_acquisition_rank,
+                        demonstration_coverage_pending,
+                        terminal_refinement_in_progress,
+                        terminal_refinement_completed,
+                        root_refresh_due: lane.root_refresh_due(
+                            next_episode,
+                            config.execution_plan.root_refresh_cadence,
+                        ),
+                        goal_relabeling_enabled: config
+                            .execution_plan
+                            .value_treatment
+                            .uses_goal_relabeling(),
+                        terminal_frontier_action_value_enabled: config
+                            .execution_plan
+                            .value_treatment
+                            .uses_terminal_frontier_action_value(),
                         seed,
                         round: frontier_sampling_round(next_episode),
+                        episode_group: lane.episode_group(next_episode)?,
                         maximum_route_frames: maximum_frontier_frames,
                         goal_distance_feature: encoder.goal_distance_feature(),
                     },
-                    lane.episode_group(next_episode)?,
                     registry,
                     &[],
                     &encode,
@@ -652,26 +651,6 @@ pub(super) fn run_seed(
             episode = episode
                 .checked_add(1)
                 .ok_or_else(|| route_message("episode counter overflowed"))?;
-            let branch_terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
-            let continuation_request = TacticQOnlineContinuationRequest {
-                force_branch: true,
-                terminal_restart: branch_terminal_restart,
-                native_terminal_supported: campaign.native_terminal_supported(),
-                next_acquisition_rank: lane.acquisition.rank(episode),
-                demonstration_coverage_pending,
-                terminal_refinement_in_progress: false,
-                terminal_refinement_completed: false,
-                root_refresh_due: lane
-                    .root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
-                goal_relabeling_enabled: config
-                    .execution_plan
-                    .value_treatment
-                    .uses_goal_relabeling(),
-                terminal_frontier_action_value_enabled: config
-                    .execution_plan
-                    .value_treatment
-                    .uses_terminal_frontier_action_value(),
-            };
             let maximum_frontier_frames = usize::try_from(
                 source_frame
                     .saturating_add(horizon.saturating_sub(u64::from(selected_maximum_ticks))),
@@ -679,15 +658,29 @@ pub(super) fn run_seed(
             .map_err(route_error)?;
             let graph_scheduling_started = Instant::now();
             let continuation = campaign
-                .restore_online_continuation(
-                    TacticQOnlineContinuationSelectionRequest {
-                        continuation: continuation_request,
+                .continue_online_rollout(
+                    TacticQOnlineRolloutRequest {
+                        force_branch: true,
+                        next_acquisition_rank: lane.acquisition.rank(episode),
+                        demonstration_coverage_pending,
+                        terminal_refinement_in_progress: false,
+                        terminal_refinement_completed: false,
+                        root_refresh_due: lane
+                            .root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
+                        goal_relabeling_enabled: config
+                            .execution_plan
+                            .value_treatment
+                            .uses_goal_relabeling(),
+                        terminal_frontier_action_value_enabled: config
+                            .execution_plan
+                            .value_treatment
+                            .uses_terminal_frontier_action_value(),
                         seed,
                         round: frontier_sampling_round(episode),
+                        episode_group: lane.episode_group(episode)?,
                         maximum_route_frames: maximum_frontier_frames,
                         goal_distance_feature: encoder.goal_distance_feature(),
                     },
-                    lane.episode_group(episode)?,
                     registry,
                     &[],
                     &encode,

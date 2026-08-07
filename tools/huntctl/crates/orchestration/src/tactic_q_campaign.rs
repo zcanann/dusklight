@@ -998,5 +998,6 @@ pub use online_learning::{
     TacticQOnlineContinuationSelectionRequest, TacticQOnlineDecisionPlan,
     TacticQOnlineDecisionRequest, TacticQOnlineFrontierStrategy, TacticQOnlineHorizonPlan,
     TacticQOnlineLeaseMode, TacticQOnlinePolicyUpdate, TacticQOnlineProposalLease,
-    online_tactic_fits_horizon, plan_online_continuation, plan_online_horizon,
+    TacticQOnlineRolloutRequest, online_tactic_fits_horizon, plan_online_continuation,
+    plan_online_horizon,
 };

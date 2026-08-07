@@ -53,16 +53,18 @@ Ordon Springs is the first adequacy test. The real terminal is
   9-tick around-corner route without a test-authored root retry, publishes exact
   root returns of 10 versus 9, and subsequently ranks the 9-tick action first.
   Between those routes it autonomously restores an untried retained interior
-  checkpoint and improves the 12-tick incumbent to 10 ticks. It then executes
-  the complete 9-tick policy through a translated corridor and terminal whose
-  exact state identities are disjoint from training but whose normalized
-  observations are equivalent. The first 12-decision production rollout now
+  checkpoint and improves the 12-tick incumbent to 10 ticks. A second cold
+  campaign independently converges in a translated corridor whose exact state
+  identities are disjoint; its different exploration order finds 10 ticks on
+  the first rollout and then 9, so the gate no longer enters the variant through
+  a test-only transition or requires the same incidental route order. The first
+  12-decision production rollout now
   remains coherent through the former eight-decision interruption point and
   runs to the terminal; ordinary rollouts branch only at a terminal, explicit
   curriculum/refinement boundary, or shared native-tick horizon. This exposed
-  and fixed scheduler admission of exhausted interior nodes; rollout-loop
-  extraction and autonomous repetition across multiple environment variants
-  remain open in P0 below.
+  and fixed scheduler admission of exhausted interior nodes. Full lifecycle
+  extraction, including environment-independent tactic promotion, remains open
+  in P0 below.
 - Native execution and the deterministic adequacy gate now share one online
   frontier selector, production parameterized proposal path, graph/policy lease
   authority, and batch-commit operation. The commit admits every executed
@@ -73,10 +75,11 @@ Ordon Springs is the first adequacy test. The real terminal is
   forced-horizon branching, terminal-refinement continuity, acquisition
   partitions, learned versus broad frontier use, root refresh, and exact
   frontier selection as one environment-independent operation. Native execution
-  and the deterministic adequacy environment restore the returned branch rather
-  than recomposing that policy. There is no decision-count branch cadence. The
-  shared horizon planner filters executable proposal batches and forces a
-  checkpoint restore before a selected action can exceed the rollout budget.
+  and the deterministic adequacy environment use the same controller to derive
+  terminal restart/support, restore the returned branch, filter the
+  state-specific applicable action surface, enforce the rollout horizon, and
+  lease executable proposals. They do not recompose those decisions. There is
+  no decision-count branch cadence.
 - Terminal completion no longer rewrites every scheduled acquisition to rank
   zero. A terminal forces a restore while preserving the lane's sealed
   acquisition partition: rank zero exploits authenticated terminal paths and

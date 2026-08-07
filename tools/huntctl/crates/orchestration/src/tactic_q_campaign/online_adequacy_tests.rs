@@ -113,9 +113,6 @@ impl AdequacyState {
     }
 
     fn execute(self, action: &str) -> Option<Self> {
-        if self == Self::Start && action == "variant" {
-            return Some(Self::VariantStart);
-        }
         if !self.applicable(action) {
             return None;
         }
@@ -200,7 +197,7 @@ fn input_frame(action: &str) -> InputFrame {
 
 fn catalog() -> TacticAssetCatalog {
     TacticAssetCatalog::new(
-        ["east", "north", "south", "west", "variant"]
+        ["east", "north", "south", "west"]
             .into_iter()
             .map(|action| {
                 TacticCatalogEntry::new(
@@ -290,15 +287,16 @@ fn encode(facts: &FactSnapshot) -> Result<Vec<f32>, &'static str> {
 fn campaign_with_cold_east_primary(
     base: &FactSnapshot,
     catalog: &TacticAssetCatalog,
+    root_state: AdequacyState,
 ) -> TacticQCampaign {
     for seed in 0..10_000 {
-        let root = facts_at(base, AdequacyState::Start, base.tape_frame);
+        let root = facts_at(base, root_state, base.tape_frame);
         let current = LearnerState::build(
             root,
             &FactRegistry::canonical(),
             catalog,
             &[],
-            |description| AdequacyState::Start.applicable(&description.option.option_id),
+            |description| root_state.applicable(&description.option.option_id),
         )
         .unwrap();
         let mut campaign = TacticQCampaign::new(
@@ -525,26 +523,22 @@ fn restore_next_scheduled_frontier(
     acquisition_rank: u64,
 ) -> AdequacyState {
     let selected = campaign
-        .restore_online_continuation(
-            TacticQOnlineContinuationSelectionRequest {
-                continuation: TacticQOnlineContinuationRequest {
-                    force_branch: false,
-                    terminal_restart: true,
-                    native_terminal_supported: campaign.native_terminal_supported(),
-                    next_acquisition_rank: acquisition_rank,
-                    demonstration_coverage_pending: false,
-                    terminal_refinement_in_progress: false,
-                    terminal_refinement_completed: false,
-                    root_refresh_due: false,
-                    goal_relabeling_enabled: false,
-                    terminal_frontier_action_value_enabled: false,
-                },
+        .continue_online_rollout(
+            TacticQOnlineRolloutRequest {
+                force_branch: false,
+                next_acquisition_rank: acquisition_rank,
+                demonstration_coverage_pending: false,
+                terminal_refinement_in_progress: false,
+                terminal_refinement_completed: false,
+                root_refresh_due: false,
+                goal_relabeling_enabled: false,
+                terminal_frontier_action_value_enabled: false,
                 seed: 0,
                 round: episode_group,
+                episode_group,
                 maximum_route_frames: usize::MAX,
                 goal_distance_feature: 0,
             },
-            episode_group,
             &FactRegistry::canonical(),
             &[],
             &encode,
@@ -577,57 +571,63 @@ fn restore_next_scheduled_frontier(
     state
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct AdequacyRollout {
+    start: AdequacyState,
+    actions: Vec<String>,
+    best_terminal_ticks: u64,
+}
+
+fn learn_until_terminal_ticks(
+    campaign: &mut TacticQCampaign,
+    catalog: &TacticAssetCatalog,
+    episode_shard_sha256: Digest,
+    target_ticks: u64,
+) -> Vec<AdequacyRollout> {
+    let mut episode = 0_u64;
+    let mut rollouts = Vec::new();
+    loop {
+        let start = state_from_facts(&campaign.current.snapshot);
+        let actions = run_to_terminal(campaign, catalog, episode_shard_sha256);
+        let best_terminal_ticks = campaign
+            .best_graph_terminal_path()
+            .unwrap()
+            .expect("a completed fixture rollout must authenticate a terminal")
+            .root_to_terminal_ticks;
+        rollouts.push(AdequacyRollout {
+            start,
+            actions,
+            best_terminal_ticks,
+        });
+        if best_terminal_ticks <= target_ticks {
+            return rollouts;
+        }
+        episode += 1;
+        restore_next_scheduled_frontier(campaign, catalog, episode, episode);
+        assert!(episode <= 8, "online fixture failed to converge");
+    }
+}
+
 #[test]
 fn production_campaign_learns_the_shorter_around_corner_route_online() {
     let (base, episode_shard_sha256) = base_facts();
     let catalog = catalog();
-    let mut campaign = campaign_with_cold_east_primary(&base, &catalog);
+    let mut campaign = campaign_with_cold_east_primary(&base, &catalog, AdequacyState::Start);
 
-    let first = run_to_terminal(&mut campaign, &catalog, episode_shard_sha256);
-    assert_eq!(first.len(), 12);
-    assert_eq!(first[0], "east");
-    assert_eq!(
-        campaign
-            .best_graph_terminal_path()
-            .unwrap()
-            .unwrap()
-            .root_to_terminal_ticks,
-        12
-    );
-
-    assert_eq!(
-        restore_next_scheduled_frontier(&mut campaign, &catalog, 1, 1),
-        AdequacyState::Detour(3),
-        "the production scheduler must branch from the retained path's untried shortcut"
-    );
-    let intermediate = run_to_terminal(&mut campaign, &catalog, episode_shard_sha256);
-    assert_eq!(intermediate.len(), 6);
-    assert_eq!(intermediate[0], "north");
-    assert_eq!(
-        campaign
-            .best_graph_terminal_path()
-            .unwrap()
-            .unwrap()
-            .root_to_terminal_ticks,
-        10
-    );
-
-    assert_eq!(
-        restore_next_scheduled_frontier(&mut campaign, &catalog, 2, 2),
-        AdequacyState::Start,
-        "the production scheduler must return to the root's untried action"
-    );
-    let improved = run_to_terminal(&mut campaign, &catalog, episode_shard_sha256);
-    assert_eq!(improved.len(), 9);
-    assert_eq!(improved[0], "north");
-    assert_eq!(
-        campaign
-            .best_graph_terminal_path()
-            .unwrap()
-            .unwrap()
-            .root_to_terminal_ticks,
-        9
-    );
+    let rollouts = learn_until_terminal_ticks(&mut campaign, &catalog, episode_shard_sha256, 9);
+    assert_eq!(rollouts.len(), 3);
+    assert_eq!(rollouts[0].start, AdequacyState::Start);
+    assert_eq!(rollouts[0].actions.len(), 12);
+    assert_eq!(rollouts[0].actions[0], "east");
+    assert_eq!(rollouts[0].best_terminal_ticks, 12);
+    assert_eq!(rollouts[1].start, AdequacyState::Detour(3));
+    assert_eq!(rollouts[1].actions.len(), 6);
+    assert_eq!(rollouts[1].actions[0], "north");
+    assert_eq!(rollouts[1].best_terminal_ticks, 10);
+    assert_eq!(rollouts[2].start, AdequacyState::Start);
+    assert_eq!(rollouts[2].actions.len(), 9);
+    assert_eq!(rollouts[2].actions[0], "north");
+    assert_eq!(rollouts[2].best_terminal_ticks, 9);
 
     assert_eq!(
         restore_next_scheduled_frontier(&mut campaign, &catalog, 3, 3),
@@ -642,68 +642,49 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
     );
     assert!(campaign.model_revision() > 0);
 
-    let variant_entry = campaign
-        .select_online_branch(
-            TacticQOnlineBranchRequest {
-                seed: 0,
-                round: 4,
-                acquisition_rank: 0,
-                maximum_route_frames: usize::MAX,
-                prefer_root: false,
-                strategy: TacticQOnlineFrontierStrategy::Graph,
-            },
-            &[],
-            &encode,
-            &|facts: &FactSnapshot| {
-                let state = state_from_facts(facts);
-                Ok::<_, &'static str>(
-                    catalog
-                        .option_descriptors()
-                        .filter(|descriptor| state.applicable(&descriptor.option_id))
-                        .cloned()
-                        .collect(),
-                )
-            },
-        )
-        .unwrap()
-        .branch;
-    assert_eq!(state_from_facts(&variant_entry.state), AdequacyState::Start);
-    campaign
-        .restore_branch(
-            &variant_entry,
-            4,
-            &FactRegistry::canonical(),
+    let mut variant_campaign =
+        campaign_with_cold_east_primary(&base, &catalog, AdequacyState::VariantStart);
+    let variant_rollouts =
+        learn_until_terminal_ticks(&mut variant_campaign, &catalog, episode_shard_sha256, 9);
+    assert!((2..=3).contains(&variant_rollouts.len()));
+    assert_eq!(variant_rollouts[0].start, AdequacyState::VariantStart);
+    assert_eq!(variant_rollouts[0].actions[0], "east");
+    assert!((10..=12).contains(&variant_rollouts[0].best_terminal_ticks));
+    let variant_final = variant_rollouts.last().unwrap();
+    assert_eq!(variant_final.start, AdequacyState::VariantStart);
+    assert_eq!(variant_final.actions.len(), 9);
+    assert_eq!(variant_final.actions[0], "north");
+    assert_eq!(variant_final.best_terminal_ticks, 9);
+    let next_variant_episode = variant_rollouts.len() as u64;
+    assert_eq!(
+        restore_next_scheduled_frontier(
+            &mut variant_campaign,
             &catalog,
-            &[],
-            |description| description.option.option_id == "variant",
-        )
-        .unwrap();
-    assert_eq!(
-        run_one_step(&mut campaign, &catalog, episode_shard_sha256),
-        "variant"
+            next_variant_episode,
+            next_variant_episode,
+        ),
+        AdequacyState::VariantStart,
+        "the production scheduler must revisit the translated learned root boundary"
     );
-    assert_eq!(
-        state_from_facts(&campaign.current.snapshot),
-        AdequacyState::VariantStart
-    );
-    let generalized = decide_production_batch(&campaign, &catalog, 2);
-    assert_eq!(
-        generalized.proposals[0].descriptor.option_id, "north",
-        "the learned shorter-route preference must transfer to an exact-state-disjoint equivalent"
-    );
+    let generalized = decide_production_batch(&variant_campaign, &catalog, 2);
+    assert_eq!(generalized.proposals[0].descriptor.option_id, "north");
     assert_eq!(
         generalized.proposals[0].reason,
         dusklight_learning::tactic_exploration::TacticSelectionReason::Greedy
     );
-    let transferred = run_to_terminal(&mut campaign, &catalog, episode_shard_sha256);
-    assert_eq!(transferred.len(), 9);
-    assert_eq!(transferred[0], "north");
-    assert_eq!(
-        state_from_facts(&campaign.current.snapshot),
-        AdequacyState::VariantGoal
-    );
+    assert!(variant_campaign.model_revision() > 0);
 
     let learning_rows = campaign.graph_learning_batch().unwrap().rows;
+    let variant_learning_rows = variant_campaign.graph_learning_batch().unwrap().rows;
+    let base_state_ids = learning_rows
+        .iter()
+        .map(|row| row.source_state.state_identity)
+        .collect::<BTreeSet<_>>();
+    let variant_state_ids = variant_learning_rows
+        .iter()
+        .map(|row| row.source_state.state_identity)
+        .collect::<BTreeSet<_>>();
+    assert!(base_state_ids.is_disjoint(&variant_state_ids));
     let exact_return = |state: AdequacyState, action: &str| {
         learning_rows
             .iter()
@@ -712,16 +693,27 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
             })
             .and_then(|row| row.exact_conditional_ticks_to_terminal)
     };
+    let variant_exact_return = |state: AdequacyState, action: &str| {
+        variant_learning_rows
+            .iter()
+            .find(|row| {
+                row.source_state.state_identity[0] == state.code() && row.action.option_id == action
+            })
+            .and_then(|row| row.exact_conditional_ticks_to_terminal)
+    };
     assert_eq!(exact_return(AdequacyState::Start, "north"), Some(9));
     assert_eq!(exact_return(AdequacyState::Detour(3), "north"), Some(6));
-    assert_eq!(exact_return(AdequacyState::VariantStart, "north"), Some(9));
+    assert_eq!(
+        variant_exact_return(AdequacyState::VariantStart, "north"),
+        Some(9)
+    );
     for step in 0..=7 {
         assert_eq!(
             exact_return(AdequacyState::Optimal(step), optimal_action(step)),
             Some(8 - u64::from(step))
         );
         assert_eq!(
-            exact_return(AdequacyState::VariantOptimal(step), optimal_action(step)),
+            variant_exact_return(AdequacyState::VariantOptimal(step), optimal_action(step)),
             Some(8 - u64::from(step))
         );
     }

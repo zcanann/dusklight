@@ -104,6 +104,23 @@ pub struct TacticQOnlineContinuationSelection {
     pub selected_root: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TacticQOnlineRolloutRequest {
+    pub force_branch: bool,
+    pub next_acquisition_rank: u64,
+    pub demonstration_coverage_pending: bool,
+    pub terminal_refinement_in_progress: bool,
+    pub terminal_refinement_completed: bool,
+    pub root_refresh_due: bool,
+    pub goal_relabeling_enabled: bool,
+    pub terminal_frontier_action_value_enabled: bool,
+    pub seed: u64,
+    pub round: u64,
+    pub episode_group: u64,
+    pub maximum_route_frames: usize,
+    pub goal_distance_feature: usize,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum TacticQOnlineHorizonPlan {
     Execute(TacticQProposalBatch),
@@ -303,6 +320,53 @@ impl TacticQCampaign {
             |_| true,
         )?;
         Ok(Some(selection))
+    }
+
+    /// Continue the current rollout or restore the next scheduled checkpoint.
+    /// Terminal state and terminal-support availability are derived from the
+    /// authoritative campaign rather than repeated by environment adapters.
+    pub fn continue_online_rollout<E, F, A>(
+        &mut self,
+        request: TacticQOnlineRolloutRequest,
+        registry: &FactRegistry,
+        reference: &[TacticEndpointDescriptor],
+        encode: &F,
+        action_surface: &A,
+    ) -> Result<Option<TacticQOnlineContinuationSelection>, TacticQCampaignError>
+    where
+        E: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+        A: Fn(
+            &TacticQCampaign,
+            &FactSnapshot,
+        ) -> Result<TacticQOnlineActionSurface, TacticQCampaignError>,
+    {
+        self.restore_online_continuation(
+            TacticQOnlineContinuationSelectionRequest {
+                continuation: TacticQOnlineContinuationRequest {
+                    force_branch: request.force_branch,
+                    terminal_restart: self.current.snapshot.terminal.reached == Some(true),
+                    native_terminal_supported: self.native_terminal_supported(),
+                    next_acquisition_rank: request.next_acquisition_rank,
+                    demonstration_coverage_pending: request.demonstration_coverage_pending,
+                    terminal_refinement_in_progress: request.terminal_refinement_in_progress,
+                    terminal_refinement_completed: request.terminal_refinement_completed,
+                    root_refresh_due: request.root_refresh_due,
+                    goal_relabeling_enabled: request.goal_relabeling_enabled,
+                    terminal_frontier_action_value_enabled: request
+                        .terminal_frontier_action_value_enabled,
+                },
+                seed: request.seed,
+                round: request.round,
+                maximum_route_frames: request.maximum_route_frames,
+                goal_distance_feature: request.goal_distance_feature,
+            },
+            request.episode_group,
+            registry,
+            reference,
+            encode,
+            action_surface,
+        )
     }
 
     /// Decide whether the current rollout must branch and, when it must,
