@@ -4,7 +4,7 @@ pub(super) use super::campaign_schedule::{
     ActiveTerminalRefinementRollout, first_demonstration_intervention,
     next_branch_acquisition_rank, prefer_root_for_periodic_branch, scheduled_branch_acquisition,
     should_probe_policy_before_branch, should_rank_frontier_with_live_model,
-    should_schedule_branch_with_terminal_refinement,
+    should_schedule_branch_with_terminal_refinement, should_start_paired_terminal_return,
 };
 use super::paired_terminal_returns::{ActivePairedTerminalReturn, PairedTerminalReturnSeed};
 use super::*;
@@ -866,7 +866,10 @@ pub(super) fn run_seed(
         let restoration = campaign
             .current_restoration_contract()
             .map_err(route_error)?;
-        let paired_terminal_return_seed = if active_paired_terminal_return.is_none() {
+        let paired_terminal_return_seed = if should_start_paired_terminal_return(
+            config.execution_plan.paired_terminal_return_evaluation,
+            active_paired_terminal_return.is_some(),
+        ) {
             PairedTerminalReturnSeed::from_pre_execution_proposals(
                 execution_plan_sha256,
                 campaign.decision_index,

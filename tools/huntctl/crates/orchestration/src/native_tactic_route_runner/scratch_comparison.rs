@@ -1285,6 +1285,7 @@ mod tests {
             root_refresh_cadence: 4,
             epsilon_per_million: 350_000,
             demonstration_chunk_ticks: None,
+            paired_terminal_return_evaluation: false,
             replay_sharing,
             budgets: NativeTacticPlanBudgets {
                 decisions_per_lane: 256,

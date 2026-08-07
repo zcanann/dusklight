@@ -1,5 +1,9 @@
 use super::*;
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 pub const NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V1: &str =
     "dusklight-native-tactic-execution-plan/v1";
 pub const NATIVE_TACTIC_EXECUTION_PLAN_SCHEMA_V2: &str =
@@ -204,6 +208,7 @@ pub struct NativeTacticExecutionPlanRequest {
     pub root_refresh_cadence: u32,
     pub epsilon_per_million: u32,
     pub demonstration_chunk_ticks: Option<u32>,
+    pub paired_terminal_return_evaluation: bool,
     pub replay_sharing: NativeTacticReplaySharingPlan,
     pub budgets: NativeTacticPlanBudgets,
 }
@@ -222,6 +227,10 @@ pub struct NativeTacticExecutionPlan {
     pub refit_every_decisions: u64,
     pub root_refresh_cadence: u32,
     pub demonstration_chunk_ticks: Option<u32>,
+    /// Run matched policy/control continuations from terminal-path boundaries.
+    /// This is an attribution experiment, not part of ordinary route learning.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub paired_terminal_return_evaluation: bool,
     pub replay_sharing: NativeTacticReplaySharingPlan,
     pub checkpoint: NativeTacticCheckpointPlan,
     pub budgets: NativeTacticPlanBudgets,
@@ -257,6 +266,8 @@ impl NativeTacticExecutionPlan {
             || request.epsilon_per_million > 1_000_000
             || request.promoted_tactic_registry_sha256 == Some(Digest::ZERO)
             || request.demonstration_chunk_ticks == Some(0)
+            || (request.paired_terminal_return_evaluation
+                && request.proposal_width_per_decision < 2)
             || (matches!(
                 request.replay_sharing,
                 NativeTacticReplaySharingPlan::BoundedStaleness { .. }
@@ -350,6 +361,7 @@ impl NativeTacticExecutionPlan {
             refit_every_decisions: request.refit_every_decisions,
             root_refresh_cadence: request.root_refresh_cadence,
             demonstration_chunk_ticks: request.demonstration_chunk_ticks,
+            paired_terminal_return_evaluation: request.paired_terminal_return_evaluation,
             replay_sharing: request.replay_sharing,
             checkpoint: NativeTacticCheckpointPlan {
                 ownership: NativeTacticCheckpointOwnership::WorkerLocal,
@@ -470,6 +482,7 @@ mod tests {
             root_refresh_cadence: 4,
             epsilon_per_million: 350_000,
             demonstration_chunk_ticks: Some(4),
+            paired_terminal_return_evaluation: false,
             replay_sharing: NativeTacticReplaySharingPlan::GenerationBarrier,
             budgets: NativeTacticPlanBudgets {
                 decisions_per_lane: 256,
@@ -630,6 +643,23 @@ mod tests {
     }
 
     #[test]
+    fn paired_terminal_returns_are_an_explicit_attribution_mode() {
+        let ordinary = NativeTacticExecutionPlan::build(request()).unwrap();
+        assert!(!ordinary.paired_terminal_return_evaluation);
+
+        let mut paired = request();
+        paired.paired_terminal_return_evaluation = true;
+        let paired = NativeTacticExecutionPlan::build(paired).unwrap();
+        assert!(paired.paired_terminal_return_evaluation);
+        assert_ne!(ordinary.identity().unwrap(), paired.identity().unwrap());
+
+        let mut invalid = request();
+        invalid.proposal_width_per_decision = 1;
+        invalid.paired_terminal_return_evaluation = true;
+        assert!(NativeTacticExecutionPlan::build(invalid).is_err());
+    }
+
+    #[test]
     fn multi_seed_plans_route_cross_decision_restores_to_checkpoint_owners() {
         let plan = NativeTacticExecutionPlan::build(request()).unwrap();
         assert_eq!(plan.lanes.len(), 4);
@@ -729,6 +759,9 @@ mod tests {
         variants.push(changed);
         let mut changed = plan.clone();
         changed.demonstration_chunk_ticks = None;
+        variants.push(changed);
+        let mut changed = plan.clone();
+        changed.paired_terminal_return_evaluation = true;
         variants.push(changed);
         let mut changed = plan.clone();
         changed.replay_sharing = NativeTacticReplaySharingPlan::BoundedStaleness {

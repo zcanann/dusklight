@@ -6,6 +6,10 @@ fn is_zero_u64(value: &u64) -> bool {
     *value == 0
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-campaign-summary/v1";
 pub const NATIVE_TACTIC_CAMPAIGN_SUMMARY_SCHEMA_V2: &str =
@@ -63,6 +67,8 @@ pub struct NativeTacticCampaignTreatmentSummary {
     pub root_refresh_cadence: u32,
     pub epsilon_per_million: Vec<u32>,
     pub demonstration_chunk_ticks: Option<u32>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub paired_terminal_return_evaluation: bool,
     pub demonstration_transitions: u64,
     pub resource_budgets: NativeTacticPlanBudgets,
 }
@@ -404,6 +410,7 @@ impl NativeTacticCampaignSummary {
                 root_refresh_cadence: plan.root_refresh_cadence,
                 epsilon_per_million,
                 demonstration_chunk_ticks: plan.demonstration_chunk_ticks,
+                paired_terminal_return_evaluation: plan.paired_terminal_return_evaluation,
                 demonstration_transitions: route.demonstration_transitions,
                 resource_budgets: route.resource_budgets,
             },

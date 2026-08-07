@@ -1,7 +1,7 @@
 use super::{
     Digest, NativeGenericExecutionStrategy, NativeTacticExecutionPlan,
     NativeTacticExecutionPlanRequest, NativeTacticPlanBudgets, NativeTacticResourceLimit,
-    OptimizationRequest, TacticProposalPolicy, option, u64_option, usize_option,
+    OptimizationRequest, TacticProposalPolicy, flag, option, u64_option, usize_option,
 };
 use dusklight_learning::tactic_value_treatment::TacticValueTreatment;
 use dusklight_orchestration::{
@@ -9,7 +9,7 @@ use dusklight_orchestration::{
 };
 use std::error::Error;
 
-const SEALED_PLAN_SHAPING_OPTIONS: [&str; 14] = [
+const SEALED_PLAN_SHAPING_OPTIONS: [&str; 15] = [
     "--seed",
     "--proposal-policy",
     "--value-treatment",
@@ -21,6 +21,7 @@ const SEALED_PLAN_SHAPING_OPTIONS: [&str; 14] = [
     "--refit-every",
     "--epsilon-per-million",
     "--demonstration-chunk-ticks",
+    "--paired-terminal-return-evaluation",
     "--maximum-stale-replay-revisions",
     "--memory-bytes",
     "--wall-micros",
@@ -85,6 +86,7 @@ pub(super) fn native_tactic_execution_plan(
         demonstration_chunk_ticks: option(learn_args, "--demonstration-chunk-ticks")
             .map(|value| value.parse())
             .transpose()?,
+        paired_terminal_return_evaluation: flag(learn_args, "--paired-terminal-return-evaluation"),
         replay_sharing,
         budgets: NativeTacticPlanBudgets {
             decisions_per_lane,

@@ -1,335 +1,187 @@
-# Usable route learning
+# Generic goal-learning framework
 
-## Goal
+## Objective
 
-Build a generic learner that discovers substantially better-than-human routes
-and creative solutions from native game experience. The algorithm is not
-prescribed: use Q-style learning, planning, search, imitation, or a hybrid that
-fits the available samples and machine throughput.
+Build a learner that uses native game experience to discover complete,
+substantially better-than-human solutions to terminal game goals. The method is
+not prescribed. Q learning, graph search, planning, imitation, and learned
+options may be combined when the result learns reliably at the sample volume we
+can actually execute.
 
-The learner must:
+The framework receives:
 
-- discover complete routes without authored waypoints or route-specific
-  shaping rewards;
-- learn from every attempted branch, not only terminal runs;
-- use binary save states to branch from useful intermediate states;
-- choose among primitive inputs, simultaneous inputs, variable-duration
-  actions, and learned multi-action tactics;
-- discover and promote reusable tactics when evidence says they help;
-- optionally learn from human demonstrations without requiring them or being
-  capped by them;
-- produce cold-replayable routes whose success is the real native terminal
-  predicate.
+- a binary save-state root;
+- a native terminal predicate;
+- typed observations, including motion, collision response, input history, and
+  currently available prompted actions;
+- primitive, simultaneous, variable-duration, and promoted multi-action inputs;
+- native tick cost.
 
-Ordon Springs is the first adequacy test, not the product. It is roughly 120
-active ticks from control to the load zone. A 125-tick human route is an
-ordinary baseline. Required quality gates are 124 ticks, then 123 ticks as
-clear better-than-human evidence, then 120 ticks as the current target.
+It must not receive route coordinates, waypoints, route-specific tactics, or
+hand-authored shaping rewards. Observations are evidence from which the learner
+may infer useful behavior; they are not individually rewarded rules.
 
-## Current baseline
+Ordon Springs is the first adequacy test. The real terminal is
+`ordon_spring_load_committed`. The ordinary human route is 125 active ticks.
+124 ticks is the first better-than-human gate, 123 is convincing evidence, and
+120 is the current target.
 
-The production `tactic-route` path already has authenticated binary save
-states, sibling restore batches, persistent state graphs, generic observations,
-generic action families, learned frontier selection, graph backups, online
-cross-lane model sharing, tactic mining, route reconstruction, and cold replay.
-The obsolete cold-root `scratch-route` entry point is retired.
+## Authoritative current evidence
 
-The fixed-work production curve measured about 3.5 useful expansions per
-second, but the first growing-corpus campaign sustained only 1.11 expansions
-per second. The small curve therefore overestimated ten-minute capacity by more
-than 3x. Checkpoint capture was not the dominant scale cost; repeated model
-updates, evidence projection, graph scheduling, hashing, ranking, and durable
-publication were.
+- Direct binary save-state restoration and non-root branching work. The last
+  bounded zero-shot campaign performed 327 direct restores with no fallback.
+- The learner can discover the real terminal quickly, but its best authenticated
+  route is 229 ticks. Two cold replays reproduced that route exactly.
+- The first terminal arrives in roughly 35 seconds; hundreds of later
+  expansions have not produced a competitive route. Discovery is no longer the
+  primary failure. Route learning and optimization are.
+- The present post-terminal loop learned one 254-tick refinement but did not
+  beat the 229-tick incumbent. This is inadequate, not partial success toward
+  the 125-tick gate.
+- Existing paired-policy and causal-report machinery has zero valid native
+  comparisons. Matched continuations are now explicit opt-in attribution mode;
+  ordinary route learning no longer freezes its learner or spends a second
+  full rollout on that control. Attribution remains off the critical path until
+  an adaptive learner produces useful improvements worth explaining.
+- The standalone around-corner fixture learns from an exhaustively enumerated
+  training world and then transfers a completed return table. It does not run
+  the production online campaign and therefore does not prove that the real
+  learner can discover or improve a route.
 
-A 64-decision, 128-proposal zero-shot preflight for seed 104729 exercised direct
-non-root restores and online fitting but found no terminal. That run proves the
-plumbing executes; it is far too small to prove or disprove learnability.
+No task is blocked on design.
 
-No task is currently blocked on missing design.
+## P0 - make the production learner learn
 
-## P0 — determine whether the learner actually learns
+- [ ] Extract one environment-independent learning/search loop from the native
+  campaign. It must own frontier selection, action selection, rollout
+  continuation, transition admission, terminal-cost backup, incumbent
+  replacement, and tactic promotion through narrow interfaces. Native process,
+  checkpoint, persistence, and reporting code remain adapters around that loop.
+- [ ] Drive that exact loop with a deterministic checkpoint environment. The
+  environment must include an around-corner local optimum in which greedy
+  one-step goal progress fails and several temporarily worse actions are
+  required. Starting with no learned return table, the production loop must:
+  discover a terminal, branch from retained intermediate states, converge to
+  the shortest route, and then repeat on exact-state-disjoint variants. A toy
+  scheduler or an exhaustively pre-trained snapshot does not satisfy this task.
+- [ ] Make successful rollouts teach multi-step terminal cost. Every transition
+  on an authenticated terminal lineage receives exact ticks-to-terminal;
+  repeated state/action evidence updates the policy used by later rollouts.
+  Open rollouts remain censored rather than becoming fabricated failures, but
+  their states, actions, availability, dynamics, and novelty remain usable
+  exploration evidence.
+- [ ] Make checkpoint rollouts the unit of optimization. Restore any useful
+  incumbent or off-incumbent boundary, try alternative actions, and continue
+  each candidate until terminal or a shared native-tick budget. Retain every
+  intermediate boundary as future branch material. Immediately replace the
+  incumbent when a faster authenticated terminal route appears.
+- [ ] Keep both exploitation and discovery alive. Learned terminal cost ranks
+  supported choices; uncertainty, state/action coverage, and seeded exploration
+  allocate trials to unsupported choices. Neither a growing fresh-state queue
+  nor repeated polishing of one lineage may starve the other partition.
+- [ ] Mine repeated useful action subsequences into candidate tactics and test
+  them against their primitive realization from matched checkpoints. Promote
+  only when they improve terminal rate, terminal ticks, or sample efficiency
+  across multiple compatible states. Primitive actions must remain selectable.
 
-- [x] Run seed 104729 with no incumbent or demonstration for up to 1,024
-  decisions, two proposals per decision, and a hard ten-minute limit, whichever
-  is reached first. Use the real `ordon_spring_load_committed` predicate and the
-  current production learner unchanged for the first treatment.
-- [x] Make that single campaign answer several questions at once. Report time
-  to first terminal, terminals, unique authenticated states, useful branches,
-  transition count, direct restores and fallbacks, action-family coverage,
-  prompted-action availability/selection, frontier revisits, learned ranking
-  changes, value calibration, materially distinct trajectory clusters, fastest
-  ticks, and cold-replay results.
-- [x] If it finds no terminal, diagnose the failure from the retained corpus
-  before running more volume. Classify it as one or more of:
-  insufficient proposal/action coverage, frontier/search starvation, broken
-  value propagation or ranking, inadequate state features, restore/state-graph
-  errors, or genuinely insufficient samples. Record evidence for the
-  classification; “mine longer” is not a diagnosis.
-- [x] Re-score native-terminal action ranking on the retained v6 corpus using
-  whole-source-state holdout and exact authenticated ticks-to-terminal. Keep
-  an unproven learned action as a measured sibling instead of deploying it.
-- [x] Re-score post-terminal graph scheduling against least-visited and seeded
-  random-valid order on the retained final graph. Report explicitly when the
-  graph lacks comparable exact outcomes instead of substituting immediate
-  progress or reward for the terminal objective.
-- [ ] Complete the adaptive, frozen-policy, and random-valid causal comparison.
-  Reuse retained experience where it supplies identical supported
-  opportunities; acquire matched native evidence only for comparisons that
-  are censored in the retained graph.
-- [x] Fix the diagnosed learning/search defect without adding Ordon coordinates,
-  authored waypoint progress, bonuses for straightness/rolling/wall contact, or
-  a named route tactic. Preserve trajectory, velocity, collision response,
-  action availability, and input history as observations the learner may use.
-- [x] Repeat the bounded diagnostic until at least one zero-shot terminal is
-  found and reproduced by two cold replays with identical terminal identity and
-  tick count.
+Exit: the production learning/search loop, without native-specific knowledge,
+learns shortest solutions in deterministic checkpoint worlds from online
+experience and demonstrates that later choices changed because of learned
+multi-step return.
 
-Latest diagnostic (2026-08-04): seed 104729 hit the ten-minute learner wall at
-349 decisions, 698 admitted proposals, 2,858 authenticated states, 57 coarse
-spatial cells, 89 model revisions, and no terminal. Every major generic family
-was available and selected, including roll, camera lock, combined lock/roll,
-curves, relative headings, seek-target, prompted actions, and neutral. Native
-branching completed 327 direct non-root restores with zero fallback replays.
+## P0 - beat the Ordon route
 
-The failure was search starvation. The closest retained state appeared at
-decision 54 and was never improved during the remaining 294 decisions. In a
-single-seed plan, root refresh exactly replaced every rank-zero learned frontier
-slot; all other frontier choices ordered zero-expansion states ahead of learned
-value. Because each expansion produced several fresh states, a promising state
-could never be revisited. The fix now separates learned exploitation, broad
-exploration, and root refresh, and makes learned reachability value precede
-coverage count inside the exploitation partition. Its 454 orchestration tests
-pass. The first matched treatment then exposed a separate Windows persistence
-failure: recovery-directory publication returned access denied at decisions
-143 and 255 while leaving valid prior recovery points. Recovery publication now
-retries only transient Windows permission-denied renames for a bounded two
-seconds and retains fail-closed behavior for every other error. The resumed
-native treatment verified both fixes: seed 104729 found the real load-zone
-terminal after 34.4 seconds, produced eight terminal proposals and three
-selected terminal decisions, and completed cleanly at 702 useful expansions.
-Its best authenticated route is 229 ticks, so discovery is now quick but route
-quality remains inadequate.
-
-Cold replay then exposed a writer/reader contract bug: the authoritative seed
-result was 97.5 MiB of pretty JSON while its reader rejected anything above 64
-MiB; the same content is 56.1 MiB compact. New seed results now use compact JSON
-and enforce the 64 MiB bound before publication. Readers temporarily accept
-existing v45 pretty artifacts up to 128 MiB for replay/migration. Full trace
-descriptor deduplication into bounded binary storage remains open below.
-The 229-tick route then passed two cold replays with identical first-hit tick,
-controller tape, and terminal boundary fingerprint
-`0f3f6ab4888746792e01a15f18465d8e`.
-
-The first matched growing-corpus optimization (2026-08-05) stopped reloading,
-rehashing, and revalidating every durable transition and tape during each
-learner refit. The replay authority now retains its already authenticated
-in-memory corpus and supplies the recorded transition identities directly.
-This preserved the 229-tick result and 34.5-second terminal discovery, reduced
-persistence from 77.5 to 47.2 seconds, but increased useful expansions only
-from 702 to 718 (1.117 to 1.144 per second). That 2.3% capacity gain is not
-material and does not satisfy the throughput task. Model fitting still consumed
-215.8 seconds and graph scheduling 120.8 seconds. Inspection then found that
-achieved-goal fitting recomputed the complete route-agnostic observation for
-every `(transition, sampled goal)` pair even though only eight goal-relative
-columns change. The exact feature path now computes each physical boundary's
-base observation once per refit and appends only those goal-relative columns.
-
-That second matched treatment also failed the campaign-level gate: useful
-expansions fell to 686 (1.094 per second), model time was still 209.6 seconds,
-and the best route remained 229 ticks. Do not spend another campaign on base
-feature or replay-materialization micro-optimizations. Across all three matched
-runs, the first terminal appears in 34--38 seconds and never improves during
-roughly 280 later decisions. Retained trace evidence identifies a quality
-search defect: a branch rooted on the authenticated terminal path is abandoned
-when the ordinary four-decision branch cadence fires, even when it has executed
-fewer native ticks than the incumbent continuation from that exact prefix. An
-early-prefix alternative can therefore be interrupted before it has an equal
-opportunity to reach the terminal. Post-terminal refinement must preserve each
-candidate rollout until it reaches the terminal or consumes the incumbent's
-exact remaining-tick budget; only then may ordinary broad/root acquisition
-replace it.
-
-The equal-budget treatment (2026-08-05) verified that contract on retained
-native trace: 14 terminal-path refinement attempts ran, every nonterminal
-attempt consumed at least its exact incumbent continuation budget, two reached
-the terminal, and 16 broad post-terminal acquisitions still ran between
-completed attempts. The treatment improved a selected 301-tick terminal route
-to 254 ticks, but its final best was still worse than the prior treatment's
-229-tick route because the longer refinements displaced broad attempts and the
-learned continuation failed on 12 of 14 opportunities. Fair refinement
-evaluation is now present; the learned refinement policy has not proved it is
-worth that budget. Re-score this retained corpus against frozen and
-random-valid selection before changing the exploration share or running more
-seeds.
-
-The retained causal audits (2026-08-05) show why immediate post-terminal
-deployment was invalid. Of 698 transitions, only 45 have exact authenticated
-terminal continuations, and only two source states have two terminal-supported
-action siblings. The universal action head ranked both correctly, but its 95%
-Wilson lower bound is 0.342 against a 0.5 chance rate, so it has no deployment
-authority. The learner now withholds complete source states, calibrates against
-exact ticks-to-terminal, and leaves the learned action in the evaluated sibling
-slot until at least eight comparable groups establish better-than-chance
-ranking. The gate and its evidence are bound into learner snapshots and
-decision journals; `calibrate-terminal-action-ranking` reproduces the report
-from a retained checkpoint without native execution.
-
-The graph-scheduler control found 322 terminal-path interior states but only 71
-were ever leased. None of 19 optimization decisions had two exact terminal
-outcomes, so the retained graph cannot compare learned, least-visited, and
-random-valid scheduling at all. This is outcome-coverage starvation: one-step
-sibling evaluation collects observations, but almost every alternative remains
-censored because it never receives a continuation to the terminal or its equal
-budget.
-
-Exit: a bounded production campaign either learns a cold-replayable route or
-produces enough evidence to name and fix the specific learning subsystem that
-failed. Raw throughput is not allowed to conceal a search or learning failure.
-
-## P0 — establish reliability and route quality
-
-- [x] Give every terminal-path refinement branch an equal native continuation
-  budget: do not preempt it until it reaches the terminal or executes the
-  incumbent's exact ticks-to-go from that prefix. Reconstruct this rollout
-  authority across recovery, retain ordinary broad exploration between
-  completed refinement attempts, and report completed versus interrupted
-  refinement attempts.
-- [x] Implement paired terminal-return collection from the same authenticated
-  save boundary. At a terminal-path decision, choose proposal zero as the
-  policy lineage and proposal one as its deterministic control before native
-  outcomes exist. Continue both until terminal or the same incumbent
-  ticks-to-go; freeze their learner snapshot, preserve both graph lineages,
-  recover unfinished pairs exactly, and prevent observed outcomes from changing
-  the selected pair.
-- [x] Separate causal policy evaluation from unique graph-expansion search.
-  A paired lineage must execute the exact pre-scheduler treatment batch even
-  when its action was already completed in the state graph; graph scheduling,
-  or substitution from a different treatment may not masquerade as the policy
-  decision. Journal epsilon/bootstrap/value selection reasons explicitly so an
-  adaptive behavior-policy result cannot be misreported as a learned-value
-  choice, and reject legacy or malformed pairs that lack treatment authority.
-- [ ] Acquire paired native evidence for the adaptive, frozen-policy, and
-  random-valid treatments. Report completed, in-progress, terminal-supported,
-  and censored pairs. Every valid completed pair contributes its binary
-  terminal outcome: a one-sided terminal is a decisive win, two failures are a
-  terminal-rate tie but remain censored for return magnitude, and two terminals
-  are ordered by exact ticks-to-terminal. Acquire at least eight decisive
-  matched outcomes per treatment before interpreting action-ranking win rates,
-  then use confidence intervals rather than the floor itself as the success
-  criterion.
-- [ ] Run five fixed zero-shot seeds under the same ten-minute envelope. All
-  five must reach the native load zone; report distributions rather than only
-  the best seed.
-- [ ] Require median time to first terminal to be measured in minutes, not
-  hours, and retain every campaign’s graph and transition corpus.
-- [ ] Confirm from graph evidence that the learner explores materially different
-  approaches and learns the around-corner navigation problem instead of
-  inheriting or endlessly polishing one lineage.
-- [ ] Discover and cold-replay a zero-shot route of 124 ticks or less.
-- [ ] With the same generic framework, reach 123 ticks or less and then 120
-  ticks or less. Beating 125 is evidence of success; approaching it is not.
-- [ ] Repeat with permuted seed order and equivalent budgets to rule out lucky
-  initialization, scheduler ordering, and update-stream leakage.
+- [ ] Run one bounded seed-104729 campaign through the corrected loop. It must
+  report, in one compact scorecard, time to first terminal, incumbent
+  improvements, branch sources, rollout completions, censored rollouts,
+  save-state restores, action/tactic coverage, useful experience per second,
+  and final cold-replay result. If it cannot improve 229 ticks, diagnose and fix
+  the learning/search decision that prevented improvement before adding volume.
+- [ ] Discover and cold-replay a zero-shot route of 124 ticks or less twice,
+  with identical terminal identity and first-hit tick.
+- [ ] Reach 123 ticks or less and then 120 ticks or less with the same generic
+  observations, objective, actions, and learning rules.
+- [ ] Run five fixed zero-shot seeds under the same bounded envelope. All five
+  must reach the native terminal, the median discovery time must be useful on a
+  local machine, and the route-quality distribution must not depend on one
+  lucky seed.
+- [ ] Repeat with permuted seed order and equivalent budgets to rule out update
+  ordering, scheduler ordering, and cross-run leakage.
 
 Exit: the framework reliably discovers substantially better-than-human Ordon
-routes on the local machine.
+routes; merely approaching 125 ticks does not pass.
 
-Causal audit correction (2026-08-05): the earlier 81-decision and 492-decision
-adaptive runs do **not** supply learned-policy comparisons. The state-graph
-scheduler replaced their pre-scheduler primary actions with untried expansions,
-including `graph_scheduler`, `unsupported_bootstrap`, and other acquisition
-choices, while the report still labeled the retained branch as the policy
-lineage. Their reported 89-versus-53 tick comparison and six completed outcomes
-remain useful search observations but are invalid causal learning evidence.
-Consequently there are currently zero valid paired native outcomes for the
-adaptive, frozen-policy, or random-valid treatments.
+## P0 - prove learning and tactics caused the result
 
-The runner now uses a distinct policy-evaluation authority for every paired
-decision. It registers the exact policy-ranked actions without leasing or
-substituting graph-search work, permits deterministic repeat observation of an
-already-completed expansion without reopening its lifecycle, binds the exact
-batch/treatment/reasons into the decision journal, and reconstructs those
-dispatches during crash recovery. Summaries exclude every pair lacking that
-authority and make the causal chain incomplete. Focused repeat-evaluation and
-legacy-contamination tests pass, as do all 462 orchestration tests. A bounded
-native activation/recovery check under this corrected authority is required
-before acquiring the treatment sample above.
+- [ ] After the adaptive learner improves a route, compare it with frozen-policy
+  and seeded random-valid controls over identical checkpoints, opportunities,
+  seeds, and native-tick budgets. Reuse retained evidence when identities match;
+  collect new paired evidence only where outcomes are censored. Require a
+  held-out gain in terminal rate, time to first terminal, route ticks, or useful
+  expansions to the result.
+- [ ] At decisive checkpoints, show that experience changed action ranking and
+  rollout selection. Audit learned dependence on generic observations such as
+  velocity, trajectory continuity, momentum loss, collision response, camera
+  and input history, and prompted-action availability. Do not convert those
+  observations into authored reward bonuses.
+- [ ] Show at least one discovered and promoted multi-action tactic improving
+  held-out native decisions relative to its primitive components.
+- [ ] Run a suboptimal human-demonstration ablation. A demonstration may improve
+  exploration or representation learning, but the learner must still succeed
+  without it, exceed it, and discover tactics absent from it.
 
-The 492-decision campaign also exposed duplicate trace serialization:
-`seed-result.json` crossed its compact JSON bound despite the decision journal
-already owning the same data. Seed results and route reports are now small
-manifests referencing checksummed binary journal segments; the recovered seed
-manifest is 10 KiB and route report 24 KiB. This storage fix does not rehabilitate
-the campaign's contaminated causal comparisons.
+Exit: adaptive learning and reusable tactics, rather than lucky search or a
+hand-authored route, causally improve the result.
 
-## P0 — prove learning and tactic discovery cause the result
+## P0 - make useful learning fast enough
 
-- [ ] Compare adaptive learning against frozen-policy and random-valid controls
-  over identical seeds, opportunities, and native budgets. Require a held-out
-  gain in terminal rate, time to first terminal, or route ticks.
-- [ ] Audit selected actions around decisive states. Show that observations such
-  as maintained velocity, momentum loss, trajectory continuity, collision
-  response, roll availability, and camera/input history change learned choices
-  through experience rather than hard-coded reward bonuses.
-- [ ] Demonstrate discovery and promotion of at least one useful multi-action
-  tactic. Promotion must improve value or sample efficiency across multiple
-  compatible states compared with its primitive components, and primitives
-  must remain selectable.
-- [ ] Demonstrate that the learner can cross a local optimum where several
-  temporarily worse actions are required before reaching the load zone.
-- [ ] Run an ordinary suboptimal human-demonstration ablation. Measure whether
-  it improves sample efficiency while still allowing the learner to exceed the
-  human route and discover tactics absent from the demonstration.
+- [ ] Profile the corrected end-to-end loop once under a representative growing
+  corpus. Attribute wall time and memory across native execution, restore,
+  model update, graph scheduling, evidence admission, persistence, and IPC in
+  the same run.
+- [ ] Optimize only measured dominant costs. Eliminate repeated whole-corpus
+  projection, hashing, fitting, or serialization when retained incremental
+  state can preserve the same semantics. Do not weaken exploration or evidence
+  integrity to inflate throughput.
+- [ ] Re-run the same treatment and require a material increase in useful
+  experience per minute or a material reduction in time to the same learned
+  result. A microbenchmark without end-to-end movement does not pass.
+- [ ] Compare one and two checkpoint-owning lanes. Keep added parallelism only
+  when it increases unique useful experience without learner contamination,
+  host saturation, or interference with unrelated processes.
 
-Exit: learned choices and reusable tactics, not lucky unguided search or a
-hand-authored route, causally improve results.
+Exit: the framework explains where its time goes and reaches the same learning
+quality materially faster.
 
-## P0 — remove the measured growing-corpus costs
+## P1 - generality and engineering quality
 
-The growing-corpus campaign has now shown a real scale limiter, but checkpoint
-capture is not it. Do not start another checkpoint-representation treatment
-without new evidence.
+- [ ] Apply the unchanged objective interface, observations, action library,
+  learning rules, and tactic promotion to a second native goal. No
+  route-specific coordinates, shaping, or named tactic may be introduced.
+- [ ] Split mixed-responsibility production files as the learning loop is
+  extracted. Execution, checkpoint ownership, branching, learning, proposal
+  generation, tactic promotion, persistence, replay proof, and reporting must
+  be independently testable modules. Production files over roughly 1,000 lines
+  require an explicit single-responsibility justification or decomposition.
+- [ ] Keep large persistent corpora, checkpoints, journals, and models bounded,
+  checksummed, atomic, and binary. JSON is acceptable only for small human-facing
+  manifests and summaries. Prefer an explicit replay-and-record migration over
+  permanent compatibility complexity.
 
-- [ ] Complete the capacity envelope with production measurements for cold-root
-  replay, save, restore, short branch, worker handoff, unique transitions,
-  retained-node bytes, and complete cold validations. Reuse campaign telemetry
-  instead of launching one experiment per metric.
-- [ ] Use the retained ten-minute telemetry to remove repeated whole-corpus work
-  from model fitting, evidence projection, graph projection/hash/ranking, and
-  durable replay publication. Preserve exact reports and recovery semantics;
-  measure the combined campaign instead of isolated microbenchmarks.
-- [ ] Re-run the same bounded treatment and require materially more than 698
-  useful expansions without weakening the exploitation/exploration schedule.
-- [ ] Re-measure one versus two checkpoint-owning lanes. Keep a second lane only
-  when it increases end-to-end unique useful experience without contamination
-  or host saturation.
-
-Exit: when volume is demonstrated to be the blocker, the framework explains
-where wall time goes and increases useful experience per minute without
-weakening correctness.
-
-## P1 — generality and maintainability
-
-- [ ] Apply the unchanged observations, action library, learning rules, tactic
-  promotion, and terminal-only objective to a second native route. Route-specific
-  coordinates, shaping rewards, and hand-authored tactics remain forbidden.
-- [ ] Audit large and mixed-responsibility production files. Split execution,
-  save-state ownership, branching, graph learning, proposal generation, tactic
-  promotion, persistence, replay proof, and reporting into independently
-  testable modules. New work must not grow another orchestration monolith.
-- [ ] Keep persistent artifacts bounded, checksummed, atomic, and binary. Retain
-  compatibility only when it is cheaper than an explicit replay-and-record
-  migration to the current format.
-
-Exit: the learner transfers beyond Ordon and its critical subsystems can be
-audited, tested, and changed independently.
+Exit: the learner transfers beyond Ordon and its critical behavior can be
+audited, tested, and changed without navigating orchestration monoliths.
 
 ## Operating rules
 
-- Every native campaign is bounded and should answer multiple hypotheses.
-- Every evaluated branch contributes transitions and outcomes.
-- Every promoted result is reproduced by two cold replays.
-- Use at most two owned native/build workers on this machine. Manage only exact
-  child processes started by this session; never enumerate or kill unrelated
-  Codex processes.
+- Work in the order above unless retained evidence proves a later task is the
+  current blocker.
+- Every native campaign is bounded and answers multiple hypotheses. Do not run
+  repeated campaigns merely to mine a better random result.
+- Tests and reports are evidence only when they exercise the production path
+  named by the task.
+- Every evaluated branch contributes its authentic transitions and outcomes.
+- Every promoted route is reproduced by two cold replays.
+- Use at most two owned build/native workers on this machine. Manage only exact
+  child processes started by this session; never stop unrelated Codex, Cargo,
+  emulator, or worker processes.
 - Commit and push each natural milestone. Do not leave a long-lived dirty tree.

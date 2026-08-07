@@ -115,6 +115,16 @@ pub(super) fn should_probe_policy_before_branch(terminal_restart: bool) -> bool 
     !terminal_restart
 }
 
+/// Matched policy/control continuations consume a second rollout and freeze
+/// learner publication. They belong only to explicit attribution campaigns;
+/// ordinary learning spends the same budget on adaptive experience.
+pub(super) fn should_start_paired_terminal_return(
+    evaluation_enabled: bool,
+    paired_return_in_progress: bool,
+) -> bool {
+    evaluation_enabled && !paired_return_in_progress
+}
+
 #[cfg(test)]
 mod terminal_refinement_tests {
     use super::*;
@@ -140,6 +150,14 @@ mod terminal_refinement_tests {
         assert!(should_schedule_branch_with_terminal_refinement(
             9, 4, true, false, false, true, false,
         ));
+    }
+
+    #[test]
+    fn ordinary_learning_never_starts_a_paired_attribution_rollout() {
+        assert!(!should_start_paired_terminal_return(false, false));
+        assert!(!should_start_paired_terminal_return(false, true));
+        assert!(should_start_paired_terminal_return(true, false));
+        assert!(!should_start_paired_terminal_return(true, true));
     }
 }
 

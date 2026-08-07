@@ -405,6 +405,7 @@ fn launch_tactic_route_learning(
                     root_refresh_cadence: 4,
                     epsilon_per_million: TACTIC_ROUTE_EPSILON_PER_MILLION,
                     demonstration_chunk_ticks: None,
+                    paired_terminal_return_evaluation: false,
                     replay_sharing: NativeTacticReplaySharingPlan::GenerationBarrier,
                     budgets: NativeTacticPlanBudgets {
                         decisions_per_lane: TACTIC_ROUTE_DECISIONS_PER_SEED,
