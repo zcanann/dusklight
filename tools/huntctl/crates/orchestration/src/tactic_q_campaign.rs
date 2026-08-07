@@ -990,3 +990,7 @@ mod tests;
 #[cfg(test)]
 #[path = "tactic_q_campaign/online_adequacy_tests.rs"]
 mod online_adequacy_tests;
+mod online_learning;
+pub use online_learning::{
+    TacticQOnlineAdmission, TacticQOnlineAdmissionTiming, TacticQOnlinePolicyUpdate,
+};

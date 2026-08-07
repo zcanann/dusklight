@@ -56,6 +56,12 @@ Ordon Springs is the first adequacy test. The real terminal is
   normalized observations. This exposed and fixed scheduler admission of
   exhausted interior nodes; loop extraction and autonomous repetition across
   whole environment variants remain open in P0 below.
+- Native execution and the deterministic adequacy gate now share one online
+  batch-commit operation. It admits every executed alternative, keeps the
+  pre-execution policy winner authoritative, backs up exact terminal cost,
+  advances or freezes the policy as requested, projects authenticated terminal
+  candidates, and reports the best graph terminal. Frontier/rollout selection
+  still lives partly in the native adapter and remains the next extraction.
 
 No task is blocked on design.
 

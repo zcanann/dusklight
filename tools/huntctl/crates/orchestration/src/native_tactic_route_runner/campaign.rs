@@ -1163,49 +1163,11 @@ pub(super) fn run_seed(
             result_validation_micros,
         )?;
         let admission_orchestration_started = Instant::now();
-        let terminal_projection_started = Instant::now();
-        let terminal_candidates = evaluated
-            .iter()
-            .filter(|proposal| proposal.outcome.terminal)
-            .map(|proposal| {
-                campaign
-                    .final_result_from_evaluated_terminal(proposal)
-                    .map_err(route_error)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let terminal_projection_micros = elapsed_micros(terminal_projection_started.elapsed());
         // The policy-selected proposal is authoritative. Sibling proposals are
         // native training and candidate evidence, not an outcome-peeking beam
         // search that replaces the learner's action after observing results.
         let winner_index = 0;
         let winning_outcome = evaluated[winner_index].outcome.clone();
-        let expected_transition = evaluated[winner_index].transition.clone();
-        let decision = TacticQDecision {
-            ranking: proposal_batch.ranking,
-            selected: winning_outcome.selected.clone(),
-        };
-        let evaluated_native_ticks = evaluated.iter().fold(0_u64, |total, proposal| {
-            total.saturating_add(u64::from(
-                proposal.outcome.execution.duration.realized_ticks,
-            ))
-        });
-        let batch_graph_admission_started = Instant::now();
-        let newly_admitted_training_rows = match campaign.admit_leased_evaluated_replay(
-            &evaluated,
-            &evaluated_episode_groups,
-            &proposal_leases,
-        ) {
-            Ok(rows) => rows as u64,
-            Err(error) => {
-                lease_ledger.resolve(lease_batch_sha256, NativeTacticLeaseOutcome::Failed)?;
-                return Err(error.into());
-            }
-        };
-        let batch_graph_admission_micros = elapsed_micros(batch_graph_admission_started.elapsed());
-        let duplicate_training_transitions = evaluated
-            .len()
-            .saturating_sub(newly_admitted_training_rows as usize)
-            as u64;
         let next_action_catalog_started = Instant::now();
         let next_proposals = parameterized_catalog_for_state_with_promoted(
             seed,
@@ -1226,49 +1188,47 @@ pub(super) fn run_seed(
             OrchestrationPhase::ActionCatalogConstruction,
             next_action_catalog_micros,
         )?;
-        let graph_admission_started = Instant::now();
-        let step = if config.execution_plan.proposal_policy == TacticProposalPolicy::FrozenPolicy
+        let policy_update = if config.execution_plan.proposal_policy
+            == TacticProposalPolicy::FrozenPolicy
             || freeze_policy_for_paired_return
         {
-            campaign
-                .retain_rewarded_without_policy_update(
-                    decision,
-                    winning_outcome.clone(),
-                    &next_proposals.catalog,
-                    &next_proposals.blueprints,
-                    registry,
-                    &encode,
-                    |_| true,
-                    reward_spec,
-                )
-                .map_err(route_error)?
+            TacticQOnlinePolicyUpdate::Frozen
         } else {
-            campaign
-                .retain_and_refit_rewarded(
-                    decision,
-                    winning_outcome.clone(),
-                    &next_proposals.catalog,
-                    &next_proposals.blueprints,
-                    registry,
-                    &encode,
-                    |_| true,
-                    reward_spec,
-                    false,
-                )
-                .map_err(route_error)?
+            TacticQOnlinePolicyUpdate::Adaptive { refit_model: false }
         };
-        let selected_outcome_retention_micros = elapsed_micros(graph_admission_started.elapsed());
+        let online_admission = match campaign.admit_online_batch(
+            &proposal_batch,
+            &evaluated,
+            &evaluated_episode_groups,
+            &proposal_leases,
+            &next_proposals.catalog,
+            &next_proposals.blueprints,
+            registry,
+            &encode,
+            |_| true,
+            reward_spec,
+            policy_update,
+        ) {
+            Ok(admission) => admission,
+            Err(error) => {
+                lease_ledger.resolve(lease_batch_sha256, NativeTacticLeaseOutcome::Failed)?;
+                return Err(error.into());
+            }
+        };
+        let terminal_candidates = online_admission.terminal_candidates;
+        let newly_admitted_training_rows = online_admission.newly_admitted_training_rows as u64;
+        let duplicate_training_transitions = online_admission.duplicate_training_transitions as u64;
+        let evaluated_native_ticks = online_admission.evaluated_native_ticks;
+        let best_authenticated_terminal_ticks = online_admission.best_authenticated_terminal_ticks;
+        let terminal_projection_micros = online_admission.timing.terminal_projection_micros;
+        let batch_graph_admission_micros = online_admission.timing.graph_admission_micros;
+        let selected_outcome_retention_micros =
+            online_admission.timing.selected_outcome_retention_micros;
+        let step = online_admission.step;
         timing.graph_admission_micros = timing
             .graph_admission_micros
             .saturating_add(selected_outcome_retention_micros);
         let frontier_retention_started = Instant::now();
-        if step.step.transition != *expected_transition
-            || step.reward != evaluated[winner_index].reward
-        {
-            return Err(route_message(
-                "retained tactic proposal differs from its pre-admission evaluation",
-            ));
-        }
         let retained_restoration = (!winning_outcome.terminal)
             .then(|| campaign.current_restoration_contract().map_err(route_error))
             .transpose()?;
@@ -1503,10 +1463,8 @@ pub(super) fn run_seed(
             .count() as u64;
         decision_restore_accounting.refresh_rates();
         native_restore_accounting.merge(&decision_restore_accounting);
-        let best_authenticated_tick_after_decision = campaign
-            .best_graph_terminal_path()
-            .map_err(route_error)?
-            .and_then(|path| path.root_to_terminal_ticks.checked_sub(1));
+        let best_authenticated_tick_after_decision =
+            best_authenticated_terminal_ticks.and_then(|ticks| ticks.checked_sub(1));
         let decision_trace = NativeTacticDecisionTrace {
             execution_plan_sha256,
             decision_index,

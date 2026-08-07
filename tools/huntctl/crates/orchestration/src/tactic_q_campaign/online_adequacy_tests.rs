@@ -357,26 +357,24 @@ fn run_one_step(
     let evaluated = campaign
         .evaluate_rewarded_outcome(outcome.clone(), &encode, &reward_spec())
         .unwrap();
-    campaign
-        .admit_leased_evaluated_replay(&[evaluated], &[campaign.episode_group], &leased.leases)
-        .unwrap();
     let target = state_from_facts(&outcome.next_facts);
-    campaign
-        .retain_and_refit_rewarded(
-            TacticQDecision {
-                ranking: leased.batch.ranking,
-                selected: selected.clone(),
-            },
-            outcome,
+    let episode_group = campaign.episode_group;
+    let admission = campaign
+        .admit_online_batch(
+            &leased.batch,
+            &[evaluated],
+            &[episode_group],
+            &leased.leases,
             catalog,
             &[],
             &registry,
             &encode,
             |description| target.applicable(&description.option.option_id),
             &reward_spec(),
-            true,
+            TacticQOnlinePolicyUpdate::Adaptive { refit_model: true },
         )
         .unwrap();
+    assert_eq!(admission.newly_admitted_training_rows, 1);
     selected.descriptor.option_id
 }
 
