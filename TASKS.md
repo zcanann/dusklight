@@ -113,8 +113,12 @@ target is 120.
   drives the matching prompt/roll observation features and legal action mask.
   Tactic mining and promotion is now the first coherence gap.
 - Tactic mining, validation, promotion, binary persistence, and ordinary policy
-  selection exist on the production path. No native campaign has yet shown a
-  learner-discovered promoted tactic improving a route.
+  selection exist on the production path. A same-seed shortcut was incorrectly
+  admitting merely proposed candidates under `promoted/*` option identities;
+  it has been removed. Only imported or generation-barrier registries whose
+  held-out native comparisons actually promoted a candidate can now affect the
+  policy. No native campaign has yet shown a learner-discovered promoted tactic
+  improving a route.
 
 No task is blocked on design.
 

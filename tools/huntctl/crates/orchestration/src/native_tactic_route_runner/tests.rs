@@ -1349,34 +1349,6 @@ fn connected_macro_needs_repeated_occurrences_not_internal_steps() {
         BTreeSet::from([Digest([1; 32]), Digest([2; 32])])
     );
 
-    let candidate_root = std::env::temp_dir().join(format!(
-        "dusklight-active-tactic-candidate-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&candidate_root);
-    let source_lane = TacticMacroSourceLane {
-        seed_index: 0,
-        seed: 11,
-    };
-    let registry_root = candidate_root
-        .join("tactic-macro-candidates")
-        .join("seed-000-11-decision-000012");
-    fs::create_dir_all(&registry_root).unwrap();
-    let mut registry = TacticMacroPromotionRegistry::default();
-    registry.propose(candidates[0].clone()).unwrap();
-    write_tactic_macro_registry(
-        &registry_root.join(format!("candidates.{TACTIC_MACRO_REGISTRY_EXTENSION}")),
-        &registry,
-    )
-    .unwrap();
-    let recovered = load_active_tactic_candidates(&candidate_root, source_lane).unwrap();
-    assert_eq!(recovered.len(), 1);
-    assert_eq!(
-        recovered[0].entry.option_id(),
-        candidates[0].option_id.as_str()
-    );
-    fs::remove_dir_all(&candidate_root).unwrap();
-
     let longer_single = InputTape {
         frames: vec![InputFrame::default(); 16],
         ..InputTape::default()

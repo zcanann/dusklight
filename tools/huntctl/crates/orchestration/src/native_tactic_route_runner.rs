@@ -1348,8 +1348,7 @@ fn current_executable_sha256() -> Result<Digest, NativeTacticRouteRunError> {
 mod macro_discovery;
 use macro_discovery::{
     ActiveTacticMacroLifecycle, TacticMacroSourceLane, count_active_tactic_selections,
-    discover_active_tactic_candidates, finalize_tactic_macro_discovery,
-    load_active_tactic_candidates, refresh_active_tactic_macros,
+    finalize_tactic_macro_discovery, refresh_active_tactic_macros,
     should_refresh_active_tactic_macros,
 };
 mod macro_discovery_report_store;
@@ -1359,8 +1358,8 @@ use macro_discovery_report_store::{
 mod macro_import;
 pub use macro_import::tactic_macro_registry_identity;
 use macro_import::{
-    ImportedPromotedTactic, ImportedPromotedTactics, candidate_tactic_entries,
-    load_imported_promoted_tactics, merge_promoted_tactic_entries, promoted_tactic_entries,
+    ImportedPromotedTactic, ImportedPromotedTactics, load_imported_promoted_tactics,
+    merge_promoted_tactic_entries, promoted_tactic_entries,
 };
 
 mod replay_sharing;

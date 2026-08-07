@@ -96,11 +96,7 @@ pub(super) fn run_seed(
         resuming_seed,
         seed_root_preexisted,
     )?;
-    let source_lane = TacticMacroSourceLane { seed_index, seed };
-    let recovered_candidates = load_active_tactic_candidates(config.output_root, source_lane)?;
-    let mut active_tactics = promoted_tactics.to_vec();
-    let mut active_candidate_discovered = !recovered_candidates.is_empty();
-    merge_promoted_tactic_entries(&mut active_tactics, recovered_candidates)?;
+    let active_tactics = promoted_tactics.to_vec();
     let performance = if resuming_seed {
         load_seed_performance(&seed_root, campaign.decision_index)?
     } else {
@@ -404,20 +400,6 @@ pub(super) fn run_seed(
             decision_acquisition_rank
         };
         let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
-        if terminal_restart
-            && config.execution_plan.proposal_policy == TacticProposalPolicy::Learned
-            && active_paired_terminal_return.is_none()
-            && !active_candidate_discovered
-        {
-            let candidates = discover_active_tactic_candidates(
-                config.output_root,
-                source_lane,
-                encoder,
-                campaign.decision_index,
-            )?;
-            active_candidate_discovered = !candidates.is_empty();
-            merge_promoted_tactic_entries(&mut active_tactics, candidates)?;
-        }
         let mut policy_update_probes = Vec::new();
         if should_probe_policy_before_branch(terminal_restart)
             && active_paired_terminal_return.is_none()
