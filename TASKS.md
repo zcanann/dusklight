@@ -1,394 +1,157 @@
-# Generic goal-learning framework
+# Generic in-game goal learner
 
 ## Objective
 
-Build a learner that uses native game experience to discover complete,
-substantially better-than-human solutions to terminal game goals. The method is
-not prescribed. Q learning, graph search, planning, imitation, and learned
-options may be combined when the result learns reliably at the sample volume we
-can actually execute.
+Build a generic learner that discovers complete, substantially better-than-human
+solutions to native game goals at useful speed. The algorithm is not prescribed:
+value learning, graph search, planning, imitation, and learned options may be
+combined when experience—not authored routes—causes better decisions.
 
-The framework receives:
+The learner receives only:
 
-- a binary save-state root;
-- a native terminal predicate;
-- typed observations, including motion, collision response, input history, and
-  currently available prompted actions;
-- primitive, simultaneous, variable-duration, and promoted multi-action inputs;
-- native tick cost.
+- a binary root save state and restorable states produced by its own experience;
+- a native terminal predicate and native tick cost;
+- typed observations such as motion, collision response, camera, input history,
+  game mode, procedure, and currently available prompted actions;
+- primitive, simultaneous, variable-duration, and learned/promoted input options.
 
-It must not receive route coordinates, waypoints, route-specific tactics, or
-hand-authored shaping rewards. Observations are evidence from which the learner
-may infer useful behavior; they are not individually rewarded rules.
+It must not receive route coordinates, route-specific rewards, named solutions,
+or a privileged action sequence. Generic observations are evidence to learn
+from, not individually rewarded rules. Human demonstrations are optional
+experience: the learner must work without them and must be able to surpass them.
 
-Ordon Springs is the first adequacy test. The real terminal is
-`ordon_spring_load_committed`. The ordinary human route is 125 active ticks.
-124 ticks is the first better-than-human gate, 123 is convincing evidence, and
-120 is the current target.
+Ordon Springs is the first native adequacy test. Success is the real
+`ordon_spring_load_committed` terminal. The human sample reaches it in 125 active
+ticks; the first pass gate is 124, convincing evidence is 123, and the current
+target is 120.
 
-## Authoritative current evidence
+## Current evidence
 
-- The former native adapter remembered only its most recent live endpoint and
-  silently root-replayed older logical branches. It now mirrors each worker's
-  bounded portable-image LRU, returns newly materialized branch-base handles to
-  the scheduler, and advances selected rollouts through a separate cheap live
-  endpoint so progress cannot evict its own branch base. Focused dispatch tests
-  cover multiple exact bindings, eviction, stale-handle fallback, and
-  sibling-first live rearming. An end-to-end native search has not yet proved
-  two nonconsecutive restores, so the checkpoint-rollout task remains open.
-  Post-hoc inspection of the retained v4-v6 reports found 774 decisions labeled
-  as process-local restores and zero whose source differed from the immediately
-  preceding endpoint; the old count was entirely continuation reuse.
-  A 96-decision width-one diagnostic against the corrected adapter selected six
-  nonconsecutive branches, but all six still used authenticated root replay and
-  zero used a nonconsecutive process-local restore. Ninety-four decisions used
-  distinct frontier states: post-terminal scheduling rotated across exact
-  interior states produced inside long options, while native retention covered
-  only option endpoints or the branch currently being materialized. The next
-  fix is scheduler-visible checkpoint locality and/or retention of the branch
-  boundaries the scheduler actually chooses, not additional campaign volume.
-  The controller now accepts bounded exact-state restoration preferences: a
-  newly materialized portable base may source one additional rollout only when
-  it remains nonterminal, within horizon, and has leaseable actions, after
-  which the preference is consumed. Root-refresh authority and ordinary global
-  acquisition remain unchanged. A 32-decision native proof then root-replayed a
-  nonconsecutive branch at decision 12 and directly restored that exact branch
-  at decision 13 with no fallback, proving one real locality handoff. It did not
-  improve the 318-tick diagnostic incumbent because optimization had ranked an
-  untouched state one tick before terminal ahead of earlier states with route
-  improvement headroom. Terminal-supported graph-node scheduling now ranks
-  earlier prefixes before coverage; the independent learned-frontier strategy
-  applies the same rule before action value when exact authenticated terminal
-  cost is equal. A 64-decision same-seed proof selected the four-tick prefix,
-  ran its candidate to the shared 320-tick horizon, then directly restored the
-  same nonconsecutive base for a sibling at decision 51. Together with the
-  decision-13 restore, this proves two genuine nonconsecutive direct restores.
-  Neither early-prefix rollout reached the terminal. A follow-up forced every
-  continuation decision to learned rank zero, but all thirteen compared action
-  selections were byte-for-byte identical to the former rotating-rank run, so
-  acquisition-rank continuity was not causal and that change was removed.
-  State-graph terminal backup currently labels interior states while explicitly
-  representing their remaining observed segments as observations, not
-  executable actions. The selected four-tick state is inside a 24-tick option:
-  it has exact ticks-to-terminal but no action for the remaining option or
-  incumbent suffix, so each branch starts relearning the remaining 315 ticks.
-  The state graph now returns the shortest exact raw terminal continuation for
-  any executable supported node, sliced from that node's route-specific
-  authenticated lineage; competing terminal routes cannot leak their suffixes
-  across exact identities. The native online runner now evaluates a supported
-  checkpoint candidate as one ordinarily selected perturbation followed by the
-  remainder of that authenticated terminal tape. It selects the most similar
-  future incumbent boundary with the existing route-agnostic feature distance;
-  shortcut headroom breaks only exact similarity ties, so this is state
-  matching rather than a route-progress reward. Approximate joins additionally
-  expose up to sixteen future incumbent states as ordinary state-reactive seek
-  actions, ordered by direct travel distance per skipped incumbent tick. Each
-  correction's maximum duration is strictly less than its skipped headroom, so
-  a terminal splice cannot merely tie the incumbent. The remainder is a
-  content-identified, stage/room-guarded experience action. The resumable
-  perturbation/rejoin/suffix phase is reconstructed from durable option
-  identities and native completion reasons after resume. The first
-  native smoke exposed that the policy could commit this action while graph
-  scheduling registered every applicable action and substituted an unrelated
-  expansion. Committed exploration now registers and leases only descriptors
-  in the policy batch. In the repeated 20-decision seed-104729 smoke, decisions
-  16 and 18 executed 291- and 313-tick authenticated continuations through
-  one-entry scheduler queues after their perturbations; the latter came from a
-  directly restored intermediate checkpoint. Both complete splices missed the
-  terminal, correctly left the 318-tick incumbent unchanged, and branched after
-  the incumbent-length budget instead of relearning the suffix. A repeated
-  native smoke then matched the two-tick perturbation to incumbent tick 8
-  instead of elapsed tick 6, creating a genuine two-tick shortcut envelope;
-  its 311-tick open-loop suffix still missed the terminal. A 22-decision
-  reactive-rejoin smoke then executed complete 24+40+175 and 2+1+311 candidate
-  structures. Neither correction actually reached its target. Native
-  target-reached authority now gates suffix execution, so the repeated smoke
-  retained both failed correction transitions but spent no long suffix on
-  either, reducing the same 22-decision native work from 931 to 427 ticks. A
-  subsequent 64-decision proof exposed allocation starvation rather than a
-  restore failure: one post-terminal discovery episode consumed 45 decisions
-  while the cyclic scheduler waited for episode completion before returning to
-  rank-zero optimization. Post-terminal cyclic discovery now receives
-  native-tick slices derived from the current authenticated incumbent length;
-  action acquisition remains fixed for the whole episode instead of silently
-  changing with the global decision index. Process-local locality hints also
-  cannot replace a rank-zero terminal-supported frontier. Under the same
-  seed-104729, width-one, 64-decision envelope, the corrected run rotated
-  through 15 episodes, returned to terminal support at episodes 4, 8, and 12,
-  made 11 direct process-local restores, and retained 53 useful transitions.
-  It still left the 318-tick diagnostic incumbent unchanged: all eight
-  incumbent-rejoin actions missed their native target, including six that used
-  their full 40-tick allowance. The rejoin action now simplifies the learner's
-  own authenticated incumbent trajectory into a bounded, closed-loop coordinate
-  sequence instead of driving straight through intervening geometry. It receives
-  only observed lineage states, not authored route coordinates, and its duration
-  remains strictly below the incumbent ticks it proposes to skip. In a bounded
-  20-decision seed-104729 campaign, one ordinary perturbation followed by this
-  learned rejoin and the authenticated terminal continuation improved the
-  incumbent from 318 to 210 ticks. Two independent cold replays hit the real
-  terminal at tick 210 with identical terminal identity and boundary evidence.
-  That winning episode began at the authenticated root; its later process-local
-  restores were consecutive continuations. A subsequent width-one,
-  32-decision run made eight direct checkpoint restores and returned to the
-  four-tick incumbent prefix nonconsecutively, but retained the 210-tick best.
-  That run exposed a false-negative execution boundary: native
-  `SeekCoordinate` could not report target completion, and a coordinate
-  sequence entering its target on its final simulated frame was classified as
-  duration exhaustion from the pre-frame observation. Native generic
-  coordinate actions now use target-aware sequence semantics and authenticate
-  the final post-simulation boundary. In a repeated 22-decision proof, the
-  restored prefix's one-tick rejoin consequently advanced to and executed its
-  203-tick incumbent suffix instead of abandoning the candidate. The suffix
-  missed the terminal because coordinate proximity did not restore compatible
-  momentum, procedure, camera, and input-history state. Thus execution from a
-  nonconsecutive restored branch is now proved, but improvement from one
-  remains open; the next correction is a state-compatible or closed-loop
-  continuation, not more sibling volume. All 43 control tests and all 486
-  orchestration tests pass.
-- The learner's previous best authenticated route was 229 ticks. The current
-  best is 210 ticks, reproduced exactly by two cold replays. This is a real
-  route-learning improvement but remains far short of the 124-tick gate.
-- The first terminal arrives in roughly 35 seconds; hundreds of later
-  expansions have not produced a competitive route. Discovery is no longer the
-  primary failure. Route learning and optimization are.
-- The present post-terminal loop learned one 254-tick refinement but did not
-  beat the 229-tick incumbent. This is inadequate, not partial success toward
-  the 125-tick gate.
-- Existing paired-policy and causal-report machinery has zero valid native
-  comparisons. Matched continuations are now explicit opt-in attribution mode;
-  ordinary route learning no longer freezes its learner or spends a second
-  full rollout on that control. Attribution remains off the critical path until
-  an adaptive learner produces useful improvements worth explaining.
-- The standalone around-corner fixture learns from an exhaustively enumerated
-  training world and then transfers a completed return table. It does not run
-  the production online campaign and therefore does not prove that the real
-  learner can discover or improve a route.
-- A production-path adequacy test now runs the real campaign, graph scheduler,
-  retained-checkpoint restore, transition admission, terminal backup, and
-  refit path online. It improves a deliberately selected 12-tick detour to a
-  9-tick around-corner route without a test-authored root retry, publishes exact
-  root returns of 10 versus 9, and subsequently ranks the 9-tick action first.
-  Between those routes it autonomously restores an untried retained interior
-  checkpoint and improves the 12-tick incumbent to 10 ticks. A second cold
-  campaign independently converges in a translated corridor whose exact state
-  identities are disjoint; its different exploration order finds 10 ticks on
-  the first rollout and then 9, so the gate no longer enters the variant through
-  a test-only transition or requires the same incidental route order. The first
-  12-decision production rollout now
-  remains coherent through the former eight-decision interruption point and
-  runs to the terminal; ordinary rollouts branch only at a terminal, explicit
-  curriculum/refinement boundary, or shared native-tick horizon. This exposed
-  and fixed scheduler admission of exhausted interior nodes.
-- Native execution and the deterministic adequacy gate now share one online
-  frontier selector, production parameterized proposal path, graph/policy lease
-  authority, and batch-commit operation. The commit admits every executed
-  alternative, keeps the pre-execution policy winner authoritative, backs up
-  exact terminal cost, advances or freezes the policy as requested, projects
-  authenticated terminal candidates, and reports the best graph terminal.
-  The shared continuation planner now also owns terminal, curriculum, and
-  forced-horizon branching, terminal-refinement continuity, acquisition
-  partitions, learned versus broad frontier use, root refresh, and exact
-  frontier selection as one environment-independent operation. Native execution
-  and the deterministic adequacy environment use the same controller to derive
-  terminal restart/support, restore the returned branch, filter the
-  state-specific applicable action surface, enforce the rollout horizon, and
-  lease executable proposals. They do not recompose those decisions. There is
-  no decision-count branch cadence. A stateful controller owns action ranking,
-  continuation, restore, horizon-safe leasing, admission, and tactic status
-  transitions; it records the outstanding decision index and refuses another
-  cycle until that exact lease is admitted. Native process execution,
-  persistence, timing, and reporting remain adapters around that controller.
-- Terminal completion no longer rewrites every scheduled acquisition to rank
-  zero. A terminal forces a restore while preserving the lane's sealed
-  acquisition partition: rank zero exploits authenticated terminal paths and
-  nonzero ranks continue broad graph discovery. Root refresh may replace a
-  scheduled broad restore but cannot replace rank-zero terminal support. The
-  production adequacy path now performs its 12-to-10-to-9 improvement through
-  successive discovery ranks 1, 2, and 3, while the single-lane plan still
-  reserves every fourth episode for exploitation.
-- Tactic discovery no longer waits until campaign finalization. Between learned
-  generations, the production runner mines the strongest repeated connected
-  sequence from completed journals, validates it against its full primitive
-  realization at matched held-out checkpoints, and adds a promoted guarded
-  tactic to the next generation's live catalog without removing primitives.
-  Checkpoint scheduling evaluates that same augmented action surface, so a
-  compatible retained state becomes eligible again when its primitives are
-  exhausted but the new tactic is untried.
-  Validation now requires exact emitted-input equivalence. An equivalent
-  multi-action sequence can promote for reducing several policy decisions to
-  one; a single-action candidate still needs a strict native outcome gain.
-  Frozen and random-valid controls do not receive this adaptive catalog update.
-  The bounded active validator prioritizes true multi-decision compositions
-  ahead of long one-component copies, so its single validation slot targets a
-  candidate that can actually earn the decision-compression promotion.
-  Promotion independence is defined by authenticated frontier identity, not by
-  arbitrary seed identity: two distinct compatible source states and two
-  distinct held-out validation states may come from one seed. This removes the
-  former blanket ban on tactic promotion in a single-seed campaign without
-  relaxing the multi-state evidence requirement.
-  After a learned seed reaches a terminal, its durable journal is mined for the
-  strongest repeated exact sequence. That sequence enters the same seed's live
-  action catalog as an explicitly unpromoted candidate, survives resume through
-  its checksummed binary registry, and can gather ordinary policy evidence while
-  all primitive components remain selectable. Only the separate two-state
-  matched candidate-versus-primitive gate changes its status to promoted.
-  The production controller adequacy environment now promotes a two-input
-  composition from matched evidence at two exact-state-disjoint compatible
-  states, installs it beside every primitive, selects it through the ordinary
-  leased decision path, and admits its transition. The promoted option emits
-  the identical two-frame tape and reaches the identical exact state in one
-  policy decision versus two primitive decisions.
-  The checksummed macro lifecycle artifact now records active refresh count,
-  newly promoted option identities, and later decisions that actually selected
-  those options; these fields are derived from durable decision journals rather
-  than inferred from catalog membership.
-  Native evidence that a same-campaign promoted tactic was selected and
-  improved learning remains open.
-- Exact graph backup covers every executable node on every authenticated
-  terminal tape, preserving route identity. The production adequacy gate now
-  asserts the exact countdown on both complete 9-tick lineages and the 10-tick
-  retained-interior shortcut. Separate production graph/learner coverage proves
-  open continuations remain right-censored while still teaching duration,
-  acceptance, prompted-action availability, next-state dynamics, uncertainty,
-  and prediction error.
+- The production online loop learns shortest paths in two exact-state-disjoint
+  deterministic around-corner worlds, branches from retained states, and backs
+  up exact terminal cost. This proves basic plumbing, not native adequacy.
+- The native adapter retains bounded process-local checkpoints and has directly
+  restored multiple nonconsecutive intermediate states. Save-state branching is
+  functional; useful optimization from those branches is not yet proven.
+- The best authenticated native route is 210 ticks and cold-replays twice at the
+  same real terminal tick. It is a real improvement over the former 318-tick
+  diagnostic route, but it is nowhere near the 124-tick adequacy gate.
+- The 210-tick result used a forced perturbation/rejoin/recorded-suffix mechanism.
+  A later restored branch reached a nearby incumbent coordinate but its suffix
+  missed because momentum, camera, procedure, and input history were
+  incompatible. Coordinate proximity is therefore not valid option
+  applicability, and this mechanism is not acceptable evidence of generic
+  learning.
+- Tactic mining, validation, promotion, binary persistence, and ordinary policy
+  selection exist on the production path. No native campaign has yet shown a
+  learner-discovered promoted tactic improving a route.
 
 No task is blocked on design.
 
-## P0 - make the production learner learn
+## P0 — make native checkpoint learning coherent
 
-- [x] Extract one environment-independent learning/search loop from the native
-  campaign. It must own frontier selection, action selection, rollout
-  continuation, transition admission, terminal-cost backup, incumbent
-  replacement, and tactic promotion through narrow interfaces. Native process,
-  checkpoint, persistence, and reporting code remain adapters around that loop.
-- [x] Drive that exact loop with a deterministic checkpoint environment. The
-  environment must include an around-corner local optimum in which greedy
-  one-step goal progress fails and several temporarily worse actions are
-  required. Starting with no learned return table, the production loop must:
-  discover a terminal, branch from retained intermediate states, converge to
-  the shortest route, and then repeat on exact-state-disjoint variants. A toy
-  scheduler or an exhaustively pre-trained snapshot does not satisfy this task.
-- [x] Make successful rollouts teach multi-step terminal cost. Every transition
-  on an authenticated terminal lineage receives exact ticks-to-terminal;
-  repeated state/action evidence updates the policy used by later rollouts.
-  Open rollouts remain censored rather than becoming fabricated failures, but
-  their states, actions, availability, dynamics, and novelty remain usable
-  exploration evidence.
-- [ ] Make native checkpoint rollouts the unit of optimization. The logical
-  graph and native adapter now retain bounded, eviction-aware restore handles
-  attached to exact graph states while keeping the selected live endpoint
-  separate. Prove the production scheduler actually restores at least two
-  nonconsecutive intermediate boundaries without root replay and improves an
-  incumbent from one of them. Continue each candidate until terminal or a
-  shared native-tick budget, and immediately replace the incumbent when a faster
-  authenticated terminal route appears.
-- [x] Keep both exploitation and discovery alive. Learned terminal cost ranks
-  supported choices; uncertainty, state/action coverage, and seeded exploration
-  allocate trials to unsupported choices. Neither a growing fresh-state queue
-  nor repeated polishing of one lineage may starve the other partition.
-- [x] Mine repeated useful action subsequences into candidate tactics and test
-  them against their primitive realization from matched checkpoints. Promote
-  only when they improve terminal rate, terminal ticks, or sample efficiency
-  across multiple compatible states. Primitive actions must remain selectable.
+- [ ] Remove forced incumbent splicing from ordinary optimization. A branch must
+  continue through ordinary learner-selected actions until terminal or a shared
+  native-tick budget. A recorded continuation may be selected only as a learned
+  option whose applicability is authenticated; coordinate proximity alone must
+  never authorize open-loop replay.
+- [ ] Make retained checkpoints the actual unit of optimization. Demonstrate in
+  the production loop that at least two nonconsecutive intermediate states are
+  restored without root replay and that ordinary subsequent decisions from one
+  produce a faster authenticated terminal route.
+- [ ] Verify that terminal returns change later action ranking at predecessor
+  states and propagate far enough to solve temporarily-worse moves around a
+  corner. Open rollouts remain censored but still teach availability, dynamics,
+  duration, novelty, and uncertainty.
+- [ ] Keep exploitation and discovery live without decision-count scripts or
+  forced route phases. Learned terminal value should revisit promising prefixes;
+  uncertainty and state/action coverage should allocate unsupported trials.
+- [ ] Expose simultaneous and variable-duration primitives—including movement,
+  camera lock, roll, and their legal compositions—through the same state-aware
+  action interface. Availability must come from native state, not a route script.
+- [ ] Mine repeated useful subsequences, validate them against their primitive
+  realization from matched retained states, and promote only improvements that
+  generalize across compatible states. Primitives remain available.
 
-Exit: the production learning/search loop, without native-specific knowledge,
-learns shortest solutions in deterministic checkpoint worlds from online
-experience and demonstrates that later choices changed because of learned
-multi-step return.
+Exit: the production learner, without a privileged route continuation, learns
+the shortest solutions in deterministic checkpoint worlds and improves a native
+incumbent from a nonconsecutive restored checkpoint.
 
-## P0 - beat the Ordon route
+## P0 — beat the Ordon route
 
-- [ ] Run one bounded seed-104729 campaign through the corrected loop. It must
-  report, in one compact scorecard, time to first terminal, incumbent
-  improvements, branch sources, rollout completions, censored rollouts,
-  save-state restores, action/tactic coverage, useful experience per second,
-  and final cold-replay result. If it cannot improve 229 ticks, diagnose and fix
-  the learning/search decision that prevented improvement before adding volume.
-- [ ] Discover and cold-replay a zero-shot route of 124 ticks or less twice,
-  with identical terminal identity and first-hit tick.
-- [ ] Reach 123 ticks or less and then 120 ticks or less with the same generic
-  observations, objective, actions, and learning rules.
-- [ ] Run five fixed zero-shot seeds under the same bounded envelope. All five
-  must reach the native terminal, the median discovery time must be useful on a
-  local machine, and the route-quality distribution must not depend on one
-  lucky seed.
-- [ ] Repeat with permuted seed order and equivalent budgets to rule out update
-  ordering, scheduler ordering, and cross-run leakage.
+- [ ] After the coherence exit above, run one bounded seed-104729 diagnostic that
+  answers multiple hypotheses in one scorecard: terminal discoveries, incumbent
+  improvements, branch sources, completed and censored rollouts, restore modes,
+  action/tactic coverage, learned ranking changes, useful experience per second,
+  and cold-replay result. Diagnose the first failed learning decision before
+  adding campaign volume.
+- [ ] Discover and cold-replay a zero-shot route of 124 ticks or less twice with
+  identical terminal identity and first-hit tick.
+- [ ] Reach 123 ticks or less and then 120 ticks or less with unchanged generic
+  observations, objective, action interface, and learning rules.
+- [ ] Under one bounded envelope, run five fixed zero-shot seeds and a permuted
+  seed order. All must reach the terminal; route quality and discovery time must
+  not depend on one lucky seed, scheduler ordering, or cross-run leakage.
 
 Exit: the framework reliably discovers substantially better-than-human Ordon
-routes; merely approaching 125 ticks does not pass.
+routes. Merely finding the terminal or approaching 125 ticks does not pass.
 
-## P0 - prove learning and tactics caused the result
+## P0 — prove learning and learned tactics caused the result
 
-- [ ] After the adaptive learner improves a route, compare it with frozen-policy
-  and seeded random-valid controls over identical checkpoints, opportunities,
-  seeds, and native-tick budgets. Reuse retained evidence when identities match;
-  collect new paired evidence only where outcomes are censored. Require a
-  held-out gain in terminal rate, time to first terminal, route ticks, or useful
-  expansions to the result.
-- [ ] At decisive checkpoints, show that experience changed action ranking and
-  rollout selection. Audit learned dependence on generic observations such as
-  velocity, trajectory continuity, momentum loss, collision response, camera
-  and input history, and prompted-action availability. Do not convert those
-  observations into authored reward bonuses.
-- [ ] Show at least one discovered and promoted multi-action tactic improving
-  held-out native decisions relative to its primitive components.
-- [ ] Run a suboptimal human-demonstration ablation. A demonstration may improve
-  exploration or representation learning, but the learner must still succeed
-  without it, exceed it, and discover tactics absent from it.
+- [ ] Compare an improving adaptive run with frozen-policy and seeded
+  random-valid controls over matched checkpoints, opportunities, seeds, and
+  native-tick budgets. Require a held-out gain in terminal rate, discovery time,
+  route ticks, or useful expansions.
+- [ ] At decisive checkpoints, show which experience changed action ranking and
+  how generic trajectory, momentum, collision response, camera, input history,
+  and prompted-action observations affected the learned estimate. Do not turn
+  those observations into authored reward bonuses.
+- [ ] Show a learner-discovered, promoted multi-action tactic improving held-out
+  native decisions over its primitive components.
+- [ ] Ablate an ordinary suboptimal human demonstration. It may accelerate
+  learning, but must not be required, cap the policy, or supply tactics absent
+  from the demonstration.
 
-Exit: adaptive learning and reusable tactics, rather than lucky search or a
-hand-authored route, causally improve the result.
+Exit: adaptive learning and reusable learned tactics—not lucky search, a forced
+splice, or an authored route—causally improve native results.
 
-## P0 - make useful learning fast enough
+## P0 — make successful learning fast enough
 
-- [ ] Profile the corrected end-to-end loop once under a representative growing
-  corpus. Attribute wall time and memory across native execution, restore,
-  model update, graph scheduling, evidence admission, persistence, and IPC in
-  the same run.
-- [ ] Optimize only measured dominant costs. Eliminate repeated whole-corpus
-  projection, hashing, fitting, or serialization when retained incremental
-  state can preserve the same semantics. Do not weaken exploration or evidence
-  integrity to inflate throughput.
-- [ ] Re-run the same treatment and require a material increase in useful
-  experience per minute or a material reduction in time to the same learned
-  result. A microbenchmark without end-to-end movement does not pass.
-- [ ] Compare one and two checkpoint-owning lanes. Keep added parallelism only
-  when it increases unique useful experience without learner contamination,
-  host saturation, or interference with unrelated processes.
+- [ ] Profile the coherent end-to-end learner once on a representative growing
+  corpus. Attribute time and memory to native execution, restore, model update,
+  graph scheduling, evidence admission, persistence, and IPC.
+- [ ] Optimize only measured dominant costs while preserving exploration and
+  evidence semantics. Re-run the same treatment and require materially more
+  useful experience per minute or less time to the same learned result.
+- [ ] Compare one and two checkpoint-owning lanes. Retain parallelism only when
+  it increases unique useful experience without contamination, host saturation,
+  or interference with unrelated processes.
 
-Exit: the framework explains where its time goes and reaches the same learning
-quality materially faster.
+Exit: the framework explains where time goes and reaches the same learning
+quality materially faster. Raw attempts per second alone do not pass.
 
-## P1 - generality and engineering quality
+## P1 — generality and engineering quality
 
-- [ ] Apply the unchanged objective interface, observations, action library,
-  learning rules, and tactic promotion to a second native goal. No
-  route-specific coordinates, shaping, or named tactic may be introduced.
-- [ ] Split mixed-responsibility production files as the learning loop is
-  extracted. Execution, checkpoint ownership, branching, learning, proposal
-  generation, tactic promotion, persistence, replay proof, and reporting must
-  be independently testable modules. Production files over roughly 1,000 lines
-  require an explicit single-responsibility justification or decomposition.
-- [ ] Keep large persistent corpora, checkpoints, journals, and models bounded,
-  checksummed, atomic, and binary. JSON is acceptable only for small human-facing
-  manifests and summaries. Prefer an explicit replay-and-record migration over
-  permanent compatibility complexity.
-
-Exit: the learner transfers beyond Ordon and its critical behavior can be
-audited, tested, and changed without navigating orchestration monoliths.
+- [ ] Apply the unchanged goal, observation, action, learning, and tactic
+  interfaces to a second native goal without route-specific shaping or tactics.
+- [ ] Decompose mixed-responsibility production files into independently testable
+  execution, checkpoint, branching, learning, proposal, tactic, persistence,
+  replay-proof, and reporting modules. Files over roughly 1,000 lines require an
+  explicit single-responsibility justification or decomposition.
+- [ ] Keep persistent corpora, checkpoints, journals, and models bounded,
+  checksummed, atomic, and binary. JSON is limited to small human-facing
+  manifests and summaries; prefer replay-and-record migrations over permanent
+  compatibility complexity.
 
 ## Operating rules
 
-- Work in the order above unless retained evidence proves a later task is the
-  current blocker.
-- Every native campaign is bounded and answers multiple hypotheses. Do not run
-  repeated campaigns merely to mine a better random result.
-- Tests and reports are evidence only when they exercise the production path
-  named by the task.
-- Every evaluated branch contributes its authentic transitions and outcomes.
-- Every promoted route is reproduced by two cold replays.
-- Use at most two owned build/native workers on this machine. Manage only exact
-  child processes started by this session; never stop unrelated Codex, Cargo,
-  emulator, or worker processes.
-- Commit and push each natural milestone. Do not leave a long-lived dirty tree.
+- Work capability-first in the order above. Do not optimize throughput while a
+  learning or execution semantic is known to be invalid.
+- Every native campaign is bounded and answers multiple hypotheses. Never mine
+  repeated campaigns for a lucky route.
+- Every evaluated branch contributes authentic transitions and outcomes; every
+  promoted route is reproduced by two cold replays.
+- Use at most two owned build/native workers. Manage only exact child processes
+  started by this session and never stop unrelated Codex, Cargo, emulator, or
+  worker processes.
+- Commit and push each natural milestone; do not leave a long-lived dirty tree.
