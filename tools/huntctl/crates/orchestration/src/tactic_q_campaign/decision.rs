@@ -522,19 +522,34 @@ impl TacticQCampaign {
             .filter(|choice| choice.applicable)
             .map(|choice| &choice.descriptor)
             .collect::<Vec<_>>();
-        let incumbent = self
-            .graph_learning_batch()?
-            .rows
-            .into_iter()
-            .filter(|row| {
-                row.source == source
-                    && applicable
-                        .iter()
-                        .any(|descriptor| **descriptor == row.action)
+        let validated = self.validated_state_graph()?;
+        let exact_returns = validated.exact_terminal_returns()?;
+        let graph = validated.graph();
+        let source_node = graph
+            .node(source)
+            .ok_or(TacticQCampaignError::InvalidState(
+                "exact terminal policy source is absent from the graph",
+            ))?;
+        let incumbent = source_node
+            .outgoing_expansions
+            .iter()
+            .filter_map(|identity| graph.expansion(*identity))
+            .filter(|expansion| {
+                matches!(
+                    expansion.status,
+                    ActionExpansionStatus::Completed {
+                        authority: ExpansionEvidenceAuthority::Executable,
+                        ..
+                    }
+                ) && applicable
+                    .iter()
+                    .any(|descriptor| **descriptor == expansion.action)
             })
-            .filter_map(|row| {
-                row.exact_conditional_ticks_to_terminal
-                    .map(|ticks| (ticks, row.realized_duration_ticks, row.action))
+            .filter_map(|expansion| {
+                let target = expansion.target?;
+                let duration = expansion.execution.as_ref()?.duration.realized_ticks;
+                let ticks = u64::from(duration).checked_add(*exact_returns.get(&target)?)?;
+                Some((ticks, duration, expansion.action.clone()))
             })
             .min_by(|left, right| {
                 left.0
