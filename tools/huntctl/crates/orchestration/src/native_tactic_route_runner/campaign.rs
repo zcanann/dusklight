@@ -500,11 +500,23 @@ pub(super) fn run_seed(
                     },
                 )
             } else {
-                campaign.graph_scheduled_root_and_frontier(
+                campaign.graph_scheduled_root_and_frontier_with_action_surface(
                     seed,
                     frontier_sampling_round(episode),
                     branch_acquisition_context.rank,
                     maximum_frontier_frames,
+                    &|state| {
+                        applicable_parameterized_descriptors_for_state(
+                            &campaign,
+                            registry,
+                            seed,
+                            campaign.decision_index,
+                            state,
+                            encoder,
+                            u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                            action_schema_sha256,
+                        )
+                    },
                 )
             }
             .map_err(route_error)?;
@@ -763,11 +775,23 @@ pub(super) fn run_seed(
                     },
                 )
             } else {
-                campaign.graph_scheduled_root_and_frontier(
+                campaign.graph_scheduled_root_and_frontier_with_action_surface(
                     seed,
                     frontier_sampling_round(episode),
                     branch_acquisition_context.rank,
                     maximum_frontier_frames,
+                    &|state| {
+                        applicable_parameterized_descriptors_for_state(
+                            &campaign,
+                            registry,
+                            seed,
+                            campaign.decision_index,
+                            state,
+                            encoder,
+                            u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                            action_schema_sha256,
+                        )
+                    },
                 )
             }
             .map_err(route_error)?;

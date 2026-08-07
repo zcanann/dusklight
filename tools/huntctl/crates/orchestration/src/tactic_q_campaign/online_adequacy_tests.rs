@@ -15,6 +15,7 @@ const LEARNER_SNAPSHOT: Digest = Digest([0x75; 32]);
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AdequacyState {
     Start,
+    VariantStart,
     Detour(u8),
     Optimal(u8),
     Goal,
@@ -24,6 +25,7 @@ impl AdequacyState {
     fn code(self) -> u8 {
         match self {
             Self::Start => 0,
+            Self::VariantStart => 64,
             Self::Detour(step) => 1 + step,
             Self::Optimal(step) => 32 + step,
             Self::Goal => 63,
@@ -33,6 +35,7 @@ impl AdequacyState {
     fn position(self) -> [f32; 3] {
         match self {
             Self::Start => [0.0, 0.0, 0.0],
+            Self::VariantStart => [10.0, 0.0, 0.0],
             // The detour initially moves toward the goal, then winds around a
             // longer corridor. Position is observation, not reward.
             Self::Detour(step) => {
@@ -72,7 +75,7 @@ impl AdequacyState {
 
     fn applicable(self, action: &str) -> bool {
         match self {
-            Self::Start => matches!(action, "east" | "north"),
+            Self::Start | Self::VariantStart => matches!(action, "east" | "north"),
             Self::Detour(step) => action == detour_action(step),
             Self::Optimal(step) => action == optimal_action(step),
             Self::Goal => false,
@@ -80,12 +83,17 @@ impl AdequacyState {
     }
 
     fn execute(self, action: &str) -> Option<Self> {
+        if self == Self::Start && action == "variant" {
+            return Some(Self::VariantStart);
+        }
         if !self.applicable(action) {
             return None;
         }
         match self {
             Self::Start if action == "east" => Some(Self::Detour(0)),
             Self::Start if action == "north" => Some(Self::Optimal(0)),
+            Self::VariantStart if action == "east" => Some(Self::Detour(0)),
+            Self::VariantStart if action == "north" => Some(Self::Optimal(0)),
             Self::Detour(10) => Some(Self::Goal),
             Self::Detour(step) => Some(Self::Detour(step + 1)),
             Self::Optimal(7) => Some(Self::Goal),
@@ -114,6 +122,7 @@ fn input_frame(action: &str) -> InputFrame {
         "east" => (127, 0),
         "south" => (0, -127),
         "west" => (-127, 0),
+        "variant" => (0, 0),
         _ => unreachable!(),
     };
     let mut frame = InputFrame {
@@ -131,7 +140,7 @@ fn input_frame(action: &str) -> InputFrame {
 
 fn catalog() -> TacticAssetCatalog {
     TacticAssetCatalog::new(
-        ["east", "north", "south", "west"]
+        ["east", "north", "south", "west", "variant"]
             .into_iter()
             .map(|action| {
                 TacticCatalogEntry::new(
@@ -172,6 +181,11 @@ fn facts_at(base: &FactSnapshot, state: AdequacyState, tape_frame: u64) -> FactS
     facts.state_identity = [state.code(); 16];
     facts.world.stage = "online-adequacy".into();
     facts.world.room = 0;
+    facts.world.point = Some(if state == AdequacyState::VariantStart {
+        1
+    } else {
+        0
+    });
     facts.player.position_f32_bits = state.position().map(f32::to_bits);
     facts.player.procedure = Some(u16::from(state.code()));
     facts.player.velocity_f32_bits = Some([0.0_f32.to_bits(); 3]);
@@ -194,6 +208,7 @@ fn facts_at(base: &FactSnapshot, state: AdequacyState, tape_frame: u64) -> FactS
 fn state_from_facts(facts: &FactSnapshot) -> AdequacyState {
     match facts.state_identity[0] {
         0 => AdequacyState::Start,
+        64 => AdequacyState::VariantStart,
         1..=11 => AdequacyState::Detour(facts.state_identity[0] - 1),
         32..=39 => AdequacyState::Optimal(facts.state_identity[0] - 32),
         63 => AdequacyState::Goal,
@@ -203,7 +218,12 @@ fn state_from_facts(facts: &FactSnapshot) -> AdequacyState {
 
 fn encode(facts: &FactSnapshot) -> Result<Vec<f32>, &'static str> {
     let [x, _, y] = facts.player.position_f32_bits.map(f32::from_bits);
-    Ok(vec![x, y, 3.0 - x, -y, f32::from(facts.state_identity[0])])
+    let origin_x = if facts.world.point == Some(1) {
+        10.0
+    } else {
+        0.0
+    };
+    Ok(vec![x - origin_x, y])
 }
 
 fn campaign_with_cold_east_primary(
@@ -212,8 +232,14 @@ fn campaign_with_cold_east_primary(
 ) -> TacticQCampaign {
     for seed in 0..10_000 {
         let root = facts_at(base, AdequacyState::Start, base.tape_frame);
-        let current =
-            LearnerState::build(root, &FactRegistry::canonical(), catalog, &[], |_| true).unwrap();
+        let current = LearnerState::build(
+            root,
+            &FactRegistry::canonical(),
+            catalog,
+            &[],
+            |description| AdequacyState::Start.applicable(&description.option.option_id),
+        )
+        .unwrap();
         let mut campaign = TacticQCampaign::new(
             FEATURE_SCHEMA,
             OBJECTIVE,
@@ -309,57 +335,103 @@ fn execute_selected(
     }
 }
 
+fn run_one_step(
+    campaign: &mut TacticQCampaign,
+    catalog: &TacticAssetCatalog,
+    episode_shard_sha256: Digest,
+) -> String {
+    let registry = FactRegistry::canonical();
+    let batch = campaign.decide_batch(catalog, &[], &encode, 4).unwrap();
+    let eligible = batch
+        .ranking
+        .choices
+        .iter()
+        .filter(|choice| choice.applicable)
+        .map(|choice| choice.descriptor.clone())
+        .collect::<Vec<_>>();
+    let leased = campaign
+        .lease_current_parameterized_batch(batch, &eligible, 1, LEARNER_SNAPSHOT)
+        .unwrap();
+    let selected = leased.batch.proposals[0].clone();
+    let outcome = execute_selected(campaign, &selected, episode_shard_sha256);
+    let evaluated = campaign
+        .evaluate_rewarded_outcome(outcome.clone(), &encode, &reward_spec())
+        .unwrap();
+    campaign
+        .admit_leased_evaluated_replay(&[evaluated], &[campaign.episode_group], &leased.leases)
+        .unwrap();
+    let target = state_from_facts(&outcome.next_facts);
+    campaign
+        .retain_and_refit_rewarded(
+            TacticQDecision {
+                ranking: leased.batch.ranking,
+                selected: selected.clone(),
+            },
+            outcome,
+            catalog,
+            &[],
+            &registry,
+            &encode,
+            |description| target.applicable(&description.option.option_id),
+            &reward_spec(),
+            true,
+        )
+        .unwrap();
+    selected.descriptor.option_id
+}
+
 fn run_to_terminal(
     campaign: &mut TacticQCampaign,
     catalog: &TacticAssetCatalog,
     episode_shard_sha256: Digest,
 ) -> Vec<String> {
-    let registry = FactRegistry::canonical();
     let mut actions = Vec::new();
     while campaign.current.snapshot.terminal.reached != Some(true) {
-        let batch = campaign.decide_batch(catalog, &[], &encode, 4).unwrap();
-        let eligible = batch
-            .ranking
-            .choices
-            .iter()
-            .filter(|choice| choice.applicable)
-            .map(|choice| choice.descriptor.clone())
-            .collect::<Vec<_>>();
-        let leased = campaign
-            .lease_current_parameterized_batch(batch, &eligible, 1, LEARNER_SNAPSHOT)
-            .unwrap();
-        let selected = leased.batch.proposals[0].clone();
-        let outcome = execute_selected(campaign, &selected, episode_shard_sha256);
-        let evaluated = campaign
-            .evaluate_rewarded_outcome(outcome.clone(), &encode, &reward_spec())
-            .unwrap();
-        campaign
-            .admit_leased_evaluated_replay(&[evaluated], &[campaign.episode_group], &leased.leases)
-            .unwrap();
-        let target = state_from_facts(&outcome.next_facts);
-        campaign
-            .retain_and_refit_rewarded(
-                TacticQDecision {
-                    ranking: leased.batch.ranking,
-                    selected: selected.clone(),
-                },
-                outcome,
-                catalog,
-                &[],
-                &registry,
-                &encode,
-                |description| target.applicable(&description.option.option_id),
-                &reward_spec(),
-                true,
-            )
-            .unwrap();
-        actions.push(selected.descriptor.option_id);
+        actions.push(run_one_step(campaign, catalog, episode_shard_sha256));
         assert!(
             actions.len() <= 32,
             "production rollout failed to terminate"
         );
     }
     actions
+}
+
+fn restore_next_scheduled_frontier(
+    campaign: &mut TacticQCampaign,
+    catalog: &TacticAssetCatalog,
+    episode_group: u64,
+) -> AdequacyState {
+    let selected = campaign
+        .graph_scheduled_root_and_frontier_with_action_surface(
+            0,
+            episode_group,
+            0,
+            usize::MAX,
+            &|facts: &FactSnapshot| {
+                let state = state_from_facts(facts);
+                Ok::<_, &'static str>(
+                    catalog
+                        .option_descriptors()
+                        .filter(|descriptor| state.applicable(&descriptor.option_id))
+                        .cloned()
+                        .collect(),
+                )
+            },
+        )
+        .unwrap()[1]
+        .clone();
+    let state = state_from_facts(&selected.state);
+    campaign
+        .restore_branch(
+            &selected,
+            episode_group,
+            &FactRegistry::canonical(),
+            catalog,
+            &[],
+            |description| state.applicable(&description.option.option_id),
+        )
+        .unwrap();
+    state
 }
 
 #[test]
@@ -380,20 +452,11 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
         12
     );
 
-    let root = campaign
-        .sample_root_and_frontier(0, 0, &[], usize::MAX)
-        .unwrap()[0]
-        .clone();
-    campaign
-        .restore_branch(
-            &root,
-            1,
-            &FactRegistry::canonical(),
-            &catalog,
-            &[],
-            |description| AdequacyState::Start.applicable(&description.option.option_id),
-        )
-        .unwrap();
+    assert_eq!(
+        restore_next_scheduled_frontier(&mut campaign, &catalog, 1),
+        AdequacyState::Start,
+        "the production scheduler must return to the root's untried action"
+    );
     let improved = run_to_terminal(&mut campaign, &catalog, episode_shard_sha256);
     assert_eq!(improved.len(), 9);
     assert_eq!(improved[0], "north");
@@ -406,20 +469,11 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
         9
     );
 
-    let root = campaign
-        .sample_root_and_frontier(0, 1, &[], usize::MAX)
-        .unwrap()[0]
-        .clone();
-    campaign
-        .restore_branch(
-            &root,
-            2,
-            &FactRegistry::canonical(),
-            &catalog,
-            &[],
-            |description| AdequacyState::Start.applicable(&description.option.option_id),
-        )
-        .unwrap();
+    assert_eq!(
+        restore_next_scheduled_frontier(&mut campaign, &catalog, 2),
+        AdequacyState::Start,
+        "the production scheduler must revisit the learned root boundary"
+    );
     let learned = campaign.decide_batch(&catalog, &[], &encode, 2).unwrap();
     assert_eq!(learned.proposals[0].descriptor.option_id, "north");
     assert_eq!(
@@ -427,6 +481,54 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
         dusklight_learning::tactic_exploration::TacticSelectionReason::Greedy
     );
     assert!(campaign.model_revision() > 0);
+
+    let variant_entry = campaign
+        .graph_scheduled_root_and_frontier_with_action_surface(
+            0,
+            3,
+            0,
+            usize::MAX,
+            &|facts: &FactSnapshot| {
+                let state = state_from_facts(facts);
+                Ok::<_, &'static str>(
+                    catalog
+                        .option_descriptors()
+                        .filter(|descriptor| state.applicable(&descriptor.option_id))
+                        .cloned()
+                        .collect(),
+                )
+            },
+        )
+        .unwrap()[1]
+        .clone();
+    assert_eq!(state_from_facts(&variant_entry.state), AdequacyState::Start);
+    campaign
+        .restore_branch(
+            &variant_entry,
+            3,
+            &FactRegistry::canonical(),
+            &catalog,
+            &[],
+            |description| description.option.option_id == "variant",
+        )
+        .unwrap();
+    assert_eq!(
+        run_one_step(&mut campaign, &catalog, episode_shard_sha256),
+        "variant"
+    );
+    assert_eq!(
+        state_from_facts(&campaign.current.snapshot),
+        AdequacyState::VariantStart
+    );
+    let generalized = campaign.decide_batch(&catalog, &[], &encode, 2).unwrap();
+    assert_eq!(
+        generalized.proposals[0].descriptor.option_id, "north",
+        "the learned shorter-route preference must transfer to an exact-state-disjoint equivalent"
+    );
+    assert_eq!(
+        generalized.proposals[0].reason,
+        dusklight_learning::tactic_exploration::TacticSelectionReason::Greedy
+    );
 
     let root_rows = campaign
         .graph_learning_batch()

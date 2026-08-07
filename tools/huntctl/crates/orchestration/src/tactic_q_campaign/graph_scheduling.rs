@@ -327,6 +327,77 @@ impl TacticQCampaign {
         acquisition_rank: u64,
         maximum_route_frames: usize,
     ) -> Result<[TacticCampaignBranch; 2], TacticQCampaignError> {
+        self.graph_scheduled_root_and_frontier_where(
+            seed,
+            generation,
+            acquisition_rank,
+            maximum_route_frames,
+            |_, _, _| Ok(true),
+        )
+    }
+
+    /// Select a graph frontier that has at least one action which is either
+    /// unregistered or currently schedulable. Node scheduling alone cannot
+    /// infer exhaustion because action surfaces are generated from the live
+    /// state and zero registered actions denotes a fresh boundary, not a dead
+    /// one.
+    pub fn graph_scheduled_root_and_frontier_with_action_surface<AE, A>(
+        &self,
+        seed: u64,
+        generation: u64,
+        acquisition_rank: u64,
+        maximum_route_frames: usize,
+        applicable_actions: &A,
+    ) -> Result<[TacticCampaignBranch; 2], TacticQCampaignError>
+    where
+        AE: fmt::Display,
+        A: Fn(&FactSnapshot) -> Result<Vec<OptionActionDescriptor>, AE>,
+    {
+        self.graph_scheduled_root_and_frontier_where(
+            seed,
+            generation,
+            acquisition_rank,
+            maximum_route_frames,
+            |graph, node_id, state| {
+                let applicable = applicable_actions(state)
+                    .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+                let node = graph
+                    .node(node_id)
+                    .ok_or(TacticQCampaignError::InvalidState(
+                        "scheduled graph node disappeared",
+                    ))?;
+                Ok(applicable.iter().any(|descriptor| {
+                    let registered = node
+                        .outgoing_expansions
+                        .iter()
+                        .filter_map(|identity| graph.expansion(*identity))
+                        .find(|expansion| expansion.action == *descriptor);
+                    match registered {
+                        Some(expansion) => {
+                            graph.expansion_is_schedulable(expansion.identity_sha256, generation)
+                        }
+                        None => true,
+                    }
+                }))
+            },
+        )
+    }
+
+    fn graph_scheduled_root_and_frontier_where<P>(
+        &self,
+        seed: u64,
+        generation: u64,
+        acquisition_rank: u64,
+        maximum_route_frames: usize,
+        mut is_schedulable: P,
+    ) -> Result<[TacticCampaignBranch; 2], TacticQCampaignError>
+    where
+        P: FnMut(
+            &crate::state_graph::StateGraph,
+            crate::state_graph::ExactStateId,
+            &FactSnapshot,
+        ) -> Result<bool, TacticQCampaignError>,
+    {
         let graph = self
             .state_graph
             .as_ref()
@@ -343,6 +414,17 @@ impl TacticQCampaign {
             seed,
             generation,
         )?;
+        let ranked = ranked
+            .into_iter()
+            .filter_map(|candidate| {
+                let node = graph.node(candidate.node)?;
+                match is_schedulable(graph, candidate.node, node.state.as_ref()) {
+                    Ok(true) => Some(Ok(candidate)),
+                    Ok(false) => None,
+                    Err(error) => Some(Err(error)),
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         if ranked.is_empty() {
             return Ok([root.clone(), root]);
         }

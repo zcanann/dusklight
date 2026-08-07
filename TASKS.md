@@ -47,12 +47,15 @@ Ordon Springs is the first adequacy test. The real terminal is
   training world and then transfers a completed return table. It does not run
   the production online campaign and therefore does not prove that the real
   learner can discover or improve a route.
-- A new production-path adequacy test now runs the real campaign, graph
-  scheduler, retained-root restore, transition admission, terminal backup, and
+- A production-path adequacy test now runs the real campaign, graph scheduler,
+  retained-checkpoint restore, transition admission, terminal backup, and
   refit path online. It improves a deliberately selected 12-tick detour to a
-  9-tick around-corner route, publishes exact root returns of 12 versus 9, and
-  subsequently ranks the 9-tick action first. Automatic frontier ownership and
-  exact-state-disjoint variants remain open in P0 below.
+  9-tick around-corner route without a test-authored root retry, publishes exact
+  root returns of 12 versus 9, subsequently ranks the 9-tick action first, and
+  transfers that preference to a different exact checkpoint with equivalent
+  normalized observations. This exposed and fixed scheduler admission of
+  exhausted interior nodes; loop extraction and autonomous repetition across
+  whole environment variants remain open in P0 below.
 
 No task is blocked on design.
 

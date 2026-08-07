@@ -823,7 +823,7 @@ mod tests {
         (graph, first, second)
     }
 
-    fn terminal_replay_graph() -> (StateGraph, Digest) {
+    fn completed_replay_graph(terminal: bool) -> (StateGraph, Digest) {
         let (mut graph, _, pending) = replay_graph();
         let before = graph.node(graph.root()).unwrap().state.as_ref().clone();
         let mut route = graph
@@ -854,9 +854,11 @@ mod tests {
         after.tape_frame += 8;
         after.recent_history.clear();
         after.recent_option = None;
-        after.terminal.reached = Some(true);
-        after.terminal.reason = FactTerminalReason::GoalReached;
-        after.terminal.first_hit_tick = Some(after.simulation_tick);
+        if terminal {
+            after.terminal.reached = Some(true);
+            after.terminal.reason = FactTerminalReason::GoalReached;
+            after.terminal.first_hit_tick = Some(after.simulation_tick);
+        }
         after.validate().unwrap();
         let next_checkpoint_sha256 = crate::state_graph::route_checkpoint_sha256(
             graph.identity.root_checkpoint_sha256,
@@ -872,7 +874,7 @@ mod tests {
             execution,
             &route,
             -8.0,
-            true,
+            terminal,
             |state| Ok::<_, &'static str>(vec![state.tape_frame as f32]),
         )
         .unwrap();
@@ -968,7 +970,7 @@ mod tests {
 
     #[test]
     fn scheduled_expansion_exposes_exact_generalized_uncertainty_and_queue_rank() {
-        let (graph, pending) = terminal_replay_graph();
+        let (graph, pending) = completed_replay_graph(true);
         let learned = BTreeMap::from([(
             pending,
             LearnedExpansionPriority {
@@ -997,6 +999,17 @@ mod tests {
             compare_scheduled_node(SearchRegime::Discovery, &fresh, &visited),
             Ordering::Less
         );
+    }
+
+    #[test]
+    fn node_queue_retains_boundaries_whose_action_surface_is_not_registered_yet() {
+        let (graph, _) = completed_replay_graph(false);
+
+        let scheduled =
+            rank_schedulable_nodes(&graph, SearchRegime::Discovery, u64::MAX, 0, 2).unwrap();
+
+        assert_eq!(scheduled.len(), 1);
+        assert_eq!(scheduled[0].registered_expansions, 0);
     }
 
     #[test]
