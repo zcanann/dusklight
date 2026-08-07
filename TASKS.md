@@ -51,7 +51,14 @@ Ordon Springs is the first adequacy test. The real terminal is
   newly materialized portable base may source one additional rollout only when
   it remains nonterminal, within horizon, and has leaseable actions, after
   which the preference is consumed. Root-refresh authority and ordinary global
-  acquisition remain unchanged. Native proof of this handoff remains open.
+  acquisition remain unchanged. A 32-decision native proof then root-replayed a
+  nonconsecutive branch at decision 12 and directly restored that exact branch
+  at decision 13 with no fallback, proving one real locality handoff. It did not
+  improve the 318-tick diagnostic incumbent because optimization had ranked an
+  untouched state one tick before terminal ahead of earlier states with route
+  improvement headroom. Terminal-supported node scheduling now ranks lower
+  root cost before coverage; native proof of two direct branch restores and an
+  incumbent improvement remains open.
 - The learner can discover the real terminal quickly, but its best authenticated
   route is 229 ticks. Two cold replays reproduced that route exactly.
 - The first terminal arrives in roughly 35 seconds; hundreds of later
