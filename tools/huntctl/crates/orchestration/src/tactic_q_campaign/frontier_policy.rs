@@ -118,6 +118,12 @@ pub(super) fn compare_frontier_acquisition(
             let right_action_value = has_action_conditioned_frontier_value(right);
             return left_ticks
                 .cmp(&right_ticks)
+                // Equal exact totals are points on the same-cost terminal
+                // lineage. Q-to-go is naturally largest near the terminal,
+                // but those late states cannot remove much route cost. Prefer
+                // the earlier prefix before action value or coverage so this
+                // exploitation lane searches for actual incumbent savings.
+                .then_with(|| left.replayed_prefix_ticks.cmp(&right.replayed_prefix_ticks))
                 .then_with(|| right_action_value.cmp(&left_action_value))
                 .then_with(|| {
                     if left_action_value && right_action_value {

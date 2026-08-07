@@ -344,9 +344,9 @@ fn equal_exact_terminal_cost_uses_action_value_before_coverage_when_estimated() 
     let fresh_low_value = TacticFrontierAcquisition {
         expansion_count: 0,
         best_mean_q: Some(-40.0),
-        exact_terminal_ticks_to_go: Some(32),
+        exact_terminal_ticks_to_go: Some(152),
         maximum_ensemble_variance: Some(0.1),
-        replayed_prefix_ticks: 160,
+        replayed_prefix_ticks: 40,
         ..high_value.clone()
     };
 
@@ -381,13 +381,50 @@ fn equal_exact_terminal_cost_keeps_coverage_order_without_action_uncertainty() {
     let fresh = TacticFrontierAcquisition {
         expansion_count: 0,
         best_mean_q: Some(-99.0),
-        exact_terminal_ticks_to_go: Some(32),
-        replayed_prefix_ticks: 160,
+        exact_terminal_ticks_to_go: Some(152),
+        replayed_prefix_ticks: 40,
         ..expanded.clone()
     };
 
     assert_eq!(
         compare_frontier_acquisition(&fresh, &expanded),
+        std::cmp::Ordering::Less
+    );
+}
+
+#[test]
+fn equal_exact_terminal_cost_prefers_route_improvement_headroom() {
+    let earlier = TacticFrontierAcquisition {
+        expansion_count: 4,
+        terminal: false,
+        terminal_value_supported: true,
+        achieved_goal_value_supported: false,
+        goal_reachability_supported: false,
+        goal_reachability_evidence_available: false,
+        reward: -0.4,
+        best_mean_q: Some(-80.0),
+        best_goal_progress_per_tick: None,
+        predicted_terminal_ticks_to_go: None,
+        predicted_total_terminal_ticks: None,
+        exact_terminal_ticks_to_go: Some(184),
+        exact_total_terminal_ticks: Some(192),
+        maximum_ensemble_variance: Some(0.4),
+        generalized_nearest_distance: None,
+        discovery_spatial_novelty: None,
+        novelty_rank: 1,
+        replayed_prefix_ticks: 8,
+    };
+    let late_fresh_high_value = TacticFrontierAcquisition {
+        expansion_count: 0,
+        best_mean_q: Some(-1.0),
+        exact_terminal_ticks_to_go: Some(1),
+        maximum_ensemble_variance: Some(0.01),
+        replayed_prefix_ticks: 191,
+        ..earlier.clone()
+    };
+
+    assert_eq!(
+        compare_frontier_acquisition(&earlier, &late_fresh_high_value),
         std::cmp::Ordering::Less
     );
 }

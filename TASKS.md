@@ -56,9 +56,14 @@ Ordon Springs is the first adequacy test. The real terminal is
   at decision 13 with no fallback, proving one real locality handoff. It did not
   improve the 318-tick diagnostic incumbent because optimization had ranked an
   untouched state one tick before terminal ahead of earlier states with route
-  improvement headroom. Terminal-supported node scheduling now ranks lower
-  root cost before coverage; native proof of two direct branch restores and an
-  incumbent improvement remains open.
+  improvement headroom. A same-seed comparison proved the graph selector then
+  chose a four-tick prefix, but the separate learned rank-zero selector still
+  chose the 318-tick prefix. Both selectors now rank earlier prefixes before
+  action value or coverage when exact authenticated terminal cost is equal, so
+  exploitation searches for removable route cost instead of merely revisiting
+  the largest known Q-to-go. The full orchestration suite passes 479 tests;
+  native proof of two direct branch restores and an incumbent improvement
+  remains open.
 - The learner can discover the real terminal quickly, but its best authenticated
   route is 229 ticks. Two cold replays reproduced that route exactly.
 - The first terminal arrives in roughly 35 seconds; hundreds of later
