@@ -11,6 +11,7 @@ const EXECUTION_AUTHORITY: Digest = Digest([0x72; 32]);
 const FEATURE_SCHEMA: Digest = Digest([0x73; 32]);
 const OBJECTIVE: Digest = Digest([0x74; 32]);
 const LEARNER_SNAPSHOT: Digest = Digest([0x75; 32]);
+const ACTION_SCHEMA: Digest = Digest([0x76; 32]);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AdequacyState {
@@ -260,10 +261,7 @@ fn campaign_with_cold_east_primary(
         campaign
             .bind_execution_authority(EXECUTION_AUTHORITY)
             .unwrap();
-        if campaign
-            .decide_batch(catalog, &[], &encode, 2)
-            .unwrap()
-            .proposals[0]
+        if decide_production_batch(&campaign, catalog, 2).proposals[0]
             .descriptor
             .option_id
             == "east"
@@ -284,6 +282,42 @@ fn reward_spec() -> TacticRewardSpec {
         potential: None,
         motion_cost: None,
     }
+}
+
+fn decide_production_batch(
+    campaign: &TacticQCampaign,
+    catalog: &TacticAssetCatalog,
+    maximum_proposals: usize,
+) -> TacticQProposalBatch {
+    let applicable = campaign
+        .current
+        .action_mask
+        .iter()
+        .filter(|choice| choice.applicable)
+        .map(|choice| choice.descriptor.option_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let state_catalog = TacticAssetCatalog::new(
+        catalog
+            .entries()
+            .iter()
+            .filter(|entry| applicable.contains(entry.option_id()))
+            .cloned()
+            .collect(),
+    )
+    .unwrap();
+    campaign
+        .decide_parameterized_batch_with_policy(
+            &state_catalog,
+            &[],
+            ACTION_SCHEMA,
+            &encode,
+            maximum_proposals,
+            0,
+            TacticProposalPolicy::Learned,
+            None,
+            false,
+        )
+        .unwrap()
 }
 
 fn execute_selected(
@@ -341,7 +375,7 @@ fn run_one_step(
     episode_shard_sha256: Digest,
 ) -> String {
     let registry = FactRegistry::canonical();
-    let batch = campaign.decide_batch(catalog, &[], &encode, 4).unwrap();
+    let batch = decide_production_batch(campaign, catalog, 4);
     let eligible = batch
         .ranking
         .choices
@@ -350,7 +384,13 @@ fn run_one_step(
         .map(|choice| choice.descriptor.clone())
         .collect::<Vec<_>>();
     let leased = campaign
-        .lease_current_parameterized_batch(batch, &eligible, 1, LEARNER_SNAPSHOT)
+        .lease_online_batch(
+            batch,
+            &eligible,
+            1,
+            LEARNER_SNAPSHOT,
+            TacticQOnlineLeaseMode::Exploration,
+        )
         .unwrap();
     let selected = leased.batch.proposals[0].clone();
     let outcome = execute_selected(campaign, &selected, episode_shard_sha256);
@@ -400,11 +440,17 @@ fn restore_next_scheduled_frontier(
     episode_group: u64,
 ) -> AdequacyState {
     let selected = campaign
-        .graph_scheduled_root_and_frontier_with_action_surface(
-            0,
-            episode_group,
-            0,
-            usize::MAX,
+        .select_online_branch(
+            TacticQOnlineBranchRequest {
+                seed: 0,
+                round: episode_group,
+                acquisition_rank: 0,
+                maximum_route_frames: usize::MAX,
+                prefer_root: false,
+                strategy: TacticQOnlineFrontierStrategy::Graph,
+            },
+            &[],
+            &encode,
             &|facts: &FactSnapshot| {
                 let state = state_from_facts(facts);
                 Ok::<_, &'static str>(
@@ -416,8 +462,8 @@ fn restore_next_scheduled_frontier(
                 )
             },
         )
-        .unwrap()[1]
-        .clone();
+        .unwrap()
+        .branch;
     let state = state_from_facts(&selected.state);
     campaign
         .restore_branch(
@@ -472,7 +518,7 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
         AdequacyState::Start,
         "the production scheduler must revisit the learned root boundary"
     );
-    let learned = campaign.decide_batch(&catalog, &[], &encode, 2).unwrap();
+    let learned = decide_production_batch(&campaign, &catalog, 2);
     assert_eq!(learned.proposals[0].descriptor.option_id, "north");
     assert_eq!(
         learned.proposals[0].reason,
@@ -481,11 +527,17 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
     assert!(campaign.model_revision() > 0);
 
     let variant_entry = campaign
-        .graph_scheduled_root_and_frontier_with_action_surface(
-            0,
-            3,
-            0,
-            usize::MAX,
+        .select_online_branch(
+            TacticQOnlineBranchRequest {
+                seed: 0,
+                round: 3,
+                acquisition_rank: 0,
+                maximum_route_frames: usize::MAX,
+                prefer_root: false,
+                strategy: TacticQOnlineFrontierStrategy::Graph,
+            },
+            &[],
+            &encode,
             &|facts: &FactSnapshot| {
                 let state = state_from_facts(facts);
                 Ok::<_, &'static str>(
@@ -497,8 +549,8 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
                 )
             },
         )
-        .unwrap()[1]
-        .clone();
+        .unwrap()
+        .branch;
     assert_eq!(state_from_facts(&variant_entry.state), AdequacyState::Start);
     campaign
         .restore_branch(
@@ -518,7 +570,7 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
         state_from_facts(&campaign.current.snapshot),
         AdequacyState::VariantStart
     );
-    let generalized = campaign.decide_batch(&catalog, &[], &encode, 2).unwrap();
+    let generalized = decide_production_batch(&campaign, &catalog, 2);
     assert_eq!(
         generalized.proposals[0].descriptor.option_id, "north",
         "the learned shorter-route preference must transfer to an exact-state-disjoint equivalent"

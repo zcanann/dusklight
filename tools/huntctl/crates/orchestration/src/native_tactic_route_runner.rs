@@ -33,6 +33,7 @@ use crate::tactic_q_campaign::{
     TacticGraphSchedulingTiming, TacticPolicyEvaluationDecisionTrace, TacticQCampaign,
     TacticQCampaignCheckpoint, TacticQCampaignError, TacticQFinalResult,
     TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot, TacticQLearnerSnapshotKind,
+    TacticQOnlineBranchRequest, TacticQOnlineFrontierStrategy, TacticQOnlineLeaseMode,
     TacticQOnlinePolicyUpdate, TacticQProposalBatch, TacticQTrainingCorpus,
     TacticRestorationContract, TacticSchedulerDecisionTrace, has_no_progress_loop,
     route_checkpoint, validate_training_corpus,

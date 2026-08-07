@@ -2,6 +2,48 @@ use super::*;
 use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TacticQOnlineFrontierStrategy {
+    Graph,
+    LearnedRanked {
+        demonstration_curriculum: bool,
+        goal_distance_feature: usize,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TacticQOnlineBranchRequest {
+    pub seed: u64,
+    pub round: u64,
+    pub acquisition_rank: u64,
+    pub maximum_route_frames: usize,
+    pub prefer_root: bool,
+    pub strategy: TacticQOnlineFrontierStrategy,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TacticQOnlineBranchSelection {
+    pub branch: TacticCampaignBranch,
+    pub selected_root: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TacticQOnlineLeaseMode {
+    Exploration,
+    PolicyEvaluation {
+        proposal_policy: TacticProposalPolicy,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TacticQOnlineProposalLease {
+    pub batch: TacticQProposalBatch,
+    pub leases: Vec<TacticExpansionLease>,
+    pub scheduler_decision: Option<TacticSchedulerDecisionTrace>,
+    pub policy_evaluation_decision: Option<TacticPolicyEvaluationDecisionTrace>,
+    pub timing: TacticGraphSchedulingTiming,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TacticQOnlinePolicyUpdate {
     Adaptive { refit_model: bool },
     Frozen,
@@ -26,6 +68,98 @@ pub struct TacticQOnlineAdmission {
 }
 
 impl TacticQCampaign {
+    /// Select the next executable checkpoint through the same acquisition
+    /// policy regardless of which environment will restore and execute it.
+    /// The action-surface callback prevents a fixed or prompted action library
+    /// from turning an already exhausted state into an infinite retry loop.
+    pub fn select_online_branch<E, AE, F, A>(
+        &self,
+        request: TacticQOnlineBranchRequest,
+        reference: &[TacticEndpointDescriptor],
+        encode: &F,
+        applicable_actions: &A,
+    ) -> Result<TacticQOnlineBranchSelection, TacticQCampaignError>
+    where
+        E: fmt::Display,
+        AE: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+        A: Fn(&FactSnapshot) -> Result<Vec<OptionActionDescriptor>, AE>,
+    {
+        let [root, frontier] = match request.strategy {
+            TacticQOnlineFrontierStrategy::Graph => self
+                .graph_scheduled_root_and_frontier_with_action_surface(
+                    request.seed,
+                    request.round,
+                    request.acquisition_rank,
+                    request.maximum_route_frames,
+                    applicable_actions,
+                )?,
+            TacticQOnlineFrontierStrategy::LearnedRanked {
+                demonstration_curriculum,
+                goal_distance_feature,
+            } => self.sample_root_and_ranked_frontier(
+                request.seed,
+                request.round,
+                reference,
+                request.maximum_route_frames,
+                demonstration_curriculum,
+                goal_distance_feature,
+                encode,
+                applicable_actions,
+            )?,
+        };
+        Ok(TacticQOnlineBranchSelection {
+            branch: if request.prefer_root { root } else { frontier },
+            selected_root: request.prefer_root,
+        })
+    }
+
+    /// Seal the exact proposals that an environment may execute. Ordinary
+    /// learning leases unique graph expansions; explicit causal evaluation can
+    /// repeat a policy-ranked action without changing exploration ownership.
+    pub fn lease_online_batch(
+        &mut self,
+        batch: TacticQProposalBatch,
+        eligible: &[OptionActionDescriptor],
+        maximum_proposals: usize,
+        learner_model_sha256: Digest,
+        mode: TacticQOnlineLeaseMode,
+    ) -> Result<TacticQOnlineProposalLease, TacticQCampaignError> {
+        match mode {
+            TacticQOnlineLeaseMode::Exploration => {
+                let leased = self.lease_current_parameterized_batch(
+                    batch,
+                    eligible,
+                    maximum_proposals,
+                    learner_model_sha256,
+                )?;
+                Ok(TacticQOnlineProposalLease {
+                    batch: leased.batch,
+                    leases: leased.leases,
+                    scheduler_decision: Some(leased.scheduler_decision),
+                    policy_evaluation_decision: None,
+                    timing: leased.timing,
+                })
+            }
+            TacticQOnlineLeaseMode::PolicyEvaluation { proposal_policy } => {
+                let evaluated = self.authorize_current_policy_evaluation_batch(
+                    batch,
+                    eligible,
+                    maximum_proposals,
+                    learner_model_sha256,
+                    proposal_policy,
+                )?;
+                Ok(TacticQOnlineProposalLease {
+                    batch: evaluated.batch,
+                    leases: evaluated.leases,
+                    scheduler_decision: None,
+                    policy_evaluation_decision: Some(evaluated.evaluation_decision),
+                    timing: evaluated.timing,
+                })
+            }
+        }
+    }
+
     /// Commit one policy-selected online decision and all of its native
     /// counterfactuals. The first proposal remains authoritative; sibling
     /// outcomes teach the graph and policy but cannot replace it after their

@@ -477,14 +477,33 @@ pub(super) fn run_seed(
                     .value_treatment
                     .uses_terminal_frontier_action_value(),
             );
-            let [root, frontier] = if ranked_frontier_branch {
-                campaign.sample_root_and_ranked_frontier(
-                    seed,
-                    frontier_sampling_round(episode),
+            let prefer_root = prefer_root_for_periodic_branch(
+                terminal_restart
+                    || branch_acquisition_context.terminal_support
+                    || (!campaign.native_terminal_supported()
+                        && learned_exploitation_acquisition
+                        && config.execution_plan.value_treatment.uses_goal_relabeling()),
+                lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
+            );
+            let strategy = if ranked_frontier_branch {
+                TacticQOnlineFrontierStrategy::LearnedRanked {
+                    demonstration_curriculum: demonstration_branch,
+                    goal_distance_feature: encoder.goal_distance_feature(),
+                }
+            } else {
+                TacticQOnlineFrontierStrategy::Graph
+            };
+            let selected_branch = campaign
+                .select_online_branch(
+                    TacticQOnlineBranchRequest {
+                        seed,
+                        round: frontier_sampling_round(episode),
+                        acquisition_rank: branch_acquisition_context.rank,
+                        maximum_route_frames: maximum_frontier_frames,
+                        prefer_root,
+                        strategy,
+                    },
                     &[],
-                    maximum_frontier_frames,
-                    demonstration_branch,
-                    encoder.goal_distance_feature(),
                     &encode,
                     &|state| {
                         applicable_parameterized_descriptors_for_state(
@@ -499,41 +518,13 @@ pub(super) fn run_seed(
                         )
                     },
                 )
-            } else {
-                campaign.graph_scheduled_root_and_frontier_with_action_surface(
-                    seed,
-                    frontier_sampling_round(episode),
-                    branch_acquisition_context.rank,
-                    maximum_frontier_frames,
-                    &|state| {
-                        applicable_parameterized_descriptors_for_state(
-                            &campaign,
-                            registry,
-                            seed,
-                            campaign.decision_index,
-                            state,
-                            encoder,
-                            u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
-                            action_schema_sha256,
-                        )
-                    },
-                )
-            }
-            .map_err(route_error)?;
+                .map_err(route_error)?
+                .branch;
             record_orchestration_detail(
                 &mut timing,
                 OrchestrationPhase::GraphSchedulingAndLeasing,
                 elapsed_micros(graph_scheduling_started.elapsed()),
             )?;
-            let prefer_root = prefer_root_for_periodic_branch(
-                terminal_restart
-                    || branch_acquisition_context.terminal_support
-                    || (!campaign.native_terminal_supported()
-                        && learned_exploitation_acquisition
-                        && config.execution_plan.value_treatment.uses_goal_relabeling()),
-                lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
-            );
-            let selected_branch = if prefer_root { &root } else { &frontier };
             let selected_uncovered_demonstration_frontier = demonstration_branch
                 && demonstration_frontier_states
                     .contains(&selected_branch.logical_frontier.state_sha256)
@@ -570,7 +561,7 @@ pub(super) fn run_seed(
             let branch_restore_started = Instant::now();
             campaign
                 .restore_branch(
-                    selected_branch,
+                    &selected_branch,
                     lane.episode_group(episode)?,
                     registry,
                     &branch_proposals.catalog,
@@ -752,14 +743,33 @@ pub(super) fn run_seed(
                     .value_treatment
                     .uses_terminal_frontier_action_value(),
             );
-            let [root, frontier] = if ranked_frontier_branch {
-                campaign.sample_root_and_ranked_frontier(
-                    seed,
-                    frontier_sampling_round(episode),
+            let prefer_root = prefer_root_for_periodic_branch(
+                branch_terminal_restart
+                    || branch_acquisition_context.terminal_support
+                    || (!campaign.native_terminal_supported()
+                        && learned_exploitation_acquisition
+                        && config.execution_plan.value_treatment.uses_goal_relabeling()),
+                lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
+            );
+            let strategy = if ranked_frontier_branch {
+                TacticQOnlineFrontierStrategy::LearnedRanked {
+                    demonstration_curriculum: demonstration_branch,
+                    goal_distance_feature: encoder.goal_distance_feature(),
+                }
+            } else {
+                TacticQOnlineFrontierStrategy::Graph
+            };
+            let selected_branch = campaign
+                .select_online_branch(
+                    TacticQOnlineBranchRequest {
+                        seed,
+                        round: frontier_sampling_round(episode),
+                        acquisition_rank: branch_acquisition_context.rank,
+                        maximum_route_frames: maximum_frontier_frames,
+                        prefer_root,
+                        strategy,
+                    },
                     &[],
-                    maximum_frontier_frames,
-                    demonstration_branch,
-                    encoder.goal_distance_feature(),
                     &encode,
                     &|state| {
                         applicable_parameterized_descriptors_for_state(
@@ -774,41 +784,13 @@ pub(super) fn run_seed(
                         )
                     },
                 )
-            } else {
-                campaign.graph_scheduled_root_and_frontier_with_action_surface(
-                    seed,
-                    frontier_sampling_round(episode),
-                    branch_acquisition_context.rank,
-                    maximum_frontier_frames,
-                    &|state| {
-                        applicable_parameterized_descriptors_for_state(
-                            &campaign,
-                            registry,
-                            seed,
-                            campaign.decision_index,
-                            state,
-                            encoder,
-                            u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
-                            action_schema_sha256,
-                        )
-                    },
-                )
-            }
-            .map_err(route_error)?;
+                .map_err(route_error)?
+                .branch;
             record_orchestration_detail(
                 &mut timing,
                 OrchestrationPhase::GraphSchedulingAndLeasing,
                 elapsed_micros(graph_scheduling_started.elapsed()),
             )?;
-            let prefer_root = prefer_root_for_periodic_branch(
-                branch_terminal_restart
-                    || branch_acquisition_context.terminal_support
-                    || (!campaign.native_terminal_supported()
-                        && learned_exploitation_acquisition
-                        && config.execution_plan.value_treatment.uses_goal_relabeling()),
-                lane.root_refresh_due(episode, config.execution_plan.root_refresh_cadence),
-            );
-            let selected_branch = if prefer_root { &root } else { &frontier };
             let selected_uncovered_demonstration_frontier = demonstration_branch
                 && demonstration_frontier_states
                     .contains(&selected_branch.logical_frontier.state_sha256)
@@ -845,7 +827,7 @@ pub(super) fn run_seed(
             let branch_restore_started = Instant::now();
             campaign
                 .restore_branch(
-                    selected_branch,
+                    &selected_branch,
                     lane.episode_group(episode)?,
                     registry,
                     &branch_proposals.catalog,
@@ -909,46 +891,27 @@ pub(super) fn run_seed(
         };
         let causal_policy_evaluation =
             active_paired_terminal_return.is_some() || paired_terminal_return_seed.is_some();
-        let (
-            proposal_batch,
-            proposal_leases,
-            scheduler_decision,
-            policy_evaluation_decision,
-            graph_scheduling_timing,
-        ) = if causal_policy_evaluation {
-            let evaluated_batch = campaign
-                .authorize_current_policy_evaluation_batch(
-                    proposal_batch,
-                    &eligible_descriptors,
-                    config.execution_plan.proposal_width_per_decision,
-                    consumed_learner_snapshot.sha256,
-                    config.execution_plan.proposal_policy,
-                )
-                .map_err(route_error)?;
-            (
-                evaluated_batch.batch,
-                evaluated_batch.leases,
-                None,
-                Some(evaluated_batch.evaluation_decision),
-                evaluated_batch.timing,
-            )
+        let lease_mode = if causal_policy_evaluation {
+            TacticQOnlineLeaseMode::PolicyEvaluation {
+                proposal_policy: config.execution_plan.proposal_policy,
+            }
         } else {
-            let leased_batch = campaign
-                .lease_current_parameterized_batch(
-                    proposal_batch,
-                    &eligible_descriptors,
-                    config.execution_plan.proposal_width_per_decision,
-                    consumed_learner_snapshot.sha256,
-                )
-                .map_err(route_error)?;
-            (
-                leased_batch.batch,
-                leased_batch.leases,
-                Some(leased_batch.scheduler_decision),
-                None,
-                leased_batch.timing,
-            )
+            TacticQOnlineLeaseMode::Exploration
         };
+        let online_lease = campaign
+            .lease_online_batch(
+                proposal_batch,
+                &eligible_descriptors,
+                config.execution_plan.proposal_width_per_decision,
+                consumed_learner_snapshot.sha256,
+                lease_mode,
+            )
+            .map_err(route_error)?;
+        let proposal_batch = online_lease.batch;
+        let proposal_leases = online_lease.leases;
+        let scheduler_decision = online_lease.scheduler_decision;
+        let policy_evaluation_decision = online_lease.policy_evaluation_decision;
+        let graph_scheduling_timing = online_lease.timing;
         if let Some(breakdown) = timing.orchestration_breakdown.as_mut() {
             breakdown.graph_scheduling_breakdown = breakdown
                 .graph_scheduling_breakdown
