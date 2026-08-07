@@ -36,7 +36,10 @@ impl NativeTacticProposalPool {
         Ok(lane)
     }
 
-    pub(super) fn direct_frontier_eligible(&self, frontier: &CachedTacticFrontier) -> bool {
+    pub(in crate::native_tactic_route_runner) fn direct_frontier_eligible(
+        &self,
+        frontier: &CachedTacticFrontier,
+    ) -> bool {
         self.direct_restore_enabled
             && frontier.worker_slot < self.senders.len()
             && self

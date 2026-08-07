@@ -13,7 +13,8 @@ use crate::native_tactic_worker::{
     NativeGenericExecutionStrategy, NativeTacticCheckpointRetention, NativeTacticCheckpointSource,
     NativeTacticCheckpointStorage, NativeTacticWorkerError, NativeTacticWorkerOutcome,
     NativeTacticWorkerPaths, PersistentTacticBatchWorker, TACTIC_CHECKPOINT_CACHE_BYTES,
-    TACTIC_INTERMEDIATE_BOUNDARY_STRIDE, execute_selected_tactic_batch_if_compatible,
+    TACTIC_CHECKPOINT_CACHE_ENTRIES, TACTIC_INTERMEDIATE_BOUNDARY_STRIDE,
+    execute_selected_tactic_batch_if_compatible,
     execute_selected_tactic_with_checkpoint_retention_and_strategy,
     materialize_tactic_frontier_with_cache_capacity, selected_tactic_batch_is_compatible,
     tactic_checkpoint_cache_request, tactic_root_checkpoint_sha256,
@@ -1374,9 +1375,10 @@ use replay_content::{persist_evaluated_replay_content, retained_replay_component
 mod worker_pool;
 use worker_pool::{
     CachedTacticFrontier, NativeTacticProposalPool, NativeTacticProposalWork,
-    load_or_capture_demonstration, parameterized_action_surface_for_state,
-    parameterized_catalog_for_state, parameterized_catalog_for_state_with_promoted,
-    parameterized_feedback_for_state, run_seed_coordinator,
+    RetainedNativeTacticFrontiers, load_or_capture_demonstration,
+    parameterized_action_surface_for_state, parameterized_catalog_for_state,
+    parameterized_catalog_for_state_with_promoted, parameterized_feedback_for_state,
+    run_seed_coordinator,
 };
 mod action_surface_audit;
 pub use action_surface_audit::{

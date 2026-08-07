@@ -147,8 +147,11 @@ pub(super) fn run_seed(
     } else {
         TacticQContentStore::initialize(&checkpoint_content_root).map_err(route_error)?
     };
-    // Process-local handles intentionally do not survive campaign resume.
-    let mut cached_frontier: Option<CachedTacticFrontier> = None;
+    // Process-local handles intentionally do not survive campaign resume. A
+    // running native worker does, however, own a bounded cache with more than
+    // one image; preserve every identity that can still be selected by the
+    // logical graph instead of remembering only the latest endpoint.
+    let mut cached_frontiers = RetainedNativeTacticFrontiers::new(TACTIC_CHECKPOINT_CACHE_ENTRIES);
     let mut branch_acquisition: Option<TacticFrontierAcquisition> = None;
     let mut active_paired_terminal_return = ActivePairedTerminalReturn::recover(&trace)?;
     let mut active_terminal_refinement = active_paired_terminal_return
@@ -358,7 +361,6 @@ pub(super) fn run_seed(
             pair.begin_control();
             active_terminal_refinement = Some(pair.rollout());
             branch_acquisition = None;
-            cached_frontier = None;
             timing.checkpoint_branching_micros = timing
                 .checkpoint_branching_micros
                 .saturating_add(elapsed_micros(branch_started.elapsed()));
@@ -856,19 +858,22 @@ pub(super) fn run_seed(
                 ..NativeTacticPersistenceTiming::default()
             },
         )?;
-        let matching_cached_frontier = cached_frontier.as_ref().filter(|frontier| {
-            frontier.state_sha256 == source_snapshot_sha256
-                && frontier.route_frames == source_route_tape.frames.len()
-                && frontier.route_checkpoint_sha256
-                    == restoration.plan.route.route_checkpoint_sha256
-                && frontier.route_tape_sha256 == restoration.plan.route.tape_sha256
-        });
-        let checkpoint_owner_worker_slot =
-            matching_cached_frontier.map(|frontier| frontier.worker_slot);
-        let usable_cached_frontier =
-            matching_cached_frontier.filter(|_| pool.direct_restore_enabled);
-        let directly_restored_frontier = usable_cached_frontier.is_some();
-        let restore_source = if directly_restored_frontier {
+        let matching_cached_frontier = cached_frontiers
+            .matching(
+                source_snapshot_sha256,
+                source_route_tape.frames.len(),
+                restoration.plan.route.route_checkpoint_sha256,
+                restoration.plan.route.tape_sha256,
+            )
+            .cloned();
+        let checkpoint_owner_worker_slot = matching_cached_frontier
+            .as_ref()
+            .map(|frontier| frontier.worker_slot);
+        let usable_cached_frontier = matching_cached_frontier
+            .as_ref()
+            .filter(|frontier| pool.direct_frontier_eligible(frontier));
+        let mut directly_restored_frontier = usable_cached_frontier.is_some();
+        let mut restore_source = if directly_restored_frontier {
             NativeTacticRestoreSource::ProcessLocalCheckpoint
         } else if source_route_tape.frames.len() > pool.root_source_frame {
             NativeTacticRestoreSource::AuthenticatedRootReplay
@@ -910,6 +915,18 @@ pub(super) fn run_seed(
                 return Err(error);
             }
         };
+        if let Some(frontier) = usable_cached_frontier {
+            let direct_restore_fell_back = proposal_work
+                .iter()
+                .any(|work| work.restore_accounting.direct_restore_fallback_replays > 0);
+            if direct_restore_fell_back {
+                cached_frontiers.remove(frontier.worker_slot, &frontier.source.restore_identity);
+                directly_restored_frontier = false;
+                restore_source = NativeTacticRestoreSource::AuthenticatedRootReplay;
+            } else {
+                cached_frontiers.touch(frontier.worker_slot, &frontier.source.restore_identity);
+            }
+        }
         inject_tactic_fault(
             config,
             NativeTacticFaultPoint::AfterNativeCompletion,
@@ -1089,7 +1106,7 @@ pub(super) fn run_seed(
         let retained_restoration = (!winning_outcome.terminal)
             .then(|| campaign.current_restoration_contract().map_err(route_error))
             .transpose()?;
-        cached_frontier = match (
+        let retained_frontier = match (
             winning_outcome.retained_native_checkpoint.as_ref(),
             winning_outcome
                 .retained_native_boundary_fingerprint
@@ -1133,6 +1150,9 @@ pub(super) fn run_seed(
                 ));
             }
         };
+        if let Some(frontier) = retained_frontier {
+            cached_frontiers.retain(frontier);
+        }
         let frontier_retention_micros = elapsed_micros(frontier_retention_started.elapsed());
         let campaign_admission_micros = elapsed_micros(admission_orchestration_started.elapsed());
         let mut admission_breakdown = NativeTacticCampaignAdmissionTiming {

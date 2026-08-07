@@ -119,10 +119,10 @@ fn missing_owner_checkpoint_is_counted_before_exact_replay_fallback() {
 }
 
 #[test]
-fn every_selected_decision_retains_a_single_use_live_endpoint() {
+fn every_selected_decision_retains_a_branchable_portable_checkpoint() {
     assert_eq!(
         primary_checkpoint_retention(true),
-        NativeTacticCheckpointRetention::LiveEndpoint
+        NativeTacticCheckpointRetention::PortableImage
     );
     assert_eq!(
         primary_checkpoint_retention(false),

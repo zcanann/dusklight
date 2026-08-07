@@ -28,8 +28,12 @@ Ordon Springs is the first adequacy test. The real terminal is
 
 ## Authoritative current evidence
 
-- Direct binary save-state restoration and non-root branching work. The last
-  bounded zero-shot campaign performed 327 direct restores with no fallback.
+- Direct binary save-state restoration works only for the runner's single most
+  recently retained native frontier. The logical graph retains older branch
+  states, but the native adapter forgets their process-local restore handles
+  and silently replays those prefixes from the authenticated root. Prior
+  "direct restore" counts therefore prove a fast continuation chain, not a
+  checkpoint-backed search frontier.
 - The learner can discover the real terminal quickly, but its best authenticated
   route is 229 ticks. Two cold replays reproduced that route exactly.
 - The first terminal arrives in roughly 35 seconds; hundreds of later
@@ -158,11 +162,16 @@ No task is blocked on design.
   Open rollouts remain censored rather than becoming fabricated failures, but
   their states, actions, availability, dynamics, and novelty remain usable
   exploration evidence.
-- [x] Make checkpoint rollouts the unit of optimization. Restore any useful
-  incumbent or off-incumbent boundary, try alternative actions, and continue
-  each candidate until terminal or a shared native-tick budget. Retain every
-  intermediate boundary as future branch material. Immediately replace the
-  incumbent when a faster authenticated terminal route appears.
+- [ ] Make native checkpoint rollouts the unit of optimization. The logical
+  graph already selects incumbent and off-incumbent boundaries, but the native
+  adapter currently remembers only one restorable frontier and root-replays
+  every older branch. Keep a bounded, eviction-aware registry of native restore
+  handles attached to their exact graph states, schedule useful cached branches,
+  restore them without replay, and retain their resulting boundaries for later
+  branching. Prove a native search restores at least two nonconsecutive
+  intermediate boundaries and improves an incumbent from one of them. Continue
+  each candidate until terminal or a shared native-tick budget, and immediately
+  replace the incumbent when a faster authenticated terminal route appears.
 - [x] Keep both exploitation and discovery alive. Learned terminal cost ranks
   supported choices; uncertainty, state/action coverage, and seeded exploration
   allocate trials to unsupported choices. Neither a growing fresh-state queue

@@ -1,8 +1,10 @@
 use super::*;
 
 mod dispatch;
+mod frontier_cache;
 mod restoration_dispatch;
 
+pub(super) use frontier_cache::RetainedNativeTacticFrontiers;
 use restoration_dispatch::{requires_frontier_materialization, validate_restoration_contract};
 
 pub(super) fn launch_tactic_route_worker(
@@ -773,7 +775,11 @@ fn primary_checkpoint_retention(retain: bool) -> NativeTacticCheckpointRetention
     if !retain {
         NativeTacticCheckpointRetention::None
     } else {
-        NativeTacticCheckpointRetention::LiveEndpoint
+        // Search must be able to return to more than the immediately previous
+        // decision. A live endpoint is cheap, but every new endpoint overwrites
+        // the old one. Portable images occupy the worker's bounded two-entry
+        // cache and therefore form an actual branchable native frontier.
+        NativeTacticCheckpointRetention::PortableImage
     }
 }
 
