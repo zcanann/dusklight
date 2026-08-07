@@ -133,6 +133,11 @@ impl RetainedNativeTacticFrontiers {
     ) -> Vec<ExactStateId> {
         self.entries
             .iter()
+            // Give the source materialized by the immediately preceding
+            // branch its bounded reuse before older pending entries. Oldest-
+            // first ordering routinely evicts that source before it is ever
+            // selected again.
+            .rev()
             .filter(|frontier| {
                 frontier.source.storage == NativeTacticCheckpointStorage::PortableImage
                     && self.pending_locality_reuse.contains(&(
@@ -241,6 +246,27 @@ mod tests {
 
         assert!(retained.pending_locality_targets().is_empty());
         assert_eq!(retained.identities(), vec!["branch-base"]);
+    }
+
+    #[test]
+    fn locality_prefers_the_most_recent_materialized_source() {
+        let mut retained = RetainedNativeTacticFrontiers::new(2);
+        retained.retain(frontier(0, "older", 1));
+        retained.retain(frontier(0, "newer", 2));
+
+        assert_eq!(
+            retained.pending_locality_targets(),
+            vec![
+                ExactStateId {
+                    route_checkpoint_sha256: digest(3),
+                    state_sha256: digest(2),
+                },
+                ExactStateId {
+                    route_checkpoint_sha256: digest(2),
+                    state_sha256: digest(1),
+                },
+            ]
+        );
     }
 
     #[test]
