@@ -316,8 +316,13 @@ impl NativeTacticExecutionPlan {
                 let support = generation_lane_index == 0;
                 let acquisition = if request.seeds.len() == 1 {
                     NativeTacticAcquisitionPlan::CyclicSupportAndRanks {
-                        cycle_width: request.lanes_per_generation.max(4) as u32,
-                        ranked_lanes_per_cycle: request.lanes_per_generation.max(4) as u32 - 1,
+                        // One worker must learn from successful suffixes and
+                        // continue discovering. Runtime scheduling accounts in
+                        // native ticks, so a two-way envelope gives each kind
+                        // of evidence equal work despite unequal episode
+                        // lengths.
+                        cycle_width: 2,
+                        ranked_lanes_per_cycle: 1,
                     }
                 } else {
                     let rank = if support {
@@ -346,11 +351,9 @@ impl NativeTacticExecutionPlan {
                     // exists.
                     epsilon_per_million: request.epsilon_per_million,
                     intervention,
-                    // A single lane cycles rank zero every fourth episode.
-                    // Phase zero would replace every learned-exploitation
-                    // acquisition with a root refresh, leaving no exploitation
-                    // branch at all. Keep root coverage independent from the
-                    // acquisition partition.
+                    // Keep root coverage independent from the acquisition
+                    // partition. Work-fair scheduling may request support on
+                    // any episode after terminal evidence arrives.
                     root_refresh_phase: if request.seeds.len() == 1 {
                         1 % request.root_refresh_cadence
                     } else {
@@ -604,8 +607,8 @@ mod tests {
         assert!(single_seed.iter().all(|plan| {
             plan.lanes[0].acquisition
                 == NativeTacticAcquisitionPlan::CyclicSupportAndRanks {
-                    cycle_width: 4,
-                    ranked_lanes_per_cycle: 3,
+                    cycle_width: 2,
+                    ranked_lanes_per_cycle: 1,
                 }
         }));
         assert!(
@@ -613,13 +616,6 @@ mod tests {
                 .iter()
                 .all(|plan| plan.lanes[0].root_refresh_phase == 1)
         );
-        assert!(single_seed.iter().all(|plan| {
-            let lane = &plan.lanes[0];
-            (1..=16).all(|episode| {
-                !(lane.acquisition.rank(episode) == 0
-                    && lane.root_refresh_due(episode, plan.root_refresh_cadence))
-            })
-        }));
     }
 
     #[test]

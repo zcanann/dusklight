@@ -36,42 +36,25 @@ target is 120.
 - The best authenticated native route is 210 ticks and cold-replays twice at the
   same real terminal tick. It is a real improvement over the former 318-tick
   diagnostic route, but it is nowhere near the 124-tick adequacy gate.
-- The former native optimizer forced a perturbation, coordinate rejoin, and
-  recorded incumbent suffix. That phase machine and its privileged action
-  injection have been removed. Active checkpoint refinement now keeps ordinary
-  learner-selected actions on the restored branch until terminal or its shared
-  tick budget, and ordinary catalogs reject privileged continuation entries.
-- A 64-decision native diagnostic restored the four-tick prefix and spent its
-  complete 315-tick refinement budget, but stalled at the around-corner local
-  optimum. Two policy-path defects were then isolated. First, the graph
-  scheduler substituted merely applicable actions for the policy selection;
-  ordinary leases now contain only policy-selected proposals. Second, the
-  generalized critic could not replace `unsupported_bootstrap` when proposal
-  width was one, and calibration also withheld every adaptive estimate. Width
-  now limits sibling evaluation rather than learned selection: an adaptive
-  estimate may replace only unsupported bootstrap, while epsilon and exact
-  greedy choices remain authoritative and frozen controls retain calibration
-  gates. The matched revalidation proved that change reached native execution
-  (9 of 19 same-state policy probes changed action), but blindly exploiting the
-  uncalibrated heuristic on 37 of 64 decisions regressed the best route from
-  318 to 898 ticks. At the first changed decision, four-row training predicted
-  about `+9.98` goal progress per tick while the 40-tick action actually
-  produced `-0.28`; the model kept control even after held-out sign accuracy
-  fell to 37.5%. Uncalibrated adaptive estimates are now bounded acquisitions:
-  they require at least eight rows, above-chance held-out progress sign, and a
-  one-in-four probe cadence until calibration grants full authority. All 453
-  learning tests pass. A matched throttled run reduced model-guided choices to
-  3 of 64 and recovered the best route from 898 to 406 ticks, but remained
-  worse than the 318-tick control. Its first terminal arrived in 21.4 seconds;
-  it then directly restored a near-terminal checkpoint with 45 exact ticks to
-  go and reconfirmed the terminal, but rank-zero optimization next jumped to
-  the four-tick prefix with 403 ticks to rediscover. The scheduler explicitly
-  preferred maximum theoretical headroom before coverage, defeating the
-  purpose of save-state branching. Terminal optimization now builds a reverse
-  curriculum: expand the nearest fresh authenticated terminal boundary, then
-  move backward as alternatives accumulate. All 487 orchestration tests pass,
-  including the production around-corner learner. Native restored-branch
-  improvement remains the required revalidation.
+- The former native optimizer's forced perturbation, coordinate rejoin, and
+  privileged incumbent continuation have been removed. Ordinary checkpoint
+  refinement now executes only learner-selected actions until terminal or its
+  shared tick budget.
+- Native diagnostics exposed and fixed three policy-path defects: scheduler
+  leases substituted merely applicable actions for the policy choice;
+  width-one proposal batches could not select learned estimates; and immature,
+  below-chance estimates controlled too many actions. Adaptive estimates now
+  replace only unsupported bootstrap, retain epsilon and exact-greedy
+  authority, and require sufficient above-chance evidence before regular use.
+- The latest matched 64-decision diagnostic still produced a 406-tick route,
+  so checkpoint coherence has not passed. The reverse curriculum correctly
+  selected authenticated suffixes 3--7 ticks from terminal, but episode-based
+  acquisition gave rank-zero optimization only 4 of 47 post-terminal decisions
+  and 27 of 790 post-terminal action ticks (3.4%). Scheduling now balances
+  support and discovery by actual evaluated native ticks, preserves the active
+  episode across decisions and resume, and gives new single-lane plans an equal
+  work envelope. All 488 orchestration and 453 learning tests pass. A native
+  restored-branch improvement remains the required revalidation.
 - Tactic mining, validation, promotion, binary persistence, and ordinary policy
   selection exist on the production path. No native campaign has yet shown a
   learner-discovered promoted tactic improving a route.

@@ -1,6 +1,7 @@
 pub(super) use super::campaign_schedule::{
-    ActiveTerminalRefinementRollout, first_demonstration_intervention,
-    should_probe_policy_before_branch, should_start_paired_terminal_return,
+    ActiveTerminalRefinementRollout, acquisition_rank_for_episode,
+    first_demonstration_intervention, should_probe_policy_before_branch,
+    should_start_paired_terminal_return,
 };
 use super::paired_terminal_returns::{ActivePairedTerminalReturn, PairedTerminalReturnSeed};
 use super::*;
@@ -387,7 +388,16 @@ pub(super) fn run_seed(
                 .checkpoint_branching_micros
                 .saturating_add(elapsed_micros(branch_started.elapsed()));
         }
-        let decision_acquisition_rank = lane.acquisition.rank(episode);
+        let native_terminal_supported = campaign
+            .best_graph_terminal_path()
+            .map_err(route_error)?
+            .is_some();
+        let decision_acquisition_rank = acquisition_rank_for_episode(
+            lane.acquisition,
+            episode,
+            native_terminal_supported,
+            &trace,
+        );
         let mut active_acquisition_rank = if active_paired_terminal_return.is_some() {
             0
         } else {
@@ -460,7 +470,12 @@ pub(super) fn run_seed(
         let next_episode = episode
             .checked_add(1)
             .ok_or_else(|| route_message("episode counter overflowed"))?;
-        let next_branch_acquisition_rank = lane.acquisition.rank(next_episode);
+        let next_branch_acquisition_rank = acquisition_rank_for_episode(
+            lane.acquisition,
+            next_episode,
+            native_terminal_supported,
+            &trace,
+        );
         let post_terminal_discovery_tick_budget = campaign
             .best_graph_terminal_path()
             .map_err(route_error)?
@@ -706,7 +721,12 @@ pub(super) fn run_seed(
                     TacticQOnlineRolloutRequest {
                         force_branch: true,
                         active_acquisition_rank,
-                        next_acquisition_rank: lane.acquisition.rank(episode),
+                        next_acquisition_rank: acquisition_rank_for_episode(
+                            lane.acquisition,
+                            episode,
+                            native_terminal_supported,
+                            &trace,
+                        ),
                         current_rollout_ticks: active_episode_ticks,
                         post_terminal_discovery_tick_budget,
                         demonstration_coverage_pending,

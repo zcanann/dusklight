@@ -1,3 +1,4 @@
+use super::campaign_schedule::acquisition_rank_for_episode;
 use super::*;
 
 pub(super) fn encode_seed_result_manifest(
@@ -383,6 +384,16 @@ fn validate_completed_seed_result(
                 || decision.lane_role != Some(lane.role)
                 || (decision.acquisition_rank != lane.acquisition.rank(decision.decision_index)
                     && decision.acquisition_rank != lane.acquisition.rank(decision.episode)
+                    && decision.acquisition_rank
+                        != acquisition_rank_for_episode(
+                            lane.acquisition,
+                            decision.episode,
+                            imported_demonstration
+                                || result.trace[..index]
+                                    .iter()
+                                    .any(|previous| previous.terminal),
+                            &result.trace[..index],
+                        )
                     && decision.acquisition_rank != 0)
                 || decision.frontier_identity == Digest::ZERO
                 || decision.restore_source.is_none()
