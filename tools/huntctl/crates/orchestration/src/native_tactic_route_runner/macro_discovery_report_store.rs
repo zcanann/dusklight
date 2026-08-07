@@ -203,6 +203,7 @@ mod tests {
             active_policy_evidence_rows: 2,
             active_policy_evidence_admitted_rows: 2,
             observation_count: 3,
+            unreconstructable_component_count: 1,
             high_value_observation_count: 1,
             mined_observation_count: 2,
             candidate_count: 1,

@@ -570,6 +570,16 @@ fn journal_projects_graph_and_materializes_routes_from_content_objects() {
         |facts| Ok::<_, &'static str>(vec![facts.player.position_f32_bits[0] as f32]),
     )
     .unwrap();
+    let encoder = GoalConditionedTacticFeatureEncoder::new(
+        before.player.position_f32_bits.map(f32::from_bits),
+    )
+    .unwrap();
+    assert!(
+        tactic_macro_component_for_transition(11, 0, &transition, &encoder, None)
+            .unwrap()
+            .is_none(),
+        "an authentic but unreconstructable action remains replay and is excluded only from macro composition"
+    );
     let store = TacticQContentStore::initialize(tactic_content_store_path(&root)).unwrap();
     let root_ref = store.store_tape(&root_tape).unwrap();
     let mut trace = journal_trace(0);

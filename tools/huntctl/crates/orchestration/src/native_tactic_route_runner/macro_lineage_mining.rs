@@ -152,13 +152,16 @@ fn collect_terminal_lineage_edge(
             "macro lineage edge is detached from its authenticated endpoint route",
         ));
     }
-    let component = tactic_macro_component_for_transition(
+    let Some(component) = tactic_macro_component_for_transition(
         seed,
         decision_index,
         &transition,
         encoder,
         retained_component,
-    )?;
+    )?
+    else {
+        return Ok(());
+    };
     edges.push(TerminalLineageEdge {
         seed,
         source_checkpoint_sha256: transition.source_checkpoint_sha256,

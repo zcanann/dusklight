@@ -263,6 +263,11 @@ pub struct NativeTacticMacroDiscoveryReport {
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub active_policy_evidence_admitted_rows: u64,
     pub observation_count: u64,
+    /// Authentic replay observations whose exact executable asset could not
+    /// be reconstructed. They remain learner replay but are ineligible for
+    /// composition into a promoted macro.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub unreconstructable_component_count: u64,
     pub high_value_observation_count: u64,
     pub mined_observation_count: u64,
     pub candidate_count: u64,

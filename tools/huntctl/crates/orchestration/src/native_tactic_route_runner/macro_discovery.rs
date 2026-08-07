@@ -180,6 +180,9 @@ pub(super) fn absorb_active_tactic_macro_validation(
         final_report.validation_state_count = final_report
             .validation_state_count
             .saturating_add(active.validation_state_count);
+        final_report.unreconstructable_component_count = final_report
+            .unreconstructable_component_count
+            .saturating_add(active.unreconstructable_component_count);
         final_report.comparison_count = final_report
             .comparison_count
             .saturating_add(active.comparison_count);
@@ -228,6 +231,7 @@ pub(super) fn mine_and_store_tactic_macros(
     }
     let mut observations = Vec::new();
     let mut observation_count = 0_u64;
+    let mut unreconstructable_component_count = 0_u64;
     let mut high_value_observation_count = 0_u64;
     for source_lane in source_lanes {
         let seed_index = source_lane.seed_index;
@@ -260,13 +264,18 @@ pub(super) fn mine_and_store_tactic_macros(
                     ));
                 }
                 observation_count = observation_count.saturating_add(1);
-                let component = tactic_macro_component_for_transition(
+                let Some(component) = tactic_macro_component_for_transition(
                     seed,
                     record.decision_index,
                     &transition,
                     encoder,
                     proposal.component.as_ref(),
-                )?;
+                )?
+                else {
+                    unreconstructable_component_count =
+                        unreconstructable_component_count.saturating_add(1);
+                    continue;
+                };
                 let observation = MacroDiscoveryObservation {
                     seed,
                     frontier_state_sha256: transition.before_state_sha256,
@@ -382,6 +391,7 @@ pub(super) fn mine_and_store_tactic_macros(
             active_policy_evidence_rows: 0,
             active_policy_evidence_admitted_rows: 0,
             observation_count,
+            unreconstructable_component_count,
             high_value_observation_count,
             mined_observation_count: observations.len() as u64,
             candidate_count: restored.registry.records().len() as u64,
@@ -455,7 +465,7 @@ pub(super) fn tactic_macro_component_for_transition(
     transition: &OptionTransitionSample,
     encoder: &GoalConditionedTacticFeatureEncoder,
     retained: Option<&TacticMacroComponent>,
-) -> Result<TacticMacroComponent, NativeTacticRouteRunError> {
+) -> Result<Option<TacticMacroComponent>, NativeTacticRouteRunError> {
     if let Some(retained) = retained {
         let entry = retained.catalog_entry().map_err(route_error)?;
         if retained.action != transition.value_sample.action
@@ -465,7 +475,7 @@ pub(super) fn tactic_macro_component_for_transition(
                 "retained tactic macro component is detached from its transition",
             ));
         }
-        return Ok(retained.clone());
+        return Ok(Some(retained.clone()));
     }
     let proposals = parameterized_catalog_for_state(
         seed,
@@ -476,16 +486,16 @@ pub(super) fn tactic_macro_component_for_transition(
         None,
         parameterized_tactic_family_schema_sha256(),
     )?;
-    let entry = proposals
+    let Some(entry) = proposals
         .catalog
         .entry(&transition.value_sample.action.option_id)
         .filter(|entry| entry.description().option == transition.value_sample.action)
-        .ok_or_else(|| {
-            route_message(
-                "tactic macro component executable source cannot be reconstructed exactly",
-            )
-        })?;
-    TacticMacroComponent::from_catalog_entry(entry).map_err(route_error)
+    else {
+        return Ok(None);
+    };
+    TacticMacroComponent::from_catalog_entry(entry)
+        .map(Some)
+        .map_err(route_error)
 }
 
 pub(super) fn retain_bounded_macro_observations(observations: &mut Vec<MacroDiscoveryObservation>) {
