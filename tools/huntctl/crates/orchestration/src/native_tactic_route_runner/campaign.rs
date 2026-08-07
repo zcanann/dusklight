@@ -80,6 +80,26 @@ fn recover_incumbent_continuation(
     )
 }
 
+fn recover_active_episode_ticks(
+    campaign: &TacticQCampaign,
+    trace: &[NativeTacticDecisionTrace],
+) -> Result<u64, NativeTacticRouteRunError> {
+    let Some(last) = trace.last() else {
+        return Ok(0);
+    };
+    let episode_start = trace
+        .iter()
+        .rposition(|decision| decision.episode != last.episode)
+        .map_or(0, |index| index + 1);
+    campaign.replay()[episode_start..]
+        .iter()
+        .try_fold(0_u64, |ticks, transition| {
+            ticks
+                .checked_add(u64::from(transition.execution.duration.realized_ticks))
+                .ok_or_else(|| route_message("active episode tick count overflowed"))
+        })
+}
+
 fn incumbent_continuation_suffix(
     campaign: &TacticQCampaign,
     continuation: ActiveIncumbentContinuation,
@@ -417,6 +437,7 @@ pub(super) fn run_seed(
     let mut cached_frontiers = RetainedNativeTacticFrontiers::new(TACTIC_CHECKPOINT_CACHE_ENTRIES);
     let mut branch_acquisition: Option<TacticFrontierAcquisition> = None;
     let mut active_incumbent_continuation = recover_incumbent_continuation(&campaign, &trace)?;
+    let mut active_episode_ticks = recover_active_episode_ticks(&campaign, &trace)?;
     let mut active_paired_terminal_return = ActivePairedTerminalReturn::recover(&trace)?;
     let mut active_terminal_refinement = active_paired_terminal_return
         .as_ref()
@@ -625,12 +646,13 @@ pub(super) fn run_seed(
             pair.begin_control();
             active_terminal_refinement = Some(pair.rollout());
             active_incumbent_continuation = None;
+            active_episode_ticks = 0;
             branch_acquisition = None;
             timing.checkpoint_branching_micros = timing
                 .checkpoint_branching_micros
                 .saturating_add(elapsed_micros(branch_started.elapsed()));
         }
-        let decision_acquisition_rank = lane.acquisition.rank(campaign.decision_index);
+        let decision_acquisition_rank = lane.acquisition.rank(episode);
         let mut active_acquisition_rank = if active_paired_terminal_return.is_some() {
             0
         } else {
@@ -704,6 +726,13 @@ pub(super) fn run_seed(
             .checked_add(1)
             .ok_or_else(|| route_message("episode counter overflowed"))?;
         let next_branch_acquisition_rank = lane.acquisition.rank(next_episode);
+        let post_terminal_discovery_tick_budget = campaign
+            .best_graph_terminal_path()
+            .map_err(route_error)?
+            .and_then(|path| {
+                lane.acquisition
+                    .post_terminal_discovery_tick_budget(path.root_to_terminal_ticks)
+            });
         let demonstration_coverage_pending = demonstration_curriculum
             && covered_demonstration_frontiers.len() < demonstration_frontier_states.len();
         let current_route_ticks = u64::try_from(campaign.route_tape.frames.len())
@@ -746,7 +775,9 @@ pub(super) fn run_seed(
         }
         let incumbent_continuation_completed = active_incumbent_continuation
             .is_some_and(ActiveIncumbentContinuation::candidate_completed);
-        let terminal_refinement_in_progress = active_terminal_refinement.is_some();
+        let terminal_refinement_in_progress = active_terminal_refinement.is_some()
+            || active_incumbent_continuation
+                .is_some_and(|continuation| !continuation.candidate_completed());
         let maximum_frontier_frames = usize::try_from(
             source_frame.saturating_add(horizon.saturating_sub(maximum_tactic_ticks)),
         )
@@ -761,7 +792,10 @@ pub(super) fn run_seed(
                     &mut campaign,
                     TacticQOnlineRolloutRequest {
                         force_branch: incumbent_continuation_completed,
+                        active_acquisition_rank,
                         next_acquisition_rank: next_branch_acquisition_rank,
+                        current_rollout_ticks: active_episode_ticks,
+                        post_terminal_discovery_tick_budget,
                         demonstration_coverage_pending,
                         terminal_refinement_in_progress,
                         terminal_refinement_completed,
@@ -820,6 +854,7 @@ pub(super) fn run_seed(
             let selected_branch = continuation.branch;
             active_incumbent_continuation =
                 incumbent_continuation_for_branch(&campaign, &selected_branch)?;
+            active_episode_ticks = 0;
             let selected_uncovered_demonstration_frontier = demonstration_branch
                 && demonstration_frontier_states
                     .contains(&selected_branch.logical_frontier.state_sha256)
@@ -1003,7 +1038,10 @@ pub(super) fn run_seed(
                     &mut campaign,
                     TacticQOnlineRolloutRequest {
                         force_branch: true,
+                        active_acquisition_rank,
                         next_acquisition_rank: lane.acquisition.rank(episode),
+                        current_rollout_ticks: active_episode_ticks,
+                        post_terminal_discovery_tick_budget,
                         demonstration_coverage_pending,
                         terminal_refinement_in_progress: false,
                         terminal_refinement_completed: false,
@@ -1052,6 +1090,7 @@ pub(super) fn run_seed(
             let selected_branch = continuation.branch;
             active_incumbent_continuation =
                 incumbent_continuation_for_branch(&campaign, &selected_branch)?;
+            active_episode_ticks = 0;
             record_orchestration_detail(
                 &mut timing,
                 OrchestrationPhase::GraphSchedulingAndLeasing,
@@ -1466,6 +1505,9 @@ pub(super) fn run_seed(
         let selected_outcome_retention_micros =
             online_admission.timing.selected_outcome_retention_micros;
         let step = online_admission.step;
+        active_episode_ticks = active_episode_ticks
+            .checked_add(u64::from(winning_outcome.execution.duration.realized_ticks))
+            .ok_or_else(|| route_message("active episode tick count overflowed"))?;
         timing.graph_admission_micros = timing
             .graph_admission_micros
             .saturating_add(selected_outcome_retention_micros);

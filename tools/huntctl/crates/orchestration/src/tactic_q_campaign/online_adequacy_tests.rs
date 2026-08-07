@@ -575,10 +575,13 @@ fn run_to_terminal(
                     force_branch: false,
                     terminal_restart: false,
                     native_terminal_supported: campaign.native_terminal_supported(),
+                    active_acquisition_rank: 1,
                     // Broad exploration must finish its selected continuation;
                     // terminal-focused acquisition is tested by the explicit
                     // retained-frontier restore below.
                     next_acquisition_rank: 1,
+                    current_rollout_ticks: 0,
+                    post_terminal_discovery_tick_budget: None,
                     demonstration_coverage_pending: false,
                     terminal_refinement_in_progress: false,
                     terminal_refinement_completed: false,
@@ -611,7 +614,10 @@ fn restore_next_scheduled_frontier(
             campaign,
             TacticQOnlineRolloutRequest {
                 force_branch: false,
+                active_acquisition_rank: acquisition_rank,
                 next_acquisition_rank: acquisition_rank,
+                current_rollout_ticks: 0,
+                post_terminal_discovery_tick_budget: None,
                 demonstration_coverage_pending: false,
                 terminal_refinement_in_progress: false,
                 terminal_refinement_completed: false,

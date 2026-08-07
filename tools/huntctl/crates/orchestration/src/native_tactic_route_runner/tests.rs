@@ -63,6 +63,22 @@ fn branch_acquisition_rank_does_not_alias_the_decision_cadence() {
     assert_eq!(acquisition.rank(2), 2);
     assert_eq!(acquisition.rank(3), 3);
     assert_eq!(acquisition.rank(4), 0);
+    assert_eq!(
+        acquisition.post_terminal_discovery_tick_budget(480),
+        Some(120)
+    );
+    assert_eq!(
+        acquisition.post_terminal_discovery_tick_budget(481),
+        Some(121)
+    );
+    assert_eq!(
+        acquisition.post_terminal_discovery_tick_budget(318),
+        Some(80)
+    );
+    assert_eq!(
+        NativeTacticAcquisitionPlan::FixedRank { rank: 3 }.post_terminal_discovery_tick_budget(480),
+        None
+    );
 }
 
 #[test]

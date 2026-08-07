@@ -104,9 +104,24 @@ Ordon Springs is the first adequacy test. The real terminal is
   structures. Neither correction actually reached its target. Native
   target-reached authority now gates suffix execution, so the repeated smoke
   retained both failed correction transitions but spent no long suffix on
-  either, reducing the same 22-decision native work from 931 to 427 ticks. The
-  full orchestration suite passes 484 tests; native proof that a restored
-  splice improves an incumbent remains open.
+  either, reducing the same 22-decision native work from 931 to 427 ticks. A
+  subsequent 64-decision proof exposed allocation starvation rather than a
+  restore failure: one post-terminal discovery episode consumed 45 decisions
+  while the cyclic scheduler waited for episode completion before returning to
+  rank-zero optimization. Post-terminal cyclic discovery now receives
+  native-tick slices derived from the current authenticated incumbent length;
+  action acquisition remains fixed for the whole episode instead of silently
+  changing with the global decision index. Process-local locality hints also
+  cannot replace a rank-zero terminal-supported frontier. Under the same
+  seed-104729, width-one, 64-decision envelope, the corrected run rotated
+  through 15 episodes, returned to terminal support at episodes 4, 8, and 12,
+  made 11 direct process-local restores, and retained 53 useful transitions.
+  It still left the 318-tick diagnostic incumbent unchanged: all eight
+  incumbent-rejoin actions missed their native target, including six that used
+  their full 40-tick allowance. Candidate construction and closed-loop control,
+  not checkpoint scheduling or additional volume, is therefore the next
+  measured bottleneck. The full orchestration suite passes 486 tests; native
+  proof that a restored splice improves an incumbent remains open.
 - The learner can discover the real terminal quickly, but its best authenticated
   route is 229 ticks. Two cold replays reproduced that route exactly.
 - The first terminal arrives in roughly 35 seconds; hundreds of later

@@ -75,7 +75,10 @@ pub struct TacticQOnlineContinuationRequest {
     pub force_branch: bool,
     pub terminal_restart: bool,
     pub native_terminal_supported: bool,
+    pub active_acquisition_rank: u64,
     pub next_acquisition_rank: u64,
+    pub current_rollout_ticks: u64,
+    pub post_terminal_discovery_tick_budget: Option<u64>,
     pub demonstration_coverage_pending: bool,
     pub terminal_refinement_in_progress: bool,
     pub terminal_refinement_completed: bool,
@@ -112,7 +115,10 @@ pub struct TacticQOnlineContinuationSelection {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TacticQOnlineRolloutRequest {
     pub force_branch: bool,
+    pub active_acquisition_rank: u64,
     pub next_acquisition_rank: u64,
+    pub current_rollout_ticks: u64,
+    pub post_terminal_discovery_tick_budget: Option<u64>,
     pub demonstration_coverage_pending: bool,
     pub terminal_refinement_in_progress: bool,
     pub terminal_refinement_completed: bool,
@@ -372,12 +378,19 @@ impl TacticQOnlineLearningController {
 pub fn plan_online_continuation(
     request: TacticQOnlineContinuationRequest,
 ) -> Result<Option<TacticQOnlineContinuationPlan>, TacticQCampaignError> {
+    let discovery_slice_completed = request.native_terminal_supported
+        && request.active_acquisition_rank != 0
+        && !request.terminal_refinement_in_progress
+        && request
+            .post_terminal_discovery_tick_budget
+            .is_some_and(|budget| request.current_rollout_ticks >= budget);
     let terminal_support = request.native_terminal_supported && request.next_acquisition_rank == 0;
     let scheduled_branch =
         request.demonstration_coverage_pending || request.terminal_restart || terminal_support;
     let should_restore = request.force_branch
         || request.terminal_restart
         || request.terminal_refinement_completed
+        || discovery_slice_completed
         || (!request.terminal_refinement_in_progress && scheduled_branch);
     if !should_restore {
         return Ok(None);
@@ -406,6 +419,13 @@ pub fn plan_online_continuation(
         prefer_root: !force_scheduled_frontier && request.root_refresh_due,
         use_learned_frontier,
     }))
+}
+
+fn acquisition_eligible_restoration_targets(
+    terminal_support: bool,
+    preferred: &[ExactStateId],
+) -> &[ExactStateId] {
+    if terminal_support { &[] } else { preferred }
 }
 
 pub fn online_tactic_fits_horizon(
@@ -585,7 +605,11 @@ impl TacticQCampaign {
                     force_branch: request.force_branch,
                     terminal_restart: self.current.snapshot.terminal.reached == Some(true),
                     native_terminal_supported: self.native_terminal_supported(),
+                    active_acquisition_rank: request.active_acquisition_rank,
                     next_acquisition_rank: request.next_acquisition_rank,
+                    current_rollout_ticks: request.current_rollout_ticks,
+                    post_terminal_discovery_tick_budget: request
+                        .post_terminal_discovery_tick_budget,
                     demonstration_coverage_pending: request.demonstration_coverage_pending,
                     terminal_refinement_in_progress: request.terminal_refinement_in_progress,
                     terminal_refinement_completed: request.terminal_refinement_completed,
@@ -637,6 +661,15 @@ impl TacticQCampaign {
         } else {
             TacticQOnlineFrontierStrategy::Graph
         };
+        // A process-local checkpoint is an execution optimization, not a new
+        // acquisition policy. In particular, an arbitrary cached frontier may
+        // not replace rank-zero terminal support. The globally selected
+        // terminal frontier can still use its matching native cache handle
+        // when the environment executes the returned branch.
+        let preferred_restoration_targets = acquisition_eligible_restoration_targets(
+            continuation.terminal_support,
+            preferred_restoration_targets,
+        );
         let selection = self.select_online_branch(
             TacticQOnlineBranchRequest {
                 seed: request.seed,
@@ -891,7 +924,10 @@ mod continuation_tests {
             force_branch: false,
             terminal_restart: false,
             native_terminal_supported: false,
+            active_acquisition_rank: 1,
             next_acquisition_rank: 1,
+            current_rollout_ticks: 0,
+            post_terminal_discovery_tick_budget: None,
             demonstration_coverage_pending: false,
             terminal_refinement_in_progress: false,
             terminal_refinement_completed: false,
@@ -994,6 +1030,49 @@ mod continuation_tests {
                 .unwrap()
                 .unwrap()
                 .use_learned_frontier
+        );
+    }
+
+    #[test]
+    fn bounded_post_terminal_discovery_rotates_only_after_native_work_budget() {
+        let mut broad = request();
+        broad.native_terminal_supported = true;
+        broad.active_acquisition_rank = 3;
+        broad.next_acquisition_rank = 4;
+        broad.post_terminal_discovery_tick_budget = Some(120);
+        broad.current_rollout_ticks = 119;
+        assert_eq!(plan_online_continuation(broad).unwrap(), None);
+
+        broad.current_rollout_ticks = 120;
+        assert_eq!(
+            plan_online_continuation(broad)
+                .unwrap()
+                .unwrap()
+                .acquisition_rank,
+            4
+        );
+
+        broad.terminal_refinement_in_progress = true;
+        assert_eq!(plan_online_continuation(broad).unwrap(), None);
+
+        broad.terminal_refinement_in_progress = false;
+        broad.active_acquisition_rank = 0;
+        assert_eq!(plan_online_continuation(broad).unwrap(), None);
+    }
+
+    #[test]
+    fn terminal_support_cannot_be_replaced_by_a_locality_hint() {
+        let target = ExactStateId {
+            route_checkpoint_sha256: Digest([1; 32]),
+            state_sha256: Digest([2; 32]),
+        };
+        assert_eq!(
+            acquisition_eligible_restoration_targets(true, &[target]),
+            &[]
+        );
+        assert_eq!(
+            acquisition_eligible_restoration_targets(false, &[target]),
+            &[target]
         );
     }
 }

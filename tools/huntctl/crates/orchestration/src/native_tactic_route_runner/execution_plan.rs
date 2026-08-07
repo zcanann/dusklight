@@ -58,6 +58,24 @@ impl NativeTacticAcquisitionPlan {
             }
         }
     }
+
+    /// Bound one post-terminal discovery episode so a long broad rollout
+    /// cannot consume the entire campaign before the cyclic support partition
+    /// is scheduled again. Fixed-rank lanes already dedicate an independent
+    /// worker to one partition and therefore keep the ordinary route horizon.
+    pub fn post_terminal_discovery_tick_budget(self, incumbent_terminal_ticks: u64) -> Option<u64> {
+        match self {
+            Self::FixedRank { .. } => None,
+            Self::CyclicSupportAndRanks { cycle_width, .. } => {
+                let cycle_width = u64::from(cycle_width);
+                (cycle_width > 1).then(|| {
+                    (incumbent_terminal_ticks / cycle_width)
+                        .saturating_add(u64::from(incumbent_terminal_ticks % cycle_width != 0))
+                        .max(1)
+                })
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
