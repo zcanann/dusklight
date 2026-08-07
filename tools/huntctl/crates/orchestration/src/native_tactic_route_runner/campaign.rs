@@ -18,7 +18,7 @@ fn incumbent_continuation_for_exact_state(
     campaign: &TacticQCampaign,
     route_checkpoint_sha256: Digest,
     state_sha256: Digest,
-    executed_actions: u64,
+    executed_actions: &[(&str, bool)],
 ) -> Result<Option<ActiveIncumbentContinuation>, NativeTacticRouteRunError> {
     let continuation = campaign
         .state_graph()
@@ -46,7 +46,7 @@ fn incumbent_continuation_for_branch(
         campaign,
         branch.logical_frontier.identity_sha256,
         branch.logical_frontier.state_sha256,
-        0,
+        &[],
     )
 }
 
@@ -62,11 +62,21 @@ fn recover_incumbent_continuation(
         .rposition(|decision| decision.episode != last.episode)
         .map_or(0, |index| index + 1);
     let first = &trace[episode_start];
+    let executed_actions = trace[episode_start..]
+        .iter()
+        .zip(&campaign.replay()[episode_start..])
+        .map(|(decision, transition)| {
+            (
+                decision.selected_option_id.as_str(),
+                transition.execution.end_reason == OptionEndReason::Terminated,
+            )
+        })
+        .collect::<Vec<_>>();
     incumbent_continuation_for_exact_state(
         campaign,
         first.frontier_identity,
         first.before.snapshot_sha256,
-        u64::try_from(trace.len() - episode_start).map_err(route_error)?,
+        &executed_actions,
     )
 }
 
@@ -131,29 +141,138 @@ fn incumbent_continuation_suffix(
     Ok(Some(tape))
 }
 
-fn force_incumbent_continuation(
-    batch: &mut TacticQProposalBatch,
-    descriptor: &OptionActionDescriptor,
-) -> Result<(), NativeTacticRouteRunError> {
-    if !batch
-        .ranking
-        .choices
+fn incumbent_rejoin_targets(
+    campaign: &TacticQCampaign,
+    continuation: ActiveIncumbentContinuation,
+    maximum_tactic_ticks: u64,
+) -> Result<Vec<IncumbentRejoinTarget>, NativeTacticRouteRunError> {
+    let graph = campaign.state_graph().map_err(route_error)?;
+    let terminal_route = graph
+        .route(continuation.terminal_route_checkpoint_sha256())
+        .ok_or_else(|| route_message("incumbent rejoin terminal route disappeared"))?;
+    let current_frames = campaign.route_tape.frames.len();
+    let current_position = campaign
+        .current
+        .snapshot
+        .player
+        .position_f32_bits
+        .map(f32::from_bits);
+    if current_position.iter().any(|value| !value.is_finite()) {
+        return Err(route_message("incumbent rejoin source position is invalid"));
+    }
+    let mut lineage = graph
+        .nodes()
+        .filter(|node| node.restoration.executable && !node.terminal)
+        .filter(|node| {
+            node.state.world.stage == campaign.current.snapshot.world.stage
+                && node.state.world.room == campaign.current.snapshot.world.room
+        })
+        .filter_map(|node| {
+            let route = graph.route(node.id.route_checkpoint_sha256)?;
+            let offset = route.frames.len();
+            (offset < terminal_route.frames.len()
+                && route.boot == terminal_route.boot
+                && route.tick_rate_numerator == terminal_route.tick_rate_numerator
+                && route.tick_rate_denominator == terminal_route.tick_rate_denominator
+                && terminal_route.frames.starts_with(&route.frames))
+            .then_some((
+                offset,
+                node.state.player.position_f32_bits.map(f32::from_bits),
+            ))
+        })
+        .collect::<Vec<_>>();
+    lineage.sort_by_key(|(offset, _)| *offset);
+    let maximum_tactic_ticks = usize::try_from(maximum_tactic_ticks).map_err(route_error)?;
+    let mut ranked = lineage
         .iter()
-        .any(|choice| choice.applicable && choice.descriptor == *descriptor)
+        .enumerate()
+        .filter_map(|(index, (offset, position))| {
+            let headroom = offset.checked_sub(current_frames)?;
+            if headroom <= 1 || position.iter().any(|value| !value.is_finite()) {
+                return None;
+            }
+            let planar_distance =
+                (position[0] - current_position[0]).hypot(position[2] - current_position[2]);
+            let boundary_spacing = index
+                .checked_sub(1)
+                .and_then(|previous| lineage.get(previous))
+                .map(|(_, previous)| (position[0] - previous[0]).hypot(position[2] - previous[2]))
+                .unwrap_or(32.0);
+            let tolerance = (boundary_spacing * 0.25).clamp(8.0, 32.0);
+            let maximum_ticks = headroom
+                .saturating_sub(1)
+                .min(maximum_tactic_ticks)
+                .min(u32::MAX as usize) as u32;
+            (maximum_ticks > 0).then_some((
+                planar_distance / headroom as f32,
+                headroom,
+                IncumbentRejoinTarget {
+                    coordinate: *position,
+                    tolerance,
+                    maximum_ticks,
+                },
+            ))
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        left.0
+            .total_cmp(&right.0)
+            .then_with(|| right.1.cmp(&left.1))
+            .then_with(|| {
+                left.2.coordinate[0]
+                    .total_cmp(&right.2.coordinate[0])
+                    .then_with(|| left.2.coordinate[2].total_cmp(&right.2.coordinate[2]))
+            })
+    });
+    ranked.truncate(16);
+    Ok(ranked.into_iter().map(|(_, _, target)| target).collect())
+}
+
+fn force_incumbent_candidates(
+    batch: &mut TacticQProposalBatch,
+    descriptors: &[OptionActionDescriptor],
+) -> Result<(), NativeTacticRouteRunError> {
+    if descriptors.is_empty()
+        || descriptors.iter().any(|descriptor| {
+            !batch
+                .ranking
+                .choices
+                .iter()
+                .any(|choice| choice.applicable && choice.descriptor == *descriptor)
+        })
     {
         return Err(route_message(
-            "incumbent continuation is absent from its applicable action surface",
+            "incumbent candidate is absent from its applicable action surface",
         ));
     }
-    let mut selected = batch
+    let selected_template = batch
         .proposals
         .first()
         .cloned()
-        .ok_or_else(|| route_message("incumbent continuation has no proposal template"))?;
-    selected.descriptor = descriptor.clone();
-    selected.reason = TacticSelectionReason::TerminalCostRefinement;
-    batch.proposals.clear();
-    batch.proposals.push(selected);
+        .ok_or_else(|| route_message("incumbent candidate has no proposal template"))?;
+    let mut ordered = batch
+        .ranking
+        .values
+        .ranked
+        .iter()
+        .map(|ranked| &ranked.descriptor)
+        .filter(|descriptor| descriptors.contains(descriptor))
+        .cloned()
+        .collect::<Vec<_>>();
+    for descriptor in descriptors {
+        if !ordered.contains(descriptor) {
+            ordered.push(descriptor.clone());
+        }
+    }
+    batch.proposals = ordered
+        .into_iter()
+        .map(|descriptor| {
+            let mut selected = selected_template.clone();
+            selected.descriptor = descriptor;
+            selected.reason = TacticSelectionReason::TerminalCostRefinement;
+            selected
+        })
+        .collect();
     Ok(())
 }
 
@@ -596,6 +715,21 @@ pub(super) fn run_seed(
             active_terminal_refinement = None;
         }
         if active_incumbent_continuation
+            .is_some_and(ActiveIncumbentContinuation::should_execute_rejoin)
+            && incumbent_rejoin_targets(
+                &campaign,
+                active_incumbent_continuation.expect("checked incumbent continuation"),
+                maximum_tactic_ticks,
+            )?
+            .is_empty()
+        {
+            active_incumbent_continuation
+                .as_mut()
+                .expect("checked incumbent continuation")
+                .skip_rejoin()
+                .map_err(route_message)?;
+        }
+        if active_incumbent_continuation
             .is_some_and(ActiveIncumbentContinuation::should_execute_suffix)
             && incumbent_continuation_suffix(
                 &campaign,
@@ -607,7 +741,7 @@ pub(super) fn run_seed(
             active_incumbent_continuation
                 .as_mut()
                 .expect("checked incumbent continuation")
-                .record_executed_action()
+                .skip_suffix()
                 .map_err(route_message)?;
         }
         let incumbent_continuation_completed = active_incumbent_continuation
@@ -735,7 +869,18 @@ pub(super) fn run_seed(
                 action_schema_sha256,
                 &active_tactics,
             )?;
-            let (proposals, forced_incumbent_descriptor) = if active_incumbent_continuation
+            let (proposals, forced_incumbent_descriptors) = if active_incumbent_continuation
+                .is_some_and(ActiveIncumbentContinuation::should_execute_rejoin)
+            {
+                let targets = incumbent_rejoin_targets(
+                    &campaign,
+                    active_incumbent_continuation.expect("checked incumbent continuation"),
+                    maximum_tactic_ticks,
+                )?;
+                let (proposals, descriptors) =
+                    with_experience_incumbent_rejoins(proposals, &targets)?;
+                (proposals, descriptors)
+            } else if active_incumbent_continuation
                 .is_some_and(ActiveIncumbentContinuation::should_execute_suffix)
             {
                 let tape = incumbent_continuation_suffix(
@@ -749,9 +894,9 @@ pub(super) fn run_seed(
                     &campaign.current.snapshot,
                     tape,
                 )?;
-                (proposals, Some(descriptor))
+                (proposals, vec![descriptor])
             } else {
-                (proposals, None)
+                (proposals, Vec::new())
             };
             record_orchestration_detail(
                 &mut timing,
@@ -779,8 +924,8 @@ pub(super) fn run_seed(
                     },
                 )
                 .map_err(route_error)?;
-            if let Some(descriptor) = forced_incumbent_descriptor.as_ref() {
-                force_incumbent_continuation(&mut preview, descriptor)?;
+            if !forced_incumbent_descriptors.is_empty() {
+                force_incumbent_candidates(&mut preview, &forced_incumbent_descriptors)?;
             }
             let selection_micros = elapsed_micros(selection_started.elapsed());
             timing.tactic_selection_micros = timing
@@ -970,9 +1115,9 @@ pub(super) fn run_seed(
             TacticQOnlineLeaseMode::PolicyEvaluation {
                 proposal_policy: config.execution_plan.proposal_policy,
             }
-        } else if active_incumbent_continuation
-            .is_some_and(ActiveIncumbentContinuation::should_execute_suffix)
-        {
+        } else if active_incumbent_continuation.is_some_and(|continuation| {
+            continuation.should_execute_rejoin() || continuation.should_execute_suffix()
+        }) {
             TacticQOnlineLeaseMode::CommittedExploration
         } else {
             TacticQOnlineLeaseMode::Exploration
@@ -1305,7 +1450,10 @@ pub(super) fn run_seed(
         };
         if let Some(continuation) = active_incumbent_continuation.as_mut() {
             continuation
-                .record_executed_action()
+                .record_executed_action(
+                    &winning_outcome.selected.descriptor.option_id,
+                    winning_outcome.execution.end_reason == OptionEndReason::Terminated,
+                )
                 .map_err(route_message)?;
         }
         let terminal_candidates = online_admission.terminal_candidates;

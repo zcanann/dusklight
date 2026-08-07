@@ -48,7 +48,7 @@ use crate::tactic_replay_control_plane::{
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState};
-use dusklight_control::option_execution::{OptionParameter, OptionType};
+use dusklight_control::option_execution::{OptionEndReason, OptionParameter, OptionType};
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
 use dusklight_learning::default_tactic_catalog::MAX_GOAL_SEEK_TARGETS;
 use dusklight_learning::fact_registry::FactRegistry;
@@ -56,6 +56,7 @@ use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::fqi::FqiConfig;
 use dusklight_learning::goal_reachability_calibration::GoalReachabilityCalibration;
 use dusklight_learning::learner_state::LearnerState;
+use dusklight_learning::native_generic_tactic::{GenericTactic, NativeGenericTacticPlan};
 use dusklight_learning::option_transition::OptionTransitionSample;
 use dusklight_learning::option_values::{OptionActionDescriptor, OptionValueConfig};
 use dusklight_learning::parameterized_tactic_proposals::{
@@ -67,8 +68,8 @@ use dusklight_learning::reward_shaping::{
     TACTIC_REWARD_SPEC_SCHEMA_V2, TacticRewardBreakdown, TacticRewardSpec,
 };
 use dusklight_learning::tactic_asset::{
-    GuardedRecordedTape, GuardedTapeStageRoom, TacticAssetCatalog, TacticAssetSource,
-    TacticCatalogEntry,
+    GuardedRecordedTape, GuardedTapeStageRoom, TacticAssetAdapter, TacticAssetCatalog,
+    TacticAssetSource, TacticCatalogEntry,
 };
 use dusklight_learning::tactic_blueprint::TacticBlueprint;
 use dusklight_learning::tactic_exploration::{
@@ -1377,11 +1378,11 @@ use replay_content::{persist_evaluated_replay_content, retained_replay_component
 
 mod worker_pool;
 use worker_pool::{
-    CachedTacticFrontier, NativeTacticProposalPool, NativeTacticProposalWork,
-    RetainedNativeTacticFrontiers, load_or_capture_demonstration,
+    CachedTacticFrontier, IncumbentRejoinTarget, NativeTacticProposalPool,
+    NativeTacticProposalWork, RetainedNativeTacticFrontiers, load_or_capture_demonstration,
     parameterized_action_surface_for_state, parameterized_catalog_for_state,
     parameterized_catalog_for_state_with_promoted, parameterized_feedback_for_state,
-    run_seed_coordinator, with_experience_terminal_continuation,
+    run_seed_coordinator, with_experience_incumbent_rejoins, with_experience_terminal_continuation,
 };
 mod action_surface_audit;
 pub use action_surface_audit::{

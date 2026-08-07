@@ -327,6 +327,57 @@ pub(super) fn with_experience_terminal_continuation(
     Ok((proposals, descriptor))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct IncumbentRejoinTarget {
+    pub coordinate: [f32; 3],
+    pub tolerance: f32,
+    pub maximum_ticks: u32,
+}
+
+pub(super) fn with_experience_incumbent_rejoins(
+    mut proposals: ParameterizedTacticProposalCatalog,
+    targets: &[IncumbentRejoinTarget],
+) -> Result<
+    (
+        ParameterizedTacticProposalCatalog,
+        Vec<OptionActionDescriptor>,
+    ),
+    NativeTacticRouteRunError,
+> {
+    if targets.is_empty()
+        || targets.len() > 16
+        || targets.iter().any(|target| {
+            target.maximum_ticks == 0
+                || !target.tolerance.is_finite()
+                || target.tolerance <= 0.0
+                || target.coordinate.iter().any(|value| !value.is_finite())
+        })
+    {
+        return Err(route_message("incumbent rejoin targets are invalid"));
+    }
+    let mut entries = proposals.catalog.entries().to_vec();
+    let mut descriptors = Vec::with_capacity(targets.len());
+    for target in targets {
+        let source = TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan::new(
+            GenericTactic::SeekCoordinate {
+                coordinate_f32_bits: target.coordinate.map(f32::to_bits),
+                tolerance_f32_bits: target.tolerance.to_bits(),
+                magnitude: 127,
+            },
+            target.maximum_ticks,
+        ));
+        let canonical = source.canonical_bytes().map_err(route_error)?;
+        let identity = Digest(Sha256::digest(canonical).into()).to_string();
+        let option_id = format!("experience/incumbent-rejoin/{}", &identity[..20]);
+        let entry = TacticCatalogEntry::new(option_id, source).map_err(route_error)?;
+        descriptors.push(entry.description().option.clone());
+        entries.push(entry);
+    }
+    proposals.catalog = TacticAssetCatalog::new(entries).map_err(route_error)?;
+    validate_parameterized_policy_catalog(&proposals.catalog)?;
+    Ok((proposals, descriptors))
+}
+
 pub(super) fn validate_parameterized_policy_catalog(
     catalog: &TacticAssetCatalog,
 ) -> Result<(), NativeTacticRouteRunError> {
@@ -340,6 +391,11 @@ pub(super) fn validate_parameterized_policy_catalog(
                 .starts_with("experience/terminal-continuation/")
                 && entry.description().kind
                     == dusklight_learning::tactic_asset::TacticAssetKind::GuardedRecordedTape)
+            && !(entry
+                .option_id()
+                .starts_with("experience/incumbent-rejoin/")
+                && entry.description().kind
+                    == dusklight_learning::tactic_asset::TacticAssetKind::NativeGenericTactic)
     }) {
         return Err(route_message(format!(
             "parameterized policy catalog contains non-atomic authored action {:?}",

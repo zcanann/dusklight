@@ -9,23 +9,45 @@ pub(super) struct ActiveTerminalRefinementRollout {
 /// One local perturbation followed by an authenticated incumbent suffix. The
 /// suffix rejoins at the most similar future state on the incumbent rather
 /// than assuming equal elapsed time means equal route progress. It is exposed
-/// as an ordinary action and admitted as ordinary experience; this state only
-/// makes the two-decision candidate resumable and prevents unrelated actions
-/// from replacing its continuation.
+/// as ordinary actions and admitted as ordinary experience; this state makes
+/// the perturbation/rejoin/suffix candidate resumable and prevents unrelated
+/// actions from replacing its committed phases.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct ActiveIncumbentContinuation {
     terminal_route_checkpoint_sha256: Digest,
-    executed_actions: u64,
+    phase: IncumbentContinuationPhase,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IncumbentContinuationPhase {
+    Perturbation,
+    Rejoin,
+    Suffix,
+    Complete,
 }
 
 impl ActiveIncumbentContinuation {
     pub(super) fn new(
         terminal_route_checkpoint_sha256: Digest,
-        executed_actions: u64,
+        executed_actions: &[(&str, bool)],
     ) -> Option<Self> {
+        let phase = match executed_actions.last().copied() {
+            Some((option_id, _)) if option_id.starts_with("experience/terminal-continuation/") => {
+                IncumbentContinuationPhase::Complete
+            }
+            Some((option_id, reached)) if option_id.starts_with("experience/incumbent-rejoin/") => {
+                if reached {
+                    IncumbentContinuationPhase::Suffix
+                } else {
+                    IncumbentContinuationPhase::Complete
+                }
+            }
+            Some(_) => IncumbentContinuationPhase::Rejoin,
+            None => IncumbentContinuationPhase::Perturbation,
+        };
         (terminal_route_checkpoint_sha256 != Digest::ZERO).then_some(Self {
             terminal_route_checkpoint_sha256,
-            executed_actions,
+            phase,
         })
     }
 
@@ -33,19 +55,62 @@ impl ActiveIncumbentContinuation {
         self.terminal_route_checkpoint_sha256
     }
 
+    pub(super) fn should_execute_rejoin(self) -> bool {
+        self.phase == IncumbentContinuationPhase::Rejoin
+    }
+
     pub(super) fn should_execute_suffix(self) -> bool {
-        self.executed_actions == 1
+        self.phase == IncumbentContinuationPhase::Suffix
     }
 
     pub(super) fn candidate_completed(self) -> bool {
-        self.executed_actions >= 2
+        self.phase == IncumbentContinuationPhase::Complete
     }
 
-    pub(super) fn record_executed_action(&mut self) -> Result<(), &'static str> {
-        self.executed_actions = self
-            .executed_actions
-            .checked_add(1)
-            .ok_or("incumbent continuation action count overflowed")?;
+    pub(super) fn skip_rejoin(&mut self) -> Result<(), &'static str> {
+        if self.phase != IncumbentContinuationPhase::Rejoin {
+            return Err("incumbent continuation skipped rejoin from the wrong phase");
+        }
+        self.phase = IncumbentContinuationPhase::Suffix;
+        Ok(())
+    }
+
+    pub(super) fn skip_suffix(&mut self) -> Result<(), &'static str> {
+        if self.phase != IncumbentContinuationPhase::Suffix {
+            return Err("incumbent continuation skipped suffix from the wrong phase");
+        }
+        self.phase = IncumbentContinuationPhase::Complete;
+        Ok(())
+    }
+
+    pub(super) fn record_executed_action(
+        &mut self,
+        option_id: &str,
+        rejoin_target_reached: bool,
+    ) -> Result<(), &'static str> {
+        self.phase = match self.phase {
+            IncumbentContinuationPhase::Perturbation
+                if !option_id.starts_with("experience/incumbent-rejoin/")
+                    && !option_id.starts_with("experience/terminal-continuation/") =>
+            {
+                IncumbentContinuationPhase::Rejoin
+            }
+            IncumbentContinuationPhase::Rejoin
+                if option_id.starts_with("experience/incumbent-rejoin/") =>
+            {
+                if rejoin_target_reached {
+                    IncumbentContinuationPhase::Suffix
+                } else {
+                    IncumbentContinuationPhase::Complete
+                }
+            }
+            IncumbentContinuationPhase::Suffix
+                if option_id.starts_with("experience/terminal-continuation/") =>
+            {
+                IncumbentContinuationPhase::Complete
+            }
+            _ => return Err("incumbent continuation executed an action in the wrong phase"),
+        };
         Ok(())
     }
 }
@@ -179,19 +244,78 @@ mod terminal_refinement_tests {
     }
 
     #[test]
-    fn incumbent_continuation_is_one_perturbation_then_one_suffix() {
+    fn incumbent_continuation_is_perturbation_rejoin_then_suffix() {
         let route = Digest([7; 32]);
-        let mut rollout = ActiveIncumbentContinuation::new(route, 0).unwrap();
+        let mut rollout = ActiveIncumbentContinuation::new(route, &[]).unwrap();
         assert_eq!(rollout.terminal_route_checkpoint_sha256(), route);
+        assert!(!rollout.should_execute_rejoin());
         assert!(!rollout.should_execute_suffix());
         assert!(!rollout.candidate_completed());
-        rollout.record_executed_action().unwrap();
+        rollout
+            .record_executed_action("family/roll/1", false)
+            .unwrap();
+        assert!(rollout.should_execute_rejoin());
+        assert!(!rollout.should_execute_suffix());
+        rollout
+            .record_executed_action("experience/incumbent-rejoin/1", true)
+            .unwrap();
         assert!(rollout.should_execute_suffix());
         assert!(!rollout.candidate_completed());
-        rollout.record_executed_action().unwrap();
+        rollout
+            .record_executed_action("experience/terminal-continuation/1", false)
+            .unwrap();
         assert!(!rollout.should_execute_suffix());
         assert!(rollout.candidate_completed());
-        assert!(ActiveIncumbentContinuation::new(Digest::ZERO, 0).is_none());
+        assert!(ActiveIncumbentContinuation::new(Digest::ZERO, &[]).is_none());
+    }
+
+    #[test]
+    fn incumbent_continuation_recovers_from_durable_option_identity() {
+        let route = Digest([7; 32]);
+        let perturbation =
+            ActiveIncumbentContinuation::new(route, &[("family/roll/1", false)]).unwrap();
+        assert!(perturbation.should_execute_rejoin());
+        let rejoin = ActiveIncumbentContinuation::new(
+            route,
+            &[
+                ("family/roll/1", false),
+                ("experience/incumbent-rejoin/1", true),
+            ],
+        )
+        .unwrap();
+        assert!(rejoin.should_execute_suffix());
+        let complete = ActiveIncumbentContinuation::new(
+            route,
+            &[
+                ("family/roll/1", false),
+                ("experience/incumbent-rejoin/1", true),
+                ("experience/terminal-continuation/1", false),
+            ],
+        )
+        .unwrap();
+        assert!(complete.candidate_completed());
+        let failed = ActiveIncumbentContinuation::new(
+            route,
+            &[
+                ("family/roll/1", false),
+                ("experience/incumbent-rejoin/1", false),
+            ],
+        )
+        .unwrap();
+        assert!(failed.candidate_completed());
+    }
+
+    #[test]
+    fn exhausted_incumbent_rejoin_ends_the_candidate_without_a_suffix() {
+        let mut rollout = ActiveIncumbentContinuation::new(Digest([7; 32]), &[]).unwrap();
+        rollout
+            .record_executed_action("family/roll/1", false)
+            .unwrap();
+        rollout
+            .record_executed_action("experience/incumbent-rejoin/1", false)
+            .unwrap();
+        assert!(rollout.candidate_completed());
+        assert!(!rollout.should_execute_suffix());
     }
 
     #[test]

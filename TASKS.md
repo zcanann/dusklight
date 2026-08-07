@@ -80,9 +80,14 @@ Ordon Springs is the first adequacy test. The real terminal is
   remainder of that authenticated terminal tape. It selects the most similar
   future incumbent boundary with the existing route-agnostic feature distance;
   shortcut headroom breaks only exact similarity ties, so this is state
-  matching rather than a route-progress reward. The remainder is
-  a content-identified, stage/room-guarded experience action and reconstructs
-  its two-step state from the durable decision journal after resume. The first
+  matching rather than a route-progress reward. Approximate joins additionally
+  expose up to sixteen future incumbent states as ordinary state-reactive seek
+  actions, ordered by direct travel distance per skipped incumbent tick. Each
+  correction's maximum duration is strictly less than its skipped headroom, so
+  a terminal splice cannot merely tie the incumbent. The remainder is a
+  content-identified, stage/room-guarded experience action. The resumable
+  perturbation/rejoin/suffix phase is reconstructed from durable option
+  identities and native completion reasons after resume. The first
   native smoke exposed that the policy could commit this action while graph
   scheduling registered every applicable action and substituted an unrelated
   expansion. Committed exploration now registers and leases only descriptors
@@ -94,9 +99,14 @@ Ordon Springs is the first adequacy test. The real terminal is
   the incumbent-length budget instead of relearning the suffix. A repeated
   native smoke then matched the two-tick perturbation to incumbent tick 8
   instead of elapsed tick 6, creating a genuine two-tick shortcut envelope;
-  its 311-tick open-loop suffix still missed the terminal. The full
-  orchestration suite passes 482 tests; native proof that a restored splice
-  improves an incumbent remains open.
+  its 311-tick open-loop suffix still missed the terminal. A 22-decision
+  reactive-rejoin smoke then executed complete 24+40+175 and 2+1+311 candidate
+  structures. Neither correction actually reached its target. Native
+  target-reached authority now gates suffix execution, so the repeated smoke
+  retained both failed correction transitions but spent no long suffix on
+  either, reducing the same 22-decision native work from 931 to 427 ticks. The
+  full orchestration suite passes 484 tests; native proof that a restored
+  splice improves an incumbent remains open.
 - The learner can discover the real terminal quickly, but its best authenticated
   route is 229 ticks. Two cold replays reproduced that route exactly.
 - The first terminal arrives in roughly 35 seconds; hundreds of later

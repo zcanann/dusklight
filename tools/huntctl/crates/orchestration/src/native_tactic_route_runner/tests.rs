@@ -1856,6 +1856,49 @@ fn promoted_guarded_tactics_join_without_removing_primitive_actions() {
     assert_eq!(guarded.allowed_stage_rooms.len(), 1);
     assert_eq!(guarded.allowed_stage_rooms[0].stage, snapshot.world.stage);
     assert_eq!(guarded.allowed_stage_rooms[0].room, snapshot.world.room);
+    let primitive =
+        parameterized_catalog_for_state(11, 3, &snapshot, &encoder, 40, None, Digest([8; 32]))
+            .unwrap();
+    let targets = [
+        IncumbentRejoinTarget {
+            coordinate: [target[0] + 10.0, target[1], target[2]],
+            tolerance: 8.0,
+            maximum_ticks: 5,
+        },
+        IncumbentRejoinTarget {
+            coordinate: [target[0] + 20.0, target[1], target[2]],
+            tolerance: 12.0,
+            maximum_ticks: 9,
+        },
+    ];
+    let (with_rejoins, rejoin_descriptors) =
+        with_experience_incumbent_rejoins(primitive, &targets).unwrap();
+    assert_eq!(rejoin_descriptors.len(), 2);
+    for (descriptor, expected) in rejoin_descriptors.iter().zip(targets) {
+        assert!(
+            descriptor
+                .option_id
+                .starts_with("experience/incumbent-rejoin/")
+        );
+        let TacticAssetSource::NativeGenericTactic(plan) = with_rejoins
+            .catalog
+            .entry(&descriptor.option_id)
+            .unwrap()
+            .source()
+        else {
+            panic!("experience rejoin must use the state-reactive native executor");
+        };
+        assert_eq!(plan.maximum_ticks, expected.maximum_ticks);
+        assert!(matches!(
+            plan.tactic,
+            GenericTactic::SeekCoordinate {
+                coordinate_f32_bits,
+                tolerance_f32_bits,
+                magnitude: 127,
+            } if coordinate_f32_bits == expected.coordinate.map(f32::to_bits)
+                && tolerance_f32_bits == expected.tolerance.to_bits()
+        ));
+    }
     let mut wrong_room = snapshot.clone();
     wrong_room.world.room = wrong_room.world.room.saturating_add(1);
     let wrong_room_primitive_descriptors =
