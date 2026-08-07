@@ -3,8 +3,9 @@
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_learning::tactic_macro_promotion::{
-    DiscoveredMacroCandidate, MacroComparisonEvidence, MacroEntryObservation, MacroPromotionStatus,
-    MacroSourceProvenance, TACTIC_MACRO_DISCOVERY_SCHEMA_V4, TacticMacroComponent,
+    DiscoveredMacroCandidate, MacroComparisonEvidence, MacroDiscoveryBasis,
+    MacroEntryObservation, MacroPromotionStatus, MacroSourceProvenance,
+    TACTIC_MACRO_DISCOVERY_SCHEMA_V4, TACTIC_MACRO_DISCOVERY_SCHEMA_V5, TacticMacroComponent,
     TacticMacroPromotionRegistry,
 };
 use serde::{Deserialize, Serialize};
@@ -45,6 +46,8 @@ struct StoredRegistry {
 struct StoredRecord {
     candidate_sha256: Digest,
     option_id: String,
+    #[serde(default)]
+    discovery_basis: MacroDiscoveryBasis,
     tape: Vec<u8>,
     components: Vec<TacticMacroComponent>,
     sources: Vec<StoredSource>,
@@ -109,13 +112,14 @@ pub fn write_tactic_macro_registry(
     }
     let stored = StoredRegistry {
         schema: TACTIC_MACRO_REGISTRY_SCHEMA_V5.into(),
-        discovery_schema: TACTIC_MACRO_DISCOVERY_SCHEMA_V4.into(),
+        discovery_schema: TACTIC_MACRO_DISCOVERY_SCHEMA_V5.into(),
         records: registry
             .records()
             .map(|record| {
                 Ok(StoredRecord {
                     candidate_sha256: record.candidate.candidate_sha256,
                     option_id: record.candidate.option_id.clone(),
+                    discovery_basis: record.candidate.discovery_basis,
                     tape: record
                         .candidate
                         .tape
@@ -192,7 +196,10 @@ pub fn read_tactic_macro_registry(
         _ => return Err(store_error("tactic macro registry version is invalid")),
     };
     if stored.schema != expected_schema
-        || stored.discovery_schema != TACTIC_MACRO_DISCOVERY_SCHEMA_V4
+        || !matches!(
+            stored.discovery_schema.as_str(),
+            TACTIC_MACRO_DISCOVERY_SCHEMA_V4 | TACTIC_MACRO_DISCOVERY_SCHEMA_V5
+        )
     {
         return Err(store_error("tactic macro registry schema is invalid"));
     }
@@ -207,6 +214,7 @@ pub fn read_tactic_macro_registry(
         let candidate = DiscoveredMacroCandidate {
             candidate_sha256: record.candidate_sha256,
             option_id: record.option_id,
+            discovery_basis: record.discovery_basis,
             tape: decoded,
             components: record.components,
             sources: record

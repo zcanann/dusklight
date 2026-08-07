@@ -117,8 +117,14 @@ target is 120.
   admitting merely proposed candidates under `promoted/*` option identities;
   it has been removed. Only imported or generation-barrier registries whose
   held-out native comparisons actually promoted a candidate can now affect the
-  policy. No native campaign has yet shown a learner-discovered promoted tactic
-  improving a route.
+  policy. Macro mining now follows authenticated terminal graph lineages rather
+  than assuming adjacent journal rows are connected, so branching through a
+  sibling or returning later to a checkpoint no longer hides the successful
+  sequence. Exact repetition across independent entry states remains sufficient
+  to propose a candidate. One authenticated successful lineage may propose at
+  most eight multi-action candidates, but each still needs two independent
+  held-out native comparisons before promotion. No native campaign has yet
+  shown a learner-discovered promoted tactic improving a route.
 
 No task is blocked on design.
 

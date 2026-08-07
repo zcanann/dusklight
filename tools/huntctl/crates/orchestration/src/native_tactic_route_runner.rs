@@ -78,7 +78,7 @@ use dusklight_learning::tactic_macro_promotion::{
     MAX_DISCOVERY_OBSERVATIONS, MIN_DISCOVERY_OCCURRENCES, MacroComparisonEvidence,
     MacroDiscoveryObservation, MacroEntryObservation, MacroPromotionStatus, MacroSourceProvenance,
     TacticMacroComponent, TacticMacroEntryCondition, TacticMacroPromotionRegistry,
-    discover_replay_macros, replay_macro_candidate,
+    discover_replay_macros, replay_macro_candidate, terminal_lineage_macro_candidate,
 };
 use dusklight_learning::tactic_value_treatment::TacticValueTreatment;
 use dusklight_learning::terminal_action_calibration::TerminalActionCalibration;
@@ -1351,6 +1351,10 @@ use macro_discovery::{
     finalize_tactic_macro_discovery, refresh_active_tactic_macros,
     should_refresh_active_tactic_macros,
 };
+mod macro_lineage_mining;
+use macro_lineage_mining::mine_terminal_lineage_tactic_macro_compositions;
+#[cfg(test)]
+use macro_lineage_mining::connected_macro_candidates;
 mod macro_discovery_report_store;
 use macro_discovery_report_store::{
     NATIVE_TACTIC_MACRO_DISCOVERY_FILE, read_macro_discovery_report, write_macro_discovery_report,

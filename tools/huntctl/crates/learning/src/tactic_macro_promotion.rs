@@ -19,6 +19,7 @@ pub const TACTIC_MACRO_DISCOVERY_SCHEMA_V1: &str = "dusklight-tactic-macro-disco
 pub const TACTIC_MACRO_DISCOVERY_SCHEMA_V2: &str = "dusklight-tactic-macro-discovery/v2";
 pub const TACTIC_MACRO_DISCOVERY_SCHEMA_V3: &str = "dusklight-tactic-macro-discovery/v3";
 pub const TACTIC_MACRO_DISCOVERY_SCHEMA_V4: &str = "dusklight-tactic-macro-discovery/v4";
+pub const TACTIC_MACRO_DISCOVERY_SCHEMA_V5: &str = "dusklight-tactic-macro-discovery/v5";
 pub const TACTIC_MACRO_COMPONENT_SCHEMA_V1: &str = "dusklight-tactic-macro-component/v1";
 pub const MAX_DISCOVERY_OBSERVATIONS: usize = 4_096;
 pub const MAX_DISCOVERED_MACROS: usize = 32;
@@ -192,10 +193,19 @@ impl TacticMacroEntryCondition {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MacroDiscoveryBasis {
+    #[default]
+    RepeatedOccurrences,
+    AuthenticatedTerminalLineage,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct DiscoveredMacroCandidate {
     pub candidate_sha256: Digest,
     pub option_id: String,
+    pub discovery_basis: MacroDiscoveryBasis,
     pub tape: InputTape,
     pub components: Vec<TacticMacroComponent>,
     pub sources: Vec<MacroSourceProvenance>,
@@ -275,9 +285,28 @@ pub fn replay_macro_candidate(
     let candidate = DiscoveredMacroCandidate {
         candidate_sha256,
         option_id: format!("promoted/{}", short_digest(candidate_sha256)),
+        discovery_basis: MacroDiscoveryBasis::RepeatedOccurrences,
         tape,
         components,
         sources,
+    };
+    validate_candidate(&candidate)?;
+    Ok(candidate)
+}
+
+pub fn terminal_lineage_macro_candidate(
+    tape: InputTape,
+    components: Vec<TacticMacroComponent>,
+    source: MacroSourceProvenance,
+) -> Result<DiscoveredMacroCandidate, &'static str> {
+    let candidate_sha256 = macro_candidate_sha256(&tape, &components)?;
+    let candidate = DiscoveredMacroCandidate {
+        candidate_sha256,
+        option_id: format!("promoted/{}", short_digest(candidate_sha256)),
+        discovery_basis: MacroDiscoveryBasis::AuthenticatedTerminalLineage,
+        tape,
+        components,
+        sources: vec![source],
     };
     validate_candidate(&candidate)?;
     Ok(candidate)
@@ -354,6 +383,7 @@ pub fn discover_replay_macros(
                 DiscoveredMacroCandidate {
                     candidate_sha256,
                     option_id: format!("promoted/{}", short_digest(candidate_sha256)),
+                    discovery_basis: MacroDiscoveryBasis::RepeatedOccurrences,
                     tape: bucket.tape,
                     components: bucket.components,
                     sources: bucket.sources.into_values().collect(),
@@ -644,11 +674,19 @@ fn validate_candidate(candidate: &DiscoveredMacroCandidate) -> Result<(), &'stat
         .iter()
         .map(|source| source.frontier_state_sha256)
         .collect::<BTreeSet<_>>();
+    let discovery_support_valid = match candidate.discovery_basis {
+        MacroDiscoveryBasis::RepeatedOccurrences => {
+            candidate.sources.len() >= MIN_DISCOVERY_OCCURRENCES
+                && distinct_source_states.len() >= MIN_DISCOVERY_OCCURRENCES
+        }
+        MacroDiscoveryBasis::AuthenticatedTerminalLineage => {
+            candidate.sources.len() == 1 && candidate.components.len() >= 2
+        }
+    };
     if candidate.candidate_sha256 == Digest::ZERO
         || candidate.option_id != format!("promoted/{}", short_digest(candidate.candidate_sha256))
-        || candidate.sources.len() < MIN_DISCOVERY_OCCURRENCES
+        || !discovery_support_valid
         || candidate.sources.len() != distinct_sources.len()
-        || distinct_source_states.len() < MIN_DISCOVERY_OCCURRENCES
         || candidate.components.is_empty()
         || candidate.components.len() > MAX_DISCOVERED_MACRO_TICKS
         || candidate
@@ -1004,6 +1042,54 @@ mod tests {
         }
 
         assert_eq!(registry.promoted().count(), 1);
+    }
+
+    #[test]
+    fn one_successful_lineage_can_propose_but_not_promote_without_held_out_repetition() {
+        let candidate = terminal_lineage_macro_candidate(
+            tape(80, 16),
+            vec![
+                observation(11, 1, 3).component,
+                observation(11, 2, 4).component,
+            ],
+            MacroSourceProvenance {
+                seed: 11,
+                frontier_state_sha256: Digest([1; 32]),
+                transition_sha256s: vec![Digest([3; 32]), Digest([5; 32])],
+                entry: observation(11, 1, 3).entry,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            candidate.discovery_basis,
+            MacroDiscoveryBasis::AuthenticatedTerminalLineage
+        );
+        let mut registry = TacticMacroPromotionRegistry::default();
+        registry.propose(candidate.clone()).unwrap();
+        let comparison = |state| {
+            MacroComparisonEvidence::new(
+                candidate.candidate_sha256,
+                17,
+                Digest([state; 32]),
+                false,
+                12.0,
+                16,
+                false,
+                12.0,
+                16,
+            )
+            .unwrap()
+        };
+
+        assert_eq!(
+            registry.observe(comparison(7)).unwrap(),
+            MacroPromotionStatus::Proposed
+        );
+        assert_eq!(registry.promoted().count(), 0);
+        assert_eq!(
+            registry.observe(comparison(8)).unwrap(),
+            MacroPromotionStatus::Promoted
+        );
     }
 
     #[test]

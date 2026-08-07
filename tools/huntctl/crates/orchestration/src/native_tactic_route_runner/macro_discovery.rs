@@ -297,7 +297,7 @@ pub(super) fn mine_and_store_tactic_macros(
     } else {
         discover_replay_macros(&observations).map_err(route_error)?
     };
-    candidates.extend(mine_connected_tactic_macro_compositions(
+    candidates.extend(mine_terminal_lineage_tactic_macro_compositions(
         output_root,
         source_lanes,
         encoder,
@@ -313,10 +313,28 @@ pub(super) fn mine_and_store_tactic_macros(
                 }
                 let mut sources = existing.sources;
                 sources.extend(candidate.sources);
+                let sources = sources
+                    .into_iter()
+                    .map(|source| (source.transition_sha256s.clone(), source))
+                    .collect::<BTreeMap<_, _>>()
+                    .into_values()
+                    .collect::<Vec<_>>();
+                let merged = if sources.len() >= MIN_DISCOVERY_OCCURRENCES {
+                    replay_macro_candidate(candidate.tape, candidate.components, sources)
+                } else {
+                    terminal_lineage_macro_candidate(
+                        candidate.tape,
+                        candidate.components,
+                        sources
+                            .into_iter()
+                            .next()
+                            .ok_or_else(|| route_message("macro candidate has no provenance"))?,
+                    )
+                }
+                .map_err(route_error)?;
                 deduplicated.insert(
                     candidate.candidate_sha256,
-                    replay_macro_candidate(candidate.tape, candidate.components, sources)
-                        .map_err(route_error)?,
+                    merged,
                 );
             }
             None => {
@@ -404,7 +422,7 @@ pub(super) fn compare_tactic_macro_candidate_priority(
         .then_with(|| left.candidate_sha256.cmp(&right.candidate_sha256))
 }
 
-fn macro_entry_observation(
+pub(super) fn macro_entry_observation(
     snapshot: &FactSnapshot,
     encoder: &GoalConditionedTacticFeatureEncoder,
 ) -> Result<MacroEntryObservation, NativeTacticRouteRunError> {
@@ -424,7 +442,7 @@ fn macro_entry_observation(
     })
 }
 
-fn tactic_macro_component_for_transition(
+pub(super) fn tactic_macro_component_for_transition(
     seed: u64,
     decision_index: u64,
     transition: &OptionTransitionSample,
@@ -461,135 +479,6 @@ fn tactic_macro_component_for_transition(
             )
         })?;
     TacticMacroComponent::from_catalog_entry(entry).map_err(route_error)
-}
-
-pub(super) fn mine_connected_tactic_macro_compositions(
-    output_root: &Path,
-    source_lanes: &[TacticMacroSourceLane],
-    encoder: &GoalConditionedTacticFeatureEncoder,
-) -> Result<Vec<DiscoveredMacroCandidate>, NativeTacticRouteRunError> {
-    let mut occurrences = ConnectedMacroOccurrences::new();
-    for source_lane in source_lanes {
-        let seed_index = source_lane.seed_index;
-        let seed = source_lane.seed;
-        let seed_root = output_root.join(format!("seed-{seed_index:03}-{seed}"));
-        let replay = load_tactic_journal_replay(&seed_root)?;
-        let store = TacticQContentStore::open(tactic_content_store_path(&seed_root))
-            .map_err(route_error)?;
-        let root_tape = store
-            .load_tape(replay.records[0].root_tape)
-            .map_err(route_error)?;
-        for start in 0..replay.transitions.len() {
-            let mut frames = Vec::new();
-            let mut components = Vec::new();
-            let mut transition_sha256s = Vec::new();
-            let source_transition = &replay.transitions[start];
-            let source_entry = macro_entry_observation(&source_transition.before, encoder)?;
-            for end in start..replay.transitions.len() {
-                if end > start {
-                    let prior = &replay.transitions[end - 1];
-                    let current = &replay.transitions[end];
-                    if prior.next_checkpoint_sha256 != current.source_checkpoint_sha256
-                        || prior.after_state_sha256 != current.before_state_sha256
-                    {
-                        break;
-                    }
-                }
-                let transition = &replay.transitions[end];
-                if frames
-                    .len()
-                    .saturating_add(transition.execution.emitted_raw_actions.len())
-                    > MAX_DISCOVERED_MACRO_TICKS
-                {
-                    break;
-                }
-                frames.extend_from_slice(&transition.execution.emitted_raw_actions);
-                let record = &replay.records[end];
-                let retained = record
-                    .proposal_batch
-                    .iter()
-                    .find(|proposal| proposal.trace.retained)
-                    .and_then(|proposal| proposal.component.as_ref());
-                components.push(tactic_macro_component_for_transition(
-                    seed,
-                    record.decision_index,
-                    transition,
-                    encoder,
-                    retained,
-                )?);
-                transition_sha256s.push(journal_transition_sha256(
-                    record.transition,
-                    record.inline_transition.as_ref(),
-                )?);
-                if end > start {
-                    let tape = InputTape {
-                        boot: root_tape.boot.clone(),
-                        tick_rate_numerator: root_tape.tick_rate_numerator,
-                        tick_rate_denominator: root_tape.tick_rate_denominator,
-                        frames: frames.clone(),
-                    };
-                    let source = MacroSourceProvenance {
-                        seed,
-                        frontier_state_sha256: source_transition.before_state_sha256,
-                        transition_sha256s: transition_sha256s.clone(),
-                        entry: source_entry.clone(),
-                    };
-                    let key = connected_macro_occurrence_key(&tape, &components)?;
-                    occurrences
-                        .entry(key)
-                        .or_insert_with(|| (tape, components.clone(), BTreeMap::new()))
-                        .2
-                        .insert(source.transition_sha256s.clone(), source);
-                }
-            }
-        }
-    }
-    connected_macro_candidates(occurrences)
-}
-
-pub(super) type ConnectedMacroOccurrences = BTreeMap<
-    Vec<u8>,
-    (
-        InputTape,
-        Vec<TacticMacroComponent>,
-        BTreeMap<Vec<Digest>, MacroSourceProvenance>,
-    ),
->;
-
-fn connected_macro_occurrence_key(
-    tape: &InputTape,
-    components: &[TacticMacroComponent],
-) -> Result<Vec<u8>, NativeTacticRouteRunError> {
-    let encoded_tape = tape.encode().map_err(route_error)?;
-    let mut key =
-        Vec::with_capacity(8 + encoded_tape.len() + 8 + components.len().saturating_mul(32));
-    key.extend_from_slice(&(encoded_tape.len() as u64).to_le_bytes());
-    key.extend_from_slice(&encoded_tape);
-    key.extend_from_slice(&(components.len() as u64).to_le_bytes());
-    for component in components {
-        key.extend_from_slice(&component.content_sha256().map_err(route_error)?.0);
-    }
-    Ok(key)
-}
-
-pub(super) fn connected_macro_candidates(
-    occurrences: ConnectedMacroOccurrences,
-) -> Result<Vec<DiscoveredMacroCandidate>, NativeTacticRouteRunError> {
-    occurrences
-        .into_values()
-        .filter(|(_, _, sources)| {
-            sources
-                .values()
-                .map(|source| source.frontier_state_sha256)
-                .collect::<BTreeSet<_>>()
-                .len()
-                >= MIN_DISCOVERY_OCCURRENCES
-        })
-        .map(|(tape, components, sources)| {
-            replay_macro_candidate(tape, components, sources.into_values().collect())
-                .map_err(route_error)
-        })
-        .collect()
 }
 
 pub(super) fn retain_bounded_macro_observations(observations: &mut Vec<MacroDiscoveryObservation>) {
