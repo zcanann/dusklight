@@ -560,6 +560,11 @@ fn compare_scheduled_node(
     left: &ScheduledNode,
     right: &ScheduledNode,
 ) -> Ordering {
+    let exact_total_terminal_ticks = |entry: &ScheduledNode| {
+        entry
+            .exact_terminal_ticks_to_go
+            .map(|ticks| entry.root_ticks.saturating_add(ticks))
+    };
     let coverage = || {
         left.completed_expansions
             .cmp(&right.completed_expansions)
@@ -572,15 +577,17 @@ fn compare_scheduled_node(
         SearchRegime::Discovery => coverage()
             .then_with(|| right.reachability_novelty.cmp(&left.reachability_novelty))
             .then_with(|| right.root_ticks.cmp(&left.root_ticks)),
-        SearchRegime::Optimization => left
-            .exact_terminal_ticks_to_go
+        SearchRegime::Optimization => exact_total_terminal_ticks(left)
             .is_none()
-            .cmp(&right.exact_terminal_ticks_to_go.is_none())
-            // Build a reverse curriculum from authenticated success. Trying
-            // to replace the whole route immediately turns a retained
-            // checkpoint back into a cold-root episode. Expand the nearest
-            // untried supported boundary first, then move backward as those
-            // boundaries acquire alternatives.
+            .cmp(&exact_total_terminal_ticks(right).is_none())
+            // A slower successful rollout creates many fresh tail states. It
+            // must not displace the best authenticated lineage merely because
+            // those states have zero coverage; that causes terminal-basin
+            // churn instead of route improvement.
+            .then_with(|| exact_total_terminal_ticks(left).cmp(&exact_total_terminal_ticks(right)))
+            // Within the best lineage, build a reverse curriculum from the
+            // nearest fresh boundary and move backward as alternatives
+            // accumulate.
             .then_with(coverage)
             .then_with(|| {
                 left.exact_terminal_ticks_to_go
@@ -1112,6 +1119,19 @@ mod tests {
 
         assert_eq!(
             compare_scheduled_node(SearchRegime::Optimization, &predecessor, &terminal_tail),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn node_optimization_keeps_a_better_terminal_lineage_ahead_of_fresh_slower_tails() {
+        let mut best_route = node_entry(2, 1, Some(5));
+        best_route.root_ticks = 270;
+        let mut fresh_slower_tail = node_entry(3, 0, Some(4));
+        fresh_slower_tail.root_ticks = 294;
+
+        assert_eq!(
+            compare_scheduled_node(SearchRegime::Optimization, &best_route, &fresh_slower_tail,),
             Ordering::Less
         );
     }

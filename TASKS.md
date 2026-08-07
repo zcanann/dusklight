@@ -46,14 +46,18 @@ target is 120.
   below-chance estimates controlled too many actions. Adaptive estimates now
   replace only unsupported bootstrap, retain epsilon and exact-greedy
   authority, and require sufficient above-chance evidence before regular use.
-- The latest matched 64-decision diagnostic still produced a 406-tick route,
-  so checkpoint coherence has not passed. The reverse curriculum correctly
-  selected authenticated suffixes 3--7 ticks from terminal, but episode-based
-  acquisition gave rank-zero optimization only 4 of 47 post-terminal decisions
-  and 27 of 790 post-terminal action ticks (3.4%). Scheduling now balances
-  support and discovery by actual evaluated native ticks, preserves the active
-  episode across decisions and resume, and gives new single-lane plans an equal
-  work envelope. All 488 orchestration and 453 learning tests pass. A native
+- A matched 64-decision diagnostic produced only a 406-tick route because
+  episode-based acquisition gave rank-zero optimization 27 of 790
+  post-terminal action ticks (3.4%). Scheduling now accounts actual evaluated
+  native work and gives new single-lane plans an equal support/discovery
+  envelope. A bounded two-proposal revalidation stopped at 48 decisions and
+  found a 274-tick terminal from an initial-episode sibling. Afterward it spent
+  347 ticks on support and 342 on discovery, proving the allocation correction,
+  but no restored branch improved 274. The trace exposed terminal-basin churn:
+  fresh suffixes from slower 286--320 tick successes displaced already-expanded
+  boundaries on the best 275-tick graph lineage. Graph scheduling now compares
+  authenticated total route cost before coverage, matching the learned-frontier
+  scheduler. All 489 orchestration and 453 learning tests pass. A native
   restored-branch improvement remains the required revalidation.
 - Tactic mining, validation, promotion, binary persistence, and ordinary policy
   selection exist on the production path. No native campaign has yet shown a
