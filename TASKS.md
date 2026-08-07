@@ -68,8 +68,10 @@ Ordon Springs is the first adequacy test. The real terminal is
   The shared continuation planner now also owns periodic versus terminal
   branching, terminal-refinement continuity, acquisition partitions, learned
   versus broad frontier use, root refresh, and forced horizon branches. The
-  action-duration horizon preview and tactic promotion still live partly in the
-  native adapter and remain the next extraction.
+  shared horizon planner also filters executable proposal batches and forces a
+  checkpoint restore before a selected action can exceed the rollout budget.
+  Tactic mining/promotion still lives in the native finalization adapter and
+  remains the next extraction.
 
 No task is blocked on design.
 

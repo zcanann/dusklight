@@ -435,7 +435,13 @@ fn run_one_step(
     episode_shard_sha256: Digest,
 ) -> String {
     let registry = FactRegistry::canonical();
-    let batch = decide_production_batch(campaign, catalog, 4);
+    let batch =
+        match plan_online_horizon(decide_production_batch(campaign, catalog, 4), 0, 32).unwrap() {
+            TacticQOnlineHorizonPlan::Execute(batch) => batch,
+            TacticQOnlineHorizonPlan::RestoreCheckpoint { .. } => {
+                panic!("one-tick adequacy actions must fit the rollout horizon")
+            }
+        };
     let eligible = batch
         .ranking
         .choices

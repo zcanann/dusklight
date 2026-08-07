@@ -590,7 +590,7 @@ pub(super) fn run_seed(
             let proposal_catalog = Arc::new(proposals.catalog);
             let proposal_blueprints = Arc::new(proposals.blueprints);
             let selection_started = Instant::now();
-            let mut preview = campaign
+            let preview = campaign
                 .decide_parameterized_batch_with_policy(
                     &proposal_catalog,
                     &proposal_blueprints,
@@ -652,40 +652,20 @@ pub(super) fn run_seed(
                     elapsed_micros(learner_refresh_started.elapsed()),
                 )?;
             }
-            let primary = preview
-                .proposals
-                .first()
-                .ok_or_else(|| route_message("tactic proposal batch is empty"))?;
-            let selected_maximum_ticks = preview
-                .ranking
-                .choices
-                .iter()
-                .find(|choice| choice.choice_id == primary.descriptor.option_id)
-                .ok_or_else(|| route_message("selected tactic is absent from its catalog"))?
-                .duration
-                .maximum_ticks;
-            if selected_tactic_fits_horizon(suffix_ticks, selected_maximum_ticks, horizon) {
-                preview.proposals.retain(|proposal| {
-                    preview
-                        .ranking
-                        .choices
-                        .iter()
-                        .find(|choice| choice.choice_id == proposal.descriptor.option_id)
-                        .is_some_and(|choice| {
-                            selected_tactic_fits_horizon(
-                                suffix_ticks,
-                                choice.duration.maximum_ticks,
-                                horizon,
-                            )
-                        })
-                });
-                break (
-                    preview,
-                    proposal_catalog,
-                    proposal_blueprints,
-                    proposal_feedback,
-                );
-            }
+            let selected_maximum_ticks =
+                match plan_online_horizon(preview, suffix_ticks, horizon).map_err(route_error)? {
+                    TacticQOnlineHorizonPlan::Execute(batch) => {
+                        break (
+                            batch,
+                            proposal_catalog,
+                            proposal_blueprints,
+                            proposal_feedback,
+                        );
+                    }
+                    TacticQOnlineHorizonPlan::RestoreCheckpoint {
+                        selected_maximum_ticks,
+                    } => selected_maximum_ticks,
+                };
             let branch_started = Instant::now();
             episode = episode
                 .checked_add(1)

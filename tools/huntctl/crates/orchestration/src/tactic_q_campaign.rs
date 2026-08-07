@@ -994,6 +994,7 @@ mod online_learning;
 pub use online_learning::{
     TacticQOnlineAdmission, TacticQOnlineAdmissionTiming, TacticQOnlineBranchRequest,
     TacticQOnlineBranchSelection, TacticQOnlineContinuationPlan, TacticQOnlineContinuationRequest,
-    TacticQOnlineFrontierStrategy, TacticQOnlineLeaseMode, TacticQOnlinePolicyUpdate,
-    TacticQOnlineProposalLease, plan_online_continuation,
+    TacticQOnlineFrontierStrategy, TacticQOnlineHorizonPlan, TacticQOnlineLeaseMode,
+    TacticQOnlinePolicyUpdate, TacticQOnlineProposalLease, online_tactic_fits_horizon,
+    plan_online_continuation, plan_online_horizon,
 };

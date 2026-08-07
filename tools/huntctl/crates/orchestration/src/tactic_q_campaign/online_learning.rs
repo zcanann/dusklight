@@ -68,6 +68,12 @@ pub struct TacticQOnlineContinuationPlan {
     pub use_learned_frontier: bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum TacticQOnlineHorizonPlan {
+    Execute(TacticQProposalBatch),
+    RestoreCheckpoint { selected_maximum_ticks: u32 },
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TacticQOnlinePolicyUpdate {
     Adaptive { refit_model: bool },
@@ -139,6 +145,53 @@ pub fn plan_online_continuation(
         prefer_root: !force_scheduled_frontier && request.root_refresh_due,
         use_learned_frontier,
     }))
+}
+
+pub fn online_tactic_fits_horizon(
+    suffix_ticks: u64,
+    selected_maximum_ticks: u32,
+    horizon: u64,
+) -> bool {
+    suffix_ticks.saturating_add(u64::from(selected_maximum_ticks)) <= horizon
+}
+
+pub fn plan_online_horizon(
+    mut batch: TacticQProposalBatch,
+    suffix_ticks: u64,
+    horizon: u64,
+) -> Result<TacticQOnlineHorizonPlan, TacticQCampaignError> {
+    let primary = batch
+        .proposals
+        .first()
+        .ok_or(TacticQCampaignError::InvalidState(
+            "online proposal batch is empty",
+        ))?;
+    let selected_maximum_ticks = batch
+        .ranking
+        .choices
+        .iter()
+        .find(|choice| choice.choice_id == primary.descriptor.option_id)
+        .ok_or(TacticQCampaignError::InvalidState(
+            "selected online tactic is absent from its action surface",
+        ))?
+        .duration
+        .maximum_ticks;
+    if !online_tactic_fits_horizon(suffix_ticks, selected_maximum_ticks, horizon) {
+        return Ok(TacticQOnlineHorizonPlan::RestoreCheckpoint {
+            selected_maximum_ticks,
+        });
+    }
+    batch.proposals.retain(|proposal| {
+        batch
+            .ranking
+            .choices
+            .iter()
+            .find(|choice| choice.choice_id == proposal.descriptor.option_id)
+            .is_some_and(|choice| {
+                online_tactic_fits_horizon(suffix_ticks, choice.duration.maximum_ticks, horizon)
+            })
+    });
+    Ok(TacticQOnlineHorizonPlan::Execute(batch))
 }
 
 impl TacticQCampaign {

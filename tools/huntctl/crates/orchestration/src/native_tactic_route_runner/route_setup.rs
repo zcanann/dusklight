@@ -396,5 +396,5 @@ pub(super) fn selected_tactic_fits_horizon(
     selected_maximum_ticks: u32,
     horizon: u64,
 ) -> bool {
-    suffix_ticks.saturating_add(u64::from(selected_maximum_ticks)) <= horizon
+    online_tactic_fits_horizon(suffix_ticks, selected_maximum_ticks, horizon)
 }
