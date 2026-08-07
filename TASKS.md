@@ -63,13 +63,18 @@ Ordon Springs is the first adequacy test. The real terminal is
   ran its candidate to the shared 320-tick horizon, then directly restored the
   same nonconsecutive base for a sibling at decision 51. Together with the
   decision-13 restore, this proves two genuine nonconsecutive direct restores.
-  Neither early-prefix rollout reached the terminal because acquisition ranks
-  intended to choose independent candidates were rotating inside each rollout
-  (0, 13, 14, 15, 0, 16, ...), producing an incoherent chain rather than a
-  learned continuation. Terminal-refinement candidates now use their branch
-  rank for the first action and learned rank zero thereafter. The full
-  orchestration suite passes 480 tests; native proof that the corrected
-  continuation improves an incumbent remains open.
+  Neither early-prefix rollout reached the terminal. A follow-up forced every
+  continuation decision to learned rank zero, but all thirteen compared action
+  selections were byte-for-byte identical to the former rotating-rank run, so
+  acquisition-rank continuity was not causal and that change was removed.
+  State-graph terminal backup currently labels interior states while explicitly
+  representing their remaining observed segments as observations, not
+  executable actions. The selected four-tick state is inside a 24-tick option:
+  it has exact ticks-to-terminal but no action for the remaining option or
+  incumbent suffix, so each branch starts relearning the remaining 315 ticks.
+  The next fix is an experience-derived executable continuation/residual action,
+  not another campaign or a rank-label change. Native proof that a restored
+  branch improves an incumbent remains open.
 - The learner can discover the real terminal quickly, but its best authenticated
   route is 229 ticks. Two cold replays reproduced that route exactly.
 - The first terminal arrives in roughly 35 seconds; hundreds of later

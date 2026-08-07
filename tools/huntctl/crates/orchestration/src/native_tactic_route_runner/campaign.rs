@@ -1,7 +1,6 @@
 pub(super) use super::campaign_schedule::{
-    ActiveTerminalRefinementRollout, active_rollout_acquisition_rank,
-    first_demonstration_intervention, should_probe_policy_before_branch,
-    should_start_paired_terminal_return,
+    ActiveTerminalRefinementRollout, first_demonstration_intervention,
+    should_probe_policy_before_branch, should_start_paired_terminal_return,
 };
 use super::paired_terminal_returns::{ActivePairedTerminalReturn, PairedTerminalReturnSeed};
 use super::*;
@@ -367,11 +366,11 @@ pub(super) fn run_seed(
                 .saturating_add(elapsed_micros(branch_started.elapsed()));
         }
         let decision_acquisition_rank = lane.acquisition.rank(campaign.decision_index);
-        let mut active_acquisition_rank = active_rollout_acquisition_rank(
-            decision_acquisition_rank,
-            active_paired_terminal_return.is_some(),
-            active_terminal_refinement.is_some(),
-        );
+        let mut active_acquisition_rank = if active_paired_terminal_return.is_some() {
+            0
+        } else {
+            decision_acquisition_rank
+        };
         let terminal_restart = campaign.current.snapshot.terminal.reached == Some(true);
         if terminal_restart
             && config.execution_plan.proposal_policy == TacticProposalPolicy::Learned
