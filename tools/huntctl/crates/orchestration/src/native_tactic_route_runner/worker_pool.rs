@@ -325,8 +325,9 @@ pub(super) fn applicable_parameterized_descriptors_for_state(
     encoder: &GoalConditionedTacticFeatureEncoder,
     maximum_ticks: u32,
     action_schema_sha256: Digest,
+    promoted_tactics: &[ImportedPromotedTactic],
 ) -> Result<Vec<OptionActionDescriptor>, NativeTacticRouteRunError> {
-    let proposals = parameterized_catalog_for_state(
+    let proposals = parameterized_catalog_for_state_with_promoted(
         seed,
         decision_index,
         state,
@@ -334,6 +335,7 @@ pub(super) fn applicable_parameterized_descriptors_for_state(
         maximum_ticks,
         parameterized_feedback_for_state(campaign, state, encoder)?,
         action_schema_sha256,
+        promoted_tactics,
     )?;
     let learner = LearnerState::build(
         state.clone(),

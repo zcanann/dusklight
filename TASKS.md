@@ -75,6 +75,9 @@ Ordon Springs is the first adequacy test. The real terminal is
   sequence from completed journals, validates it against its full primitive
   realization at matched held-out checkpoints, and adds a promoted guarded
   tactic to the next generation's live catalog without removing primitives.
+  Checkpoint scheduling evaluates that same augmented action surface, so a
+  compatible retained state becomes eligible again when its primitives are
+  exhausted but the new tactic is untried.
   Validation now requires exact emitted-input equivalence. An equivalent
   multi-action sequence can promote for reducing several policy decisions to
   one; a single-action candidate still needs a strict native outcome gain.

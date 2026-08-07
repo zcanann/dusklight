@@ -1668,6 +1668,48 @@ fn promoted_guarded_tactics_join_without_removing_primitive_actions() {
     let primitive_proposals =
         parameterized_catalog_for_state(11, 3, &snapshot, &encoder, 40, None, Digest([8; 32]))
             .unwrap();
+    let current = LearnerState::build(
+        snapshot.clone(),
+        &FactRegistry::canonical(),
+        &primitive_proposals.catalog,
+        &primitive_proposals.blueprints,
+        |_| true,
+    )
+    .unwrap();
+    let campaign = TacticQCampaign::new(
+        encoder.schema_sha256,
+        Digest([6; 32]),
+        Digest([7; 32]),
+        0,
+        current,
+        InputTape {
+            frames: vec![InputFrame::default(); snapshot.tape_frame as usize],
+            ..InputTape::default()
+        },
+        route_option_value_config(Digest([8; 32])),
+        TacticExplorationConfig {
+            seed: 11,
+            epsilon_per_million: 100_000,
+        },
+    )
+    .unwrap();
+    let scheduler_actions = applicable_parameterized_descriptors_for_state(
+        &campaign,
+        &FactRegistry::canonical(),
+        11,
+        3,
+        &snapshot,
+        &encoder,
+        40,
+        Digest([8; 32]),
+        &active_promoted,
+    )
+    .unwrap();
+    assert!(
+        scheduler_actions
+            .iter()
+            .any(|descriptor| descriptor.option_id.starts_with("promoted/"))
+    );
     let primitive_descriptors = primitive_proposals
         .catalog
         .option_descriptors()

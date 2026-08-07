@@ -490,6 +490,7 @@ pub(super) fn run_seed(
                             encoder,
                             u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                             action_schema_sha256,
+                            promoted_tactics,
                         )
                     },
                 )
@@ -733,6 +734,7 @@ pub(super) fn run_seed(
                             encoder,
                             u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                             action_schema_sha256,
+                            promoted_tactics,
                         )
                     },
                 )
