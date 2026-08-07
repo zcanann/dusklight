@@ -27,117 +27,41 @@ target is 120.
 
 ## Current evidence
 
-- The production online loop learns shortest paths in two exact-state-disjoint
-  deterministic around-corner worlds, branches from retained states, and backs
-  up exact terminal cost. This proves basic plumbing, not native adequacy.
-- The native adapter retains bounded process-local checkpoints and has directly
-  restored multiple nonconsecutive intermediate states. Save-state branching is
-  functional and has produced one matched 274-to-251 tick improvement; route
-  quality and repeatability remain unproven.
-- The best-ever authenticated native artifact is 210 ticks under an earlier
-  campaign configuration and cold-replays twice at the same real terminal tick.
-  It is not directly comparable to the newer matched checkpoint diagnostics;
-  neither result is near the 124-tick adequacy gate.
-- The former native optimizer's forced perturbation, coordinate rejoin, and
-  privileged incumbent continuation have been removed. Ordinary checkpoint
-  refinement now executes only learner-selected actions until terminal or its
-  shared tick budget.
-- Native diagnostics exposed and fixed three policy-path defects: scheduler
-  leases substituted merely applicable actions for the policy choice;
-  width-one proposal batches could not select learned estimates; and immature,
-  below-chance estimates controlled too many actions. Adaptive estimates now
-  replace only unsupported bootstrap, retain epsilon and exact-greedy
-  authority, and require sufficient above-chance evidence before regular use.
-- A matched 64-decision diagnostic produced only a 406-tick route because
-  episode-based acquisition gave rank-zero optimization 27 of 790
-  post-terminal action ticks (3.4%). Scheduling now accounts actual evaluated
-  native work and gives new single-lane plans an equal support/discovery
-  envelope. A bounded two-proposal revalidation stopped at 48 decisions and
-  found a 274-tick terminal from an initial-episode sibling. Afterward it spent
-  347 ticks on support and 342 on discovery, proving the allocation correction,
-  but no restored branch improved 274. The trace exposed terminal-basin churn:
-  fresh suffixes from slower 286--320 tick successes displaced already-expanded
-  boundaries on the best 275-tick graph lineage. Graph scheduling now compares
-  authenticated total route cost before coverage, matching the learned-frontier
-  scheduler. A cached rank-zero source may receive one immediate reuse only
-  when it belongs to that best authenticated total, and it retains the exact
-  incumbent ticks-to-go bound. Locality consumes the most recently materialized
-  eligible source before older pending cache entries. A subsequent 53-decision
-  run used 720 native ticks, held support/discovery at 123/126 ticks, kept every
-  supported branch on total 275, and directly restored many nonconsecutive
-  checkpoints (172 cache hits, one miss), but still held 274. Direct reuse had
-  re-registered its own locality entitlement and consequently selected the
-  same prefix-274, one-tick-to-go state roughly two dozen times. Consuming
-  locality by exact graph target after all replacement images are admitted now
-  prevents that self-rearming loop. The next bounded run advanced through the
-  best lineage and improved its authenticated incumbent from 274 to 251 ticks.
-  Nonconsecutive prefixes 274, 254, 212, and 44 restored directly without root
-  replay; after branching at prefix 212, decision 25 continued from the
-  process-local result of an ordinary four-tick action and reached the real
-  terminal with another ordinary learner action. All 490 orchestration and 453
-  learning tests pass.
-- Terminal-value propagation is live rather than merely serialized. The first
-  native terminal entered replay at decision 11; the next fitted-snapshot probe
-  at the same predecessor changed the selected action from unsupported neutral
-  to roll under the native-terminal value head, and the following decision used
-  a terminal-value-ranked action. In the production around-corner adequacy
-  world, exact terminal cost backs through nine predecessor actions and changes
-  the root policy from the initially discovered 12-tick route to the 9-tick
-  route even though its first three moves increase goal distance. A translated,
-  exact-state-disjoint world learns the same policy. Open rollouts remain absent
-  from numeric terminal returns while their authentic transitions stay in the
-  replay and graph for achieved-goal dynamics, availability, duration,
-  coverage, novelty, and uncertainty.
-- From-scratch plans now default to the V4 goal-relabeled universal frontier
-  treatment instead of V2. Cold-start discovery still learns from every
-  achieved transition; after a real terminal, the retained-frontier policy also
-  receives action-conditioned terminal value and ensemble uncertainty across
-  parameterized tactic-family labels. Explicit older treatments and legacy
-  snapshot decoding remain available. A bounded 32-decision native run under
-  this default found the terminal in six seconds, then selected a retained
-  prefix using terminal mean Q `-191.17` and nonzero ensemble variance. Its
-  support continuation made four terminal-value-ranked decisions, while the
-  same policy kept unsupported discovery live for six decisions and 228
-  evaluated ticks through epsilon, reachability, and bootstrap coverage. The
-  cutoff arrived while work-based scheduling was still paying discovery back
-  against the preceding 632-tick support continuation; no decision-count phase
-  switched the policy. The sealed campaign summary and completion validate.
-  The same bounded native run exercised the state-aware action surface rather
-  than merely enumerating it: selected actions included ordinary movement,
-  four-tick rolls, a generic prompted action, camera-lock-forward, and
-  camera-lock-roll-forward with multiple durations. The proposal family covers
-  direction-plus-L+A on one frame, direction then L+A, and the fully staggered
-  direction/L/A sequence; camera-lock-forward covers same-frame and staggered
-  direction/L before holding raw forward. Focused tests prove that all sixteen
-  headings receive 4/8/16/40-tick movement choices and that native `do_status`
-  drives the matching prompt/roll observation features and legal action mask.
-  Tactic mining and promotion is now the first coherence gap.
-- Tactic mining, validation, promotion, binary persistence, and ordinary policy
-  selection exist on the production path. A same-seed shortcut was incorrectly
-  admitting merely proposed candidates under `promoted/*` option identities;
-  it has been removed. Only imported or generation-barrier registries whose
-  held-out native comparisons actually promoted a candidate can now affect the
-  policy. Macro mining now follows authenticated terminal graph lineages rather
-  than assuming adjacent journal rows are connected, so branching through a
-  sibling or returning later to a checkpoint no longer hides the successful
-  sequence. Exact repetition across independent entry states remains sufficient
-  to propose a candidate. One authenticated successful lineage may propose at
-  most eight multi-action candidates, but each still needs two independent
-  held-out native comparisons before promotion. A bounded three-generation
-  native campaign mined 32 candidates from 191 authentic proposal outcomes.
-  Final validation found 31 candidates with compatible held-out frontiers,
-  performed four matched native comparisons, and promoted two; an explicit
-  held-out reuse probe executed one four-component macro as one exact 44-tick
-  action. This proves graph-lineage mining, comparative validation, promotion,
-  persistence, and executable reuse. It does not yet prove ordinary policy
-  adoption: each of the two inter-generation refreshes had only one compatible
-  held-out state, so no candidate cleared the two-state promotion gate early
-  enough to enter a later generation. The campaign therefore reported no
-  active promoted option IDs and zero ordinary promoted-tactic selections. Its
-  best route remained 274 ticks. Recovery also exposed and fixed two reporting
-  defects: inherited shared-replay terminal support was rejected as if it were
-  unexplained local discovery, and summary validation conflated one
-  terminal-producing seed with all three seeds carrying terminal support.
+- The production online loop learns the 9-tick shortest route in two
+  exact-state-disjoint deterministic around-corner worlds. It restores retained
+  states, propagates exact terminal cost through temporarily worse moves, and
+  keeps censored rollouts as dynamics and coverage evidence without assigning
+  them a terminal return.
+- Native process-local checkpoints are active optimization state, not passive
+  artifacts. A matched run restored nonconsecutive prefixes directly and
+  improved an authenticated incumbent from 274 to 251 ticks. Forced
+  perturbations, coordinate rejoins, and privileged incumbent continuations are
+  absent; subsequent actions come from the ordinary learner.
+- The state-aware action surface exposes movement, roll, prompted actions,
+  camera lock, simultaneous inputs, and variable durations. Native prompt state
+  controls legality. The V4 goal-relabeled universal frontier learner consumes
+  generic motion, collision, camera, input-history, and availability features;
+  none is converted into a route-specific reward bonus.
+- The learned-option loop is now end to end. Connected terminal graph lineages
+  produce candidates; matched native execution compares each candidate with its
+  exact primitive components at two held-out states; only promoted candidates
+  enter the ordinary action surface. Authentic but non-composable replay remains
+  learner evidence and is counted rather than aborting mining. A sealed
+  four-generation, zero-demonstration campaign admitted 11 of 14 promoted-option
+  transition rows, activated four promoted options, and made three later
+  ordinary selections. Two were selected by learned generalized value. Each
+  selected option contained two validated primitive components, saving three
+  policy decisions while the primitive actions remained available.
+- That same bounded campaign reached the real terminal in all four seeds and
+  improved its authenticated incumbent from 403 to 230 to 222 ticks. It used
+  direct process-local restores in every seed and sealed its report, summary,
+  learner completion, and campaign completion. This is useful framework
+  evidence, but 222 is still nowhere near the 124-tick adequacy gate. The older
+  210-tick artifact remains the best cold-replayed route and is not directly
+  comparable to this treatment.
+- The full orchestration suite passes: 491 tests, including exact-return policy
+  adoption, learned-option decision compression, checkpoint branching, replay
+  recovery, and campaign report validation.
 
 No task is blocked on design.
 
@@ -157,7 +81,7 @@ No task is blocked on design.
 - [x] Expose simultaneous and variable-duration primitives—including movement,
   camera lock, roll, and their legal compositions—through the same state-aware
   action interface. Availability must come from native state, not a route script.
-- [ ] Complete the learned-option loop: mine useful connected subsequences,
+- [x] Complete the learned-option loop: mine useful connected subsequences,
   validate them against their primitive realization from matched retained
   states, promote only improvements that generalize across compatible states,
   and give the ordinary policy evidence with which to rank and select the
