@@ -19,7 +19,12 @@ enum AdequacyState {
     VariantStart,
     Detour(u8),
     Optimal(u8),
+    Shortcut(u8),
     Goal,
+    VariantDetour(u8),
+    VariantOptimal(u8),
+    VariantShortcut(u8),
+    VariantGoal,
 }
 
 impl AdequacyState {
@@ -29,7 +34,12 @@ impl AdequacyState {
             Self::VariantStart => 64,
             Self::Detour(step) => 1 + step,
             Self::Optimal(step) => 32 + step,
+            Self::Shortcut(step) => 48 + step,
             Self::Goal => 63,
+            Self::VariantDetour(step) => 65 + step,
+            Self::VariantOptimal(step) => 96 + step,
+            Self::VariantShortcut(step) => 112 + step,
+            Self::VariantGoal => 127,
         }
     }
 
@@ -70,16 +80,35 @@ impl AdequacyState {
                 ];
                 POSITIONS[step as usize]
             }
+            Self::Shortcut(step) => {
+                const POSITIONS: [[f32; 3]; 5] = [
+                    [2.0, 0.0, -1.0],
+                    [2.5, 0.0, -1.0],
+                    [3.0, 0.0, -1.0],
+                    [3.5, 0.0, -1.0],
+                    [3.5, 0.0, 0.0],
+                ];
+                POSITIONS[step as usize]
+            }
             Self::Goal => [3.0, 0.0, 0.0],
+            Self::VariantDetour(step) => translated(Self::Detour(step).position()),
+            Self::VariantOptimal(step) => translated(Self::Optimal(step).position()),
+            Self::VariantShortcut(step) => translated(Self::Shortcut(step).position()),
+            Self::VariantGoal => translated(Self::Goal.position()),
         }
     }
 
     fn applicable(self, action: &str) -> bool {
         match self {
             Self::Start | Self::VariantStart => matches!(action, "east" | "north"),
+            Self::Detour(3) | Self::VariantDetour(3) => matches!(action, "east" | "north"),
             Self::Detour(step) => action == detour_action(step),
             Self::Optimal(step) => action == optimal_action(step),
-            Self::Goal => false,
+            Self::Shortcut(step) => action == shortcut_action(step),
+            Self::VariantDetour(step) => action == detour_action(step),
+            Self::VariantOptimal(step) => action == optimal_action(step),
+            Self::VariantShortcut(step) => action == shortcut_action(step),
+            Self::Goal | Self::VariantGoal => false,
         }
     }
 
@@ -93,15 +122,41 @@ impl AdequacyState {
         match self {
             Self::Start if action == "east" => Some(Self::Detour(0)),
             Self::Start if action == "north" => Some(Self::Optimal(0)),
-            Self::VariantStart if action == "east" => Some(Self::Detour(0)),
-            Self::VariantStart if action == "north" => Some(Self::Optimal(0)),
+            Self::VariantStart if action == "east" => Some(Self::VariantDetour(0)),
+            Self::VariantStart if action == "north" => Some(Self::VariantOptimal(0)),
+            Self::Detour(3) if action == "north" => Some(Self::Shortcut(0)),
             Self::Detour(10) => Some(Self::Goal),
             Self::Detour(step) => Some(Self::Detour(step + 1)),
             Self::Optimal(7) => Some(Self::Goal),
             Self::Optimal(step) => Some(Self::Optimal(step + 1)),
+            Self::Shortcut(4) => Some(Self::Goal),
+            Self::Shortcut(step) => Some(Self::Shortcut(step + 1)),
+            Self::VariantDetour(3) if action == "north" => Some(Self::VariantShortcut(0)),
+            Self::VariantDetour(10) => Some(Self::VariantGoal),
+            Self::VariantDetour(step) => Some(Self::VariantDetour(step + 1)),
+            Self::VariantOptimal(7) => Some(Self::VariantGoal),
+            Self::VariantOptimal(step) => Some(Self::VariantOptimal(step + 1)),
+            Self::VariantShortcut(4) => Some(Self::VariantGoal),
+            Self::VariantShortcut(step) => Some(Self::VariantShortcut(step + 1)),
             _ => None,
         }
     }
+
+    fn variant(self) -> bool {
+        matches!(
+            self,
+            Self::VariantStart
+                | Self::VariantDetour(_)
+                | Self::VariantOptimal(_)
+                | Self::VariantShortcut(_)
+                | Self::VariantGoal
+        )
+    }
+}
+
+fn translated(mut position: [f32; 3]) -> [f32; 3] {
+    position[0] += 10.0;
+    position
 }
 
 fn detour_action(step: u8) -> &'static str {
@@ -115,6 +170,10 @@ fn optimal_action(step: u8) -> &'static str {
     [
         "north", "north", "east", "east", "east", "south", "south", "south",
     ][step as usize]
+}
+
+fn shortcut_action(step: u8) -> &'static str {
+    ["north", "east", "east", "south", "west"][step as usize]
 }
 
 fn input_frame(action: &str) -> InputFrame {
@@ -182,18 +241,14 @@ fn facts_at(base: &FactSnapshot, state: AdequacyState, tape_frame: u64) -> FactS
     facts.state_identity = [state.code(); 16];
     facts.world.stage = "online-adequacy".into();
     facts.world.room = 0;
-    facts.world.point = Some(if state == AdequacyState::VariantStart {
-        1
-    } else {
-        0
-    });
+    facts.world.point = Some(if state.variant() { 1 } else { 0 });
     facts.player.position_f32_bits = state.position().map(f32::to_bits);
     facts.player.procedure = Some(u16::from(state.code()));
     facts.player.velocity_f32_bits = Some([0.0_f32.to_bits(); 3]);
     facts.player.forward_speed_f32_bits = Some(0.0_f32.to_bits());
     facts.recent_history.clear();
     facts.recent_option = None;
-    let terminal = state == AdequacyState::Goal;
+    let terminal = matches!(state, AdequacyState::Goal | AdequacyState::VariantGoal);
     facts.terminal.configured = Some(true);
     facts.terminal.reached = Some(terminal);
     facts.terminal.reason = if terminal {
@@ -212,7 +267,12 @@ fn state_from_facts(facts: &FactSnapshot) -> AdequacyState {
         64 => AdequacyState::VariantStart,
         1..=11 => AdequacyState::Detour(facts.state_identity[0] - 1),
         32..=39 => AdequacyState::Optimal(facts.state_identity[0] - 32),
+        48..=52 => AdequacyState::Shortcut(facts.state_identity[0] - 48),
         63 => AdequacyState::Goal,
+        65..=75 => AdequacyState::VariantDetour(facts.state_identity[0] - 65),
+        96..=103 => AdequacyState::VariantOptimal(facts.state_identity[0] - 96),
+        112..=116 => AdequacyState::VariantShortcut(facts.state_identity[0] - 112),
+        127 => AdequacyState::VariantGoal,
         _ => panic!("unknown adequacy state"),
     }
 }
@@ -363,7 +423,7 @@ fn execute_selected(
         next_facts,
         state_extraction_micros: 1,
         intermediate_boundaries: Vec::new(),
-        terminal: target == AdequacyState::Goal,
+        terminal: matches!(target, AdequacyState::Goal | AdequacyState::VariantGoal),
         retained_native_checkpoint: None,
         retained_native_boundary_fingerprint: None,
     }
@@ -498,6 +558,23 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
 
     assert_eq!(
         restore_next_scheduled_frontier(&mut campaign, &catalog, 1),
+        AdequacyState::Detour(3),
+        "the production scheduler must branch from the retained path's untried shortcut"
+    );
+    let intermediate = run_to_terminal(&mut campaign, &catalog, episode_shard_sha256);
+    assert_eq!(intermediate.len(), 6);
+    assert_eq!(intermediate[0], "north");
+    assert_eq!(
+        campaign
+            .best_graph_terminal_path()
+            .unwrap()
+            .unwrap()
+            .root_to_terminal_ticks,
+        10
+    );
+
+    assert_eq!(
+        restore_next_scheduled_frontier(&mut campaign, &catalog, 2),
         AdequacyState::Start,
         "the production scheduler must return to the root's untried action"
     );
@@ -514,7 +591,7 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
     );
 
     assert_eq!(
-        restore_next_scheduled_frontier(&mut campaign, &catalog, 2),
+        restore_next_scheduled_frontier(&mut campaign, &catalog, 3),
         AdequacyState::Start,
         "the production scheduler must revisit the learned root boundary"
     );
@@ -530,7 +607,7 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
         .select_online_branch(
             TacticQOnlineBranchRequest {
                 seed: 0,
-                round: 3,
+                round: 4,
                 acquisition_rank: 0,
                 maximum_route_frames: usize::MAX,
                 prefer_root: false,
@@ -555,7 +632,7 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
     campaign
         .restore_branch(
             &variant_entry,
-            3,
+            4,
             &FactRegistry::canonical(),
             &catalog,
             &[],
@@ -579,6 +656,13 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
         generalized.proposals[0].reason,
         dusklight_learning::tactic_exploration::TacticSelectionReason::Greedy
     );
+    let transferred = run_to_terminal(&mut campaign, &catalog, episode_shard_sha256);
+    assert_eq!(transferred.len(), 9);
+    assert_eq!(transferred[0], "north");
+    assert_eq!(
+        state_from_facts(&campaign.current.snapshot),
+        AdequacyState::VariantGoal
+    );
 
     let root_rows = campaign
         .graph_learning_batch()
@@ -593,6 +677,6 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
             )
         })
         .collect::<BTreeMap<_, _>>();
-    assert_eq!(root_rows.get("east"), Some(&Some(12)));
+    assert_eq!(root_rows.get("east"), Some(&Some(10)));
     assert_eq!(root_rows.get("north"), Some(&Some(9)));
 }

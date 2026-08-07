@@ -51,11 +51,14 @@ Ordon Springs is the first adequacy test. The real terminal is
   retained-checkpoint restore, transition admission, terminal backup, and
   refit path online. It improves a deliberately selected 12-tick detour to a
   9-tick around-corner route without a test-authored root retry, publishes exact
-  root returns of 12 versus 9, subsequently ranks the 9-tick action first, and
-  transfers that preference to a different exact checkpoint with equivalent
-  normalized observations. This exposed and fixed scheduler admission of
-  exhausted interior nodes; loop extraction and autonomous repetition across
-  whole environment variants remain open in P0 below.
+  root returns of 10 versus 9, and subsequently ranks the 9-tick action first.
+  Between those routes it autonomously restores an untried retained interior
+  checkpoint and improves the 12-tick incumbent to 10 ticks. It then executes
+  the complete 9-tick policy through a translated corridor and terminal whose
+  exact state identities are disjoint from training but whose normalized
+  observations are equivalent. This exposed and fixed scheduler admission of
+  exhausted interior nodes; rollout-loop extraction and autonomous repetition
+  across multiple environment variants remain open in P0 below.
 - Native execution and the deterministic adequacy gate now share one online
   frontier selector, production parameterized proposal path, graph/policy lease
   authority, and batch-commit operation. The commit admits every executed
