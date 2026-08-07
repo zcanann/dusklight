@@ -128,9 +128,23 @@ Ordon Springs is the first adequacy test. The real terminal is
   incumbent from 318 to 210 ticks. Two independent cold replays hit the real
   terminal at tick 210 with identical terminal identity and boundary evidence.
   That winning episode began at the authenticated root; its later process-local
-  restores were consecutive continuations, so proof that a nonconsecutive
-  intermediate restore causes an incumbent improvement remains open. The full
-  orchestration suite passes 486 tests.
+  restores were consecutive continuations. A subsequent width-one,
+  32-decision run made eight direct checkpoint restores and returned to the
+  four-tick incumbent prefix nonconsecutively, but retained the 210-tick best.
+  That run exposed a false-negative execution boundary: native
+  `SeekCoordinate` could not report target completion, and a coordinate
+  sequence entering its target on its final simulated frame was classified as
+  duration exhaustion from the pre-frame observation. Native generic
+  coordinate actions now use target-aware sequence semantics and authenticate
+  the final post-simulation boundary. In a repeated 22-decision proof, the
+  restored prefix's one-tick rejoin consequently advanced to and executed its
+  203-tick incumbent suffix instead of abandoning the candidate. The suffix
+  missed the terminal because coordinate proximity did not restore compatible
+  momentum, procedure, camera, and input-history state. Thus execution from a
+  nonconsecutive restored branch is now proved, but improvement from one
+  remains open; the next correction is a state-compatible or closed-loop
+  continuation, not more sibling volume. All 43 control tests and all 486
+  orchestration tests pass.
 - The learner's previous best authenticated route was 229 ticks. The current
   best is 210 ticks, reproduced exactly by two cold replays. This is a real
   route-learning improvement but remains far short of the 124-tick gate.

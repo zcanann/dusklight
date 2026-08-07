@@ -503,22 +503,20 @@ fn seek_coordinate_becomes_one_linear_native_controller_candidate() {
     )
     .unwrap()
     .expect("seek-coordinate has a native controller equivalent");
-    let Operation::SeekCoordinate {
-        frame,
-        target: actual,
-        offset,
-        stop_radius,
+    let Operation::SeekCoordinateSequence {
+        coordinates_xz,
+        intermediate_stop_radius,
+        final_stop_radius,
         magnitude,
         ..
-    } = program.layers[0].operation
+    } = &program.layers[0].operation
     else {
-        panic!("seek coordinate must compile to the same controller operation");
+        panic!("seek coordinate must compile to a target-aware controller operation");
     };
-    assert_eq!(frame, CoordinateFrame::World);
-    assert_eq!(actual, target);
-    assert_eq!(offset, [0.0; 3]);
-    assert_eq!(stop_radius.to_bits(), 24.0_f32.to_bits());
-    assert_eq!(magnitude, 127);
+    assert_eq!(coordinates_xz, &vec![[target[0], target[2]]]);
+    assert_eq!(intermediate_stop_radius.to_bits(), 24.0_f32.to_bits());
+    assert_eq!(final_stop_radius.to_bits(), 24.0_f32.to_bits());
+    assert_eq!(*magnitude, 127);
     assert_eq!(program.duration_frames, 80);
 }
 

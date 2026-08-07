@@ -105,6 +105,50 @@ impl ControllerProgramStepper {
         &self.program
     }
 
+    /// Re-evaluate only the target predicate against the boundary produced by
+    /// the last emitted frame. Native execution observes actions before their
+    /// simulation step, so a target first entered on the final allowed frame
+    /// is otherwise indistinguishable from an exhausted controller.
+    pub fn target_reached_after_last_frame(
+        &self,
+        observation: &ControllerRuntimeObservation,
+    ) -> Result<Option<u16>, ControllerRuntimeError> {
+        observation.validate()?;
+        let Some(controller_frame) = self.next_frame.checked_sub(1) else {
+            return Ok(None);
+        };
+        if let Some((boundary_index, simulation_tick, tape_frame)) = self.previous_boundary
+            && (observation.boundary_index != boundary_index + 1
+                || observation.simulation_tick != simulation_tick + 1
+                || observation.tape_frame != tape_frame + 1)
+        {
+            return Err(ControllerRuntimeError::DiscontinuousObservation);
+        }
+        for (index, layer) in self.program.layers.iter().enumerate() {
+            if controller_frame < layer.start_frame
+                || controller_frame - layer.start_frame >= layer.duration_frames
+            {
+                continue;
+            }
+            let layer_index =
+                u16::try_from(index).map_err(|_| ControllerRuntimeError::InvalidLayer)?;
+            let local = controller_frame - layer.start_frame + 1;
+            let mut coordinate_sequence = self.coordinate_sequences[index].clone();
+            if evaluate_stick(
+                &layer.operation,
+                local,
+                layer.duration_frames,
+                observation,
+                &mut coordinate_sequence,
+            )?
+            .target_reached
+            {
+                return Ok(Some(layer_index));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn step(
         &mut self,
         observation: &ControllerRuntimeObservation,
@@ -985,5 +1029,38 @@ mod tests {
             stepper.step(&observed),
             Err(ControllerRuntimeError::Stopped)
         ));
+    }
+
+    #[test]
+    fn coordinate_sequence_recognizes_a_target_entered_on_its_final_frame() {
+        let program = ControllerProgram {
+            duration_frames: 1,
+            layers: vec![crate::controller_program::Layer {
+                start_frame: 0,
+                duration_frames: 1,
+                operation: Operation::SeekCoordinateSequence {
+                    blend: StickBlend::Replace,
+                    coordinates_xz: vec![[10.0, 0.0]],
+                    intermediate_stop_radius: 2.0,
+                    final_stop_radius: 2.0,
+                    magnitude: 127,
+                },
+            }],
+        };
+        let mut stepper = ControllerProgramStepper::new(program).unwrap();
+        let mut observed = observation();
+        assert_eq!(
+            stepper.step(&observed).unwrap().end,
+            Some(ControllerRuntimeEnd::MaximumDuration)
+        );
+
+        observed.boundary_index += 1;
+        observed.simulation_tick += 1;
+        observed.tape_frame += 1;
+        observed.player_position[0] = 10.0;
+        assert_eq!(
+            stepper.target_reached_after_last_frame(&observed).unwrap(),
+            Some(0)
+        );
     }
 }

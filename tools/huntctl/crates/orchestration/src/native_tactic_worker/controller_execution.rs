@@ -202,12 +202,14 @@ pub(super) fn native_generic_controller_program(
             coordinate_f32_bits,
             tolerance_f32_bits,
             magnitude,
-        } => Operation::SeekCoordinate {
+        } => Operation::SeekCoordinateSequence {
             blend: StickBlend::Replace,
-            frame: CoordinateFrame::World,
-            target: coordinate_f32_bits.map(f32::from_bits),
-            offset: [0.0; 3],
-            stop_radius: f32::from_bits(*tolerance_f32_bits),
+            coordinates_xz: vec![[
+                f32::from_bits(coordinate_f32_bits[0]),
+                f32::from_bits(coordinate_f32_bits[2]),
+            ]],
+            intermediate_stop_radius: f32::from_bits(*tolerance_f32_bits),
+            final_stop_radius: f32::from_bits(*tolerance_f32_bits),
             magnitude: *magnitude,
         },
         GenericTactic::SeekCoordinateSequence {
@@ -358,6 +360,23 @@ pub(super) fn finish_native_controller_candidate(
         if index + 1 != option_steps.len() {
             observation =
                 controller_observation_from_post_simulation(&native_step.post_simulation)?;
+        }
+    }
+
+    if kind == NativeControllerOutcomeKind::NativeGeneric
+        && stepper_end == Some(ControllerRuntimeEnd::MaximumDuration)
+    {
+        let final_observation = controller_observation_from_post_simulation(
+            &option_steps
+                .last()
+                .expect("controller candidate has at least one option step")
+                .post_simulation,
+        )?;
+        if let Some(layer_index) = stepper
+            .target_reached_after_last_frame(&final_observation)
+            .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?
+        {
+            stepper_end = Some(ControllerRuntimeEnd::TargetReached { layer_index });
         }
     }
 
