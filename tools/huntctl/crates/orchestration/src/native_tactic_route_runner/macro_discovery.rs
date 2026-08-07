@@ -300,15 +300,7 @@ pub(super) fn mine_and_store_tactic_macros(
         }
     }
     let mut candidates = deduplicated.into_values().collect::<Vec<_>>();
-    candidates.sort_by(|left, right| {
-        right
-            .tape
-            .frames
-            .len()
-            .cmp(&left.tape.frames.len())
-            .then_with(|| right.sources.len().cmp(&left.sources.len()))
-            .then_with(|| left.candidate_sha256.cmp(&right.candidate_sha256))
-    });
+    candidates.sort_by(compare_tactic_macro_candidate_priority);
     candidates.truncate(maximum_candidates);
     let mut registry = TacticMacroPromotionRegistry::default();
     for candidate in candidates {
@@ -365,6 +357,23 @@ pub(super) fn mine_and_store_tactic_macros(
             registry_sha256,
         },
     })
+}
+
+pub(super) fn compare_tactic_macro_candidate_priority(
+    left: &DiscoveredMacroCandidate,
+    right: &DiscoveredMacroCandidate,
+) -> std::cmp::Ordering {
+    // Active refresh validates only the strongest bounded candidate. Prefer
+    // actual compositions: collapsing several policy decisions is an
+    // attainable sample-efficiency gain, while a full-length copy of one
+    // primitive normally cannot outperform its own realization.
+    right
+        .components
+        .len()
+        .cmp(&left.components.len())
+        .then_with(|| right.tape.frames.len().cmp(&left.tape.frames.len()))
+        .then_with(|| right.sources.len().cmp(&left.sources.len()))
+        .then_with(|| left.candidate_sha256.cmp(&right.candidate_sha256))
 }
 
 fn macro_entry_observation(

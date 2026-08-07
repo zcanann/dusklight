@@ -1342,6 +1342,29 @@ fn connected_macro_needs_repeated_occurrences_not_internal_steps() {
             .collect::<BTreeSet<_>>(),
         BTreeSet::from([Digest([1; 32]), Digest([2; 32])])
     );
+
+    let longer_single = InputTape {
+        frames: vec![InputFrame::default(); 16],
+        ..InputTape::default()
+    };
+    let single = replay_macro_candidate(
+        longer_single,
+        vec![component("family/primitive/a")],
+        vec![
+            MacroSourceProvenance {
+                transition_sha256s: vec![Digest([21; 32])],
+                ..source(17, 5, 21)
+            },
+            MacroSourceProvenance {
+                transition_sha256s: vec![Digest([23; 32])],
+                ..source(19, 6, 23)
+            },
+        ],
+    )
+    .unwrap();
+    let mut prioritized = vec![single, candidates[0].clone()];
+    prioritized.sort_by(compare_tactic_macro_candidate_priority);
+    assert_eq!(prioritized[0].components.len(), 2);
 }
 
 #[test]

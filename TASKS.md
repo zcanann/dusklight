@@ -82,6 +82,9 @@ Ordon Springs is the first adequacy test. The real terminal is
   multi-action sequence can promote for reducing several policy decisions to
   one; a single-action candidate still needs a strict native outcome gain.
   Frozen and random-valid controls do not receive this adaptive catalog update.
+  The bounded active validator prioritizes true multi-decision compositions
+  ahead of long one-component copies, so its single validation slot targets a
+  candidate that can actually earn the decision-compression promotion.
   Environment-independent lifecycle ownership and native evidence that a
   same-campaign promoted tactic was selected and improved learning remain open.
 - Exact graph backup covers every executable node on every authenticated
