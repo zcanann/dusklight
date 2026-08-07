@@ -1,7 +1,6 @@
 pub(super) use super::campaign_schedule::{
-    ActiveIncumbentContinuation, ActiveTerminalRefinementRollout, first_demonstration_intervention,
-    select_incumbent_rejoin_offset, should_probe_policy_before_branch,
-    should_start_paired_terminal_return,
+    ActiveTerminalRefinementRollout, first_demonstration_intervention,
+    should_probe_policy_before_branch, should_start_paired_terminal_return,
 };
 use super::paired_terminal_returns::{ActivePairedTerminalReturn, PairedTerminalReturnSeed};
 use super::*;
@@ -13,72 +12,6 @@ use seed_initialization::{SeedCampaignInitialization, load_or_create_seed_campai
 
 pub(super) const NATIVE_TACTIC_RESULT_ADMISSION_SCHEMA_V1: &str =
     "dusklight-native-tactic-result-admission/v1";
-
-fn incumbent_continuation_for_exact_state(
-    campaign: &TacticQCampaign,
-    route_checkpoint_sha256: Digest,
-    state_sha256: Digest,
-    executed_actions: &[(&str, bool)],
-) -> Result<Option<ActiveIncumbentContinuation>, NativeTacticRouteRunError> {
-    let continuation = campaign
-        .state_graph()
-        .map_err(route_error)?
-        .exact_terminal_continuation(crate::state_graph::ExactStateId {
-            route_checkpoint_sha256,
-            state_sha256,
-        });
-    match continuation {
-        Ok(Some(continuation)) => Ok(ActiveIncumbentContinuation::new(
-            continuation.terminal_route_checkpoint_sha256,
-            executed_actions,
-        )),
-        Ok(None) => Ok(None),
-        Err(crate::state_graph::StateGraphError::Invalid(_)) => Ok(None),
-        Err(error) => Err(route_error(error)),
-    }
-}
-
-fn incumbent_continuation_for_branch(
-    campaign: &TacticQCampaign,
-    branch: &crate::tactic_q_campaign::TacticCampaignBranch,
-) -> Result<Option<ActiveIncumbentContinuation>, NativeTacticRouteRunError> {
-    incumbent_continuation_for_exact_state(
-        campaign,
-        branch.logical_frontier.identity_sha256,
-        branch.logical_frontier.state_sha256,
-        &[],
-    )
-}
-
-fn recover_incumbent_continuation(
-    campaign: &TacticQCampaign,
-    trace: &[NativeTacticDecisionTrace],
-) -> Result<Option<ActiveIncumbentContinuation>, NativeTacticRouteRunError> {
-    let Some(last) = trace.last() else {
-        return Ok(None);
-    };
-    let episode_start = trace
-        .iter()
-        .rposition(|decision| decision.episode != last.episode)
-        .map_or(0, |index| index + 1);
-    let first = &trace[episode_start];
-    let executed_actions = trace[episode_start..]
-        .iter()
-        .zip(&campaign.replay()[episode_start..])
-        .map(|(decision, transition)| {
-            (
-                decision.selected_option_id.as_str(),
-                transition.execution.end_reason == OptionEndReason::Terminated,
-            )
-        })
-        .collect::<Vec<_>>();
-    incumbent_continuation_for_exact_state(
-        campaign,
-        first.frontier_identity,
-        first.before.snapshot_sha256,
-        &executed_actions,
-    )
-}
 
 fn recover_active_episode_ticks(
     campaign: &TacticQCampaign,
@@ -98,291 +31,6 @@ fn recover_active_episode_ticks(
                 .checked_add(u64::from(transition.execution.duration.realized_ticks))
                 .ok_or_else(|| route_message("active episode tick count overflowed"))
         })
-}
-
-fn incumbent_continuation_suffix(
-    campaign: &TacticQCampaign,
-    continuation: ActiveIncumbentContinuation,
-    encoder: &GoalConditionedTacticFeatureEncoder,
-) -> Result<Option<InputTape>, NativeTacticRouteRunError> {
-    let graph = campaign.state_graph().map_err(route_error)?;
-    let terminal_route = graph
-        .route(continuation.terminal_route_checkpoint_sha256())
-        .ok_or_else(|| route_message("incumbent continuation terminal route disappeared"))?;
-    let current_frames = campaign.route_tape.frames.len();
-    if current_frames >= terminal_route.frames.len() {
-        return Ok(None);
-    }
-    let query = encoder
-        .encode(&campaign.current.snapshot)
-        .map_err(route_error)?;
-    let candidates = graph
-        .nodes()
-        .filter(|node| node.restoration.executable && !node.terminal)
-        .filter(|node| {
-            node.state.world.stage == campaign.current.snapshot.world.stage
-                && node.state.world.room == campaign.current.snapshot.world.room
-        })
-        .filter_map(|node| {
-            let route = graph.route(node.id.route_checkpoint_sha256)?;
-            let offset = route.frames.len();
-            (offset >= current_frames
-                && offset < terminal_route.frames.len()
-                && route.boot == terminal_route.boot
-                && route.tick_rate_numerator == terminal_route.tick_rate_numerator
-                && route.tick_rate_denominator == terminal_route.tick_rate_denominator
-                && terminal_route.frames.starts_with(&route.frames))
-            .then_some((offset, node))
-        })
-        .map(|(offset, node)| {
-            encoder
-                .encode(&node.state)
-                .map(|features| (offset, features))
-                .map_err(route_error)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let rejoin_offset =
-        select_incumbent_rejoin_offset(&query, &candidates, &encoder.distance_weights())
-            .unwrap_or(current_frames);
-    let frames = terminal_route
-        .frames
-        .get(rejoin_offset..)
-        .ok_or_else(|| route_message("incumbent rejoin offset exceeds its terminal route"))?;
-    if frames.is_empty() {
-        return Ok(None);
-    }
-    let mut tape = InputTape {
-        tick_rate_numerator: terminal_route.tick_rate_numerator,
-        tick_rate_denominator: terminal_route.tick_rate_denominator,
-        ..InputTape::default()
-    };
-    tape.frames.extend_from_slice(frames);
-    tape.validate().map_err(route_error)?;
-    Ok(Some(tape))
-}
-
-pub(super) fn simplify_incumbent_rejoin_coordinates(
-    current: [f32; 3],
-    lineage: &[[f32; 3]],
-) -> Vec<[f32; 3]> {
-    const MAXIMUM_COORDINATES: usize =
-        dusklight_control::controller_program::MAX_SEEK_COORDINATE_SEQUENCE_POINTS;
-    let mut points = Vec::with_capacity(lineage.len().saturating_add(1));
-    points.push(current);
-    for point in lineage {
-        if points
-            .last()
-            .is_none_or(|previous| (previous[0] - point[0]).hypot(previous[2] - point[2]) > 1.0e-3)
-        {
-            points.push(*point);
-        }
-    }
-    if points.len() <= 1 {
-        return Vec::new();
-    }
-
-    let mut selected = vec![0, points.len() - 1];
-    while selected.len() < MAXIMUM_COORDINATES.saturating_add(1) {
-        selected.sort_unstable();
-        let mut best: Option<(f32, usize)> = None;
-        for endpoints in selected.windows(2) {
-            let start_index = endpoints[0];
-            let end_index = endpoints[1];
-            let start = points[start_index];
-            let end = points[end_index];
-            let dx = end[0] - start[0];
-            let dz = end[2] - start[2];
-            let length_squared = dx * dx + dz * dz;
-            for index in start_index + 1..end_index {
-                let point = points[index];
-                let progress = if length_squared > 0.0 {
-                    (((point[0] - start[0]) * dx + (point[2] - start[2]) * dz) / length_squared)
-                        .clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                let nearest_x = start[0] + dx * progress;
-                let nearest_z = start[2] + dz * progress;
-                let distance_squared =
-                    (point[0] - nearest_x).powi(2) + (point[2] - nearest_z).powi(2);
-                if best.is_none_or(|(best_distance, best_index)| {
-                    distance_squared > best_distance
-                        || (distance_squared == best_distance && index < best_index)
-                }) {
-                    best = Some((distance_squared, index));
-                }
-            }
-        }
-        let Some((distance_squared, index)) = best else {
-            break;
-        };
-        if distance_squared <= 1.0e-6 {
-            break;
-        }
-        selected.push(index);
-    }
-    selected.sort_unstable();
-    selected
-        .into_iter()
-        .skip(1)
-        .map(|index| points[index])
-        .collect()
-}
-
-fn incumbent_rejoin_intermediate_tolerance(current: [f32; 3], coordinates: &[[f32; 3]]) -> f32 {
-    let mut previous = current;
-    let minimum_spacing = coordinates
-        .iter()
-        .fold(f32::INFINITY, |minimum, coordinate| {
-            let spacing = (coordinate[0] - previous[0]).hypot(coordinate[2] - previous[2]);
-            previous = *coordinate;
-            minimum.min(spacing)
-        });
-    (minimum_spacing * 0.25).clamp(8.0, 96.0)
-}
-
-fn incumbent_rejoin_targets(
-    campaign: &TacticQCampaign,
-    continuation: ActiveIncumbentContinuation,
-) -> Result<Vec<IncumbentRejoinTarget>, NativeTacticRouteRunError> {
-    let graph = campaign.state_graph().map_err(route_error)?;
-    let terminal_route = graph
-        .route(continuation.terminal_route_checkpoint_sha256())
-        .ok_or_else(|| route_message("incumbent rejoin terminal route disappeared"))?;
-    let current_frames = campaign.route_tape.frames.len();
-    let current_position = campaign
-        .current
-        .snapshot
-        .player
-        .position_f32_bits
-        .map(f32::from_bits);
-    if current_position.iter().any(|value| !value.is_finite()) {
-        return Err(route_message("incumbent rejoin source position is invalid"));
-    }
-    let mut lineage = graph
-        .nodes()
-        .filter(|node| node.restoration.executable && !node.terminal)
-        .filter(|node| {
-            node.state.world.stage == campaign.current.snapshot.world.stage
-                && node.state.world.room == campaign.current.snapshot.world.room
-        })
-        .filter_map(|node| {
-            let route = graph.route(node.id.route_checkpoint_sha256)?;
-            let offset = route.frames.len();
-            (offset < terminal_route.frames.len()
-                && route.boot == terminal_route.boot
-                && route.tick_rate_numerator == terminal_route.tick_rate_numerator
-                && route.tick_rate_denominator == terminal_route.tick_rate_denominator
-                && terminal_route.frames.starts_with(&route.frames))
-            .then_some((
-                offset,
-                node.state.player.position_f32_bits.map(f32::from_bits),
-            ))
-        })
-        .collect::<Vec<_>>();
-    lineage.sort_by_key(|(offset, _)| *offset);
-    let mut ranked = lineage
-        .iter()
-        .enumerate()
-        .filter_map(|(index, (offset, position))| {
-            let headroom = offset.checked_sub(current_frames)?;
-            if headroom <= 1 || position.iter().any(|value| !value.is_finite()) {
-                return None;
-            }
-            let planar_distance =
-                (position[0] - current_position[0]).hypot(position[2] - current_position[2]);
-            let boundary_spacing = index
-                .checked_sub(1)
-                .and_then(|previous| lineage.get(previous))
-                .map(|(_, previous)| (position[0] - previous[0]).hypot(position[2] - previous[2]))
-                .unwrap_or(32.0);
-            let tolerance = (boundary_spacing * 0.25).clamp(8.0, 32.0);
-            let maximum_ticks = headroom
-                .saturating_sub(1)
-                .min(dusklight_learning::native_generic_tactic::MAX_NATIVE_TACTIC_TICKS as usize)
-                as u32;
-            let path = lineage[..=index]
-                .iter()
-                .filter(|(candidate_offset, _)| *candidate_offset > current_frames)
-                .map(|(_, coordinate)| *coordinate)
-                .collect::<Vec<_>>();
-            let coordinates = simplify_incumbent_rejoin_coordinates(current_position, &path);
-            let intermediate_tolerance =
-                incumbent_rejoin_intermediate_tolerance(current_position, &coordinates);
-            (maximum_ticks > 0).then_some((
-                planar_distance / headroom as f32,
-                headroom,
-                IncumbentRejoinTarget {
-                    coordinates,
-                    intermediate_tolerance,
-                    tolerance,
-                    maximum_ticks,
-                },
-            ))
-        })
-        .collect::<Vec<_>>();
-    ranked.sort_by(|left, right| {
-        left.0
-            .total_cmp(&right.0)
-            .then_with(|| right.1.cmp(&left.1))
-            .then_with(|| {
-                let left_coordinate = left.2.coordinates.last().expect("ranked rejoin target");
-                let right_coordinate = right.2.coordinates.last().expect("ranked rejoin target");
-                left_coordinate[0]
-                    .total_cmp(&right_coordinate[0])
-                    .then_with(|| left_coordinate[2].total_cmp(&right_coordinate[2]))
-            })
-    });
-    ranked.truncate(16);
-    Ok(ranked.into_iter().map(|(_, _, target)| target).collect())
-}
-
-fn force_incumbent_candidates(
-    batch: &mut TacticQProposalBatch,
-    descriptors: &[OptionActionDescriptor],
-) -> Result<(), NativeTacticRouteRunError> {
-    if descriptors.is_empty()
-        || descriptors.iter().any(|descriptor| {
-            !batch
-                .ranking
-                .choices
-                .iter()
-                .any(|choice| choice.applicable && choice.descriptor == *descriptor)
-        })
-    {
-        return Err(route_message(
-            "incumbent candidate is absent from its applicable action surface",
-        ));
-    }
-    let selected_template = batch
-        .proposals
-        .first()
-        .cloned()
-        .ok_or_else(|| route_message("incumbent candidate has no proposal template"))?;
-    let mut ordered = batch
-        .ranking
-        .values
-        .ranked
-        .iter()
-        .map(|ranked| &ranked.descriptor)
-        .filter(|descriptor| descriptors.contains(descriptor))
-        .cloned()
-        .collect::<Vec<_>>();
-    for descriptor in descriptors {
-        if !ordered.contains(descriptor) {
-            ordered.push(descriptor.clone());
-        }
-    }
-    batch.proposals = ordered
-        .into_iter()
-        .map(|descriptor| {
-            let mut selected = selected_template.clone();
-            selected.descriptor = descriptor;
-            selected.reason = TacticSelectionReason::TerminalCostRefinement;
-            selected
-        })
-        .collect();
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -525,7 +173,6 @@ pub(super) fn run_seed(
     // logical graph instead of remembering only the latest endpoint.
     let mut cached_frontiers = RetainedNativeTacticFrontiers::new(TACTIC_CHECKPOINT_CACHE_ENTRIES);
     let mut branch_acquisition: Option<TacticFrontierAcquisition> = None;
-    let mut active_incumbent_continuation = recover_incumbent_continuation(&campaign, &trace)?;
     let mut active_episode_ticks = recover_active_episode_ticks(&campaign, &trace)?;
     let mut active_paired_terminal_return = ActivePairedTerminalReturn::recover(&trace)?;
     let mut active_terminal_refinement = active_paired_terminal_return
@@ -734,7 +381,6 @@ pub(super) fn run_seed(
                 .expect("checked paired control");
             pair.begin_control();
             active_terminal_refinement = Some(pair.rollout());
-            active_incumbent_continuation = None;
             active_episode_ticks = 0;
             branch_acquisition = None;
             timing.checkpoint_branching_micros = timing
@@ -832,40 +478,7 @@ pub(super) fn run_seed(
         if terminal_refinement_completed {
             active_terminal_refinement = None;
         }
-        if active_incumbent_continuation
-            .is_some_and(ActiveIncumbentContinuation::should_execute_rejoin)
-            && incumbent_rejoin_targets(
-                &campaign,
-                active_incumbent_continuation.expect("checked incumbent continuation"),
-            )?
-            .is_empty()
-        {
-            active_incumbent_continuation
-                .as_mut()
-                .expect("checked incumbent continuation")
-                .skip_rejoin()
-                .map_err(route_message)?;
-        }
-        if active_incumbent_continuation
-            .is_some_and(ActiveIncumbentContinuation::should_execute_suffix)
-            && incumbent_continuation_suffix(
-                &campaign,
-                active_incumbent_continuation.expect("checked incumbent continuation"),
-                encoder,
-            )?
-            .is_none()
-        {
-            active_incumbent_continuation
-                .as_mut()
-                .expect("checked incumbent continuation")
-                .skip_suffix()
-                .map_err(route_message)?;
-        }
-        let incumbent_continuation_completed = active_incumbent_continuation
-            .is_some_and(ActiveIncumbentContinuation::candidate_completed);
-        let terminal_refinement_in_progress = active_terminal_refinement.is_some()
-            || active_incumbent_continuation
-                .is_some_and(|continuation| !continuation.candidate_completed());
+        let terminal_refinement_in_progress = active_terminal_refinement.is_some();
         let maximum_frontier_frames = usize::try_from(
             source_frame.saturating_add(horizon.saturating_sub(maximum_tactic_ticks)),
         )
@@ -879,7 +492,7 @@ pub(super) fn run_seed(
                 .continue_rollout(
                     &mut campaign,
                     TacticQOnlineRolloutRequest {
-                        force_branch: incumbent_continuation_completed,
+                        force_branch: false,
                         active_acquisition_rank,
                         next_acquisition_rank: next_branch_acquisition_rank,
                         current_rollout_ticks: active_episode_ticks,
@@ -940,8 +553,6 @@ pub(super) fn run_seed(
             active_acquisition_rank = branch_acquisition_context.acquisition_rank;
             let demonstration_branch = branch_acquisition_context.demonstration;
             let selected_branch = continuation.branch;
-            active_incumbent_continuation =
-                incumbent_continuation_for_branch(&campaign, &selected_branch)?;
             active_episode_ticks = 0;
             let selected_uncovered_demonstration_frontier = demonstration_branch
                 && demonstration_frontier_states
@@ -992,34 +603,6 @@ pub(super) fn run_seed(
                 action_schema_sha256,
                 &active_tactics,
             )?;
-            let (proposals, forced_incumbent_descriptors) = if active_incumbent_continuation
-                .is_some_and(ActiveIncumbentContinuation::should_execute_rejoin)
-            {
-                let targets = incumbent_rejoin_targets(
-                    &campaign,
-                    active_incumbent_continuation.expect("checked incumbent continuation"),
-                )?;
-                let (proposals, descriptors) =
-                    with_experience_incumbent_rejoins(proposals, &targets)?;
-                (proposals, descriptors)
-            } else if active_incumbent_continuation
-                .is_some_and(ActiveIncumbentContinuation::should_execute_suffix)
-            {
-                let tape = incumbent_continuation_suffix(
-                    &campaign,
-                    active_incumbent_continuation.expect("checked incumbent continuation"),
-                    encoder,
-                )?
-                .ok_or_else(|| route_message("incumbent continuation suffix disappeared"))?;
-                let (proposals, descriptor) = with_experience_terminal_continuation(
-                    proposals,
-                    &campaign.current.snapshot,
-                    tape,
-                )?;
-                (proposals, vec![descriptor])
-            } else {
-                (proposals, Vec::new())
-            };
             record_orchestration_detail(
                 &mut timing,
                 OrchestrationPhase::ActionCatalogConstruction,
@@ -1028,7 +611,7 @@ pub(super) fn run_seed(
             let proposal_catalog = Arc::new(proposals.catalog);
             let proposal_blueprints = Arc::new(proposals.blueprints);
             let selection_started = Instant::now();
-            let mut preview = online
+            let preview = online
                 .select_action_batch(
                     &campaign,
                     &proposal_catalog,
@@ -1046,9 +629,6 @@ pub(super) fn run_seed(
                     },
                 )
                 .map_err(route_error)?;
-            if !forced_incumbent_descriptors.is_empty() {
-                force_incumbent_candidates(&mut preview, &forced_incumbent_descriptors)?;
-            }
             let selection_micros = elapsed_micros(selection_started.elapsed());
             timing.tactic_selection_micros = timing
                 .tactic_selection_micros
@@ -1175,8 +755,6 @@ pub(super) fn run_seed(
             active_acquisition_rank = branch_acquisition_context.acquisition_rank;
             let demonstration_branch = branch_acquisition_context.demonstration;
             let selected_branch = continuation.branch;
-            active_incumbent_continuation =
-                incumbent_continuation_for_branch(&campaign, &selected_branch)?;
             active_episode_ticks = 0;
             record_orchestration_detail(
                 &mut timing,
@@ -1241,10 +819,6 @@ pub(super) fn run_seed(
             TacticQOnlineLeaseMode::PolicyEvaluation {
                 proposal_policy: config.execution_plan.proposal_policy,
             }
-        } else if active_incumbent_continuation.is_some_and(|continuation| {
-            continuation.should_execute_rejoin() || continuation.should_execute_suffix()
-        }) {
-            TacticQOnlineLeaseMode::CommittedExploration
         } else {
             TacticQOnlineLeaseMode::Exploration
         };
@@ -1574,14 +1148,6 @@ pub(super) fn run_seed(
                 return Err(error.into());
             }
         };
-        if let Some(continuation) = active_incumbent_continuation.as_mut() {
-            continuation
-                .record_executed_action(
-                    &winning_outcome.selected.descriptor.option_id,
-                    winning_outcome.execution.end_reason == OptionEndReason::Terminated,
-                )
-                .map_err(route_message)?;
-        }
         let terminal_candidates = online_admission.terminal_candidates;
         let newly_admitted_training_rows = online_admission.newly_admitted_training_rows as u64;
         let duplicate_training_transitions = online_admission.duplicate_training_transitions as u64;

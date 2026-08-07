@@ -947,6 +947,20 @@ mod continuation_tests {
     }
 
     #[test]
+    fn active_terminal_refinement_keeps_ordinary_actions_on_the_restored_branch() {
+        let mut refinement = request();
+        refinement.native_terminal_supported = true;
+        refinement.next_acquisition_rank = 0;
+        refinement.terminal_refinement_in_progress = true;
+        refinement.terminal_frontier_action_value_enabled = true;
+        assert_eq!(plan_online_continuation(refinement).unwrap(), None);
+
+        refinement.terminal_refinement_in_progress = false;
+        refinement.terminal_refinement_completed = true;
+        assert!(plan_online_continuation(refinement).unwrap().is_some());
+    }
+
+    #[test]
     fn terminal_support_owns_rank_zero_and_cannot_be_replaced_by_root_refresh() {
         let mut terminal = request();
         terminal.native_terminal_supported = true;

@@ -1711,6 +1711,18 @@ fn promoted_guarded_tactics_join_without_removing_primitive_actions() {
     let combined = TacticAssetCatalog::new(entries).unwrap();
 
     validate_parameterized_policy_catalog(&combined).unwrap();
+    let forced_continuation = TacticAssetCatalog::new(vec![
+        TacticCatalogEntry::new(
+            "experience/terminal-continuation/test-only",
+            candidate.catalog_entry().unwrap().source().clone(),
+        )
+        .unwrap(),
+    ])
+    .unwrap();
+    assert!(
+        validate_parameterized_policy_catalog(&forced_continuation).is_err(),
+        "ordinary policy catalogs must reject privileged recorded continuations"
+    );
     assert!(
         combined
             .entries()
@@ -1842,120 +1854,6 @@ fn promoted_guarded_tactics_join_without_removing_primitive_actions() {
             .iter()
             .any(|entry| entry.option_id().starts_with("promoted/"))
     );
-    let continuation_tape = InputTape {
-        frames: vec![InputFrame::default(); 3],
-        ..InputTape::default()
-    };
-    let primitive =
-        parameterized_catalog_for_state(11, 3, &snapshot, &encoder, 40, None, Digest([8; 32]))
-            .unwrap();
-    let (with_continuation, continuation_descriptor) =
-        with_experience_terminal_continuation(primitive, &snapshot, continuation_tape.clone())
-            .unwrap();
-    assert!(
-        continuation_descriptor
-            .option_id
-            .starts_with("experience/terminal-continuation/")
-    );
-    let continuation_entry = with_continuation
-        .catalog
-        .entry(&continuation_descriptor.option_id)
-        .unwrap();
-    assert_eq!(
-        continuation_entry.description().kind,
-        dusklight_learning::tactic_asset::TacticAssetKind::GuardedRecordedTape
-    );
-    let TacticAssetSource::GuardedRecordedTape(guarded) = continuation_entry.source() else {
-        panic!("experience continuation must use the guarded tape executor");
-    };
-    assert_eq!(guarded.tape, continuation_tape);
-    assert_eq!(guarded.allowed_stage_rooms.len(), 1);
-    assert_eq!(guarded.allowed_stage_rooms[0].stage, snapshot.world.stage);
-    assert_eq!(guarded.allowed_stage_rooms[0].room, snapshot.world.room);
-    let primitive =
-        parameterized_catalog_for_state(11, 3, &snapshot, &encoder, 40, None, Digest([8; 32]))
-            .unwrap();
-    let targets = [
-        IncumbentRejoinTarget {
-            coordinates: vec![[target[0] + 10.0, target[1], target[2]]],
-            intermediate_tolerance: 24.0,
-            tolerance: 8.0,
-            maximum_ticks: 5,
-        },
-        IncumbentRejoinTarget {
-            coordinates: vec![
-                [target[0] + 10.0, target[1], target[2] - 20.0],
-                [target[0] + 20.0, target[1], target[2]],
-            ],
-            intermediate_tolerance: 24.0,
-            tolerance: 12.0,
-            maximum_ticks: 9,
-        },
-    ];
-    let (with_rejoins, rejoin_descriptors) =
-        with_experience_incumbent_rejoins(primitive, &targets).unwrap();
-    assert_eq!(rejoin_descriptors.len(), 2);
-    for (index, (descriptor, expected)) in rejoin_descriptors.iter().zip(&targets).enumerate() {
-        assert!(
-            descriptor
-                .option_id
-                .starts_with("experience/incumbent-rejoin/")
-        );
-        let TacticAssetSource::NativeGenericTactic(plan) = with_rejoins
-            .catalog
-            .entry(&descriptor.option_id)
-            .unwrap()
-            .source()
-        else {
-            panic!("experience rejoin must use the state-reactive native executor");
-        };
-        assert_eq!(plan.maximum_ticks, expected.maximum_ticks);
-        if index == 0 {
-            assert!(matches!(
-                plan.tactic,
-                GenericTactic::SeekCoordinate {
-                    coordinate_f32_bits,
-                    tolerance_f32_bits,
-                    magnitude: 127,
-                } if coordinate_f32_bits == expected.coordinates[0].map(f32::to_bits)
-                    && tolerance_f32_bits == expected.tolerance.to_bits()
-            ));
-        } else {
-            assert!(matches!(
-                &plan.tactic,
-                GenericTactic::SeekCoordinateSequence {
-                    coordinates_f32_bits,
-                    intermediate_tolerance_f32_bits,
-                    final_tolerance_f32_bits,
-                    stall_grace_ticks: 9,
-                    stationary_window_ticks: 9,
-                    magnitude: 127,
-                    ..
-                } if coordinates_f32_bits == &expected.coordinates
-                    .iter()
-                    .map(|coordinate| coordinate.map(f32::to_bits))
-                    .collect::<Vec<_>>()
-                    && *intermediate_tolerance_f32_bits == expected.intermediate_tolerance.to_bits()
-                    && *final_tolerance_f32_bits == expected.tolerance.to_bits()
-            ));
-        }
-    }
-
-    let simplified = campaign::simplify_incumbent_rejoin_coordinates(
-        [0.0, 0.0, 0.0],
-        &[
-            [100.0, 0.0, 0.0],
-            [200.0, 0.0, 0.0],
-            [200.0, 0.0, 100.0],
-            [200.0, 0.0, 200.0],
-            [300.0, 0.0, 200.0],
-            [400.0, 0.0, 200.0],
-        ],
-    );
-    assert!(simplified.len() <= 4);
-    assert!(simplified.contains(&[200.0, 0.0, 0.0]));
-    assert!(simplified.contains(&[200.0, 0.0, 200.0]));
-    assert_eq!(simplified.last(), Some(&[400.0, 0.0, 200.0]));
     let mut wrong_room = snapshot.clone();
     wrong_room.world.room = wrong_room.world.room.saturating_add(1);
     let wrong_room_primitive_descriptors =

@@ -36,12 +36,12 @@ target is 120.
 - The best authenticated native route is 210 ticks and cold-replays twice at the
   same real terminal tick. It is a real improvement over the former 318-tick
   diagnostic route, but it is nowhere near the 124-tick adequacy gate.
-- The 210-tick result used a forced perturbation/rejoin/recorded-suffix mechanism.
-  A later restored branch reached a nearby incumbent coordinate but its suffix
-  missed because momentum, camera, procedure, and input history were
-  incompatible. Coordinate proximity is therefore not valid option
-  applicability, and this mechanism is not acceptable evidence of generic
-  learning.
+- The former native optimizer forced a perturbation, coordinate rejoin, and
+  recorded incumbent suffix. That phase machine and its privileged action
+  injection have been removed. Active checkpoint refinement now keeps ordinary
+  learner-selected actions on the restored branch until terminal or its shared
+  tick budget, and ordinary catalogs reject privileged continuation entries.
+  All 483 orchestration tests pass.
 - Tactic mining, validation, promotion, binary persistence, and ordinary policy
   selection exist on the production path. No native campaign has yet shown a
   learner-discovered promoted tactic improving a route.
@@ -50,11 +50,6 @@ No task is blocked on design.
 
 ## P0 — make native checkpoint learning coherent
 
-- [ ] Remove forced incumbent splicing from ordinary optimization. A branch must
-  continue through ordinary learner-selected actions until terminal or a shared
-  native-tick budget. A recorded continuation may be selected only as a learned
-  option whose applicability is authenticated; coordinate proximity alone must
-  never authorize open-loop replay.
 - [ ] Make retained checkpoints the actual unit of optimization. Demonstrate in
   the production loop that at least two nonconsecutive intermediate states are
   restored without root replay and that ordinary subsequent decisions from one
