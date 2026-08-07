@@ -455,6 +455,7 @@ pub(super) fn run_seed(
         )
         .map_err(route_error)?;
         let graph_scheduling_started = Instant::now();
+        let preferred_restoration_targets = cached_frontiers.pending_locality_targets();
         let continuation = if campaign.replay().is_empty() {
             None
         } else {
@@ -487,6 +488,7 @@ pub(super) fn run_seed(
                     },
                     registry,
                     &[],
+                    &preferred_restoration_targets,
                     &encode,
                     &|campaign, state| {
                         parameterized_action_surface_for_state(
@@ -664,6 +666,7 @@ pub(super) fn run_seed(
             )
             .map_err(route_error)?;
             let graph_scheduling_started = Instant::now();
+            let preferred_restoration_targets = cached_frontiers.pending_locality_targets();
             let continuation = online
                 .continue_rollout(
                     &mut campaign,
@@ -691,6 +694,7 @@ pub(super) fn run_seed(
                     },
                     registry,
                     &[],
+                    &preferred_restoration_targets,
                     &encode,
                     &|campaign, state| {
                         parameterized_action_surface_for_state(
@@ -925,6 +929,12 @@ pub(super) fn run_seed(
                 restore_source = NativeTacticRestoreSource::AuthenticatedRootReplay;
             } else {
                 cached_frontiers.touch(frontier.worker_slot, &frontier.source.restore_identity);
+                if frontier.source.storage == NativeTacticCheckpointStorage::PortableImage {
+                    cached_frontiers.consume_locality_reuse(
+                        frontier.worker_slot,
+                        &frontier.source.restore_identity,
+                    );
+                }
             }
         }
         for work in &proposal_work {

@@ -47,6 +47,11 @@ Ordon Springs is the first adequacy test. The real terminal is
   only option endpoints or the branch currently being materialized. The next
   fix is scheduler-visible checkpoint locality and/or retention of the branch
   boundaries the scheduler actually chooses, not additional campaign volume.
+  The controller now accepts bounded exact-state restoration preferences: a
+  newly materialized portable base may source one additional rollout only when
+  it remains nonterminal, within horizon, and has leaseable actions, after
+  which the preference is consumed. Root-refresh authority and ordinary global
+  acquisition remain unchanged. Native proof of this handoff remains open.
 - The learner can discover the real terminal quickly, but its best authenticated
   route is 229 ticks. Two cold replays reproduced that route exactly.
 - The first terminal arrives in roughly 35 seconds; hundreds of later

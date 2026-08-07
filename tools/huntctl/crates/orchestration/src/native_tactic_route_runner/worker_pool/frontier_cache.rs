@@ -1,5 +1,6 @@
 use super::*;
-use std::collections::VecDeque;
+use crate::state_graph::ExactStateId;
+use std::collections::{BTreeSet, VecDeque};
 
 /// Rust-side identities for the bounded checkpoint caches owned by persistent
 /// native workers.
@@ -12,6 +13,7 @@ use std::collections::VecDeque;
 pub(in crate::native_tactic_route_runner) struct RetainedNativeTacticFrontiers {
     entries: VecDeque<CachedTacticFrontier>,
     portable_entries_per_worker: usize,
+    pending_locality_reuse: BTreeSet<(usize, String)>,
 }
 
 impl RetainedNativeTacticFrontiers {
@@ -20,6 +22,7 @@ impl RetainedNativeTacticFrontiers {
         Self {
             entries: VecDeque::new(),
             portable_entries_per_worker,
+            pending_locality_reuse: BTreeSet::new(),
         }
     }
 
@@ -63,6 +66,8 @@ impl RetainedNativeTacticFrontiers {
         worker_slot: usize,
         restore_identity: &str,
     ) {
+        self.pending_locality_reuse
+            .remove(&(worker_slot, restore_identity.to_owned()));
         self.entries.retain(|frontier| {
             frontier.worker_slot != worker_slot
                 || frontier.source.restore_identity != restore_identity
@@ -96,7 +101,12 @@ impl RetainedNativeTacticFrontiers {
                                     == NativeTacticCheckpointStorage::PortableImage
                         })
                         .expect("bounded portable frontier exists");
-                    self.entries.remove(index);
+                    let evicted = self
+                        .entries
+                        .remove(index)
+                        .expect("located portable frontier");
+                    self.pending_locality_reuse
+                        .remove(&(evicted.worker_slot, evicted.source.restore_identity));
                 }
             }
             NativeTacticCheckpointStorage::LiveEndpoint => {
@@ -106,7 +116,44 @@ impl RetainedNativeTacticFrontiers {
                 });
             }
         }
+        if frontier.source.storage == NativeTacticCheckpointStorage::PortableImage {
+            self.pending_locality_reuse.insert((
+                frontier.worker_slot,
+                frontier.source.restore_identity.clone(),
+            ));
+        }
         self.entries.push_back(frontier);
+    }
+
+    /// A newly materialized portable branch base receives one bounded chance
+    /// to amortize its replay with another rollout from the same exact state.
+    /// The learning controller still rejects exhausted or ineligible states.
+    pub(in crate::native_tactic_route_runner) fn pending_locality_targets(
+        &self,
+    ) -> Vec<ExactStateId> {
+        self.entries
+            .iter()
+            .filter(|frontier| {
+                frontier.source.storage == NativeTacticCheckpointStorage::PortableImage
+                    && self.pending_locality_reuse.contains(&(
+                        frontier.worker_slot,
+                        frontier.source.restore_identity.clone(),
+                    ))
+            })
+            .map(|frontier| ExactStateId {
+                route_checkpoint_sha256: frontier.route_checkpoint_sha256,
+                state_sha256: frontier.state_sha256,
+            })
+            .collect()
+    }
+
+    pub(in crate::native_tactic_route_runner) fn consume_locality_reuse(
+        &mut self,
+        worker_slot: usize,
+        restore_identity: &str,
+    ) {
+        self.pending_locality_reuse
+            .remove(&(worker_slot, restore_identity.to_owned()));
     }
 
     #[cfg(test)]
@@ -175,6 +222,25 @@ mod tests {
         second_live.source.storage = NativeTacticCheckpointStorage::LiveEndpoint;
         retained.retain(second_live);
         assert_eq!(retained.identities(), vec!["branch-base", "live-two"]);
+        assert_eq!(
+            retained.pending_locality_targets(),
+            vec![ExactStateId {
+                route_checkpoint_sha256: digest(2),
+                state_sha256: digest(1),
+            }]
+        );
+    }
+
+    #[test]
+    fn portable_locality_preference_is_consumed_once_without_eviction() {
+        let mut retained = RetainedNativeTacticFrontiers::new(2);
+        retained.retain(frontier(0, "branch-base", 1));
+        assert_eq!(retained.pending_locality_targets().len(), 1);
+
+        retained.consume_locality_reuse(0, "branch-base");
+
+        assert!(retained.pending_locality_targets().is_empty());
+        assert_eq!(retained.identities(), vec!["branch-base"]);
     }
 
     #[test]

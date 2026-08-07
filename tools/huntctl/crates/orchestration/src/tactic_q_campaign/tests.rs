@@ -1477,6 +1477,50 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         frontier_branch.logical_frontier
     );
     assert!(exact_frontier.acquisition.is_none());
+    let preferred_target = crate::state_graph::ExactStateId {
+        route_checkpoint_sha256: exact_frontier.logical_frontier.identity_sha256,
+        state_sha256: exact_frontier.logical_frontier.state_sha256,
+    };
+    let locality_selected = restored
+        .select_online_branch(
+            TacticQOnlineBranchRequest {
+                seed: 5,
+                round: 1,
+                acquisition_rank: 0,
+                maximum_route_frames: usize::MAX,
+                prefer_root: false,
+                strategy: TacticQOnlineFrontierStrategy::Graph,
+            },
+            &[],
+            &[preferred_target],
+            &encode,
+            &|_: &FactSnapshot| {
+                Ok::<_, &'static str>(catalog.option_descriptors().cloned().collect())
+            },
+        )
+        .unwrap();
+    assert_eq!(locality_selected.branch, exact_frontier);
+    assert!(!locality_selected.selected_root);
+    let root_refresh = restored
+        .select_online_branch(
+            TacticQOnlineBranchRequest {
+                seed: 5,
+                round: 1,
+                acquisition_rank: 0,
+                maximum_route_frames: usize::MAX,
+                prefer_root: true,
+                strategy: TacticQOnlineFrontierStrategy::Graph,
+            },
+            &[],
+            &[preferred_target],
+            &encode,
+            &|_: &FactSnapshot| {
+                Ok::<_, &'static str>(catalog.option_descriptors().cloned().collect())
+            },
+        )
+        .unwrap();
+    assert!(root_refresh.selected_root);
+    assert_eq!(root_refresh.branch.kind, TacticBranchKind::Root);
     let frontier_restoration = restored.current_restoration_contract().unwrap();
     assert_eq!(
         frontier_restoration.plan.node.state_sha256,

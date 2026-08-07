@@ -223,6 +223,7 @@ impl TacticQOnlineLearningController {
         request: TacticQOnlineRolloutRequest,
         registry: &FactRegistry,
         reference: &[TacticEndpointDescriptor],
+        preferred_restoration_targets: &[ExactStateId],
         encode: &F,
         action_surface: &A,
     ) -> Result<Option<TacticQOnlineContinuationSelection>, TacticQCampaignError>
@@ -235,7 +236,14 @@ impl TacticQOnlineLearningController {
         ) -> Result<TacticQOnlineActionSurface, TacticQCampaignError>,
     {
         self.require_planning()?;
-        campaign.continue_online_rollout(request, registry, reference, encode, action_surface)
+        campaign.continue_online_rollout(
+            request,
+            registry,
+            reference,
+            preferred_restoration_targets,
+            encode,
+            action_surface,
+        )
     }
 
     pub fn prepare_decision(
@@ -498,6 +506,7 @@ impl TacticQCampaign {
         episode_group: u64,
         registry: &FactRegistry,
         reference: &[TacticEndpointDescriptor],
+        preferred_restoration_targets: &[ExactStateId],
         encode: &F,
         action_surface: &A,
     ) -> Result<Option<TacticQOnlineContinuationSelection>, TacticQCampaignError>
@@ -509,9 +518,13 @@ impl TacticQCampaign {
             &FactSnapshot,
         ) -> Result<TacticQOnlineActionSurface, TacticQCampaignError>,
     {
-        let selection = self.select_online_continuation(request, reference, encode, &|state| {
-            Ok::<_, TacticQCampaignError>(action_surface(self, state)?.applicable_actions)
-        })?;
+        let selection = self.select_online_continuation(
+            request,
+            reference,
+            preferred_restoration_targets,
+            encode,
+            &|state| Ok::<_, TacticQCampaignError>(action_surface(self, state)?.applicable_actions),
+        )?;
         let Some(selection) = selection else {
             return Ok(None);
         };
@@ -535,6 +548,7 @@ impl TacticQCampaign {
         request: TacticQOnlineRolloutRequest,
         registry: &FactRegistry,
         reference: &[TacticEndpointDescriptor],
+        preferred_restoration_targets: &[ExactStateId],
         encode: &F,
         action_surface: &A,
     ) -> Result<Option<TacticQOnlineContinuationSelection>, TacticQCampaignError>
@@ -569,6 +583,7 @@ impl TacticQCampaign {
             request.episode_group,
             registry,
             reference,
+            preferred_restoration_targets,
             encode,
             action_surface,
         )
@@ -582,6 +597,7 @@ impl TacticQCampaign {
         &self,
         request: TacticQOnlineContinuationSelectionRequest,
         reference: &[TacticEndpointDescriptor],
+        preferred_restoration_targets: &[ExactStateId],
         encode: &F,
         applicable_actions: &A,
     ) -> Result<Option<TacticQOnlineContinuationSelection>, TacticQCampaignError>
@@ -612,6 +628,7 @@ impl TacticQCampaign {
                 strategy,
             },
             reference,
+            preferred_restoration_targets,
             encode,
             applicable_actions,
         )?;
@@ -630,6 +647,7 @@ impl TacticQCampaign {
         &self,
         request: TacticQOnlineBranchRequest,
         reference: &[TacticEndpointDescriptor],
+        preferred_restoration_targets: &[ExactStateId],
         encode: &F,
         applicable_actions: &A,
     ) -> Result<TacticQOnlineBranchSelection, TacticQCampaignError>
@@ -639,6 +657,21 @@ impl TacticQCampaign {
         F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
         A: Fn(&FactSnapshot) -> Result<Vec<OptionActionDescriptor>, AE>,
     {
+        if !request.prefer_root {
+            for target in preferred_restoration_targets {
+                if let Some(branch) = self.exact_schedulable_frontier_branch(
+                    *target,
+                    request.round,
+                    request.maximum_route_frames,
+                    applicable_actions,
+                )? {
+                    return Ok(TacticQOnlineBranchSelection {
+                        branch,
+                        selected_root: false,
+                    });
+                }
+            }
+        }
         let [root, frontier] = match request.strategy {
             TacticQOnlineFrontierStrategy::Graph => self
                 .graph_scheduled_root_and_frontier_with_action_surface(

@@ -626,6 +626,7 @@ fn restore_next_scheduled_frontier(
             },
             &FactRegistry::canonical(),
             &[],
+            &[],
             &encode,
             &|_, facts: &FactSnapshot| {
                 let state = state_from_facts(facts);

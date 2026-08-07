@@ -13,7 +13,8 @@ use crate::native_tactic_worker::{
     PersistentTacticBatchWorker, execute_selected_tactic,
 };
 use crate::state_graph::{
-    StateGraph, StateGraphError, StateGraphIdentity, StateGraphValidationToken, ValidatedStateGraph,
+    ExactStateId, StateGraph, StateGraphError, StateGraphIdentity, StateGraphValidationToken,
+    ValidatedStateGraph,
 };
 use crate::tactic_q_checkpoint_store;
 use dusklight_automation_contracts::artifact::Digest;

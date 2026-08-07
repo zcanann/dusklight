@@ -486,6 +486,54 @@ impl TacticQCampaign {
         Ok([root, frontier])
     }
 
+    /// Return an exact preferred branch only while it remains executable and
+    /// has an action the graph can currently lease. Environments may expose a
+    /// bounded restoration-locality hint, but cannot force exhausted work or
+    /// bypass graph lease authority.
+    pub(crate) fn exact_schedulable_frontier_branch<AE, A>(
+        &self,
+        target: crate::state_graph::ExactStateId,
+        generation: u64,
+        maximum_route_frames: usize,
+        applicable_actions: &A,
+    ) -> Result<Option<TacticCampaignBranch>, TacticQCampaignError>
+    where
+        AE: fmt::Display,
+        A: Fn(&FactSnapshot) -> Result<Vec<OptionActionDescriptor>, AE>,
+    {
+        let graph = self.state_graph()?;
+        let Some(node) = graph.node(target).filter(|node| {
+            node.id != graph.root() && node.restoration.executable && !node.terminal
+        }) else {
+            return Ok(None);
+        };
+        let Some(route) = graph.route(target.route_checkpoint_sha256) else {
+            return Ok(None);
+        };
+        if route.frames.len() > maximum_route_frames {
+            return Ok(None);
+        }
+        let applicable = applicable_actions(node.state.as_ref())
+            .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+        let schedulable = applicable.iter().any(|descriptor| {
+            let registered = node
+                .outgoing_expansions
+                .iter()
+                .filter_map(|identity| graph.expansion(*identity))
+                .find(|expansion| expansion.action == *descriptor);
+            match registered {
+                Some(expansion) => {
+                    graph.expansion_is_schedulable(expansion.identity_sha256, generation)
+                }
+                None => true,
+            }
+        });
+        if !schedulable {
+            return Ok(None);
+        }
+        self.exact_frontier_branch(target).map(Some)
+    }
+
     /// Materialize one exact executable graph node without ranking it against
     /// any observed outcome. Paired terminal-return controls use this to honor
     /// the control target selected at the original source boundary, even after
