@@ -70,8 +70,17 @@ Ordon Springs is the first adequacy test. The real terminal is
   versus broad frontier use, root refresh, and forced horizon branches. The
   shared horizon planner also filters executable proposal batches and forces a
   checkpoint restore before a selected action can exceed the rollout budget.
-  Tactic mining/promotion still lives in the native finalization adapter and
-  remains the next extraction.
+- Tactic discovery no longer waits until campaign finalization. Between learned
+  generations, the production runner mines the strongest repeated connected
+  sequence from completed journals, validates it against its full primitive
+  realization at matched held-out checkpoints, and adds a promoted guarded
+  tactic to the next generation's live catalog without removing primitives.
+  Validation now requires exact emitted-input equivalence. An equivalent
+  multi-action sequence can promote for reducing several policy decisions to
+  one; a single-action candidate still needs a strict native outcome gain.
+  Frozen and random-valid controls do not receive this adaptive catalog update.
+  Environment-independent lifecycle ownership and native evidence that a
+  same-campaign promoted tactic was selected and improved learning remain open.
 - Exact graph backup covers every executable node on every authenticated
   terminal tape, preserving route identity. The production adequacy gate now
   asserts the exact countdown on both complete 9-tick lineages and the 10-tick

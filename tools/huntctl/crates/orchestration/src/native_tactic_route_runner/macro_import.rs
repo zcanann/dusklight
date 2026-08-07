@@ -1,10 +1,12 @@
 use super::*;
 
+#[derive(Clone)]
 pub(super) struct ImportedPromotedTactics {
     pub(super) entries: Vec<ImportedPromotedTactic>,
     pub(super) report: NativeTacticImportedMacroReport,
 }
 
+#[derive(Clone, PartialEq)]
 pub(super) struct ImportedPromotedTactic {
     pub(super) entry: TacticCatalogEntry,
     pub(super) condition: TacticMacroEntryCondition,
@@ -34,16 +36,7 @@ pub(super) fn load_imported_promoted_tactics(
             "promoted tactic registry differs from its sealed execution-plan identity",
         ));
     }
-    let entries = artifact
-        .registry
-        .promoted()
-        .map(|record| {
-            Ok::<_, NativeTacticRouteRunError>(ImportedPromotedTactic {
-                entry: record.candidate.catalog_entry().map_err(route_error)?,
-                condition: record.candidate.entry_condition().map_err(route_error)?,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let entries = promoted_tactic_entries(&artifact.registry)?;
     if entries.is_empty() {
         return Err(route_message(
             "promoted tactic registry contains no promoted tactics",
@@ -57,4 +50,40 @@ pub(super) fn load_imported_promoted_tactics(
         },
         entries,
     }))
+}
+
+pub(super) fn promoted_tactic_entries(
+    registry: &TacticMacroPromotionRegistry,
+) -> Result<Vec<ImportedPromotedTactic>, NativeTacticRouteRunError> {
+    registry
+        .promoted()
+        .map(|record| {
+            Ok(ImportedPromotedTactic {
+                entry: record.candidate.catalog_entry().map_err(route_error)?,
+                condition: record.candidate.entry_condition().map_err(route_error)?,
+            })
+        })
+        .collect()
+}
+
+pub(super) fn merge_promoted_tactic_entries(
+    active: &mut Vec<ImportedPromotedTactic>,
+    discovered: Vec<ImportedPromotedTactic>,
+) -> Result<(), NativeTacticRouteRunError> {
+    for tactic in discovered {
+        match active
+            .iter()
+            .find(|existing| existing.entry.option_id() == tactic.entry.option_id())
+        {
+            Some(existing) if existing != &tactic => {
+                return Err(route_message(
+                    "promoted tactic option identity collides with different content",
+                ));
+            }
+            Some(_) => {}
+            None => active.push(tactic),
+        }
+    }
+    active.sort_by(|left, right| left.entry.option_id().cmp(right.entry.option_id()));
+    Ok(())
 }

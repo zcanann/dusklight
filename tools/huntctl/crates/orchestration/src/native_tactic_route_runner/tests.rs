@@ -1530,6 +1530,26 @@ fn native_prompt_facts_drive_matching_feature_and_action_surfaces() {
 
 #[test]
 fn promoted_guarded_tactics_join_without_removing_primitive_actions() {
+    assert!(should_refresh_active_tactic_macros(
+        TacticProposalPolicy::Learned,
+        0,
+        2
+    ));
+    assert!(!should_refresh_active_tactic_macros(
+        TacticProposalPolicy::Learned,
+        1,
+        2
+    ));
+    assert!(!should_refresh_active_tactic_macros(
+        TacticProposalPolicy::FrozenPolicy,
+        0,
+        2
+    ));
+    assert!(!should_refresh_active_tactic_macros(
+        TacticProposalPolicy::RandomValid,
+        0,
+        2
+    ));
     let generic = propose_parameterized_tactics(ParameterizedTacticProposalContext {
         seed: 11,
         decision_index: 3,
@@ -1637,6 +1657,14 @@ fn promoted_guarded_tactics_join_without_removing_primitive_actions() {
             }],
         },
     };
+    assert_eq!(
+        parameterized_policy_action_schema_sha256(None),
+        parameterized_policy_action_schema_sha256(Some(Digest([9; 32])))
+    );
+    let mut active_promoted = Vec::new();
+    merge_promoted_tactic_entries(&mut active_promoted, vec![imported.clone()]).unwrap();
+    merge_promoted_tactic_entries(&mut active_promoted, vec![imported.clone()]).unwrap();
+    assert_eq!(active_promoted.len(), 1);
     let primitive_proposals =
         parameterized_catalog_for_state(11, 3, &snapshot, &encoder, 40, None, Digest([8; 32]))
             .unwrap();

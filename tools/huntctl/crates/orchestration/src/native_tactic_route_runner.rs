@@ -552,6 +552,9 @@ fn run_native_tactic_route_with_optional_fleet(
             .as_ref()
             .map(|imported| imported.report.registry_sha256),
     );
+    let mut active_promoted_tactics = imported_promoted_tactics
+        .as_ref()
+        .map_or_else(Vec::new, |imported| imported.entries.clone());
     let root_checkpoint_sha256 = completed_preflight
         .as_ref()
         .map(|preflight| preflight.root_checkpoint_sha256)
@@ -720,7 +723,10 @@ fn run_native_tactic_route_with_optional_fleet(
             learner.invocation_metrics().update_micros;
         drop(learner);
         campaign_phase_wall.campaign_setup_micros = elapsed_micros(campaign_started.elapsed());
-        for generation in &config.execution_plan.generations {
+        let mut active_macro_reports = Vec::new();
+        for (generation_position, generation) in
+            config.execution_plan.generations.iter().enumerate()
+        {
             let generation_started = Instant::now();
             let inherited_learner_snapshot = if let Some(snapshot) = &frozen_policy_snapshot {
                 Arc::clone(snapshot)
@@ -768,9 +774,7 @@ fn run_native_tactic_route_with_optional_fleet(
                         let registry = &registry;
                         let encoder = &encoder;
                         let reward_spec = &reward_spec;
-                        let promoted_tactics = imported_promoted_tactics
-                            .as_ref()
-                            .map_or(&[][..], |imported| imported.entries.as_slice());
+                        let promoted_tactics = active_promoted_tactics.as_slice();
                         let initial_facts = &initial_facts;
                         let route_prefix = &route_prefix;
                         let live_learner = live_learner.clone();
@@ -863,16 +867,56 @@ fn run_native_tactic_route_with_optional_fleet(
                     .into_iter()
                     .map(|(seed_index, completion)| (seed_index, completion.result)),
             );
+            if should_refresh_active_tactic_macros(
+                config.execution_plan.proposal_policy,
+                generation_position,
+                config.execution_plan.generations.len(),
+            ) {
+                let source_lanes = results
+                    .iter()
+                    .map(|(seed_index, _)| TacticMacroSourceLane {
+                        seed_index: *seed_index,
+                        seed: config.execution_plan.seeds[*seed_index],
+                    })
+                    .collect::<Vec<_>>();
+                if let Some(refresh) = refresh_active_tactic_macros(
+                    config,
+                    &pool,
+                    &encoder,
+                    root_checkpoint_sha256,
+                    &source_lanes,
+                    generation.generation_index,
+                )? {
+                    campaign_phase_wall.generation_coordination_micros = campaign_phase_wall
+                        .generation_coordination_micros
+                        .checked_add(refresh.report.validation_wall_micros)
+                        .ok_or_else(|| {
+                            route_message("active tactic macro validation timing overflowed")
+                        })?;
+                    campaign_phase_wall.active_macro_validation_micros = campaign_phase_wall
+                        .active_macro_validation_micros
+                        .checked_add(refresh.report.validation_wall_micros)
+                        .ok_or_else(|| {
+                            route_message("active tactic macro validation timing overflowed")
+                        })?;
+                    merge_promoted_tactic_entries(
+                        &mut active_promoted_tactics,
+                        refresh.promoted_tactics,
+                    )?;
+                    active_macro_reports.push(refresh.report);
+                }
+            }
         }
         campaign_phase_wall.campaign_finalization_started_micros =
             elapsed_micros(campaign_started.elapsed());
-        let completion = finalize_tactic_macro_discovery(
+        let mut completion = finalize_tactic_macro_discovery(
             config,
             &pool,
             &encoder,
             execution_plan_sha256,
             root_checkpoint_sha256,
         )?;
+        absorb_active_tactic_macro_validation(&mut completion, &active_macro_reports);
         let shared_training_replay_rows =
             lock_learner_authority(&learner_authority)?.replay().len() as u64;
         Ok::<_, NativeTacticRouteRunError>((
@@ -975,10 +1019,14 @@ fn run_native_tactic_route_with_optional_fleet(
     // A completed-seed preflight reuses durable macro validation instead of
     // waiting through it again. Keep that authenticated historical phase in
     // the campaign wall floor so exclusive timing remains additive.
+    let final_macro_validation_wall_micros = tactic_macro_discovery
+        .validation_wall_micros
+        .checked_sub(campaign_phase_wall.active_macro_validation_micros)
+        .ok_or_else(|| route_message("active macro validation exceeds total validation"))?;
     let observed_route_cutoff_wall_micros = elapsed_micros(campaign_started.elapsed()).max(
         campaign_phase_wall
             .campaign_finalization_started_micros
-            .saturating_add(tactic_macro_discovery.validation_wall_micros),
+            .saturating_add(final_macro_validation_wall_micros),
     );
     let campaign_finalization_wall_micros = observed_route_cutoff_wall_micros
         .checked_sub(campaign_phase_wall.campaign_finalization_started_micros)
@@ -1036,6 +1084,10 @@ fn run_native_tactic_route_with_optional_fleet(
             process_launch_micros,
             demonstration_execution_micros,
             macro_validation_execution_micros: tactic_macro_discovery.validation_wall_micros,
+            active_macro_validation_execution_micros: tactic_macro_discovery
+                .validation_wall_micros
+                .checked_sub(final_macro_validation_wall_micros)
+                .ok_or_else(|| route_message("active macro validation timing regressed"))?,
             learner_update_micros: learner_metrics.update_micros,
             learner_reconstruction_micros: learner_metrics.reconstruction_micros,
             campaign_setup_model_update_micros: campaign_phase_wall
@@ -1269,7 +1321,10 @@ fn current_executable_sha256() -> Result<Digest, NativeTacticRouteRunError> {
 }
 
 mod macro_discovery;
-use macro_discovery::finalize_tactic_macro_discovery;
+use macro_discovery::{
+    TacticMacroSourceLane, absorb_active_tactic_macro_validation, finalize_tactic_macro_discovery,
+    refresh_active_tactic_macros, should_refresh_active_tactic_macros,
+};
 mod macro_discovery_report_store;
 use macro_discovery_report_store::{
     NATIVE_TACTIC_MACRO_DISCOVERY_FILE, read_macro_discovery_report, write_macro_discovery_report,
@@ -1278,6 +1333,7 @@ mod macro_import;
 pub use macro_import::tactic_macro_registry_identity;
 use macro_import::{
     ImportedPromotedTactic, ImportedPromotedTactics, load_imported_promoted_tactics,
+    merge_promoted_tactic_entries, promoted_tactic_entries,
 };
 
 mod replay_sharing;

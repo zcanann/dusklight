@@ -5,6 +5,31 @@ pub(super) struct MinedTacticMacros {
     report: NativeTacticMacroDiscoveryReport,
 }
 
+pub(super) struct ValidatedTacticMacros {
+    registry: TacticMacroPromotionRegistry,
+    report: NativeTacticMacroDiscoveryReport,
+}
+
+pub(super) struct ActiveTacticMacroRefresh {
+    pub(super) promoted_tactics: Vec<ImportedPromotedTactic>,
+    pub(super) report: NativeTacticMacroDiscoveryReport,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct TacticMacroSourceLane {
+    pub(super) seed_index: usize,
+    pub(super) seed: u64,
+}
+
+pub(super) fn should_refresh_active_tactic_macros(
+    proposal_policy: TacticProposalPolicy,
+    generation_position: usize,
+    generation_count: usize,
+) -> bool {
+    proposal_policy == TacticProposalPolicy::Learned
+        && generation_position.saturating_add(1) < generation_count
+}
+
 pub(super) fn finalize_tactic_macro_discovery(
     config: &NativeTacticRouteRunConfig<'_>,
     pool: &NativeTacticProposalPool,
@@ -22,10 +47,37 @@ pub(super) fn finalize_tactic_macro_discovery(
             root_checkpoint_sha256,
         );
     }
-    let mined =
-        mine_and_store_tactic_macros(config.output_root, &config.execution_plan.seeds, encoder)?;
-    let report =
-        validate_and_store_tactic_macros(config, pool, encoder, root_checkpoint_sha256, mined)?;
+    let source_lanes = config
+        .execution_plan
+        .seeds
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(seed_index, seed)| TacticMacroSourceLane { seed_index, seed })
+        .collect::<Vec<_>>();
+    let mined = mine_and_store_tactic_macros(
+        config.output_root,
+        &source_lanes,
+        encoder,
+        MAX_DISCOVERED_MACROS,
+        config
+            .output_root
+            .join(format!("tactic-macros.{TACTIC_MACRO_REGISTRY_EXTENSION}")),
+    )?;
+    let validated = validate_and_store_tactic_macros(
+        config,
+        pool,
+        encoder,
+        root_checkpoint_sha256,
+        &source_lanes,
+        config.output_root.join("tactic-macro-validation"),
+        config.output_root.join(format!(
+            "tactic-macros-validated.{TACTIC_MACRO_REGISTRY_EXTENSION}"
+        )),
+        true,
+        mined,
+    )?;
+    let report = validated.report;
     write_macro_discovery_report(
         config.output_root,
         execution_plan_sha256,
@@ -36,15 +88,117 @@ pub(super) fn finalize_tactic_macro_discovery(
     )
 }
 
+pub(super) fn refresh_active_tactic_macros(
+    config: &NativeTacticRouteRunConfig<'_>,
+    pool: &NativeTacticProposalPool,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+    root_checkpoint_sha256: Digest,
+    source_lanes: &[TacticMacroSourceLane],
+    generation_index: usize,
+) -> Result<Option<ActiveTacticMacroRefresh>, NativeTacticRouteRunError> {
+    if !tactic_macro_promotion_has_seed_support(
+        &source_lanes
+            .iter()
+            .map(|lane| lane.seed)
+            .collect::<Vec<_>>(),
+    ) {
+        return Ok(None);
+    }
+    // Active promotion is deliberately narrow: validate the strongest new
+    // candidate between generations, then let the next generation provide the
+    // real reuse evidence. Finalization still audits the complete bounded set.
+    let active_root = config
+        .output_root
+        .join("tactic-macro-active")
+        .join(format!("generation-{generation_index:03}"));
+    let mined = mine_and_store_tactic_macros(
+        config.output_root,
+        source_lanes,
+        encoder,
+        1,
+        active_root.join(format!("mined.{TACTIC_MACRO_REGISTRY_EXTENSION}")),
+    )?;
+    if mined.registry.records().len() == 0 {
+        return Ok(None);
+    }
+    let validated = validate_and_store_tactic_macros(
+        config,
+        pool,
+        encoder,
+        root_checkpoint_sha256,
+        source_lanes,
+        active_root.join("validation"),
+        active_root.join(format!("validated.{TACTIC_MACRO_REGISTRY_EXTENSION}")),
+        false,
+        mined,
+    )?;
+    let promoted_tactics = promoted_tactic_entries(&validated.registry)?;
+    Ok(Some(ActiveTacticMacroRefresh {
+        promoted_tactics,
+        report: validated.report,
+    }))
+}
+
+pub(super) fn absorb_active_tactic_macro_validation(
+    final_report: &mut NativeTacticMacroDiscoveryReport,
+    active_reports: &[NativeTacticMacroDiscoveryReport],
+) {
+    for active in active_reports {
+        final_report.validation_state_count = final_report
+            .validation_state_count
+            .saturating_add(active.validation_state_count);
+        final_report.comparison_count = final_report
+            .comparison_count
+            .saturating_add(active.comparison_count);
+        final_report.executed_component_baseline_count = final_report
+            .executed_component_baseline_count
+            .saturating_add(active.executed_component_baseline_count);
+        final_report.validation_native_ticks = final_report
+            .validation_native_ticks
+            .saturating_add(active.validation_native_ticks);
+        final_report.validation_wall_micros = final_report
+            .validation_wall_micros
+            .saturating_add(active.validation_wall_micros);
+        final_report.validation_native_simulation_micros = final_report
+            .validation_native_simulation_micros
+            .saturating_add(active.validation_native_simulation_micros);
+        final_report.validation_ipc_and_result_transport_micros = final_report
+            .validation_ipc_and_result_transport_micros
+            .saturating_add(active.validation_ipc_and_result_transport_micros);
+        final_report.validation_native_observation_capture_micros = final_report
+            .validation_native_observation_capture_micros
+            .saturating_add(active.validation_native_observation_capture_micros);
+        final_report.validation_native_corpus_encoding_micros = final_report
+            .validation_native_corpus_encoding_micros
+            .saturating_add(active.validation_native_corpus_encoding_micros);
+        final_report.validation_rust_state_extraction_micros = final_report
+            .validation_rust_state_extraction_micros
+            .saturating_add(active.validation_rust_state_extraction_micros);
+        final_report.validation_preparation_micros = final_report
+            .validation_preparation_micros
+            .saturating_add(active.validation_preparation_micros);
+        final_report
+            .validation_restore_accounting
+            .merge(&active.validation_restore_accounting);
+    }
+}
+
 pub(super) fn mine_and_store_tactic_macros(
     output_root: &Path,
-    exploration_seeds: &[u64],
+    source_lanes: &[TacticMacroSourceLane],
     encoder: &GoalConditionedTacticFeatureEncoder,
+    maximum_candidates: usize,
+    registry_path: PathBuf,
 ) -> Result<MinedTacticMacros, NativeTacticRouteRunError> {
+    if maximum_candidates == 0 || maximum_candidates > MAX_DISCOVERED_MACROS {
+        return Err(route_message("tactic macro candidate capacity is invalid"));
+    }
     let mut observations = Vec::new();
     let mut observation_count = 0_u64;
     let mut high_value_observation_count = 0_u64;
-    for (seed_index, seed) in exploration_seeds.iter().copied().enumerate() {
+    for source_lane in source_lanes {
+        let seed_index = source_lane.seed_index;
+        let seed = source_lane.seed;
         let seed_root = output_root.join(format!("seed-{seed_index:03}-{seed}"));
         let records = read_tactic_decision_records(&seed_root)?;
         if records.is_empty() {
@@ -120,7 +274,7 @@ pub(super) fn mine_and_store_tactic_macros(
     };
     candidates.extend(mine_connected_tactic_macro_compositions(
         output_root,
-        exploration_seeds,
+        source_lanes,
         encoder,
     )?);
     let mut deduplicated = BTreeMap::<Digest, DiscoveredMacroCandidate>::new();
@@ -155,13 +309,11 @@ pub(super) fn mine_and_store_tactic_macros(
             .then_with(|| right.sources.len().cmp(&left.sources.len()))
             .then_with(|| left.candidate_sha256.cmp(&right.candidate_sha256))
     });
-    candidates.truncate(MAX_DISCOVERED_MACROS);
+    candidates.truncate(maximum_candidates);
     let mut registry = TacticMacroPromotionRegistry::default();
     for candidate in candidates {
         registry.propose(candidate).map_err(route_error)?;
     }
-    let registry_path =
-        output_root.join(format!("tactic-macros.{TACTIC_MACRO_REGISTRY_EXTENSION}"));
     let registry_sha256 =
         write_tactic_macro_registry(&registry_path, &registry).map_err(route_error)?;
     let restored = read_tactic_macro_registry(&registry_path).map_err(route_error)?;
@@ -276,11 +428,13 @@ fn tactic_macro_component_for_transition(
 
 pub(super) fn mine_connected_tactic_macro_compositions(
     output_root: &Path,
-    exploration_seeds: &[u64],
+    source_lanes: &[TacticMacroSourceLane],
     encoder: &GoalConditionedTacticFeatureEncoder,
 ) -> Result<Vec<DiscoveredMacroCandidate>, NativeTacticRouteRunError> {
     let mut occurrences = ConnectedMacroOccurrences::new();
-    for (seed_index, seed) in exploration_seeds.iter().copied().enumerate() {
+    for source_lane in source_lanes {
+        let seed_index = source_lane.seed_index;
+        let seed = source_lane.seed;
         let seed_root = output_root.join(format!("seed-{seed_index:03}-{seed}"));
         let replay = load_tactic_journal_replay(&seed_root)?;
         let store = TacticQContentStore::open(tactic_content_store_path(&seed_root))
@@ -423,11 +577,12 @@ pub(super) struct TacticMacroValidationFrontier {
     pub(super) route_tape: InputTape,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct TacticMacroMeasuredOutcome {
     pub(super) terminal: bool,
     pub(super) progress: f32,
     pub(super) ticks: u32,
+    pub(super) emitted_raw_actions: Vec<InputFrame>,
 }
 
 #[derive(Default)]
@@ -487,24 +642,32 @@ pub(super) fn validate_and_store_tactic_macros(
     pool: &NativeTacticProposalPool,
     encoder: &GoalConditionedTacticFeatureEncoder,
     root_checkpoint_sha256: Digest,
+    source_lanes: &[TacticMacroSourceLane],
+    validation_root: PathBuf,
+    validated_path: PathBuf,
+    prove_immediate_reuse: bool,
     mut mined: MinedTacticMacros,
-) -> Result<NativeTacticMacroDiscoveryReport, NativeTacticRouteRunError> {
+) -> Result<ValidatedTacticMacros, NativeTacticRouteRunError> {
     let started = Instant::now();
     let candidates = mined
         .registry
         .records()
         .map(|record| record.candidate.clone())
         .collect::<Vec<_>>();
-    let validation_frontiers =
-        if tactic_macro_promotion_has_seed_support(&config.execution_plan.seeds) {
-            collect_tactic_macro_validation_frontiers(
-                config.output_root,
-                &config.execution_plan.seeds,
-                root_checkpoint_sha256,
-            )?
-        } else {
-            Vec::new()
-        };
+    let validation_frontiers = if tactic_macro_promotion_has_seed_support(
+        &source_lanes
+            .iter()
+            .map(|lane| lane.seed)
+            .collect::<Vec<_>>(),
+    ) {
+        collect_tactic_macro_validation_frontiers(
+            config.output_root,
+            source_lanes,
+            root_checkpoint_sha256,
+        )?
+    } else {
+        Vec::new()
+    };
     let mut jobs = Vec::new();
     let mut held_out_compatible_candidate_count = 0_u64;
     let mut source_state_exclusion_count = 0_u64;
@@ -561,9 +724,7 @@ pub(super) fn validate_and_store_tactic_macros(
             ) {
                 continue;
             }
-            let validation_root = config
-                .output_root
-                .join("tactic-macro-validation")
+            let job_output_root = validation_root
                 .join(candidate.candidate_sha256.to_string())
                 .join(format!(
                     "seed-{}-comparison-{comparison_index:02}",
@@ -573,7 +734,7 @@ pub(super) fn validate_and_store_tactic_macros(
                 candidate: candidate.clone(),
                 frontier: frontier.clone(),
                 comparison_index,
-                output_root: validation_root,
+                output_root: job_output_root,
             });
             used_seeds.insert(frontier.seed);
             used_states.insert(frontier.state_sha256);
@@ -624,9 +785,6 @@ pub(super) fn validate_and_store_tactic_macros(
     let validation_state_count = results.len() as u64;
     let comparison_count = results.len() as u64;
     let executed_component_baseline_count = results.len() as u64;
-    let validated_path = config.output_root.join(format!(
-        "tactic-macros-validated.{TACTIC_MACRO_REGISTRY_EXTENSION}"
-    ));
     let registry_sha256 =
         write_tactic_macro_registry(&validated_path, &mined.registry).map_err(route_error)?;
     let restored = read_tactic_macro_registry(&validated_path).map_err(route_error)?;
@@ -635,15 +793,19 @@ pub(super) fn validate_and_store_tactic_macros(
             "validated tactic macro registry failed exact round-trip verification",
         ));
     }
-    let reuse = reuse_promoted_tactic_macro(
-        config,
-        pool,
-        encoder,
-        &validation_frontiers,
-        &mined.registry,
-        registry_sha256,
-        &mut accounting,
-    )?;
+    let reuse = if prove_immediate_reuse {
+        reuse_promoted_tactic_macro(
+            config,
+            pool,
+            encoder,
+            &validation_frontiers,
+            &mined.registry,
+            registry_sha256,
+            &mut accounting,
+        )?
+    } else {
+        None
+    };
     let (proposed_count, promoted_count, demoted_count) =
         mined
             .registry
@@ -681,7 +843,10 @@ pub(super) fn validate_and_store_tactic_macros(
     mined.report.reuse = reuse;
     mined.report.registry_path = path_text(&validated_path);
     mined.report.registry_sha256 = registry_sha256;
-    Ok(mined.report)
+    Ok(ValidatedTacticMacros {
+        registry: mined.registry,
+        report: mined.report,
+    })
 }
 
 pub(super) fn tactic_macro_entry_distance(
@@ -750,11 +915,17 @@ fn run_tactic_macro_validation_job(
         &job.output_root.join("primitive-components"),
         &mut accounting,
     )?;
+    exact_realized_macro_tape(&job.candidate.tape, &candidate_outcome.emitted_raw_actions)?;
+    if candidate_outcome.emitted_raw_actions != primitive_outcome.emitted_raw_actions {
+        return Err(route_message(
+            "macro validation candidate and primitive sequence emitted different inputs",
+        ));
+    }
     Ok(TacticMacroValidationResult {
         candidate_sha256: job.candidate.candidate_sha256,
         frontier_seed: job.frontier.seed,
         frontier_state_sha256: job.frontier.state_sha256,
-        candidate_outcome: *candidate_outcome,
+        candidate_outcome: candidate_outcome.clone(),
         primitive_outcome,
         accounting,
     })
@@ -842,6 +1013,7 @@ fn evaluate_tactic_macro_component_sequence(
         terminal,
         progress: before_distance - after_distance,
         ticks,
+        emitted_raw_actions: route_tape.frames[frontier.route_tape.frames.len()..].to_vec(),
     })
 }
 
@@ -1056,6 +1228,7 @@ pub(super) fn evaluate_tactic_macro_validation_batch(
                     terminal: evaluated.outcome.terminal,
                     progress: before_distance - after_distance,
                     ticks,
+                    emitted_raw_actions: evaluated.outcome.execution.emitted_raw_actions,
                 },
             ))
         })
@@ -1092,11 +1265,13 @@ fn merge_tactic_macro_validation_accounting(
 
 pub(super) fn collect_tactic_macro_validation_frontiers(
     output_root: &Path,
-    exploration_seeds: &[u64],
+    source_lanes: &[TacticMacroSourceLane],
     root_checkpoint_sha256: Digest,
 ) -> Result<Vec<TacticMacroValidationFrontier>, NativeTacticRouteRunError> {
     let mut frontiers = BTreeMap::new();
-    for (seed_index, seed) in exploration_seeds.iter().copied().enumerate() {
+    for source_lane in source_lanes {
+        let seed_index = source_lane.seed_index;
+        let seed = source_lane.seed;
         let seed_root = output_root.join(format!("seed-{seed_index:03}-{seed}"));
         let replay = load_tactic_journal_replay(&seed_root)?;
         if replay.root_checkpoint_sha256 != root_checkpoint_sha256 {

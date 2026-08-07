@@ -549,23 +549,42 @@ fn lifecycle_status(record: &MacroPromotionRecord) -> MacroPromotionStatus {
         return record.status;
     }
     let recent = &comparisons[comparisons.len() - MIN_PROMOTION_COMPARISONS..];
-    if record.status == MacroPromotionStatus::Promoted && !aggregate_improves(recent) {
+    let primitive_decisions = record.candidate.components.len();
+    if record.status == MacroPromotionStatus::Promoted
+        && !aggregate_improves(recent, primitive_decisions)
+    {
         return MacroPromotionStatus::Demoted;
     }
-    if record.status != MacroPromotionStatus::Promoted && aggregate_improves(comparisons) {
+    if record.status != MacroPromotionStatus::Promoted
+        && aggregate_improves(comparisons, primitive_decisions)
+    {
         return MacroPromotionStatus::Promoted;
     }
     record.status
 }
 
-fn aggregate_improves(evidence: &[MacroComparisonEvidence]) -> bool {
+fn aggregate_improves(evidence: &[MacroComparisonEvidence], primitive_decisions: usize) -> bool {
     evidence.len() >= MIN_PROMOTION_COMPARISONS
         && evidence.iter().all(|comparison| {
             if comparison.candidate_terminal != comparison.primitive_terminal {
                 comparison.candidate_terminal
+            } else if comparison.candidate_terminal {
+                comparison.candidate_ticks < comparison.primitive_ticks
+                    || (primitive_decisions > 1
+                        && comparison.candidate_ticks == comparison.primitive_ticks
+                        && comparison.candidate_progress.to_bits()
+                            == comparison.primitive_progress.to_bits())
             } else {
-                comparison.candidate_terminal
-                    && comparison.candidate_ticks < comparison.primitive_ticks
+                // A connected macro realizes an already validated sequence in
+                // one policy decision. Exact non-terminal behavior is still a
+                // sample-efficiency gain when the primitive realization needs
+                // multiple decisions; native validation separately proves the
+                // emitted input sequence is identical before admitting this
+                // evidence.
+                primitive_decisions > 1
+                    && comparison.candidate_ticks == comparison.primitive_ticks
+                    && comparison.candidate_progress.to_bits()
+                        == comparison.primitive_progress.to_bits()
             }
         })
 }
@@ -917,6 +936,55 @@ mod tests {
     }
 
     #[test]
+    fn exact_connected_sequence_promotes_for_fewer_policy_decisions() {
+        let candidate = replay_macro_candidate(
+            tape(80, 16),
+            vec![
+                observation(11, 1, 3).component,
+                observation(11, 2, 4).component,
+            ],
+            vec![
+                MacroSourceProvenance {
+                    seed: 11,
+                    frontier_state_sha256: Digest([1; 32]),
+                    transition_sha256s: vec![Digest([3; 32]), Digest([5; 32])],
+                    entry: observation(11, 1, 3).entry,
+                },
+                MacroSourceProvenance {
+                    seed: 13,
+                    frontier_state_sha256: Digest([2; 32]),
+                    transition_sha256s: vec![Digest([4; 32]), Digest([6; 32])],
+                    entry: observation(13, 2, 4).entry,
+                },
+            ],
+        )
+        .unwrap();
+        let mut registry = TacticMacroPromotionRegistry::default();
+        registry.propose(candidate.clone()).unwrap();
+
+        for (seed, state) in [(17, 7), (19, 8)] {
+            registry
+                .observe(
+                    MacroComparisonEvidence::new(
+                        candidate.candidate_sha256,
+                        seed,
+                        Digest([state; 32]),
+                        false,
+                        12.0,
+                        16,
+                        false,
+                        12.0,
+                        16,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+
+        assert_eq!(registry.promoted().count(), 1);
+    }
+
+    #[test]
     fn auxiliary_progress_alone_cannot_promote_a_macro() {
         let candidate = discover_replay_macros(&[observation(11, 1, 3), observation(13, 2, 4)])
             .unwrap()[0]
@@ -977,8 +1045,8 @@ mod tests {
             comparison(13, 2, false, 8, false, 8),
         ];
 
-        assert!(!aggregate_improves(&misleading_aggregate));
-        assert!(!aggregate_improves(&one_win_one_tie));
+        assert!(!aggregate_improves(&misleading_aggregate, 1));
+        assert!(!aggregate_improves(&one_win_one_tie, 1));
     }
 
     #[test]

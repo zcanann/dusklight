@@ -24,18 +24,16 @@ pub(crate) struct GoalConditionedTacticContext {
 }
 
 pub(crate) fn parameterized_policy_action_schema_sha256(
-    promoted_tactic_registry_sha256: Option<Digest>,
+    _promoted_tactic_registry_sha256: Option<Digest>,
 ) -> Digest {
-    if promoted_tactic_registry_sha256.is_none() {
-        let mut hasher = Sha256::new();
-        hasher.update(b"dusklight-parameterized-policy-action-schema/v2");
-        hasher.update(parameterized_tactic_family_schema_sha256().0);
-        return Digest(hasher.finalize().into());
-    }
+    // The schema identifies the factorized action representation, not a
+    // campaign's current catalog membership. Promoted tactics can therefore
+    // join between generations without invalidating replay learned from the
+    // stable primitive family. Concrete imported registries remain separately
+    // content-addressed in the execution plan and report.
     let mut hasher = Sha256::new();
-    hasher.update(b"dusklight-parameterized-policy-action-schema/v3");
+    hasher.update(b"dusklight-parameterized-policy-action-schema/v4");
     hasher.update(parameterized_tactic_family_schema_sha256().0);
-    hasher.update(promoted_tactic_registry_sha256.unwrap().0);
     Digest(hasher.finalize().into())
 }
 

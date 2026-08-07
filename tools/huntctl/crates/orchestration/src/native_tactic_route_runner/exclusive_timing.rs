@@ -189,6 +189,7 @@ pub(super) struct CampaignExclusiveTimingInput {
     pub process_launch_micros: u64,
     pub demonstration_execution_micros: u64,
     pub macro_validation_execution_micros: u64,
+    pub active_macro_validation_execution_micros: u64,
     pub learner_update_micros: u64,
     pub learner_reconstruction_micros: u64,
     pub campaign_setup_model_update_micros: u64,
@@ -204,6 +205,7 @@ pub(super) struct CampaignPhaseWallTiming {
     pub campaign_setup_micros: u64,
     pub campaign_setup_model_update_micros: u64,
     pub generation_coordination_micros: u64,
+    pub active_macro_validation_micros: u64,
     pub generation_model_update_micros: u64,
     pub campaign_finalization_started_micros: u64,
     pub seed_invocation_critical_lane_wall_micros: u64,
@@ -277,12 +279,15 @@ pub(super) fn attribute_campaign_timing(
     let generation_orchestration_micros = input
         .generation_coordination_wall_micros
         .checked_sub(input.generation_model_update_micros)
-        .ok_or_else(|| {
-            route_message("native tactic generation model timing exceeds coordination wall")
-        })?;
+        .and_then(|total| total.checked_sub(input.active_macro_validation_execution_micros))
+        .ok_or_else(|| route_message("native tactic generation work exceeds coordination wall"))?;
+    let final_macro_validation_execution_micros = input
+        .macro_validation_execution_micros
+        .checked_sub(input.active_macro_validation_execution_micros)
+        .ok_or_else(|| route_message("active macro validation exceeds total validation"))?;
     let campaign_finalization_orchestration_micros = input
         .campaign_finalization_wall_micros
-        .checked_sub(input.macro_validation_execution_micros)
+        .checked_sub(final_macro_validation_execution_micros)
         .ok_or_else(|| {
             route_message("native tactic macro validation exceeds campaign finalization wall")
         })?;
