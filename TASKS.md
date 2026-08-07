@@ -32,10 +32,12 @@ target is 120.
   up exact terminal cost. This proves basic plumbing, not native adequacy.
 - The native adapter retains bounded process-local checkpoints and has directly
   restored multiple nonconsecutive intermediate states. Save-state branching is
-  functional; useful optimization from those branches is not yet proven.
-- The best authenticated native route is 210 ticks and cold-replays twice at the
-  same real terminal tick. It is a real improvement over the former 318-tick
-  diagnostic route, but it is nowhere near the 124-tick adequacy gate.
+  functional and has produced one matched 274-to-251 tick improvement; route
+  quality and repeatability remain unproven.
+- The best-ever authenticated native artifact is 210 ticks under an earlier
+  campaign configuration and cold-replays twice at the same real terminal tick.
+  It is not directly comparable to the newer matched checkpoint diagnostics;
+  neither result is near the 124-tick adequacy gate.
 - The former native optimizer's forced perturbation, coordinate rejoin, and
   privileged incumbent continuation have been removed. Ordinary checkpoint
   refinement now executes only learner-selected actions until terminal or its
@@ -73,8 +75,20 @@ target is 120.
   replay; after branching at prefix 212, decision 25 continued from the
   process-local result of an ordinary four-tick action and reached the real
   terminal with another ordinary learner action. All 490 orchestration and 453
-  learning tests pass. Terminal-value propagation, rather than checkpoint
-  execution, is now the first coherence gap.
+  learning tests pass.
+- Terminal-value propagation is live rather than merely serialized. The first
+  native terminal entered replay at decision 11; the next fitted-snapshot probe
+  at the same predecessor changed the selected action from unsupported neutral
+  to roll under the native-terminal value head, and the following decision used
+  a terminal-value-ranked action. In the production around-corner adequacy
+  world, exact terminal cost backs through nine predecessor actions and changes
+  the root policy from the initially discovered 12-tick route to the 9-tick
+  route even though its first three moves increase goal distance. A translated,
+  exact-state-disjoint world learns the same policy. Open rollouts remain absent
+  from numeric terminal returns while their authentic transitions stay in the
+  replay and graph for achieved-goal dynamics, availability, duration,
+  coverage, novelty, and uncertainty. The live exploitation/discovery balance
+  is now the first coherence gap.
 - Tactic mining, validation, promotion, binary persistence, and ordinary policy
   selection exist on the production path. No native campaign has yet shown a
   learner-discovered promoted tactic improving a route.
@@ -87,7 +101,7 @@ No task is blocked on design.
   the production loop that at least two nonconsecutive intermediate states are
   restored without root replay and that ordinary subsequent decisions from one
   produce a faster authenticated terminal route.
-- [ ] Verify that terminal returns change later action ranking at predecessor
+- [x] Verify that terminal returns change later action ranking at predecessor
   states and propagate far enough to solve temporarily-worse moves around a
   corner. Open rollouts remain censored but still teach availability, dynamics,
   duration, novelty, and uncertainty.
