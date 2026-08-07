@@ -538,13 +538,8 @@ fn lifecycle_status(record: &MacroPromotionRecord) -> MacroPromotionStatus {
         .iter()
         .map(|evidence| evidence.frontier_state_sha256)
         .collect::<BTreeSet<_>>();
-    let distinct_seeds = comparisons
-        .iter()
-        .map(|evidence| evidence.seed)
-        .collect::<BTreeSet<_>>();
     if comparisons.len() < MIN_PROMOTION_COMPARISONS
         || distinct_states.len() < MIN_PROMOTION_COMPARISONS
-        || distinct_seeds.len() < MIN_PROMOTION_COMPARISONS
     {
         return record.status;
     }
@@ -904,7 +899,7 @@ mod tests {
     }
 
     #[test]
-    fn promotion_requires_strict_comparative_gain_across_states_and_seeds() {
+    fn promotion_requires_strict_comparative_gain_across_independent_states() {
         let candidate = discover_replay_macros(&[observation(11, 1, 3), observation(13, 2, 4)])
             .unwrap()[0]
             .clone();
@@ -929,7 +924,7 @@ mod tests {
             MacroPromotionStatus::Proposed
         );
         assert_eq!(
-            registry.observe(evidence(13, 2)).unwrap(),
+            registry.observe(evidence(11, 2)).unwrap(),
             MacroPromotionStatus::Promoted
         );
         assert_eq!(registry.promoted().count(), 1);
@@ -962,7 +957,7 @@ mod tests {
         let mut registry = TacticMacroPromotionRegistry::default();
         registry.propose(candidate.clone()).unwrap();
 
-        for (seed, state) in [(17, 7), (19, 8)] {
+        for (seed, state) in [(17, 7), (17, 8)] {
             registry
                 .observe(
                     MacroComparisonEvidence::new(

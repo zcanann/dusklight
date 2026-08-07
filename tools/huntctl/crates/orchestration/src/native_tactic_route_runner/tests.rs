@@ -1266,16 +1266,6 @@ fn root_episode_slots_do_not_skip_frontier_rotation_rounds() {
 }
 
 #[test]
-fn tactic_macro_validation_waits_for_independent_seed_support() {
-    assert!(!tactic_macro_promotion_has_seed_support(&[]));
-    assert!(!tactic_macro_promotion_has_seed_support(&[104_729]));
-    assert!(!tactic_macro_promotion_has_seed_support(&[
-        104_729, 104_729
-    ]));
-    assert!(tactic_macro_promotion_has_seed_support(&[104_729, 130_363]));
-}
-
-#[test]
 fn connected_macro_needs_repeated_occurrences_not_internal_steps() {
     let tape = InputTape {
         frames: vec![

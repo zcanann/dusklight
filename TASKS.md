@@ -100,6 +100,11 @@ Ordon Springs is the first adequacy test. The real terminal is
   The bounded active validator prioritizes true multi-decision compositions
   ahead of long one-component copies, so its single validation slot targets a
   candidate that can actually earn the decision-compression promotion.
+  Promotion independence is defined by authenticated frontier identity, not by
+  arbitrary seed identity: two distinct compatible source states and two
+  distinct held-out validation states may come from one seed. This removes the
+  former blanket ban on tactic promotion in a single-seed campaign without
+  relaxing the multi-state evidence requirement.
   The checksummed macro lifecycle artifact now records active refresh count,
   newly promoted option identities, and later decisions that actually selected
   those options; these fields are derived from durable decision journals rather

@@ -73,10 +73,10 @@ use dusklight_learning::tactic_exploration::{
 use dusklight_learning::tactic_features::GoalConditionedTacticFeatureEncoder;
 use dusklight_learning::tactic_macro_promotion::{
     DiscoveredMacroCandidate, MAX_DISCOVERED_MACRO_TICKS, MAX_DISCOVERED_MACROS,
-    MAX_DISCOVERY_OBSERVATIONS, MIN_DISCOVERY_OCCURRENCES, MIN_PROMOTION_COMPARISONS,
-    MacroComparisonEvidence, MacroDiscoveryObservation, MacroEntryObservation,
-    MacroPromotionStatus, MacroSourceProvenance, TacticMacroComponent, TacticMacroEntryCondition,
-    TacticMacroPromotionRegistry, discover_replay_macros, replay_macro_candidate,
+    MAX_DISCOVERY_OBSERVATIONS, MIN_DISCOVERY_OCCURRENCES, MacroComparisonEvidence,
+    MacroDiscoveryObservation, MacroEntryObservation, MacroPromotionStatus, MacroSourceProvenance,
+    TacticMacroComponent, TacticMacroEntryCondition, TacticMacroPromotionRegistry,
+    discover_replay_macros, replay_macro_candidate,
 };
 use dusklight_learning::tactic_value_treatment::TacticValueTreatment;
 use dusklight_learning::terminal_action_calibration::TerminalActionCalibration;

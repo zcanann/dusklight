@@ -129,14 +129,6 @@ pub(super) fn refresh_active_tactic_macros(
     source_lanes: &[TacticMacroSourceLane],
     generation_index: usize,
 ) -> Result<Option<ActiveTacticMacroRefresh>, NativeTacticRouteRunError> {
-    if !tactic_macro_promotion_has_seed_support(
-        &source_lanes
-            .iter()
-            .map(|lane| lane.seed)
-            .collect::<Vec<_>>(),
-    ) {
-        return Ok(None);
-    }
     // Active promotion is deliberately narrow: validate the strongest new
     // candidate between generations, then let the next generation provide the
     // real reuse evidence. Finalization still audits the complete bounded set.
@@ -699,20 +691,11 @@ pub(super) fn validate_and_store_tactic_macros(
         .records()
         .map(|record| record.candidate.clone())
         .collect::<Vec<_>>();
-    let validation_frontiers = if tactic_macro_promotion_has_seed_support(
-        &source_lanes
-            .iter()
-            .map(|lane| lane.seed)
-            .collect::<Vec<_>>(),
-    ) {
-        collect_tactic_macro_validation_frontiers(
-            config.output_root,
-            source_lanes,
-            root_checkpoint_sha256,
-        )?
-    } else {
-        Vec::new()
-    };
+    let validation_frontiers = collect_tactic_macro_validation_frontiers(
+        config.output_root,
+        source_lanes,
+        root_checkpoint_sha256,
+    )?;
     let mut jobs = Vec::new();
     let mut held_out_compatible_candidate_count = 0_u64;
     let mut source_state_exclusion_count = 0_u64;
@@ -750,11 +733,10 @@ pub(super) fn validate_and_store_tactic_macros(
                 .then_with(|| left.1.seed.cmp(&right.1.seed))
                 .then_with(|| left.1.state_sha256.cmp(&right.1.state_sha256))
         });
-        let mut used_seeds = BTreeSet::new();
         let mut used_states = BTreeSet::new();
         let mut comparison_index = 0_u64;
         for (_, frontier) in compatible_frontiers {
-            if used_seeds.contains(&frontier.seed) || used_states.contains(&frontier.state_sha256) {
+            if used_states.contains(&frontier.state_sha256) {
                 continue;
             }
             let suffix_ticks = frontier
@@ -781,7 +763,6 @@ pub(super) fn validate_and_store_tactic_macros(
                 comparison_index,
                 output_root: job_output_root,
             });
-            used_seeds.insert(frontier.seed);
             used_states.insert(frontier.state_sha256);
             comparison_index = comparison_index.saturating_add(1);
             if comparison_index >= 2 {
@@ -1060,15 +1041,6 @@ fn evaluate_tactic_macro_component_sequence(
         ticks,
         emitted_raw_actions: route_tape.frames[frontier.route_tape.frames.len()..].to_vec(),
     })
-}
-
-pub(super) fn tactic_macro_promotion_has_seed_support(exploration_seeds: &[u64]) -> bool {
-    exploration_seeds
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>()
-        .len()
-        >= MIN_PROMOTION_COMPARISONS
 }
 
 pub(super) fn reuse_promoted_tactic_macro(
