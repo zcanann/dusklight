@@ -152,13 +152,19 @@ impl RetainedNativeTacticFrontiers {
             .collect()
     }
 
-    pub(in crate::native_tactic_route_runner) fn consume_locality_reuse(
+    pub(in crate::native_tactic_route_runner) fn consume_locality_target(
         &mut self,
-        worker_slot: usize,
-        restore_identity: &str,
+        target: ExactStateId,
     ) {
-        self.pending_locality_reuse
-            .remove(&(worker_slot, restore_identity.to_owned()));
+        for frontier in self.entries.iter().filter(|frontier| {
+            frontier.route_checkpoint_sha256 == target.route_checkpoint_sha256
+                && frontier.state_sha256 == target.state_sha256
+        }) {
+            self.pending_locality_reuse.remove(&(
+                frontier.worker_slot,
+                frontier.source.restore_identity.clone(),
+            ));
+        }
     }
 
     #[cfg(test)]
@@ -242,10 +248,26 @@ mod tests {
         retained.retain(frontier(0, "branch-base", 1));
         assert_eq!(retained.pending_locality_targets().len(), 1);
 
-        retained.consume_locality_reuse(0, "branch-base");
+        retained.consume_locality_target(ExactStateId {
+            route_checkpoint_sha256: digest(2),
+            state_sha256: digest(1),
+        });
 
         assert!(retained.pending_locality_targets().is_empty());
         assert_eq!(retained.identities(), vec!["branch-base"]);
+    }
+
+    #[test]
+    fn direct_reuse_cannot_rearm_the_same_exact_target() {
+        let mut retained = RetainedNativeTacticFrontiers::new(2);
+        retained.retain(frontier(0, "first-image", 1));
+        retained.retain(frontier(1, "sibling-image", 1));
+        retained.consume_locality_target(ExactStateId {
+            route_checkpoint_sha256: digest(2),
+            state_sha256: digest(1),
+        });
+
+        assert!(retained.pending_locality_targets().is_empty());
     }
 
     #[test]

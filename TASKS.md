@@ -60,9 +60,16 @@ target is 120.
   scheduler. A cached rank-zero source may receive one immediate reuse only
   when it belongs to that best authenticated total, and it retains the exact
   incumbent ticks-to-go bound. Locality consumes the most recently materialized
-  eligible source before older pending cache entries. All 489 orchestration and
-  453 learning tests pass. A native restored-branch improvement remains the
-  required revalidation.
+  eligible source before older pending cache entries. A subsequent 53-decision
+  run used 720 native ticks, held support/discovery at 123/126 ticks, kept every
+  supported branch on total 275, and directly restored many nonconsecutive
+  checkpoints (172 cache hits, one miss), but still held 274. Direct reuse had
+  re-registered its own locality entitlement and consequently selected the
+  same prefix-274, one-tick-to-go state roughly two dozen times. Consuming
+  locality by exact graph target after all replacement images are admitted now
+  prevents that self-rearming loop. All 490 orchestration and 453 learning
+  tests pass. A native restored-branch improvement remains the required
+  revalidation.
 - Tactic mining, validation, promotion, binary persistence, and ordinary policy
   selection exist on the production path. No native campaign has yet shown a
   learner-discovered promoted tactic improving a route.

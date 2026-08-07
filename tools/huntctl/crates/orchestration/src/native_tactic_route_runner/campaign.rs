@@ -986,12 +986,6 @@ pub(super) fn run_seed(
                 restore_source = NativeTacticRestoreSource::AuthenticatedRootReplay;
             } else {
                 cached_frontiers.touch(frontier.worker_slot, &frontier.source.restore_identity);
-                if frontier.source.storage == NativeTacticCheckpointStorage::PortableImage {
-                    cached_frontiers.consume_locality_reuse(
-                        frontier.worker_slot,
-                        &frontier.source.restore_identity,
-                    );
-                }
             }
         }
         for work in &proposal_work {
@@ -1005,6 +999,12 @@ pub(super) fn run_seed(
                     route_tape_sha256: restoration.plan.route.tape_sha256,
                 });
             }
+        }
+        if directly_restored_frontier {
+            cached_frontiers.consume_locality_target(crate::state_graph::ExactStateId {
+                route_checkpoint_sha256: restoration.plan.route.route_checkpoint_sha256,
+                state_sha256: source_snapshot_sha256,
+            });
         }
         inject_tactic_fault(
             config,
