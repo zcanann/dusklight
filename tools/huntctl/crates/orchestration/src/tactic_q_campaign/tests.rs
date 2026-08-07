@@ -1170,6 +1170,13 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         dusklight_learning::goal_reachability_calibration::calibrate_goal_reachability(&[], 0)
             .unwrap();
     assert!(!calibration.deployment_ready);
+    let mut acquisition_calibration = calibration.clone();
+    acquisition_calibration.source_transitions = 8;
+    acquisition_calibration.source_state_groups = 8;
+    acquisition_calibration.evaluated_action_predictions = 8;
+    acquisition_calibration.mean_absolute_progress_error = Some(1.0);
+    acquisition_calibration.progress_sign_accuracy = Some(0.625);
+    acquisition_calibration.validate().unwrap();
     let context = GeneralizedTacticContext::from_facts(&before).unwrap();
     let descriptor = treatment_corpus.transitions[0].value_sample.action.clone();
     let alternate_descriptor = treatment_corpus.transitions[1].value_sample.action.clone();
@@ -1196,7 +1203,8 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     .unwrap();
     blocked_control.value_treatment = TacticValueTreatment::GoalRelabeledFittedQKnnV2;
     blocked_control.campaign_learner_authority_managed = true;
-    blocked_control.goal_reachability_calibration = Some(calibration.clone());
+    blocked_control.goal_reachability_calibration = Some(acquisition_calibration.clone());
+    blocked_control.decision_index = 4;
     let blocked_control_batch = blocked_control
         .decide_parameterized_batch_with_policy::<&'static str, _>(
             &catalog,
@@ -1212,7 +1220,8 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         .unwrap();
     unproven_goal_consumer.value_treatment = TacticValueTreatment::GoalRelabeledFittedQKnnV2;
     unproven_goal_consumer.campaign_learner_authority_managed = true;
-    unproven_goal_consumer.goal_reachability_calibration = Some(calibration.clone());
+    unproven_goal_consumer.goal_reachability_calibration = Some(acquisition_calibration.clone());
+    unproven_goal_consumer.decision_index = 4;
     *unproven_goal_consumer.generalized_model.borrow_mut() =
         Some(CachedGeneralizedTacticValueModel {
             goal_distance_feature: 0,
@@ -1235,7 +1244,7 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
     assert!(!unproven_batch.goal_reachability_estimates.is_empty());
     assert_eq!(
         unproven_batch.goal_reachability_calibration,
-        Some(calibration)
+        Some(acquisition_calibration)
     );
     assert_ne!(
         unproven_batch.proposals, blocked_control_batch.proposals,

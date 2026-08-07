@@ -51,8 +51,17 @@ target is 120.
   now limits sibling evaluation rather than learned selection: an adaptive
   estimate may replace only unsupported bootstrap, while epsilon and exact
   greedy choices remain authoritative and frozen controls retain calibration
-  gates. All 453 learning and 485 orchestration tests pass. A native restored-
-  branch improvement remains the required revalidation.
+  gates. The matched revalidation proved that change reached native execution
+  (9 of 19 same-state policy probes changed action), but blindly exploiting the
+  uncalibrated heuristic on 37 of 64 decisions regressed the best route from
+  318 to 898 ticks. At the first changed decision, four-row training predicted
+  about `+9.98` goal progress per tick while the 40-tick action actually
+  produced `-0.28`; the model kept control even after held-out sign accuracy
+  fell to 37.5%. Uncalibrated adaptive estimates are now bounded acquisitions:
+  they require at least eight rows, above-chance held-out progress sign, and a
+  one-in-four probe cadence until calibration grants full authority. All 453
+  learning and 486 orchestration tests pass. Native restored-branch improvement
+  remains the required revalidation.
 - Tactic mining, validation, promotion, binary persistence, and ordinary policy
   selection exist on the production path. No native campaign has yet shown a
   learner-discovered promoted tactic improving a route.
