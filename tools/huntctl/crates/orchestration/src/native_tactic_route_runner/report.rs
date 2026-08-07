@@ -244,6 +244,16 @@ pub(super) struct NativeTacticDemonstration {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticMacroDiscoveryReport {
+    /// Bounded mining/validation passes completed before a later learned
+    /// generation, rather than during terminal report finalization.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub active_refresh_count: u64,
+    /// Tactics first promoted from this campaign's own earlier generations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub active_promoted_option_ids: Vec<String>,
+    /// Later policy decisions that actually selected one of those tactics.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub active_selected_decisions: u64,
     pub observation_count: u64,
     pub high_value_observation_count: u64,
     pub mined_observation_count: u64,

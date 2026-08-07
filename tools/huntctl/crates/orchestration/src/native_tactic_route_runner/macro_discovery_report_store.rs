@@ -49,6 +49,20 @@ impl StoredMacroDiscoveryReport {
             || self.feature_schema_sha256 == Digest::ZERO
             || self.root_checkpoint_sha256 == Digest::ZERO
             || self.report.registry_sha256 == Digest::ZERO
+            || self
+                .report
+                .active_promoted_option_ids
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+            || self
+                .report
+                .active_promoted_option_ids
+                .iter()
+                .any(|option_id| !option_id.starts_with("promoted/"))
+            || (!self.report.active_promoted_option_ids.is_empty()
+                && self.report.active_refresh_count == 0)
+            || (self.report.active_selected_decisions > 0
+                && self.report.active_promoted_option_ids.is_empty())
             || self.expected_content_sha256()? != self.content_sha256
         {
             return Err(route_message(
@@ -181,6 +195,9 @@ mod tests {
 
     fn report(path: &Path, registry_sha256: Digest) -> NativeTacticMacroDiscoveryReport {
         NativeTacticMacroDiscoveryReport {
+            active_refresh_count: 1,
+            active_promoted_option_ids: vec!["promoted/001122".into()],
+            active_selected_decisions: 2,
             observation_count: 3,
             high_value_observation_count: 1,
             mined_observation_count: 2,
@@ -232,6 +249,18 @@ mod tests {
             report.clone(),
         )
         .unwrap();
+        let mut detached_active = report.clone();
+        detached_active.active_promoted_option_ids.clear();
+        assert!(
+            StoredMacroDiscoveryReport::build(
+                Digest([1; 32]),
+                Digest([2; 32]),
+                Digest([3; 32]),
+                Digest([4; 32]),
+                detached_active,
+            )
+            .is_err()
+        );
         let encoded = encode(&stored).unwrap();
         assert_eq!(decode(&encoded).unwrap(), stored);
         let mut tampered = encoded;

@@ -15,6 +15,13 @@ pub(super) struct ActiveTacticMacroRefresh {
     pub(super) report: NativeTacticMacroDiscoveryReport,
 }
 
+#[derive(Default)]
+pub(super) struct ActiveTacticMacroLifecycle {
+    pub(super) validation_reports: Vec<NativeTacticMacroDiscoveryReport>,
+    pub(super) promoted_option_ids: BTreeSet<String>,
+    pub(super) selected_decisions: u64,
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct TacticMacroSourceLane {
     pub(super) seed_index: usize,
@@ -30,12 +37,33 @@ pub(super) fn should_refresh_active_tactic_macros(
         && generation_position.saturating_add(1) < generation_count
 }
 
+pub(super) fn count_active_tactic_selections(
+    output_root: &Path,
+    source_lanes: &[TacticMacroSourceLane],
+    promoted_option_ids: &BTreeSet<String>,
+) -> Result<u64, NativeTacticRouteRunError> {
+    if promoted_option_ids.is_empty() {
+        return Ok(0);
+    }
+    source_lanes.iter().try_fold(0_u64, |total, lane| {
+        let seed_root = output_root.join(format!("seed-{:03}-{}", lane.seed_index, lane.seed));
+        let selected = read_tactic_decision_journal(&seed_root)?
+            .into_iter()
+            .filter(|decision| promoted_option_ids.contains(&decision.selected_option_id))
+            .count();
+        total
+            .checked_add(u64::try_from(selected).map_err(route_error)?)
+            .ok_or_else(|| route_message("active tactic selection count overflowed"))
+    })
+}
+
 pub(super) fn finalize_tactic_macro_discovery(
     config: &NativeTacticRouteRunConfig<'_>,
     pool: &NativeTacticProposalPool,
     encoder: &GoalConditionedTacticFeatureEncoder,
     execution_plan_sha256: Digest,
     root_checkpoint_sha256: Digest,
+    active: &ActiveTacticMacroLifecycle,
 ) -> Result<NativeTacticMacroDiscoveryReport, NativeTacticRouteRunError> {
     let durable_path = config.output_root.join(NATIVE_TACTIC_MACRO_DISCOVERY_FILE);
     if durable_path.is_file() {
@@ -77,7 +105,12 @@ pub(super) fn finalize_tactic_macro_discovery(
         true,
         mined,
     )?;
-    let report = validated.report;
+    let mut report = validated.report;
+    absorb_active_tactic_macro_validation(&mut report, &active.validation_reports);
+    report.active_refresh_count =
+        u64::try_from(active.validation_reports.len()).map_err(route_error)?;
+    report.active_promoted_option_ids = active.promoted_option_ids.iter().cloned().collect();
+    report.active_selected_decisions = active.selected_decisions;
     write_macro_discovery_report(
         config.output_root,
         execution_plan_sha256,
@@ -328,6 +361,9 @@ pub(super) fn mine_and_store_tactic_macros(
     Ok(MinedTacticMacros {
         registry,
         report: NativeTacticMacroDiscoveryReport {
+            active_refresh_count: 0,
+            active_promoted_option_ids: Vec::new(),
+            active_selected_decisions: 0,
             observation_count,
             high_value_observation_count,
             mined_observation_count: observations.len() as u64,

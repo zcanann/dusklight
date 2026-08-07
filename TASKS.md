@@ -85,6 +85,10 @@ Ordon Springs is the first adequacy test. The real terminal is
   The bounded active validator prioritizes true multi-decision compositions
   ahead of long one-component copies, so its single validation slot targets a
   candidate that can actually earn the decision-compression promotion.
+  The checksummed macro lifecycle artifact now records active refresh count,
+  newly promoted option identities, and later decisions that actually selected
+  those options; these fields are derived from durable decision journals rather
+  than inferred from catalog membership.
   Environment-independent lifecycle ownership and native evidence that a
   same-campaign promoted tactic was selected and improved learning remain open.
 - Exact graph backup covers every executable node on every authenticated

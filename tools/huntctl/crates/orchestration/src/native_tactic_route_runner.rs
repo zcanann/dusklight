@@ -678,6 +678,7 @@ fn run_native_tactic_route_with_optional_fleet(
                     &encoder,
                     execution_plan_sha256,
                     root_checkpoint_sha256,
+                    &ActiveTacticMacroLifecycle::default(),
                 )?,
             };
             let shared_training_replay_rows = completed_learner_view
@@ -723,7 +724,7 @@ fn run_native_tactic_route_with_optional_fleet(
             learner.invocation_metrics().update_micros;
         drop(learner);
         campaign_phase_wall.campaign_setup_micros = elapsed_micros(campaign_started.elapsed());
-        let mut active_macro_reports = Vec::new();
+        let mut active_macro_lifecycle = ActiveTacticMacroLifecycle::default();
         for (generation_position, generation) in
             config.execution_plan.generations.iter().enumerate()
         {
@@ -899,24 +900,46 @@ fn run_native_tactic_route_with_optional_fleet(
                         .ok_or_else(|| {
                             route_message("active tactic macro validation timing overflowed")
                         })?;
+                    active_macro_lifecycle.promoted_option_ids.extend(
+                        refresh.promoted_tactics.iter().filter_map(|tactic| {
+                            (!active_promoted_tactics.iter().any(|existing| {
+                                existing.entry.option_id() == tactic.entry.option_id()
+                            }))
+                            .then(|| tactic.entry.option_id().to_owned())
+                        }),
+                    );
                     merge_promoted_tactic_entries(
                         &mut active_promoted_tactics,
                         refresh.promoted_tactics,
                     )?;
-                    active_macro_reports.push(refresh.report);
+                    active_macro_lifecycle
+                        .validation_reports
+                        .push(refresh.report);
                 }
             }
         }
         campaign_phase_wall.campaign_finalization_started_micros =
             elapsed_micros(campaign_started.elapsed());
-        let mut completion = finalize_tactic_macro_discovery(
+        let source_lanes = results
+            .iter()
+            .map(|(seed_index, _)| TacticMacroSourceLane {
+                seed_index: *seed_index,
+                seed: config.execution_plan.seeds[*seed_index],
+            })
+            .collect::<Vec<_>>();
+        active_macro_lifecycle.selected_decisions = count_active_tactic_selections(
+            config.output_root,
+            &source_lanes,
+            &active_macro_lifecycle.promoted_option_ids,
+        )?;
+        let completion = finalize_tactic_macro_discovery(
             config,
             &pool,
             &encoder,
             execution_plan_sha256,
             root_checkpoint_sha256,
+            &active_macro_lifecycle,
         )?;
-        absorb_active_tactic_macro_validation(&mut completion, &active_macro_reports);
         let shared_training_replay_rows =
             lock_learner_authority(&learner_authority)?.replay().len() as u64;
         Ok::<_, NativeTacticRouteRunError>((
@@ -1322,8 +1345,9 @@ fn current_executable_sha256() -> Result<Digest, NativeTacticRouteRunError> {
 
 mod macro_discovery;
 use macro_discovery::{
-    TacticMacroSourceLane, absorb_active_tactic_macro_validation, finalize_tactic_macro_discovery,
-    refresh_active_tactic_macros, should_refresh_active_tactic_macros,
+    ActiveTacticMacroLifecycle, TacticMacroSourceLane, count_active_tactic_selections,
+    finalize_tactic_macro_discovery, refresh_active_tactic_macros,
+    should_refresh_active_tactic_macros,
 };
 mod macro_discovery_report_store;
 use macro_discovery_report_store::{
