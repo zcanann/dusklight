@@ -89,6 +89,13 @@ target is 120.
   replay and graph for achieved-goal dynamics, availability, duration,
   coverage, novelty, and uncertainty. The live exploitation/discovery balance
   is now the first coherence gap.
+- From-scratch plans now default to the V4 goal-relabeled universal frontier
+  treatment instead of V2. Cold-start discovery still learns from every
+  achieved transition; after a real terminal, the retained-frontier policy also
+  receives action-conditioned terminal value and ensemble uncertainty across
+  parameterized tactic-family labels. Explicit older treatments and legacy
+  snapshot decoding remain available. A native run has not yet validated this
+  new default's exploitation/discovery behavior.
 - Tactic mining, validation, promotion, binary persistence, and ordinary policy
   selection exist on the production path. No native campaign has yet shown a
   learner-discovered promoted tactic improving a route.

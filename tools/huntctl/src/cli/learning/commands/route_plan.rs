@@ -133,7 +133,7 @@ fn value_treatment(
 
 fn default_value_treatment(campaign_class: CampaignClass) -> TacticValueTreatment {
     if campaign_class == CampaignClass::FromScratchDiscovery {
-        TacticValueTreatment::GoalRelabeledFittedQKnnV2
+        TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4
     } else {
         TacticValueTreatment::LocalGeneralizedFittedQKnnV1
     }
@@ -209,10 +209,10 @@ mod tests {
     }
 
     #[test]
-    fn scratch_defaults_to_achieved_goal_learning_and_overrides_remain_explicit() {
+    fn scratch_defaults_to_achieved_goal_and_terminal_frontier_learning() {
         assert_eq!(
             default_value_treatment(CampaignClass::FromScratchDiscovery),
-            TacticValueTreatment::GoalRelabeledFittedQKnnV2
+            TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4
         );
         assert_eq!(
             default_value_treatment(CampaignClass::DemonstrationAssistedDiscovery),
