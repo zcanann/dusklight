@@ -33,11 +33,12 @@ use crate::tactic_q_campaign::{
     TacticGraphSchedulingTiming, TacticPolicyEvaluationDecisionTrace, TacticQCampaign,
     TacticQCampaignCheckpoint, TacticQCampaignError, TacticQFinalResult,
     TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot, TacticQLearnerSnapshotKind,
-    TacticQOnlineContinuationRequest, TacticQOnlineContinuationSelectionRequest,
-    TacticQOnlineHorizonPlan, TacticQOnlineLeaseMode, TacticQOnlinePolicyUpdate,
-    TacticQProposalBatch, TacticQTrainingCorpus, TacticRestorationContract,
-    TacticSchedulerDecisionTrace, has_no_progress_loop, online_tactic_fits_horizon,
-    plan_online_horizon, route_checkpoint, validate_training_corpus,
+    TacticQOnlineActionSurface, TacticQOnlineContinuationRequest,
+    TacticQOnlineContinuationSelectionRequest, TacticQOnlineDecisionPlan,
+    TacticQOnlineDecisionRequest, TacticQOnlineHorizonPlan, TacticQOnlineLeaseMode,
+    TacticQOnlinePolicyUpdate, TacticQProposalBatch, TacticQTrainingCorpus,
+    TacticRestorationContract, TacticSchedulerDecisionTrace, has_no_progress_loop,
+    online_tactic_fits_horizon, plan_online_horizon, route_checkpoint, validate_training_corpus,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use crate::tactic_replay_control_plane::{
@@ -1373,7 +1374,7 @@ use replay_content::{persist_evaluated_replay_content, retained_replay_component
 mod worker_pool;
 use worker_pool::{
     CachedTacticFrontier, NativeTacticProposalPool, NativeTacticProposalWork,
-    applicable_parameterized_descriptors_for_state, load_or_capture_demonstration,
+    load_or_capture_demonstration, parameterized_action_surface_for_state,
     parameterized_catalog_for_state, parameterized_catalog_for_state_with_promoted,
     parameterized_feedback_for_state, run_seed_coordinator,
 };

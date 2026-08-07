@@ -316,7 +316,7 @@ pub(super) fn validate_parameterized_policy_catalog(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn applicable_parameterized_descriptors_for_state(
+pub(super) fn parameterized_action_surface_for_state(
     campaign: &TacticQCampaign,
     registry: &FactRegistry,
     seed: u64,
@@ -326,7 +326,7 @@ pub(super) fn applicable_parameterized_descriptors_for_state(
     maximum_ticks: u32,
     action_schema_sha256: Digest,
     promoted_tactics: &[ImportedPromotedTactic],
-) -> Result<Vec<OptionActionDescriptor>, NativeTacticRouteRunError> {
+) -> Result<TacticQOnlineActionSurface, NativeTacticRouteRunError> {
     let proposals = parameterized_catalog_for_state_with_promoted(
         seed,
         decision_index,
@@ -345,18 +345,22 @@ pub(super) fn applicable_parameterized_descriptors_for_state(
         |_| true,
     )
     .map_err(route_error)?;
-    let descriptors = learner
+    let applicable_actions = learner
         .action_mask
         .into_iter()
         .filter(|choice| choice.applicable)
         .map(|choice| choice.descriptor)
         .collect::<Vec<_>>();
-    if descriptors.is_empty() {
+    if applicable_actions.is_empty() {
         return Err(route_message(
             "frontier proposal catalog has no applicable executable tactics",
         ));
     }
-    Ok(descriptors)
+    Ok(TacticQOnlineActionSurface {
+        catalog: proposals.catalog,
+        blueprints: proposals.blueprints,
+        applicable_actions,
+    })
 }
 
 pub(super) fn parameterized_feedback_for_state(

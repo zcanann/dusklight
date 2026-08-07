@@ -435,29 +435,25 @@ fn run_one_step(
     episode_shard_sha256: Digest,
 ) -> String {
     let registry = FactRegistry::canonical();
-    let batch =
-        match plan_online_horizon(decide_production_batch(campaign, catalog, 4), 0, 32).unwrap() {
-            TacticQOnlineHorizonPlan::Execute(batch) => batch,
-            TacticQOnlineHorizonPlan::RestoreCheckpoint { .. } => {
-                panic!("one-tick adequacy actions must fit the rollout horizon")
-            }
-        };
-    let eligible = batch
-        .ranking
-        .choices
-        .iter()
-        .filter(|choice| choice.applicable)
-        .map(|choice| choice.descriptor.clone())
-        .collect::<Vec<_>>();
-    let leased = campaign
-        .lease_online_batch(
+    let batch = decide_production_batch(campaign, catalog, 4);
+    let leased = match campaign
+        .prepare_online_decision(
             batch,
-            &eligible,
-            1,
-            LEARNER_SNAPSHOT,
-            TacticQOnlineLeaseMode::Exploration,
+            TacticQOnlineDecisionRequest {
+                suffix_ticks: 0,
+                horizon: 32,
+                maximum_proposals: 1,
+                learner_model_sha256: LEARNER_SNAPSHOT,
+                lease_mode: TacticQOnlineLeaseMode::Exploration,
+            },
         )
-        .unwrap();
+        .unwrap()
+    {
+        TacticQOnlineDecisionPlan::Execute(leased) => leased,
+        TacticQOnlineDecisionPlan::RestoreCheckpoint { .. } => {
+            panic!("one-tick adequacy actions must fit the rollout horizon")
+        }
+    };
     let selected = leased.batch.proposals[0].clone();
     let outcome = execute_selected(campaign, &selected, episode_shard_sha256);
     let evaluated = campaign
@@ -529,7 +525,7 @@ fn restore_next_scheduled_frontier(
     acquisition_rank: u64,
 ) -> AdequacyState {
     let selected = campaign
-        .select_online_continuation(
+        .restore_online_continuation(
             TacticQOnlineContinuationSelectionRequest {
                 continuation: TacticQOnlineContinuationRequest {
                     force_branch: false,
@@ -548,33 +544,36 @@ fn restore_next_scheduled_frontier(
                 maximum_route_frames: usize::MAX,
                 goal_distance_feature: 0,
             },
+            episode_group,
+            &FactRegistry::canonical(),
             &[],
             &encode,
-            &|facts: &FactSnapshot| {
+            &|_, facts: &FactSnapshot| {
                 let state = state_from_facts(facts);
-                Ok::<_, &'static str>(
-                    catalog
-                        .option_descriptors()
-                        .filter(|descriptor| state.applicable(&descriptor.option_id))
-                        .cloned()
-                        .collect(),
-                )
+                let applicable_actions = catalog
+                    .option_descriptors()
+                    .filter(|descriptor| state.applicable(&descriptor.option_id))
+                    .cloned()
+                    .collect();
+                Ok(TacticQOnlineActionSurface {
+                    catalog: TacticAssetCatalog::new(
+                        catalog
+                            .entries()
+                            .iter()
+                            .filter(|entry| state.applicable(entry.option_id()))
+                            .cloned()
+                            .collect(),
+                    )
+                    .unwrap(),
+                    blueprints: Vec::new(),
+                    applicable_actions,
+                })
             },
         )
         .unwrap()
         .expect("a terminal rollout must schedule another checkpoint")
         .branch;
     let state = state_from_facts(&selected.state);
-    campaign
-        .restore_branch(
-            &selected,
-            episode_group,
-            &FactRegistry::canonical(),
-            catalog,
-            &[],
-            |description| state.applicable(&description.option.option_id),
-        )
-        .unwrap();
     state
 }
 

@@ -44,6 +44,28 @@ pub struct TacticQOnlineProposalLease {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TacticQOnlineDecisionRequest {
+    pub suffix_ticks: u64,
+    pub horizon: u64,
+    pub maximum_proposals: usize,
+    pub learner_model_sha256: Digest,
+    pub lease_mode: TacticQOnlineLeaseMode,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TacticQOnlineDecisionPlan {
+    Execute(TacticQOnlineProposalLease),
+    RestoreCheckpoint { selected_maximum_ticks: u32 },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TacticQOnlineActionSurface {
+    pub catalog: TacticAssetCatalog,
+    pub blueprints: Vec<TacticBlueprint>,
+    pub applicable_actions: Vec<OptionActionDescriptor>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TacticQOnlineContinuationRequest {
     pub force_branch: bool,
     pub terminal_restart: bool,
@@ -199,6 +221,90 @@ pub fn plan_online_horizon(
 }
 
 impl TacticQCampaign {
+    /// Apply the shared rollout horizon to the policy-selected batch and lease
+    /// every executable alternative that can finish inside that horizon. This
+    /// is the complete pre-execution decision boundary used by both native and
+    /// deterministic environments.
+    pub fn prepare_online_decision(
+        &mut self,
+        batch: TacticQProposalBatch,
+        request: TacticQOnlineDecisionRequest,
+    ) -> Result<TacticQOnlineDecisionPlan, TacticQCampaignError> {
+        let batch = match plan_online_horizon(batch, request.suffix_ticks, request.horizon)? {
+            TacticQOnlineHorizonPlan::Execute(batch) => batch,
+            TacticQOnlineHorizonPlan::RestoreCheckpoint {
+                selected_maximum_ticks,
+            } => {
+                return Ok(TacticQOnlineDecisionPlan::RestoreCheckpoint {
+                    selected_maximum_ticks,
+                });
+            }
+        };
+        let eligible = batch
+            .ranking
+            .choices
+            .iter()
+            .filter(|choice| {
+                choice.applicable
+                    && online_tactic_fits_horizon(
+                        request.suffix_ticks,
+                        choice.duration.maximum_ticks,
+                        request.horizon,
+                    )
+            })
+            .map(|choice| choice.descriptor.clone())
+            .collect::<Vec<_>>();
+        Ok(TacticQOnlineDecisionPlan::Execute(
+            self.lease_online_batch(
+                batch,
+                &eligible,
+                request.maximum_proposals,
+                request.learner_model_sha256,
+                request.lease_mode,
+            )?,
+        ))
+    }
+
+    /// Select and logically restore the next checkpoint through one shared
+    /// environment-independent operation. The environment supplies only the
+    /// executable action surface for a state; it does not choose or reinterpret
+    /// the frontier selected by the learning loop.
+    #[allow(clippy::too_many_arguments)]
+    pub fn restore_online_continuation<E, F, A>(
+        &mut self,
+        request: TacticQOnlineContinuationSelectionRequest,
+        episode_group: u64,
+        registry: &FactRegistry,
+        reference: &[TacticEndpointDescriptor],
+        encode: &F,
+        action_surface: &A,
+    ) -> Result<Option<TacticQOnlineContinuationSelection>, TacticQCampaignError>
+    where
+        E: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+        A: Fn(
+            &TacticQCampaign,
+            &FactSnapshot,
+        ) -> Result<TacticQOnlineActionSurface, TacticQCampaignError>,
+    {
+        let selection = self.select_online_continuation(request, reference, encode, &|state| {
+            Ok::<_, TacticQCampaignError>(action_surface(self, state)?.applicable_actions)
+        })?;
+        let Some(selection) = selection else {
+            return Ok(None);
+        };
+        let surface = action_surface(self, &selection.branch.state)?;
+        self.restore_branch(
+            &selection.branch,
+            episode_group,
+            registry,
+            &surface.catalog,
+            &surface.blueprints,
+            |_| true,
+        )?;
+        Ok(Some(selection))
+    }
+
     /// Decide whether the current rollout must branch and, when it must,
     /// select the exact executable frontier through the matching acquisition
     /// partition. Environments restore the returned branch; they do not

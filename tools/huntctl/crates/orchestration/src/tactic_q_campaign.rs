@@ -992,10 +992,11 @@ mod tests;
 mod online_adequacy_tests;
 mod online_learning;
 pub use online_learning::{
-    TacticQOnlineAdmission, TacticQOnlineAdmissionTiming, TacticQOnlineBranchRequest,
-    TacticQOnlineBranchSelection, TacticQOnlineContinuationPlan, TacticQOnlineContinuationRequest,
-    TacticQOnlineContinuationSelection, TacticQOnlineContinuationSelectionRequest,
-    TacticQOnlineFrontierStrategy, TacticQOnlineHorizonPlan, TacticQOnlineLeaseMode,
-    TacticQOnlinePolicyUpdate, TacticQOnlineProposalLease, online_tactic_fits_horizon,
-    plan_online_continuation, plan_online_horizon,
+    TacticQOnlineActionSurface, TacticQOnlineAdmission, TacticQOnlineAdmissionTiming,
+    TacticQOnlineBranchRequest, TacticQOnlineBranchSelection, TacticQOnlineContinuationPlan,
+    TacticQOnlineContinuationRequest, TacticQOnlineContinuationSelection,
+    TacticQOnlineContinuationSelectionRequest, TacticQOnlineDecisionPlan,
+    TacticQOnlineDecisionRequest, TacticQOnlineFrontierStrategy, TacticQOnlineHorizonPlan,
+    TacticQOnlineLeaseMode, TacticQOnlinePolicyUpdate, TacticQOnlineProposalLease,
+    online_tactic_fits_horizon, plan_online_continuation, plan_online_horizon,
 };

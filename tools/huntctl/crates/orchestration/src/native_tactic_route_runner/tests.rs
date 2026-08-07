@@ -1734,7 +1734,7 @@ fn promoted_guarded_tactics_join_without_removing_primitive_actions() {
         },
     )
     .unwrap();
-    let scheduler_actions = applicable_parameterized_descriptors_for_state(
+    let scheduler_surface = parameterized_action_surface_for_state(
         &campaign,
         &FactRegistry::canonical(),
         11,
@@ -1747,7 +1747,8 @@ fn promoted_guarded_tactics_join_without_removing_primitive_actions() {
     )
     .unwrap();
     assert!(
-        scheduler_actions
+        scheduler_surface
+            .applicable_actions
             .iter()
             .any(|descriptor| descriptor.option_id.starts_with("promoted/"))
     );

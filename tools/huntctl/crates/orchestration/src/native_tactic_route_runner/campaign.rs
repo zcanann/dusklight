@@ -473,7 +473,7 @@ pub(super) fn run_seed(
             None
         } else {
             campaign
-                .select_online_continuation(
+                .restore_online_continuation(
                     TacticQOnlineContinuationSelectionRequest {
                         continuation: continuation_request,
                         seed,
@@ -481,36 +481,41 @@ pub(super) fn run_seed(
                         maximum_route_frames: maximum_frontier_frames,
                         goal_distance_feature: encoder.goal_distance_feature(),
                     },
+                    lane.episode_group(next_episode)?,
+                    registry,
                     &[],
                     &encode,
-                    &|state| {
-                        applicable_parameterized_descriptors_for_state(
-                            &campaign,
+                    &|campaign, state| {
+                        parameterized_action_surface_for_state(
+                            campaign,
                             registry,
                             seed,
                             campaign.decision_index,
                             state,
                             encoder,
-                            u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                            u32::try_from(maximum_tactic_ticks).map_err(|error| {
+                                TacticQCampaignError::Frontier(error.to_string())
+                            })?,
                             action_schema_sha256,
                             &active_tactics,
                         )
+                        .map_err(|error| TacticQCampaignError::Frontier(error.to_string()))
                     },
                 )
                 .map_err(route_error)?
         };
+        let graph_scheduling_micros = elapsed_micros(graph_scheduling_started.elapsed());
+        record_orchestration_detail(
+            &mut timing,
+            OrchestrationPhase::GraphSchedulingAndLeasing,
+            graph_scheduling_micros,
+        )?;
         if let Some(continuation) = continuation {
-            let branch_started = Instant::now();
             episode = next_episode;
             let branch_acquisition_context = continuation.continuation;
             active_acquisition_rank = branch_acquisition_context.acquisition_rank;
             let demonstration_branch = branch_acquisition_context.demonstration;
             let selected_branch = continuation.branch;
-            record_orchestration_detail(
-                &mut timing,
-                OrchestrationPhase::GraphSchedulingAndLeasing,
-                elapsed_micros(graph_scheduling_started.elapsed()),
-            )?;
             let selected_uncovered_demonstration_frontier = demonstration_branch
                 && demonstration_frontier_states
                     .contains(&selected_branch.logical_frontier.state_sha256)
@@ -528,42 +533,9 @@ pub(super) fn run_seed(
                     acquisition.exact_terminal_ticks_to_go,
                 )
             });
-            let action_catalog_started = Instant::now();
-            let branch_proposals = parameterized_catalog_for_state_with_promoted(
-                seed,
-                campaign.decision_index,
-                &selected_branch.state,
-                encoder,
-                u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
-                parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
-                action_schema_sha256,
-                &active_tactics,
-            )?;
-            record_orchestration_detail(
-                &mut timing,
-                OrchestrationPhase::ActionCatalogConstruction,
-                elapsed_micros(action_catalog_started.elapsed()),
-            )?;
-            let branch_restore_started = Instant::now();
-            campaign
-                .restore_branch(
-                    &selected_branch,
-                    lane.episode_group(episode)?,
-                    registry,
-                    &branch_proposals.catalog,
-                    &branch_proposals.blueprints,
-                    |_| true,
-                )
-                .map_err(route_error)?;
-            record_orchestration_detail(
-                &mut timing,
-                OrchestrationPhase::GraphSchedulingAndLeasing,
-                elapsed_micros(branch_restore_started.elapsed()),
-            )?;
-            let branch_micros = elapsed_micros(branch_started.elapsed());
             timing.checkpoint_branching_micros = timing
                 .checkpoint_branching_micros
-                .saturating_add(branch_micros);
+                .saturating_add(graph_scheduling_micros);
         }
 
         // Reserve horizon for the tactic Q actually selected at this state,
@@ -677,7 +649,6 @@ pub(super) fn run_seed(
                         selected_maximum_ticks,
                     } => selected_maximum_ticks,
                 };
-            let branch_started = Instant::now();
             episode = episode
                 .checked_add(1)
                 .ok_or_else(|| route_message("episode counter overflowed"))?;
@@ -708,7 +679,7 @@ pub(super) fn run_seed(
             .map_err(route_error)?;
             let graph_scheduling_started = Instant::now();
             let continuation = campaign
-                .select_online_continuation(
+                .restore_online_continuation(
                     TacticQOnlineContinuationSelectionRequest {
                         continuation: continuation_request,
                         seed,
@@ -716,20 +687,25 @@ pub(super) fn run_seed(
                         maximum_route_frames: maximum_frontier_frames,
                         goal_distance_feature: encoder.goal_distance_feature(),
                     },
+                    lane.episode_group(episode)?,
+                    registry,
                     &[],
                     &encode,
-                    &|state| {
-                        applicable_parameterized_descriptors_for_state(
-                            &campaign,
+                    &|campaign, state| {
+                        parameterized_action_surface_for_state(
+                            campaign,
                             registry,
                             seed,
                             campaign.decision_index,
                             state,
                             encoder,
-                            u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                            u32::try_from(maximum_tactic_ticks).map_err(|error| {
+                                TacticQCampaignError::Frontier(error.to_string())
+                            })?,
                             action_schema_sha256,
                             &active_tactics,
                         )
+                        .map_err(|error| TacticQCampaignError::Frontier(error.to_string()))
                     },
                 )
                 .map_err(route_error)?
@@ -760,39 +736,7 @@ pub(super) fn run_seed(
                     acquisition.exact_terminal_ticks_to_go,
                 )
             });
-            let action_catalog_started = Instant::now();
-            let branch_proposals = parameterized_catalog_for_state_with_promoted(
-                seed,
-                campaign.decision_index,
-                &selected_branch.state,
-                encoder,
-                u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
-                parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
-                action_schema_sha256,
-                &active_tactics,
-            )?;
-            record_orchestration_detail(
-                &mut timing,
-                OrchestrationPhase::ActionCatalogConstruction,
-                elapsed_micros(action_catalog_started.elapsed()),
-            )?;
-            let branch_restore_started = Instant::now();
-            campaign
-                .restore_branch(
-                    &selected_branch,
-                    lane.episode_group(episode)?,
-                    registry,
-                    &branch_proposals.catalog,
-                    &branch_proposals.blueprints,
-                    |_| true,
-                )
-                .map_err(route_error)?;
-            record_orchestration_detail(
-                &mut timing,
-                OrchestrationPhase::GraphSchedulingAndLeasing,
-                elapsed_micros(branch_restore_started.elapsed()),
-            )?;
-            let branch_micros = elapsed_micros(branch_started.elapsed());
+            let branch_micros = elapsed_micros(graph_scheduling_started.elapsed());
             timing.checkpoint_branching_micros = timing
                 .checkpoint_branching_micros
                 .saturating_add(branch_micros);
@@ -804,20 +748,6 @@ pub(super) fn run_seed(
             .frames
             .len()
             .saturating_sub(source_frame as usize) as u64;
-        let eligible_descriptors = proposal_batch
-            .ranking
-            .choices
-            .iter()
-            .filter(|choice| {
-                choice.applicable
-                    && selected_tactic_fits_horizon(
-                        suffix_ticks,
-                        choice.duration.maximum_ticks,
-                        horizon,
-                    )
-            })
-            .map(|choice| choice.descriptor.clone())
-            .collect::<Vec<_>>();
         let source_snapshot = campaign.current.snapshot.clone();
         let source_snapshot_sha256 = source_snapshot.content_sha256().map_err(route_error)?;
         let source_route_tape = campaign.route_tape.clone();
@@ -850,15 +780,26 @@ pub(super) fn run_seed(
         } else {
             TacticQOnlineLeaseMode::Exploration
         };
-        let online_lease = campaign
-            .lease_online_batch(
+        let online_lease = match campaign
+            .prepare_online_decision(
                 proposal_batch,
-                &eligible_descriptors,
-                config.execution_plan.proposal_width_per_decision,
-                consumed_learner_snapshot.sha256,
-                lease_mode,
+                TacticQOnlineDecisionRequest {
+                    suffix_ticks,
+                    horizon,
+                    maximum_proposals: config.execution_plan.proposal_width_per_decision,
+                    learner_model_sha256: consumed_learner_snapshot.sha256,
+                    lease_mode,
+                },
             )
-            .map_err(route_error)?;
+            .map_err(route_error)?
+        {
+            TacticQOnlineDecisionPlan::Execute(lease) => lease,
+            TacticQOnlineDecisionPlan::RestoreCheckpoint { .. } => {
+                return Err(route_message(
+                    "online decision no longer fits the horizon after its branch was fixed",
+                ));
+            }
+        };
         let proposal_batch = online_lease.batch;
         let proposal_leases = online_lease.leases;
         let scheduler_decision = online_lease.scheduler_decision;
