@@ -3,10 +3,9 @@
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_learning::tactic_macro_promotion::{
-    DiscoveredMacroCandidate, MacroComparisonEvidence, MacroDiscoveryBasis,
-    MacroEntryObservation, MacroPromotionStatus, MacroSourceProvenance,
-    TACTIC_MACRO_DISCOVERY_SCHEMA_V4, TACTIC_MACRO_DISCOVERY_SCHEMA_V5, TacticMacroComponent,
-    TacticMacroPromotionRegistry,
+    DiscoveredMacroCandidate, MacroComparisonEvidence, MacroDiscoveryBasis, MacroEntryObservation,
+    MacroPromotionStatus, MacroSourceProvenance, TACTIC_MACRO_DISCOVERY_SCHEMA_V4,
+    TACTIC_MACRO_DISCOVERY_SCHEMA_V5, TacticMacroComponent, TacticMacroPromotionRegistry,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
