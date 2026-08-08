@@ -35,6 +35,49 @@ fn graph_action_is_schedulable(
     })
 }
 
+fn completed_executable_action_target(
+    graph: &StateGraph,
+    node_id: ExactStateId,
+    descriptor: &OptionActionDescriptor,
+) -> Result<Option<(Digest, ExactStateId)>, TacticQCampaignError> {
+    let node = graph
+        .node(node_id)
+        .ok_or(TacticQCampaignError::InvalidState(
+            "completed-action source graph node disappeared",
+        ))?;
+    let Some(expansion) = node
+        .outgoing_expansions
+        .iter()
+        .filter_map(|identity| graph.expansion(*identity))
+        .find(|expansion| expansion.action == *descriptor)
+    else {
+        return Ok(None);
+    };
+    if !matches!(
+        expansion.status,
+        crate::state_graph::ActionExpansionStatus::Completed {
+            authority: crate::state_graph::ExpansionEvidenceAuthority::Executable,
+            ..
+        }
+    ) {
+        return Ok(None);
+    }
+    let Some(target) = expansion.target else {
+        return Err(TacticQCampaignError::InvalidState(
+            "completed executable expansion has no target",
+        ));
+    };
+    let target_node = graph
+        .node(target)
+        .ok_or(TacticQCampaignError::InvalidState(
+            "completed executable expansion target disappeared",
+        ))?;
+    Ok(target_node
+        .restoration
+        .executable
+        .then_some((expansion.identity_sha256, target)))
+}
+
 fn graph_node_has_schedulable_action(
     graph: &StateGraph,
     node_id: ExactStateId,
@@ -324,6 +367,16 @@ pub struct TacticRestorationContract {
 }
 
 impl TacticQCampaign {
+    fn current_exact_graph_state(&self) -> Result<ExactStateId, TacticQCampaignError> {
+        Ok(crate::state_graph::ExactStateId {
+            route_checkpoint_sha256: route_checkpoint(
+                self.root_checkpoint_sha256,
+                &self.route_tape,
+            )?,
+            state_sha256: self.current.snapshot_sha256,
+        })
+    }
+
     pub fn current_restoration_contract(
         &self,
     ) -> Result<TacticRestorationContract, TacticQCampaignError> {
@@ -590,14 +643,64 @@ impl TacticQCampaign {
         let Some(graph) = self.state_graph.as_ref() else {
             return Ok(true);
         };
-        let source = crate::state_graph::ExactStateId {
-            route_checkpoint_sha256: route_checkpoint(
-                self.root_checkpoint_sha256,
-                &self.route_tape,
-            )?,
-            state_sha256: self.current.snapshot_sha256,
-        };
+        let source = self.current_exact_graph_state()?;
         graph_action_is_schedulable(graph, source, self.decision_index, descriptor)
+    }
+
+    pub(crate) fn current_completed_action_target(
+        &self,
+        descriptor: &OptionActionDescriptor,
+    ) -> Result<Option<(Digest, ExactStateId)>, TacticQCampaignError> {
+        let Some(graph) = self.state_graph.as_ref() else {
+            return Ok(None);
+        };
+        completed_executable_action_target(graph, self.current_exact_graph_state()?, descriptor)
+    }
+
+    /// A learned policy may follow completed executable work without leasing or
+    /// rerunning it. The target remains route-exact and is restored through the
+    /// same authenticated graph checkpoint contract as any other frontier.
+    pub(crate) fn current_completed_action_traversal(
+        &self,
+        descriptor: &OptionActionDescriptor,
+    ) -> Result<Option<(Digest, TacticCampaignBranch)>, TacticQCampaignError> {
+        let Some((expansion_sha256, target)) = self.current_completed_action_target(descriptor)?
+        else {
+            return Ok(None);
+        };
+        let graph = self.state_graph()?;
+        if graph.node(target).is_some_and(|node| node.terminal) {
+            return Ok(None);
+        }
+        Ok(Some((
+            expansion_sha256,
+            self.exact_frontier_branch(target)?,
+        )))
+    }
+
+    pub(crate) fn current_action_is_exploration_selectable(
+        &self,
+        descriptor: &OptionActionDescriptor,
+    ) -> Result<bool, TacticQCampaignError> {
+        if self.current_action_is_schedulable(descriptor)? {
+            return Ok(true);
+        }
+        Ok(self.current_completed_action_target(descriptor)?.is_some())
+    }
+
+    pub(crate) fn current_completed_terminal_action(
+        &self,
+        descriptor: &OptionActionDescriptor,
+    ) -> Result<Option<Digest>, TacticQCampaignError> {
+        let Some((expansion_sha256, target)) = self.current_completed_action_target(descriptor)?
+        else {
+            return Ok(None);
+        };
+        let graph = self.state_graph()?;
+        Ok(graph
+            .node(target)
+            .is_some_and(|node| node.terminal)
+            .then_some(expansion_sha256))
     }
 
     /// A locality hint may accelerate rank-zero optimization only when its

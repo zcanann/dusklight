@@ -78,11 +78,12 @@ target is 120.
   decisions and 262 unique useful graph expansions, and served all 117
   checkpoint-owned decisions locally with zero direct-restore fallback replay.
   Goal-reachability controlled every primary in seeds 130363, 155921, and
-  181081. The run also exposed the first concrete critic error at the same root
-  checkpoint: it selected a 24-tick short curve predicted at 13.70 progress per
-  tick but realized at 10.83, while its 40-tick seek-target sibling was predicted
-  at 2.39 and realized 18.09. This is a learning/ranking defect, not a throughput
-  problem.
+  181081. The run also exposed an apparent ranking failure at the same root
+  checkpoint: its trace selected a 24-tick short curve while a completed 40-tick
+  seek-target sibling had realized 18.09 progress per tick. Reconstructing the
+  exact replay-198 model showed that it actually ranked that seek-target first;
+  the exploration mask had marked the completed expansion inapplicable. The
+  learner knew the better move but the graph could not follow it.
 - That audit found a second validity defect: models fitted at replay revisions
   70, 134, and 198 could inherit deployment calibration computed at older
   power-of-two prefixes 64, 128, and 128. Learner snapshot v6 now binds every
@@ -160,14 +161,22 @@ incumbent from a nonconsecutive restored checkpoint.
   replay, and a 220-tick retained best. It did not preserve the incomplete
   attempt's 214-tick route, so the first wrong same-state ranking was extracted
   above instead of adding volume.
-- [ ] Prove that authentic sibling feedback changes later rankings across
-  parameterized action instances. Reproduce the sealed root misranking offline:
-  after observing the 40-tick seek-target sibling's 18.09 realized progress per
-  tick, a later immutable learner revision must rank compatible instances from
-  that evidence or explicitly withhold authority because uncertainty remains.
-  Calibration and the fitted model must come from the same replay revision.
-  Add a deterministic production-path regression before any further native
-  campaign; do not special-case Ordon coordinates, action IDs, or route phases.
+- [x] Make learned completed graph edges executable policy choices. Ordinary
+  exploration now ranks completed executable actions alongside new work; when
+  one wins, the production loop restores its exact retained target and replans
+  there without leasing or rerunning the expansion. A planning cycle follows
+  each completed edge at most once, so an exhausted known terminal path
+  backtracks and exposes the next learned-ranked sibling. Deterministic
+  production regressions prove restoration, composition, backtracking, and the
+  unchanged unique-expansion lease invariant.
+- [ ] Prove that authentic sibling feedback changes later generalized rankings
+  across parameterized action instances. From one immutable replay prefix,
+  identify the causal before/after rows that promote a compatible action family
+  member at a held-out exact state, or explicitly withhold authority because
+  uncertainty remains. Calibration and the fitted model must come from the same
+  replay revision. Do not special-case Ordon coordinates, action IDs, or route
+  phases, and do not run another native campaign until this production-path
+  regression passes.
 - [ ] Discover and cold-replay a zero-shot route of 124 ticks or less twice with
   identical terminal identity and first-hit tick.
 - [ ] Reach 123 ticks or less and then 120 ticks or less with unchanged generic

@@ -582,14 +582,19 @@ pub(super) fn run_seed(
         // Restoring a branch can change the selected tactic. Recheck until the
         // preview fits; the periodic root sample guarantees convergence because
         // every catalog entry is itself bounded by the exploration horizon.
-        let selection_lease_mode = if active_paired_terminal_return.is_some() {
-            TacticQOnlineLeaseMode::PolicyEvaluation {
-                proposal_policy: config.execution_plan.proposal_policy,
-            }
-        } else {
-            TacticQOnlineLeaseMode::Exploration
-        };
-        let (proposal_batch, proposal_catalog, proposal_blueprints, proposal_feedback) = loop {
+        let paired_terminal_return_seed_pending = should_start_paired_terminal_return(
+            config.execution_plan.paired_terminal_return_evaluation,
+            active_paired_terminal_return.is_some(),
+        );
+        let selection_lease_mode =
+            if active_paired_terminal_return.is_some() || paired_terminal_return_seed_pending {
+                TacticQOnlineLeaseMode::PolicyEvaluation {
+                    proposal_policy: config.execution_plan.proposal_policy,
+                }
+            } else {
+                TacticQOnlineLeaseMode::Exploration
+            };
+        let (online_lease, proposal_catalog, proposal_blueprints, proposal_feedback) = loop {
             let suffix_ticks = campaign
                 .route_tape
                 .frames
@@ -616,25 +621,23 @@ pub(super) fn run_seed(
             let proposal_catalog = Arc::new(proposals.catalog);
             let proposal_blueprints = Arc::new(proposals.blueprints);
             let selection_started = Instant::now();
-            let preview = online
-                .select_action_batch(
-                    &campaign,
-                    &proposal_catalog,
-                    &proposal_blueprints,
-                    &encode,
-                    TacticQOnlineActionSelectionRequest {
-                        family_schema_sha256: action_schema_sha256,
-                        maximum_proposals: config.execution_plan.proposal_width_per_decision,
-                        acquisition_partition: active_acquisition_rank,
-                        policy: config.execution_plan.proposal_policy,
-                        goal_distance_feature: Some(encoder.goal_distance_feature()),
-                        force_exploration: demonstration_intervention_pending
-                            && config.execution_plan.proposal_policy
-                                != TacticProposalPolicy::RandomValid,
-                        lease_mode: selection_lease_mode,
-                    },
-                )
-                .map_err(route_error)?;
+            let preview = online.select_action_batch(
+                &campaign,
+                &proposal_catalog,
+                &proposal_blueprints,
+                &encode,
+                TacticQOnlineActionSelectionRequest {
+                    family_schema_sha256: action_schema_sha256,
+                    maximum_proposals: config.execution_plan.proposal_width_per_decision,
+                    acquisition_partition: active_acquisition_rank,
+                    policy: config.execution_plan.proposal_policy,
+                    goal_distance_feature: Some(encoder.goal_distance_feature()),
+                    force_exploration: demonstration_intervention_pending
+                        && config.execution_plan.proposal_policy
+                            != TacticProposalPolicy::RandomValid,
+                    lease_mode: selection_lease_mode,
+                },
+            );
             let selection_micros = elapsed_micros(selection_started.elapsed());
             timing.tactic_selection_micros = timing
                 .tactic_selection_micros
@@ -644,6 +647,7 @@ pub(super) fn run_seed(
                 OrchestrationPhase::TacticSelection,
                 selection_micros,
             )?;
+            let preview = preview.map_err(route_error)?;
             if active_paired_terminal_return.is_none()
                 && let Some(session) = replay_session.as_mut()
             {
@@ -686,12 +690,84 @@ pub(super) fn run_seed(
             let selected_maximum_ticks =
                 match plan_online_horizon(preview, suffix_ticks, horizon).map_err(route_error)? {
                     TacticQOnlineHorizonPlan::Execute(batch) => {
-                        break (
-                            batch,
-                            proposal_catalog,
-                            proposal_blueprints,
-                            proposal_feedback,
-                        );
+                        let planning_started = Instant::now();
+                        match online
+                            .prepare_decision(
+                                &mut campaign,
+                                batch,
+                                TacticQOnlineDecisionRequest {
+                                    suffix_ticks,
+                                    horizon,
+                                    maximum_proposals: config
+                                        .execution_plan
+                                        .proposal_width_per_decision,
+                                    learner_model_sha256: consumed_learner_snapshot.sha256,
+                                    lease_mode: selection_lease_mode,
+                                },
+                            )
+                            .map_err(route_error)?
+                        {
+                            TacticQOnlineDecisionPlan::Execute(lease) => {
+                                record_orchestration_detail(
+                                    &mut timing,
+                                    OrchestrationPhase::GraphSchedulingAndLeasing,
+                                    elapsed_micros(planning_started.elapsed()),
+                                )?;
+                                break (
+                                    lease,
+                                    proposal_catalog,
+                                    proposal_blueprints,
+                                    proposal_feedback,
+                                );
+                            }
+                            TacticQOnlineDecisionPlan::FollowCompletedExpansion(traversal) => {
+                                episode = episode
+                                    .checked_add(1)
+                                    .ok_or_else(|| route_message("episode counter overflowed"))?;
+                                let target_surface = parameterized_action_surface_for_state(
+                                    &campaign,
+                                    registry,
+                                    seed,
+                                    campaign.decision_index,
+                                    &traversal.target.state,
+                                    encoder,
+                                    u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                                    action_schema_sha256,
+                                    &active_tactics,
+                                )?;
+                                campaign
+                                    .restore_branch(
+                                        &traversal.target,
+                                        lane.episode_group(episode)?,
+                                        registry,
+                                        &target_surface.catalog,
+                                        &target_surface.blueprints,
+                                        |_| true,
+                                    )
+                                    .map_err(route_error)?;
+                                active_episode_ticks = 0;
+                                demonstration_intervention_pending = false;
+                                let traversal_micros = elapsed_micros(planning_started.elapsed());
+                                timing.checkpoint_branching_micros = timing
+                                    .checkpoint_branching_micros
+                                    .saturating_add(traversal_micros);
+                                record_orchestration_detail(
+                                    &mut timing,
+                                    OrchestrationPhase::GraphSchedulingAndLeasing,
+                                    traversal_micros,
+                                )?;
+                                continue;
+                            }
+                            TacticQOnlineDecisionPlan::BacktrackCompletedTerminal {
+                                selected_maximum_ticks,
+                                ..
+                            } => selected_maximum_ticks,
+                            TacticQOnlineDecisionPlan::RestoreCheckpoint { .. } => {
+                                return Err(route_message(
+                                    "online decision no longer fits the horizon after preview",
+                                ));
+                            }
+                        }
                     }
                     TacticQOnlineHorizonPlan::RestoreCheckpoint {
                         selected_maximum_ticks,
@@ -796,22 +872,13 @@ pub(super) fn run_seed(
                 .saturating_add(branch_micros);
         };
         demonstration_intervention_pending = false;
-        let graph_leasing_started = Instant::now();
-        let suffix_ticks = campaign
-            .route_tape
-            .frames
-            .len()
-            .saturating_sub(source_frame as usize) as u64;
         let source_snapshot = campaign.current.snapshot.clone();
         let source_snapshot_sha256 = source_snapshot.content_sha256().map_err(route_error)?;
         let source_route_tape = campaign.route_tape.clone();
         let restoration = campaign
             .current_restoration_contract()
             .map_err(route_error)?;
-        let paired_terminal_return_seed = if should_start_paired_terminal_return(
-            config.execution_plan.paired_terminal_return_evaluation,
-            active_paired_terminal_return.is_some(),
-        ) {
+        let paired_terminal_return_seed = if paired_terminal_return_seed_pending {
             PairedTerminalReturnSeed::from_pre_execution_proposals(
                 execution_plan_sha256,
                 campaign.decision_index,
@@ -820,40 +887,10 @@ pub(super) fn run_seed(
                 branch_acquisition.as_ref(),
                 consumed_learner_snapshot.sha256,
                 consumed_learner_snapshot.replay_revision,
-                &proposal_batch.proposals,
+                &online_lease.batch.proposals,
             )
         } else {
             None
-        };
-        let causal_policy_evaluation =
-            active_paired_terminal_return.is_some() || paired_terminal_return_seed.is_some();
-        let lease_mode = if causal_policy_evaluation {
-            TacticQOnlineLeaseMode::PolicyEvaluation {
-                proposal_policy: config.execution_plan.proposal_policy,
-            }
-        } else {
-            TacticQOnlineLeaseMode::Exploration
-        };
-        let online_lease = match online
-            .prepare_decision(
-                &mut campaign,
-                proposal_batch,
-                TacticQOnlineDecisionRequest {
-                    suffix_ticks,
-                    horizon,
-                    maximum_proposals: config.execution_plan.proposal_width_per_decision,
-                    learner_model_sha256: consumed_learner_snapshot.sha256,
-                    lease_mode,
-                },
-            )
-            .map_err(route_error)?
-        {
-            TacticQOnlineDecisionPlan::Execute(lease) => lease,
-            TacticQOnlineDecisionPlan::RestoreCheckpoint { .. } => {
-                return Err(route_message(
-                    "online decision no longer fits the horizon after its branch was fixed",
-                ));
-            }
         };
         let proposal_batch = online_lease.batch;
         let proposal_leases = online_lease.leases;
@@ -871,12 +908,6 @@ pub(super) fn run_seed(
             campaign.decision_index,
             &proposal_leases,
         )?;
-        record_orchestration_detail(
-            &mut timing,
-            OrchestrationPhase::GraphSchedulingAndLeasing,
-            elapsed_micros(graph_leasing_started.elapsed()),
-        )?;
-
         let decision_index = campaign.decision_index;
         inject_tactic_fault(
             config,

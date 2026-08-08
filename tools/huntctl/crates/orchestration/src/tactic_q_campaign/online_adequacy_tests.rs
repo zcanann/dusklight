@@ -537,24 +537,64 @@ fn run_one_step(
     episode_shard_sha256: Digest,
 ) -> String {
     let registry = FactRegistry::canonical();
-    let batch = decide_production_batch(online, campaign, catalog, 4);
-    let leased = match online
-        .prepare_decision(
-            campaign,
-            batch,
-            TacticQOnlineDecisionRequest {
-                suffix_ticks: 0,
-                horizon: 32,
-                maximum_proposals: 1,
-                learner_model_sha256: LEARNER_SNAPSHOT,
-                lease_mode: TacticQOnlineLeaseMode::Exploration,
-            },
-        )
-        .unwrap()
-    {
-        TacticQOnlineDecisionPlan::Execute(leased) => leased,
-        TacticQOnlineDecisionPlan::RestoreCheckpoint { .. } => {
-            panic!("one-tick adequacy actions must fit the rollout horizon")
+    let mut completed_edges_followed = 0_usize;
+    let leased = loop {
+        let batch = decide_production_batch(online, campaign, catalog, 4);
+        match online
+            .prepare_decision(
+                campaign,
+                batch,
+                TacticQOnlineDecisionRequest {
+                    suffix_ticks: 0,
+                    horizon: 32,
+                    maximum_proposals: 1,
+                    learner_model_sha256: LEARNER_SNAPSHOT,
+                    lease_mode: TacticQOnlineLeaseMode::Exploration,
+                },
+            )
+            .unwrap()
+        {
+            TacticQOnlineDecisionPlan::Execute(leased) => break leased,
+            TacticQOnlineDecisionPlan::FollowCompletedExpansion(traversal) => {
+                completed_edges_followed += 1;
+                assert!(
+                    completed_edges_followed <= 32,
+                    "completed graph traversal failed to reach new work"
+                );
+                let target_state = state_from_facts(&traversal.target.state);
+                let next_episode_group = campaign
+                    .episode_groups
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(campaign.episode_group))
+                    .max()
+                    .unwrap()
+                    + 1;
+                campaign
+                    .restore_branch(
+                        &traversal.target,
+                        next_episode_group,
+                        &registry,
+                        catalog,
+                        &[],
+                        |description| target_state.applicable(&description.option.option_id),
+                    )
+                    .unwrap();
+            }
+            TacticQOnlineDecisionPlan::BacktrackCompletedTerminal { .. } => {
+                let next_episode_group = campaign
+                    .episode_groups
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(campaign.episode_group))
+                    .max()
+                    .unwrap()
+                    + 1;
+                restore_next_scheduled_frontier(online, campaign, catalog, next_episode_group, 0);
+            }
+            TacticQOnlineDecisionPlan::RestoreCheckpoint { .. } => {
+                panic!("one-tick adequacy actions must fit the rollout horizon")
+            }
         }
     };
     assert_eq!(
@@ -647,7 +687,7 @@ fn restore_next_scheduled_frontier(
         .continue_rollout(
             campaign,
             TacticQOnlineRolloutRequest {
-                force_branch: false,
+                force_branch: true,
                 active_acquisition_rank: acquisition_rank,
                 next_acquisition_rank: acquisition_rank,
                 current_rollout_ticks: 0,
@@ -769,6 +809,12 @@ fn ordinary_exploration_preserves_the_policy_selected_action() {
         .unwrap()
     {
         TacticQOnlineDecisionPlan::Execute(leased) => leased,
+        TacticQOnlineDecisionPlan::FollowCompletedExpansion(_) => {
+            panic!("cold exploration unexpectedly selected a completed graph edge")
+        }
+        TacticQOnlineDecisionPlan::BacktrackCompletedTerminal { .. } => {
+            panic!("cold exploration unexpectedly selected a completed terminal edge")
+        }
         TacticQOnlineDecisionPlan::RestoreCheckpoint { .. } => {
             panic!("the selected one-tick action must fit the rollout horizon")
         }
@@ -782,6 +828,100 @@ fn ordinary_exploration_preserves_the_policy_selected_action() {
         .expect("ordinary exploration must still use an authenticated graph lease");
     assert_eq!(scheduler.ranked_source_queue.len(), 1);
     assert_eq!(scheduler.evaluated_expansion_sha256.len(), 1);
+}
+
+#[test]
+fn completed_policy_edge_is_followed_once_then_backtracking_selects_new_work() {
+    let (base, episode_shard_sha256) = base_facts();
+    let catalog = catalog();
+    let mut campaign = campaign_with_cold_primary(&base, &catalog, AdequacyState::Start, "east");
+    let mut online = TacticQOnlineLearningController::default();
+    assert_eq!(
+        run_one_step(&mut online, &mut campaign, &catalog, episode_shard_sha256,),
+        "east"
+    );
+    let root = campaign
+        .sample_root_and_frontier(0, 0, &[], usize::MAX)
+        .unwrap()[0]
+        .clone();
+    campaign
+        .restore_branch(
+            &root,
+            1,
+            &FactRegistry::canonical(),
+            &catalog,
+            &[],
+            |description| AdequacyState::Start.applicable(&description.option.option_id),
+        )
+        .unwrap();
+
+    let east_only = TacticAssetCatalog::new(vec![catalog.entry("east").unwrap().clone()]).unwrap();
+    let batch = online
+        .select_action_batch(
+            &campaign,
+            &east_only,
+            &[],
+            &encode,
+            TacticQOnlineActionSelectionRequest {
+                family_schema_sha256: ACTION_SCHEMA,
+                maximum_proposals: 1,
+                acquisition_partition: 0,
+                policy: TacticProposalPolicy::Learned,
+                goal_distance_feature: None,
+                force_exploration: false,
+                lease_mode: TacticQOnlineLeaseMode::Exploration,
+            },
+        )
+        .unwrap();
+    let traversal = match online
+        .prepare_decision(
+            &mut campaign,
+            batch,
+            TacticQOnlineDecisionRequest {
+                suffix_ticks: 0,
+                horizon: 32,
+                maximum_proposals: 1,
+                learner_model_sha256: LEARNER_SNAPSHOT,
+                lease_mode: TacticQOnlineLeaseMode::Exploration,
+            },
+        )
+        .unwrap()
+    {
+        TacticQOnlineDecisionPlan::FollowCompletedExpansion(traversal) => traversal,
+        other => panic!("completed policy edge was not followed: {other:?}"),
+    };
+    assert_eq!(traversal.batch.proposals[0].descriptor.option_id, "east");
+    let target_state = state_from_facts(&traversal.target.state);
+    campaign
+        .restore_branch(
+            &traversal.target,
+            2,
+            &FactRegistry::canonical(),
+            &catalog,
+            &[],
+            |description| target_state.applicable(&description.option.option_id),
+        )
+        .unwrap();
+    assert_eq!(
+        state_from_facts(&campaign.current.snapshot),
+        AdequacyState::Detour(0)
+    );
+
+    campaign
+        .restore_branch(
+            &root,
+            3,
+            &FactRegistry::canonical(),
+            &catalog,
+            &[],
+            |description| AdequacyState::Start.applicable(&description.option.option_id),
+        )
+        .unwrap();
+    let next = decide_production_batch(&mut online, &campaign, &catalog, 1);
+    assert_eq!(
+        next.proposals[0].descriptor.option_id, "north",
+        "the planning cycle must not follow the same completed edge twice"
+    );
 }
 
 #[test]

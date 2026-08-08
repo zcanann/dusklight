@@ -43,6 +43,13 @@ pub struct TacticQOnlineProposalLease {
     pub timing: TacticGraphSchedulingTiming,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct TacticQOnlineCompletedExpansionTraversal {
+    pub batch: TacticQProposalBatch,
+    pub expansion_sha256: Digest,
+    pub target: TacticCampaignBranch,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TacticQOnlineDecisionRequest {
     pub suffix_ticks: u64,
@@ -55,7 +62,14 @@ pub struct TacticQOnlineDecisionRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TacticQOnlineDecisionPlan {
     Execute(TacticQOnlineProposalLease),
-    RestoreCheckpoint { selected_maximum_ticks: u32 },
+    FollowCompletedExpansion(TacticQOnlineCompletedExpansionTraversal),
+    BacktrackCompletedTerminal {
+        expansion_sha256: Digest,
+        selected_maximum_ticks: u32,
+    },
+    RestoreCheckpoint {
+        selected_maximum_ticks: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -182,6 +196,7 @@ pub struct TacticQOnlineTacticUpdate {
 #[derive(Clone, Debug, Default)]
 pub struct TacticQOnlineLearningController {
     pending_decision_index: Option<u64>,
+    followed_completed_expansions: BTreeSet<Digest>,
 }
 
 impl TacticQOnlineLearningController {
@@ -211,18 +226,53 @@ impl TacticQOnlineLearningController {
         F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
     {
         self.require_planning()?;
-        campaign.decide_parameterized_batch_with_policy_and_lease_mode(
-            catalog,
-            blueprints,
-            request.family_schema_sha256,
-            encode,
-            request.maximum_proposals,
-            request.acquisition_partition,
-            request.policy,
-            request.goal_distance_feature,
-            request.force_exploration,
-            request.lease_mode,
-        )
+        let mut proposal_width = request.maximum_proposals;
+        loop {
+            let mut batch = campaign.decide_parameterized_batch_with_policy_and_lease_mode(
+                catalog,
+                blueprints,
+                request.family_schema_sha256,
+                encode,
+                proposal_width,
+                request.acquisition_partition,
+                request.policy,
+                request.goal_distance_feature,
+                request.force_exploration,
+                request.lease_mode,
+            )?;
+            if request.lease_mode == TacticQOnlineLeaseMode::Exploration
+                && !self.followed_completed_expansions.is_empty()
+            {
+                let mut eligible = Vec::with_capacity(batch.proposals.len());
+                for proposal in batch.proposals {
+                    let followed = campaign
+                        .current_completed_action_target(&proposal.descriptor)?
+                        .is_some_and(|(expansion_sha256, _)| {
+                            self.followed_completed_expansions
+                                .contains(&expansion_sha256)
+                        });
+                    if !followed {
+                        eligible.push(proposal);
+                    }
+                }
+                batch.proposals = eligible;
+            }
+            if !batch.proposals.is_empty() {
+                batch.proposals.truncate(request.maximum_proposals);
+                return Ok(batch);
+            }
+            let applicable = batch
+                .ranking
+                .choices
+                .iter()
+                .filter(|choice| choice.applicable)
+                .count();
+            let next_width = proposal_width.saturating_mul(2).min(applicable);
+            if next_width <= proposal_width {
+                return Err(TacticExplorationError::NoApplicableTactic.into());
+            }
+            proposal_width = next_width;
+        }
     }
 
     pub fn continue_rollout<E, F, A>(
@@ -262,8 +312,31 @@ impl TacticQOnlineLearningController {
     ) -> Result<TacticQOnlineDecisionPlan, TacticQCampaignError> {
         self.require_planning()?;
         let plan = campaign.prepare_online_decision(batch, request)?;
-        if matches!(plan, TacticQOnlineDecisionPlan::Execute(_)) {
-            self.pending_decision_index = Some(campaign.decision_index);
+        match &plan {
+            TacticQOnlineDecisionPlan::Execute(_) => {
+                self.pending_decision_index = Some(campaign.decision_index);
+                self.followed_completed_expansions.clear();
+            }
+            TacticQOnlineDecisionPlan::FollowCompletedExpansion(traversal) => {
+                if !self
+                    .followed_completed_expansions
+                    .insert(traversal.expansion_sha256)
+                {
+                    return Err(TacticQCampaignError::InvalidState(
+                        "online planning selected one completed expansion twice",
+                    ));
+                }
+            }
+            TacticQOnlineDecisionPlan::BacktrackCompletedTerminal {
+                expansion_sha256, ..
+            } => {
+                if !self.followed_completed_expansions.insert(*expansion_sha256) {
+                    return Err(TacticQCampaignError::InvalidState(
+                        "online planning selected one completed terminal twice",
+                    ));
+                }
+            }
+            TacticQOnlineDecisionPlan::RestoreCheckpoint { .. } => {}
         }
         Ok(plan)
     }
@@ -485,6 +558,43 @@ impl TacticQCampaign {
                 });
             }
         };
+        if request.lease_mode == TacticQOnlineLeaseMode::Exploration {
+            let primary = batch
+                .proposals
+                .first()
+                .ok_or(TacticQCampaignError::InvalidState(
+                    "online proposal batch is empty",
+                ))?;
+            if let Some((expansion_sha256, target)) =
+                self.current_completed_action_traversal(&primary.descriptor)?
+            {
+                return Ok(TacticQOnlineDecisionPlan::FollowCompletedExpansion(
+                    TacticQOnlineCompletedExpansionTraversal {
+                        batch,
+                        expansion_sha256,
+                        target,
+                    },
+                ));
+            }
+            if let Some(expansion_sha256) =
+                self.current_completed_terminal_action(&primary.descriptor)?
+            {
+                let selected_maximum_ticks = batch
+                    .ranking
+                    .choices
+                    .iter()
+                    .find(|choice| choice.descriptor == primary.descriptor)
+                    .ok_or(TacticQCampaignError::InvalidState(
+                        "completed terminal action is absent from its ranking",
+                    ))?
+                    .duration
+                    .maximum_ticks;
+                return Ok(TacticQOnlineDecisionPlan::BacktrackCompletedTerminal {
+                    expansion_sha256,
+                    selected_maximum_ticks,
+                });
+            }
+        }
         // Action selection belongs to the policy. The graph scheduler may
         // order and lease the selected alternatives, but it must never replace
         // them with another merely-applicable action. Doing so bypasses epsilon,
@@ -494,21 +604,21 @@ impl TacticQCampaign {
             .iter()
             .map(|proposal| &proposal.descriptor)
             .collect::<Vec<_>>();
-        let eligible = batch
-            .ranking
-            .choices
-            .iter()
-            .filter(|choice| {
-                choice.applicable
-                    && selected.contains(&&choice.descriptor)
-                    && online_tactic_fits_horizon(
-                        request.suffix_ticks,
-                        choice.duration.maximum_ticks,
-                        request.horizon,
-                    )
-            })
-            .map(|choice| choice.descriptor.clone())
-            .collect::<Vec<_>>();
+        let mut eligible = Vec::new();
+        for choice in &batch.ranking.choices {
+            if choice.applicable
+                && selected.contains(&&choice.descriptor)
+                && online_tactic_fits_horizon(
+                    request.suffix_ticks,
+                    choice.duration.maximum_ticks,
+                    request.horizon,
+                )
+                && (request.lease_mode != TacticQOnlineLeaseMode::Exploration
+                    || self.current_action_is_schedulable(&choice.descriptor)?)
+            {
+                eligible.push(choice.descriptor.clone());
+            }
+        }
         Ok(TacticQOnlineDecisionPlan::Execute(
             self.lease_online_batch(
                 batch,

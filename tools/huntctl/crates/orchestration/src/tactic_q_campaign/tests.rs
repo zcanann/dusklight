@@ -989,23 +989,41 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             .current_action_is_schedulable(&decision.selected.descriptor)
             .unwrap()
     );
-    assert!(
-        restarted_scheduled
-            .decide_parameterized_batch_with_policy_and_lease_mode::<&'static str, _>(
-                &catalog,
-                &[],
-                Digest([91; 32]),
-                &encode,
-                1,
-                0,
-                TacticProposalPolicy::Learned,
-                None,
-                false,
-                TacticQOnlineLeaseMode::Exploration,
-            )
-            .is_err(),
-        "ordinary exploration must not select an already completed exact expansion"
-    );
+    let reusable = restarted_scheduled
+        .decide_parameterized_batch_with_policy_and_lease_mode::<&'static str, _>(
+            &catalog,
+            &[],
+            Digest([91; 32]),
+            &encode,
+            1,
+            0,
+            TacticProposalPolicy::Learned,
+            None,
+            false,
+            TacticQOnlineLeaseMode::Exploration,
+        )
+        .unwrap();
+    assert_eq!(reusable.proposals[0], decision.selected);
+    match restarted_scheduled
+        .prepare_online_decision(
+            reusable,
+            TacticQOnlineDecisionRequest {
+                suffix_ticks: 0,
+                horizon: 8,
+                maximum_proposals: 1,
+                learner_model_sha256,
+                lease_mode: TacticQOnlineLeaseMode::Exploration,
+            },
+        )
+        .unwrap()
+    {
+        TacticQOnlineDecisionPlan::FollowCompletedExpansion(traversal) => {
+            assert_eq!(traversal.expansion_sha256, leased_expansion);
+            assert_eq!(traversal.target.state, outcome.next_facts);
+            assert_eq!(traversal.target.route_tape, outcome.route_tape);
+        }
+        other => panic!("completed learned action was not followed: {other:?}"),
+    }
     assert!(
         restarted_scheduled
             .decide_parameterized_batch_with_policy::<&'static str, _>(

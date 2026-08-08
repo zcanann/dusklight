@@ -224,7 +224,7 @@ impl TacticQCampaign {
         {
             let applicable = intrinsically_applicable
                 && (lease_mode != TacticQOnlineLeaseMode::Exploration
-                    || self.current_action_is_schedulable(&candidate.descriptor)?);
+                    || self.current_action_is_exploration_selectable(&candidate.descriptor)?);
             choices.push(LearnerActionMaskEntry {
                 choice_id: candidate.choice_id,
                 kind: candidate.kind,
