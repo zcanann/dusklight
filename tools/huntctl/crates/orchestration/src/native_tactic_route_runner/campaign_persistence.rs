@@ -223,6 +223,7 @@ pub(super) fn read_completed_seed_preflight(
             execution_plan_sha256,
             completion.objective_sha256(),
             completion.root_checkpoint_sha256(),
+            completion.root_facts().tape_frame,
         )?;
         return Ok(ValidatedCompletedSeedPreflight {
             result,
@@ -540,11 +541,16 @@ fn validate_completed_seed_against_checkpoint(
         result.best_terminal_tape.as_deref(),
         result.best_authenticated_tick,
     ) {
-        let source_frame = result
-            .trace
-            .first()
-            .map(|decision| decision.before.tape_frame)
-            .ok_or_else(|| route_message("terminal seed result has no source decision"))?;
+        // A later generation can begin its first local decision from an
+        // inherited retained frontier. That decision's tape frame is not the
+        // execution root from which the campaign-best route is measured.
+        // Recover the source frame from the authenticated graph root instead.
+        let source_frame = checkpoint
+            .state_graph
+            .node(checkpoint.state_graph.root())
+            .ok_or_else(|| route_message("completed seed graph has no root state"))?
+            .state
+            .tape_frame;
         let terminal_result =
             TacticQFinalResult::read(Path::new(result_path)).map_err(route_error)?;
         let tape = InputTape::decode(&fs::read(tape_path).map_err(route_error)?)
@@ -564,7 +570,11 @@ fn validate_completed_seed_against_checkpoint(
                 .state_graph
                 .route(best_graph_terminal.route_checkpoint_sha256)
                 != Some(&tape)
-            || authenticated_first_hit_tick(&terminal_result, source_frame) != Some(first_hit_tick)
+            || !completed_terminal_tick_matches(
+                terminal_result.route_tape.frames.len(),
+                source_frame,
+                first_hit_tick,
+            )
         {
             return Err(route_message(
                 "completed tactic best-terminal artifacts belong to another execution plan",
@@ -595,17 +605,13 @@ fn validate_completed_terminal_artifacts(
     execution_plan_sha256: Digest,
     objective_sha256: Digest,
     root_checkpoint_sha256: Digest,
+    root_source_frame: u64,
 ) -> Result<(), NativeTacticRouteRunError> {
     if let (Some(result_path), Some(tape_path), Some(first_hit_tick)) = (
         result.best_terminal_result.as_deref(),
         result.best_terminal_tape.as_deref(),
         result.best_authenticated_tick,
     ) {
-        let source_frame = result
-            .trace
-            .first()
-            .map(|decision| decision.before.tape_frame)
-            .ok_or_else(|| route_message("terminal seed result has no source decision"))?;
         let terminal_result =
             TacticQFinalResult::read(Path::new(result_path)).map_err(route_error)?;
         let tape = InputTape::decode(&fs::read(tape_path).map_err(route_error)?)
@@ -620,7 +626,11 @@ fn validate_completed_terminal_artifacts(
                 != result
                     .best_terminal_route_checkpoint_sha256
                     .ok_or_else(|| route_message("terminal route checkpoint is absent"))?
-            || authenticated_first_hit_tick(&terminal_result, source_frame) != Some(first_hit_tick)
+            || !completed_terminal_tick_matches(
+                terminal_result.route_tape.frames.len(),
+                root_source_frame,
+                first_hit_tick,
+            )
         {
             return Err(route_message(
                 "completed tactic best-terminal artifacts belong to another execution plan",
@@ -648,6 +658,18 @@ fn validate_completed_terminal_artifacts(
     Ok(())
 }
 
+fn completed_terminal_tick_matches(
+    route_frames: usize,
+    root_source_frame: u64,
+    expected_first_hit_tick: u64,
+) -> bool {
+    u64::try_from(route_frames)
+        .ok()
+        .and_then(|frames| frames.checked_sub(root_source_frame))
+        .and_then(|route_ticks| route_ticks.checked_sub(1))
+        == Some(expected_first_hit_tick)
+}
+
 fn authenticated_terminal_origin_matches(
     inherited_terminal_support: bool,
     first_authenticated_decision: Option<u64>,
@@ -662,7 +684,17 @@ fn authenticated_terminal_origin_matches(
 
 #[cfg(test)]
 mod tests {
-    use super::authenticated_terminal_origin_matches;
+    use super::{authenticated_terminal_origin_matches, completed_terminal_tick_matches};
+
+    #[test]
+    fn inherited_frontier_does_not_rebase_campaign_terminal_ticks() {
+        // The terminal artifact is rooted at frame 506 and reaches first hit
+        // after 257 active ticks. A later generation's first local decision
+        // can begin from an inherited frame-546 frontier; that local frame is
+        // not allowed to redefine the artifact's campaign-relative cost.
+        assert!(completed_terminal_tick_matches(764, 506, 257));
+        assert!(!completed_terminal_tick_matches(764, 546, 257));
+    }
 
     #[test]
     fn imported_terminal_support_precedes_native_proposal_discovery() {

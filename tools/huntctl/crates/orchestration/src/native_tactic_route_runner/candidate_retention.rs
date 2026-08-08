@@ -144,15 +144,6 @@ pub(super) fn successful_result_is_better(
     )
 }
 
-pub(super) fn authenticated_first_hit_tick(
-    result: &TacticQFinalResult,
-    source_frame: u64,
-) -> Option<u64> {
-    u64::try_from(result.route_tape.frames.len())
-        .ok()
-        .and_then(|route_frames| route_frames_first_hit_tick(route_frames, source_frame))
-}
-
 pub(super) fn route_frames_first_hit_tick(route_frames: u64, source_frame: u64) -> Option<u64> {
     route_frames
         .checked_sub(source_frame)
