@@ -169,7 +169,7 @@ impl TacticQCampaign {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn decide_parameterized_batch_with_policy_and_lease_mode<E, F>(
+    pub(crate) fn decide_parameterized_batch_with_policy_and_lease_mode<E, F>(
         &self,
         proposal_catalog: &TacticAssetCatalog,
         proposal_blueprints: &[TacticBlueprint],

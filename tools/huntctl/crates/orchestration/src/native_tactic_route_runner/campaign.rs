@@ -439,6 +439,7 @@ pub(super) fn run_seed(
                         acquisition_partition: decision_acquisition_rank,
                         proposal_policy: config.execution_plan.proposal_policy,
                         force_exploration: false,
+                        lease_mode: TacticQOnlineLeaseMode::Exploration,
                     },
                 )?);
                 consumed_learner_snapshot = snapshot;
@@ -665,6 +666,7 @@ pub(super) fn run_seed(
                             force_exploration: demonstration_intervention_pending
                                 && config.execution_plan.proposal_policy
                                     != TacticProposalPolicy::RandomValid,
+                            lease_mode: selection_lease_mode,
                         },
                     )?);
                     consumed_learner_snapshot = snapshot;

@@ -9,6 +9,10 @@ pub(super) struct PolicyUpdateProbeContext<'a> {
     pub(super) acquisition_partition: u64,
     pub(super) proposal_policy: TacticProposalPolicy,
     pub(super) force_exploration: bool,
+    /// Expansion availability is part of the fixed action surface. Reusing a
+    /// repeatable evaluation mask for an exploration preview would falsely
+    /// attribute graph-lifecycle changes to the learner publication.
+    pub(super) lease_mode: TacticQOnlineLeaseMode,
 }
 
 /// Same-state, same-action-surface policy reassessment across one published
@@ -106,7 +110,7 @@ pub(super) fn consume_policy_update_with_probe(
     let generated_before = if before_batch.is_none() {
         Some(
             campaign
-                .decide_parameterized_batch_with_policy(
+                .decide_parameterized_batch_with_policy_and_lease_mode(
                     context.catalog,
                     context.blueprints,
                     context.action_schema_sha256,
@@ -116,6 +120,7 @@ pub(super) fn consume_policy_update_with_probe(
                     context.proposal_policy,
                     Some(context.encoder.goal_distance_feature()),
                     context.force_exploration,
+                    context.lease_mode,
                 )
                 .map_err(route_error)?,
         )
@@ -128,7 +133,7 @@ pub(super) fn consume_policy_update_with_probe(
     let state_sha256 = campaign.current.snapshot_sha256;
     session.consume_snapshot(campaign, after_snapshot)?;
     let after = campaign
-        .decide_parameterized_batch_with_policy(
+        .decide_parameterized_batch_with_policy_and_lease_mode(
             context.catalog,
             context.blueprints,
             context.action_schema_sha256,
@@ -138,6 +143,7 @@ pub(super) fn consume_policy_update_with_probe(
             context.proposal_policy,
             Some(context.encoder.goal_distance_feature()),
             context.force_exploration,
+            context.lease_mode,
         )
         .map_err(route_error)?;
     build_policy_update_probe(

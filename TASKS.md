@@ -82,7 +82,12 @@ target is 120.
   exact expansions, skips exhausted learned/root frontiers, and distinguishes
   this from explicit policy evaluation, where repeating a completed action is
   intentional. Failed campaigns can be inspected from their durable decision
-  journal without requiring a sealed final report.
+  journal without requiring a sealed final report. The first post-fix attempt
+  completed seed 104729 at 464 ticks and reached 220 in seed 130363 before its
+  decision-11 learner refresh rejected a policy-update probe: the pre-update
+  batch used the exploration mask while the post-update batch incorrectly used
+  repeatable policy-evaluation availability. Probe reinference now preserves
+  the original lease mode, so the learner update remains the only changed input.
 - The full orchestration suite passes: 494 tests, including exact-return policy
   adoption, learned-option decision compression, checkpoint branching, replay
   recovery, and campaign report validation.
@@ -152,7 +157,8 @@ incumbent from a nonconsecutive restored checkpoint.
   The first attempt already proved reachability authority and improved the
   authenticated incumbent from 222 to 214 ticks, but stopped at seed 1 decision
   30 when an exhausted learned frontier reached the unique-expansion lease.
-  Re-run once after the exact lifecycle fix. Require reachability to control
+  Resume the same bounded post-fix attempt after correcting its policy-update
+  probe mode; do not start another campaign. Require reachability to control
   every eligible non-epsilon, non-exact decision while the terminal critic is
   uncalibrated, with terminal/factor probes confined to siblings. If the sealed
   run does not retain the improvement, diagnose its first wrong decision rather
