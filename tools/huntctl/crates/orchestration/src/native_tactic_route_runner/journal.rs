@@ -330,15 +330,18 @@ pub(super) fn load_tactic_journal_replay(
     let first_transition = transitions
         .first()
         .ok_or_else(|| route_message("tactic decision journal has no root transition"))?;
-    if route_checkpoint(first_record.root_checkpoint_sha256, &root_tape).map_err(route_error)?
-        != first_transition.source_checkpoint_sha256
-        || root_tape.frames.len() as u64
-            != first_transition.execution.realized_tape_range.start_frame
-    {
-        return Err(route_message(
-            "tactic decision journal root tape is detached",
-        ));
-    }
+    // A later generation may begin at a retained checkpoint inherited from an
+    // earlier lane. The record still binds the campaign's true root tape, but
+    // its first executable transition is rooted at the separately persisted
+    // source-route anchor. Select that authenticated anchor as this journal's
+    // replay base instead of pretending every seed begins at the cold root.
+    let replay_base_tape = journal_replay_base_tape(
+        seed_root,
+        first_record.root_checkpoint_sha256,
+        &root_tape,
+        first_transition,
+        source_route_tapes.first().and_then(Option::as_ref),
+    )?;
     let root_identity = (
         first_transition.source_checkpoint_sha256,
         first_transition.before_state_sha256,
@@ -361,7 +364,7 @@ pub(super) fn load_tactic_journal_replay(
             materialize_journal_route(
                 index,
                 transition,
-                &root_tape,
+                &replay_base_tape,
                 first_record.root_checkpoint_sha256,
                 root_identity,
                 &parents,
@@ -394,6 +397,51 @@ pub(super) fn load_tactic_journal_replay(
         transitions,
         routes,
     })
+}
+
+pub(super) fn journal_replay_base_tape(
+    seed_root: &Path,
+    root_checkpoint_sha256: Digest,
+    root_tape: &InputTape,
+    first_transition: &dusklight_learning::option_transition::OptionTransitionSample,
+    first_source_route_tape: Option<&InputTape>,
+) -> Result<InputTape, NativeTacticRouteRunError> {
+    let expected_source_checkpoint = first_transition.source_checkpoint_sha256;
+    let expected_source_frame = first_transition.execution.realized_tape_range.start_frame;
+    let root_route_checkpoint =
+        route_checkpoint(root_checkpoint_sha256, root_tape).map_err(route_error)?;
+    if root_route_checkpoint == expected_source_checkpoint
+        && root_tape.frames.len() as u64 == expected_source_frame
+    {
+        return Ok(root_tape.clone());
+    }
+
+    let source_route = first_source_route_tape.ok_or_else(|| {
+        route_message(format!(
+            "tactic decision journal first retained source has no route anchor: seed_root={}, root_tape_frames={}, first_transition_start={}, root_route_checkpoint={:?}, transition_source_checkpoint={:?}",
+            seed_root.display(),
+            root_tape.frames.len(),
+            expected_source_frame,
+            root_route_checkpoint,
+            expected_source_checkpoint,
+        ))
+    })?;
+    source_route.validate().map_err(route_error)?;
+    let source_route_checkpoint =
+        route_checkpoint(root_checkpoint_sha256, source_route).map_err(route_error)?;
+    if source_route.frames.len() as u64 != expected_source_frame
+        || source_route_checkpoint != expected_source_checkpoint
+    {
+        return Err(route_message(format!(
+            "tactic decision journal first retained source route is detached: seed_root={}, source_route_frames={}, first_transition_start={}, source_route_checkpoint={:?}, transition_source_checkpoint={:?}",
+            seed_root.display(),
+            source_route.frames.len(),
+            expected_source_frame,
+            source_route_checkpoint,
+            expected_source_checkpoint,
+        )));
+    }
+    Ok(source_route.clone())
 }
 
 pub(super) fn materialize_journal_route(

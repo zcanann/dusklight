@@ -695,6 +695,36 @@ fn journal_projects_graph_and_materializes_routes_from_content_objects() {
     let materialized = materialize_tactic_decision_route(&root, 0).unwrap();
     assert_eq!(materialized, route);
 
+    let mut inherited_transition = transition.clone();
+    inherited_transition.source_checkpoint_sha256 = next_checkpoint_sha256;
+    inherited_transition
+        .execution
+        .realized_tape_range
+        .start_frame = route.frames.len() as u64;
+    assert_eq!(
+        journal_replay_base_tape(
+            &root,
+            root_checkpoint_sha256,
+            &root_tape,
+            &inherited_transition,
+            Some(&route),
+        )
+        .unwrap(),
+        route,
+        "a later generation replays from its authenticated retained source instead of the cold root"
+    );
+    assert!(
+        journal_replay_base_tape(
+            &root,
+            root_checkpoint_sha256,
+            &root_tape,
+            &inherited_transition,
+            None,
+        )
+        .is_err(),
+        "an off-root journal cannot invent the missing retained source route"
+    );
+
     let mut alternate_route = route.clone();
     alternate_route.frames[before.tape_frame as usize].pads[0].stick_x = 64;
     let mut alternate_after = after.clone();
