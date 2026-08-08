@@ -110,7 +110,8 @@ use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticThroughputEvidenceBundle, NativeTacticThroughputTreatmentBundle,
     audit_native_tactic_fault_recovery, build_native_tactic_optimization_handoff,
     read_and_validate_native_tactic_cold_replay, read_native_tactic_route_report,
-    run_native_tactic_cold_replay, run_native_tactic_restore_locality, run_native_tactic_route,
+    read_tactic_decision_journal, run_native_tactic_cold_replay,
+    run_native_tactic_restore_locality, run_native_tactic_route,
     run_native_tactic_throughput_curve_controlled, tactic_macro_registry_identity,
 };
 use huntctl::search_evaluator::native_tactic_worker::NativeGenericExecutionStrategy;
@@ -433,6 +434,7 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "inspect-scratch-headings"
             | "prove-generalized-tactics"
             | "tactic-route"
+            | "inspect-tactic-decision-journal"
             | "validate-tactic-campaign-completion"
             | "project-tactic-route-accounting"
             | "project-tactic-campaign-summary"
@@ -535,6 +537,7 @@ mod tests {
             "validate-tactic-campaign-completion",
             "project-tactic-campaign-summary",
             "project-tactic-route-accounting",
+            "inspect-tactic-decision-journal",
             "audit-post-terminal-tactic-controls",
             "audit-tactic-scratch-campaign",
             "audit-tactic-observations",

@@ -165,6 +165,7 @@ pub struct TacticQOnlineActionSelectionRequest {
     pub policy: TacticProposalPolicy,
     pub goal_distance_feature: Option<usize>,
     pub force_exploration: bool,
+    pub lease_mode: TacticQOnlineLeaseMode,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -210,7 +211,7 @@ impl TacticQOnlineLearningController {
         F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
     {
         self.require_planning()?;
-        campaign.decide_parameterized_batch_with_policy(
+        campaign.decide_parameterized_batch_with_policy_and_lease_mode(
             catalog,
             blueprints,
             request.family_schema_sha256,
@@ -220,6 +221,7 @@ impl TacticQOnlineLearningController {
             request.policy,
             request.goal_distance_feature,
             request.force_exploration,
+            request.lease_mode,
         )
     }
 
@@ -727,7 +729,20 @@ impl TacticQCampaign {
                 }
             }
         }
-        let [root, frontier] = match request.strategy {
+        if request.prefer_root {
+            let graph = self.state_graph()?;
+            let root_id = graph.root();
+            if !self
+                .schedulable_actions_at_exact_state(root_id, request.round, applicable_actions)?
+                .is_empty()
+            {
+                return Ok(TacticQOnlineBranchSelection {
+                    branch: graph_root_branch(graph)?,
+                    selected_root: true,
+                });
+            }
+        }
+        let [_root, frontier] = match request.strategy {
             TacticQOnlineFrontierStrategy::Graph => self
                 .graph_scheduled_root_and_frontier_with_action_surface(
                     request.seed,
@@ -739,7 +754,7 @@ impl TacticQCampaign {
             TacticQOnlineFrontierStrategy::LearnedRanked {
                 demonstration_curriculum,
                 goal_distance_feature,
-            } => self.sample_root_and_ranked_frontier(
+            } => self.sample_root_and_ranked_frontier_with_schedulability(
                 request.seed,
                 request.round,
                 reference,
@@ -748,11 +763,12 @@ impl TacticQCampaign {
                 goal_distance_feature,
                 encode,
                 applicable_actions,
+                true,
             )?,
         };
         Ok(TacticQOnlineBranchSelection {
-            branch: if request.prefer_root { root } else { frontier },
-            selected_root: request.prefer_root,
+            selected_root: frontier.kind == TacticBranchKind::Root,
+            branch: frontier,
         })
     }
 

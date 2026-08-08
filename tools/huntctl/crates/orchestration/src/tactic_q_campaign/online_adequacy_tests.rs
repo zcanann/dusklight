@@ -396,6 +396,39 @@ fn decide_production_batch(
     catalog: &TacticAssetCatalog,
     maximum_proposals: usize,
 ) -> TacticQProposalBatch {
+    decide_batch_for_mode(
+        online,
+        campaign,
+        catalog,
+        maximum_proposals,
+        TacticQOnlineLeaseMode::Exploration,
+    )
+}
+
+fn decide_policy_evaluation_batch(
+    online: &mut TacticQOnlineLearningController,
+    campaign: &TacticQCampaign,
+    catalog: &TacticAssetCatalog,
+    maximum_proposals: usize,
+) -> TacticQProposalBatch {
+    decide_batch_for_mode(
+        online,
+        campaign,
+        catalog,
+        maximum_proposals,
+        TacticQOnlineLeaseMode::PolicyEvaluation {
+            proposal_policy: TacticProposalPolicy::Learned,
+        },
+    )
+}
+
+fn decide_batch_for_mode(
+    online: &mut TacticQOnlineLearningController,
+    campaign: &TacticQCampaign,
+    catalog: &TacticAssetCatalog,
+    maximum_proposals: usize,
+    lease_mode: TacticQOnlineLeaseMode,
+) -> TacticQProposalBatch {
     let applicable = campaign
         .current
         .action_mask
@@ -425,6 +458,7 @@ fn decide_production_batch(
                 policy: TacticProposalPolicy::Learned,
                 goal_distance_feature: None,
                 force_exploration: false,
+                lease_mode,
             },
         )
         .unwrap()
@@ -778,12 +812,21 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
     assert_eq!(rollouts[2].actions[0], "north");
     assert_eq!(rollouts[2].best_terminal_ticks, 9);
 
-    assert_eq!(
-        restore_next_scheduled_frontier(&mut online, &mut campaign, &catalog, 3, 3),
-        AdequacyState::Start,
-        "the production scheduler must revisit the learned root boundary"
-    );
-    let learned = decide_production_batch(&mut online, &campaign, &catalog, 2);
+    let root = campaign
+        .sample_root_and_frontier(0, 0, &[], usize::MAX)
+        .unwrap()[0]
+        .clone();
+    campaign
+        .restore_branch(
+            &root,
+            3,
+            &FactRegistry::canonical(),
+            &catalog,
+            &[],
+            |description| AdequacyState::Start.applicable(&description.option.option_id),
+        )
+        .unwrap();
+    let learned = decide_policy_evaluation_batch(&mut online, &campaign, &catalog, 2);
     assert_eq!(learned.proposals[0].descriptor.option_id, "north");
     assert_eq!(
         learned.proposals[0].reason,
@@ -809,19 +852,21 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
     assert_eq!(variant_final.actions.len(), 9);
     assert_eq!(variant_final.actions[0], "north");
     assert_eq!(variant_final.best_terminal_ticks, 9);
-    let next_variant_episode = variant_rollouts.len() as u64;
-    assert_eq!(
-        restore_next_scheduled_frontier(
-            &mut online,
-            &mut variant_campaign,
+    let variant_root = variant_campaign
+        .sample_root_and_frontier(0, 0, &[], usize::MAX)
+        .unwrap()[0]
+        .clone();
+    variant_campaign
+        .restore_branch(
+            &variant_root,
+            variant_rollouts.len() as u64,
+            &FactRegistry::canonical(),
             &catalog,
-            next_variant_episode,
-            next_variant_episode,
-        ),
-        AdequacyState::VariantStart,
-        "the production scheduler must revisit the translated learned root boundary"
-    );
-    let generalized = decide_production_batch(&mut online, &variant_campaign, &catalog, 2);
+            &[],
+            |description| AdequacyState::VariantStart.applicable(&description.option.option_id),
+        )
+        .unwrap();
+    let generalized = decide_policy_evaluation_batch(&mut online, &variant_campaign, &catalog, 2);
     assert_eq!(generalized.proposals[0].descriptor.option_id, "north");
     assert_eq!(
         generalized.proposals[0].reason,
@@ -1031,8 +1076,12 @@ fn promoted_composition_reduces_online_policy_decisions() {
             },
         )
         .unwrap();
-    let learned =
-        decide_production_batch(&mut macro_controller, &macro_campaign, &promoted_catalog, 2);
+    let learned = decide_policy_evaluation_batch(
+        &mut macro_controller,
+        &macro_campaign,
+        &promoted_catalog,
+        2,
+    );
     assert_eq!(
         learned.proposals[0].descriptor.option_id,
         candidate.option_id

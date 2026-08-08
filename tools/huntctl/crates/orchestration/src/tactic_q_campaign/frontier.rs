@@ -354,6 +354,38 @@ impl TacticQCampaign {
         F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
         A: Fn(&FactSnapshot) -> Result<Vec<OptionActionDescriptor>, AE>,
     {
+        self.sample_root_and_ranked_frontier_with_schedulability(
+            seed,
+            round,
+            reference,
+            maximum_route_frames,
+            demonstration_curriculum,
+            goal_distance_feature,
+            encode,
+            applicable_actions,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn sample_root_and_ranked_frontier_with_schedulability<E, AE, F, A>(
+        &self,
+        seed: u64,
+        round: u64,
+        reference: &[TacticEndpointDescriptor],
+        maximum_route_frames: usize,
+        demonstration_curriculum: bool,
+        goal_distance_feature: usize,
+        encode: &F,
+        applicable_actions: &A,
+        require_schedulable_expansion: bool,
+    ) -> Result<[TacticCampaignBranch; 2], TacticQCampaignError>
+    where
+        E: fmt::Display,
+        AE: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+        A: Fn(&FactSnapshot) -> Result<Vec<OptionActionDescriptor>, AE>,
+    {
         let [root, _] =
             self.sample_root_and_frontier(seed, round, reference, maximum_route_frames)?;
         let root_frames = root.route_tape.frames.len();
@@ -430,11 +462,6 @@ impl TacticQCampaign {
                 choices = demonstration_choices;
             }
         }
-        if choices.is_empty() {
-            return Err(TacticQCampaignError::InvalidState(
-                "frontier archive has no eligible learned acquisition",
-            ));
-        }
         if !demonstration_curriculum && choices.len() > MAX_RANKED_FRONTIER_CANDIDATES {
             choices = limit_ranked_frontier_candidates(
                 seed,
@@ -443,6 +470,31 @@ impl TacticQCampaign {
                 choices,
                 &exact_terminal_ticks,
             );
+        }
+        let choices = choices
+            .into_iter()
+            .filter_map(|entry| {
+                let target = crate::state_graph::ExactStateId {
+                    route_checkpoint_sha256: entry.route_checkpoint_sha256,
+                    state_sha256: entry.frontier_state_sha256,
+                };
+                let applicable = if require_schedulable_expansion {
+                    self.schedulable_actions_at_exact_state(target, round, applicable_actions)
+                } else {
+                    applicable_actions(&entry.frontier_state)
+                        .map_err(|error| TacticQCampaignError::Features(error.to_string()))
+                };
+                match applicable {
+                    Ok(applicable) if !applicable.is_empty() => Some(Ok((entry, applicable))),
+                    Ok(_) => None,
+                    Err(error) => Some(Err(error)),
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if choices.is_empty() {
+            return Err(TacticQCampaignError::InvalidState(
+                "frontier archive has no schedulable learned acquisition",
+            ));
         }
         let tie_offset = seeded_frontier_index(seed, round, choices.len());
         let choice_count = choices.len();
@@ -490,7 +542,7 @@ impl TacticQCampaign {
         let mut ranked = choices
             .into_iter()
             .enumerate()
-            .map(|(novelty_rank, entry)| {
+            .map(|(novelty_rank, (entry, applicable))| {
                 let acquisition_estimates = if demonstration_curriculum {
                     (None, None, None, None, None)
                 } else {
@@ -499,13 +551,6 @@ impl TacticQCampaign {
                     if features.is_empty() || features.iter().any(|value| !value.is_finite()) {
                         return Err(TacticQCampaignError::Features(
                             "frontier encoding is empty or non-finite".into(),
-                        ));
-                    }
-                    let applicable = applicable_actions(&entry.frontier_state)
-                        .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
-                    if applicable.is_empty() {
-                        return Err(TacticQCampaignError::InvalidState(
-                            "frontier has no applicable executable actions".into(),
                         ));
                     }
                     if let Some(model) = terminal_action_model.as_ref() {

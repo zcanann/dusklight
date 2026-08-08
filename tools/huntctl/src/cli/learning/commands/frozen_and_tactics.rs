@@ -23,12 +23,12 @@ use super::{
     build_native_tactic_optimization_handoff, cli, command_conservative_q, flag,
     native_frozen_policy_probe_model, native_tactic_execution_plan, option,
     prove_generalized_tactic_held_out_value, read_and_validate_native_tactic_cold_replay,
-    read_native_tactic_route_report, realize_native_frozen_policy_tape, repeated_option,
-    required_path, run_native_tactic_cold_replay, run_native_tactic_policy,
-    run_native_tactic_restore_locality, run_native_tactic_route,
-    run_native_tactic_throughput_curve_controlled, sealed_plan_shape_conflict,
-    tactic_macro_registry_identity, u64_option, usage_error, usize_option,
-    verify_native_frozen_policy_cold_replay, verify_native_frozen_policy_reinference,
+    read_native_tactic_route_report, read_tactic_decision_journal,
+    realize_native_frozen_policy_tape, repeated_option, required_path,
+    run_native_tactic_cold_replay, run_native_tactic_policy, run_native_tactic_restore_locality,
+    run_native_tactic_route, run_native_tactic_throughput_curve_controlled,
+    sealed_plan_shape_conflict, tactic_macro_registry_identity, u64_option, usage_error,
+    usize_option, verify_native_frozen_policy_cold_replay, verify_native_frozen_policy_reinference,
 };
 use serde_json::json;
 use sha2::Digest as _;
@@ -60,6 +60,32 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
                 u64_option(learn_args, "--iterations", 100)?,
             )?;
             println!("{}", serde_json::to_string_pretty(&benchmark)?);
+            Ok(())
+        }
+        Some("inspect-tactic-decision-journal") => {
+            let learn_args = &args[1..];
+            let seed_root = required_path(learn_args, "--input")?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "tactic decision trace output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let trace = read_tactic_decision_journal(&seed_root)?;
+            fs::write(&output, serde_json::to_vec_pretty(&trace)?)?;
+            println!("{}", serde_json::to_string_pretty(&json!({
+                "input": seed_root,
+                "output": output,
+                "decisions": trace.len(),
+            }))?);
             Ok(())
         }
         Some("freeze-tactic-policy") => {

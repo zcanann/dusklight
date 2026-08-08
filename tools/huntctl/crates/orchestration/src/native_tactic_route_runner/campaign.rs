@@ -581,6 +581,13 @@ pub(super) fn run_seed(
         // Restoring a branch can change the selected tactic. Recheck until the
         // preview fits; the periodic root sample guarantees convergence because
         // every catalog entry is itself bounded by the exploration horizon.
+        let selection_lease_mode = if active_paired_terminal_return.is_some() {
+            TacticQOnlineLeaseMode::PolicyEvaluation {
+                proposal_policy: config.execution_plan.proposal_policy,
+            }
+        } else {
+            TacticQOnlineLeaseMode::Exploration
+        };
         let (proposal_batch, proposal_catalog, proposal_blueprints, proposal_feedback) = loop {
             let suffix_ticks = campaign
                 .route_tape
@@ -623,6 +630,7 @@ pub(super) fn run_seed(
                         force_exploration: demonstration_intervention_pending
                             && config.execution_plan.proposal_policy
                                 != TacticProposalPolicy::RandomValid,
+                        lease_mode: selection_lease_mode,
                     },
                 )
                 .map_err(route_error)?;

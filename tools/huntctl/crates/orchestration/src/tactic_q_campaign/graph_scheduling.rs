@@ -13,6 +13,39 @@ pub const TACTIC_SCHEDULER_DECISION_SCHEMA_V1: &str = "dusklight-tactic-schedule
 pub const TACTIC_POLICY_EVALUATION_DECISION_SCHEMA_V1: &str =
     "dusklight-tactic-policy-evaluation-decision/v1";
 
+fn graph_action_is_schedulable(
+    graph: &StateGraph,
+    node_id: ExactStateId,
+    generation: u64,
+    descriptor: &OptionActionDescriptor,
+) -> Result<bool, TacticQCampaignError> {
+    let node = graph
+        .node(node_id)
+        .ok_or(TacticQCampaignError::InvalidState(
+            "scheduled graph node disappeared",
+        ))?;
+    let registered = node
+        .outgoing_expansions
+        .iter()
+        .filter_map(|identity| graph.expansion(*identity))
+        .find(|expansion| expansion.action == *descriptor);
+    Ok(match registered {
+        Some(expansion) => graph.expansion_is_schedulable(expansion.identity_sha256, generation),
+        None => true,
+    })
+}
+
+fn graph_node_has_schedulable_action(
+    graph: &StateGraph,
+    node_id: ExactStateId,
+    generation: u64,
+    applicable: &[OptionActionDescriptor],
+) -> Result<bool, TacticQCampaignError> {
+    applicable.iter().try_fold(false, |found, descriptor| {
+        Ok(found || graph_action_is_schedulable(graph, node_id, generation, descriptor)?)
+    })
+}
+
 /// Inclusive subphase timings for the graph-scheduling call. The surrounding
 /// route timing also includes horizon filtering, branch restoration, and lease
 /// journal publication, so this breakdown is required to be no larger than the
@@ -361,24 +394,7 @@ impl TacticQCampaign {
             |graph, node_id, state| {
                 let applicable = applicable_actions(state)
                     .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
-                let node = graph
-                    .node(node_id)
-                    .ok_or(TacticQCampaignError::InvalidState(
-                        "scheduled graph node disappeared",
-                    ))?;
-                Ok(applicable.iter().any(|descriptor| {
-                    let registered = node
-                        .outgoing_expansions
-                        .iter()
-                        .filter_map(|identity| graph.expansion(*identity))
-                        .find(|expansion| expansion.action == *descriptor);
-                    match registered {
-                        Some(expansion) => {
-                            graph.expansion_is_schedulable(expansion.identity_sha256, generation)
-                        }
-                        None => true,
-                    }
-                }))
+                graph_node_has_schedulable_action(graph, node_id, generation, &applicable)
             },
         )
     }
@@ -405,6 +421,7 @@ impl TacticQCampaign {
                 "node scheduling requires a bound state graph",
             ))?;
         let root = graph_root_branch(graph)?;
+        let root_schedulable = is_schedulable(graph, graph.root(), &root.state)?;
         let terminal_supported = graph.best_terminal_path().is_some();
         let (regime, selected_rank) = graph_node_acquisition(terminal_supported, acquisition_rank);
         let ranked = rank_schedulable_nodes_validated(
@@ -426,7 +443,12 @@ impl TacticQCampaign {
             })
             .collect::<Result<Vec<_>, _>>()?;
         if ranked.is_empty() {
-            return Ok([root.clone(), root]);
+            if root_schedulable {
+                return Ok([root.clone(), root]);
+            }
+            return Err(TacticQCampaignError::InvalidState(
+                "state graph has no schedulable action expansion",
+            ));
         }
         // Rank zero is the terminal-support lane. Nonzero ranks are a sealed
         // broad-exploration share: after terminal discovery they deliberately
@@ -516,20 +538,7 @@ impl TacticQCampaign {
         }
         let applicable = applicable_actions(node.state.as_ref())
             .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
-        let schedulable = applicable.iter().any(|descriptor| {
-            let registered = node
-                .outgoing_expansions
-                .iter()
-                .filter_map(|identity| graph.expansion(*identity))
-                .find(|expansion| expansion.action == *descriptor);
-            match registered {
-                Some(expansion) => {
-                    graph.expansion_is_schedulable(expansion.identity_sha256, generation)
-                }
-                None => true,
-            }
-        });
-        if !schedulable {
+        if !graph_node_has_schedulable_action(graph, target, generation, &applicable)? {
             return Ok(None);
         }
         let branch = if terminal_support {
@@ -538,6 +547,57 @@ impl TacticQCampaign {
             self.exact_frontier_branch(target)?
         };
         Ok(Some(branch))
+    }
+
+    /// Return the native-applicable actions which still name unique graph work
+    /// at one exact restorable boundary. A completed action remains valid for
+    /// explicit policy evaluation, but ordinary exploration must continue from
+    /// its recorded target rather than attempting to lease it a second time.
+    pub(crate) fn schedulable_actions_at_exact_state<AE, A>(
+        &self,
+        target: crate::state_graph::ExactStateId,
+        generation: u64,
+        applicable_actions: &A,
+    ) -> Result<Vec<OptionActionDescriptor>, TacticQCampaignError>
+    where
+        AE: fmt::Display,
+        A: Fn(&FactSnapshot) -> Result<Vec<OptionActionDescriptor>, AE>,
+    {
+        let graph = self.state_graph()?;
+        let node = graph
+            .node(target)
+            .ok_or(TacticQCampaignError::InvalidState(
+                "action-surface graph node is absent",
+            ))?;
+        let applicable = applicable_actions(node.state.as_ref())
+            .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+        applicable
+            .into_iter()
+            .filter_map(|descriptor| {
+                match graph_action_is_schedulable(graph, target, generation, &descriptor) {
+                    Ok(true) => Some(Ok(descriptor)),
+                    Ok(false) => None,
+                    Err(error) => Some(Err(error)),
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn current_action_is_schedulable(
+        &self,
+        descriptor: &OptionActionDescriptor,
+    ) -> Result<bool, TacticQCampaignError> {
+        let Some(graph) = self.state_graph.as_ref() else {
+            return Ok(true);
+        };
+        let source = crate::state_graph::ExactStateId {
+            route_checkpoint_sha256: route_checkpoint(
+                self.root_checkpoint_sha256,
+                &self.route_tape,
+            )?,
+            state_sha256: self.current.snapshot_sha256,
+        };
+        graph_action_is_schedulable(graph, source, self.decision_index, descriptor)
     }
 
     /// A locality hint may accelerate rank-zero optimization only when its

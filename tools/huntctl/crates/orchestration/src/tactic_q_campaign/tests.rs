@@ -984,6 +984,94 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             .status,
         crate::state_graph::ActionExpansionStatus::Completed { .. }
     ));
+    assert!(
+        !restarted_scheduled
+            .current_action_is_schedulable(&decision.selected.descriptor)
+            .unwrap()
+    );
+    assert!(
+        restarted_scheduled
+            .decide_parameterized_batch_with_policy_and_lease_mode::<&'static str, _>(
+                &catalog,
+                &[],
+                Digest([91; 32]),
+                &encode,
+                1,
+                0,
+                TacticProposalPolicy::Learned,
+                None,
+                false,
+                TacticQOnlineLeaseMode::Exploration,
+            )
+            .is_err(),
+        "ordinary exploration must not select an already completed exact expansion"
+    );
+    assert!(
+        restarted_scheduled
+            .decide_parameterized_batch_with_policy::<&'static str, _>(
+                &catalog,
+                &[],
+                Digest([91; 32]),
+                &encode,
+                1,
+                0,
+                TacticProposalPolicy::Learned,
+                None,
+                false,
+            )
+            .is_ok(),
+        "explicit policy evaluation may repeat a completed action"
+    );
+    let rotated = restarted_scheduled
+        .select_online_branch(
+            TacticQOnlineBranchRequest {
+                seed: 5,
+                round: restarted_scheduled.decision_index,
+                acquisition_rank: 0,
+                maximum_route_frames: usize::MAX,
+                prefer_root: true,
+                strategy: TacticQOnlineFrontierStrategy::Graph,
+            },
+            &[],
+            &[],
+            &encode,
+            &|_: &FactSnapshot| {
+                Ok::<_, &'static str>(catalog.option_descriptors().cloned().collect())
+            },
+        )
+        .unwrap();
+    assert!(!rotated.selected_root);
+    assert_eq!(rotated.branch.kind, TacticBranchKind::RetainedFrontier);
+    assert_eq!(
+        rotated.branch.logical_frontier.state_sha256,
+        evaluated.transition.after_state_sha256
+    );
+    let learned_rotated = restarted_scheduled
+        .select_online_branch(
+            TacticQOnlineBranchRequest {
+                seed: 5,
+                round: restarted_scheduled.decision_index,
+                acquisition_rank: 0,
+                maximum_route_frames: usize::MAX,
+                prefer_root: true,
+                strategy: TacticQOnlineFrontierStrategy::LearnedRanked {
+                    demonstration_curriculum: false,
+                    goal_distance_feature: 0,
+                },
+            },
+            &[],
+            &[],
+            &encode,
+            &|_: &FactSnapshot| {
+                Ok::<_, &'static str>(catalog.option_descriptors().cloned().collect())
+            },
+        )
+        .unwrap();
+    assert!(!learned_rotated.selected_root);
+    assert_eq!(
+        learned_rotated.branch.logical_frontier.state_sha256,
+        evaluated.transition.after_state_sha256
+    );
     let policy_evaluation = restarted_scheduled
         .authorize_current_policy_evaluation_batch(
             TacticQProposalBatch {
@@ -1650,8 +1738,17 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             },
         )
         .unwrap();
-    assert!(root_refresh.selected_root);
-    assert_eq!(root_refresh.branch.kind, TacticBranchKind::Root);
+    assert!(
+        !root_refresh.selected_root,
+        "an exhausted root-refresh hint must rotate to schedulable graph work"
+    );
+    assert_eq!(root_refresh.branch.kind, TacticBranchKind::RetainedFrontier);
+    assert_eq!(root_refresh.branch.state, exact_frontier.state);
+    assert_eq!(root_refresh.branch.route_tape, exact_frontier.route_tape);
+    assert_eq!(
+        root_refresh.branch.logical_frontier,
+        exact_frontier.logical_frontier
+    );
     let frontier_restoration = restored.current_restoration_contract().unwrap();
     assert_eq!(
         frontier_restoration.plan.node.state_sha256,
