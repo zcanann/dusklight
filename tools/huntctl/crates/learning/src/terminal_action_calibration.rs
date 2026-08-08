@@ -11,11 +11,13 @@
 use crate::generalized_tactic_value::fitted_q::fit_transition_returns;
 use crate::generalized_tactic_value::{GeneralizedTacticContext, GeneralizedTacticValueError};
 use crate::option_transition::OptionTransitionSample;
+use crate::stable_group_fold::stable_group_fold;
 use crate::tactic_value_treatment::ContinuousTacticDoubleQModel;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const TERMINAL_ACTION_CALIBRATION_SCHEMA_V1: &str = "dusklight-terminal-action-calibration/v1";
+pub const TERMINAL_ACTION_CALIBRATION_SCHEMA_V2: &str = "dusklight-terminal-action-calibration/v2";
 pub const TERMINAL_ACTION_CALIBRATION_FOLDS: usize = 4;
 pub const MINIMUM_TERMINAL_ACTION_CALIBRATION_GROUPS: usize = 8;
 const COMPARISON_EPSILON_TICKS: f32 = 1.0e-4;
@@ -48,8 +50,10 @@ impl TerminalActionCalibration {
             self.ranking_win_rate_wilson_lower_bound,
             self.chance_win_rate,
         );
-        if self.schema != TERMINAL_ACTION_CALIBRATION_SCHEMA_V1
-            || self.folds != TERMINAL_ACTION_CALIBRATION_FOLDS
+        if !matches!(
+            self.schema.as_str(),
+            TERMINAL_ACTION_CALIBRATION_SCHEMA_V1 | TERMINAL_ACTION_CALIBRATION_SCHEMA_V2
+        ) || self.folds != TERMINAL_ACTION_CALIBRATION_FOLDS
             || self.fitted_folds > self.folds
             || self.source_state_groups > self.source_transitions
             || self.terminal_supported_transitions > self.source_transitions
@@ -119,9 +123,10 @@ pub fn calibrate_terminal_action_ranking(
     for fold in 0..TERMINAL_ACTION_CALIBRATION_FOLDS {
         let training = indexed_groups
             .iter()
-            .enumerate()
-            .filter(|(index, _)| index % TERMINAL_ACTION_CALIBRATION_FOLDS != fold)
-            .flat_map(|(_, (_, rows))| rows.iter().map(|index| transitions[*index].clone()))
+            .filter(|(state, _)| {
+                stable_group_fold(*state, TERMINAL_ACTION_CALIBRATION_FOLDS) != fold
+            })
+            .flat_map(|(_, rows)| rows.iter().map(|index| transitions[*index].clone()))
             .collect::<Vec<_>>();
         let fitted = if universal_action_head {
             ContinuousTacticDoubleQModel::fit_universal_action_head(
@@ -144,12 +149,9 @@ pub fn calibrate_terminal_action_ranking(
             Err(error) => return Err(error),
         };
         fitted_folds = fitted_folds.saturating_add(1);
-        for (_, rows) in indexed_groups
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| index % TERMINAL_ACTION_CALIBRATION_FOLDS == fold)
-            .map(|(_, group)| group)
-        {
+        for (_, rows) in indexed_groups.iter().filter(|(state, _)| {
+            stable_group_fold(*state, TERMINAL_ACTION_CALIBRATION_FOLDS) == fold
+        }) {
             evaluate_group(
                 &model,
                 transitions,
@@ -170,7 +172,7 @@ pub fn calibrate_terminal_action_ranking(
     let ranking_win_rate_wilson_lower_bound = (comparable_state_groups != 0)
         .then_some(wilson_lower_bound(ranking_wins, comparable_state_groups));
     let mut report = TerminalActionCalibration {
-        schema: TERMINAL_ACTION_CALIBRATION_SCHEMA_V1.into(),
+        schema: TERMINAL_ACTION_CALIBRATION_SCHEMA_V2.into(),
         source_transitions: transitions.len(),
         source_state_groups: indexed_groups.len(),
         folds: TERMINAL_ACTION_CALIBRATION_FOLDS,
@@ -395,6 +397,7 @@ mod tests {
     #[test]
     fn empty_calibration_is_valid_and_cannot_deploy() {
         let report = calibrate_terminal_action_ranking(&[], 0, 8, 0.999, true).unwrap();
+        assert_eq!(report.schema, TERMINAL_ACTION_CALIBRATION_SCHEMA_V2);
         assert_eq!(report.source_transitions, 0);
         assert_eq!(report.fitted_folds, 0);
         assert!(!report.deployment_ready);

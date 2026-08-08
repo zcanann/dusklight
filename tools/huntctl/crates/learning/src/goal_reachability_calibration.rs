@@ -11,11 +11,14 @@ use crate::generalized_tactic_value::{
     GeneralizedTacticValueModel,
 };
 use crate::option_transition::OptionTransitionSample;
+use crate::stable_group_fold::stable_group_fold;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const GOAL_REACHABILITY_CALIBRATION_SCHEMA_V1: &str =
     "dusklight-goal-reachability-calibration/v1";
+pub const GOAL_REACHABILITY_CALIBRATION_SCHEMA_V2: &str =
+    "dusklight-goal-reachability-calibration/v2";
 pub const GOAL_REACHABILITY_CALIBRATION_FOLDS: usize = 4;
 pub const MINIMUM_GOAL_REACHABILITY_CALIBRATION_GROUPS: usize = 8;
 const COMPARISON_EPSILON: f32 = 1.0e-4;
@@ -53,8 +56,10 @@ impl GoalReachabilityCalibration {
             self.ranking_win_rate_wilson_lower_bound,
             self.chance_win_rate,
         );
-        if self.schema != GOAL_REACHABILITY_CALIBRATION_SCHEMA_V1
-            || self.folds != GOAL_REACHABILITY_CALIBRATION_FOLDS
+        if !matches!(
+            self.schema.as_str(),
+            GOAL_REACHABILITY_CALIBRATION_SCHEMA_V1 | GOAL_REACHABILITY_CALIBRATION_SCHEMA_V2
+        ) || self.folds != GOAL_REACHABILITY_CALIBRATION_FOLDS
             || self.source_state_groups > self.source_transitions
             || self.comparable_state_groups > self.source_state_groups
             || self.ranking_wins > self.comparable_state_groups
@@ -118,9 +123,10 @@ pub fn calibrate_goal_reachability(
     for fold in 0..GOAL_REACHABILITY_CALIBRATION_FOLDS {
         let training = indexed_groups
             .iter()
-            .enumerate()
-            .filter(|(index, _)| index % GOAL_REACHABILITY_CALIBRATION_FOLDS != fold)
-            .flat_map(|(_, (_, rows))| rows.iter().copied().cloned())
+            .filter(|(state, _)| {
+                stable_group_fold(*state, GOAL_REACHABILITY_CALIBRATION_FOLDS) != fold
+            })
+            .flat_map(|(_, rows)| rows.iter().copied().cloned())
             .collect::<Vec<_>>();
         if training.len() < 2 {
             continue;
@@ -129,11 +135,9 @@ pub fn calibrate_goal_reachability(
             &training,
             goal_distance_feature,
         )?;
-        for (_, (_, rows)) in indexed_groups
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| index % GOAL_REACHABILITY_CALIBRATION_FOLDS == fold)
-        {
+        for (_, rows) in indexed_groups.iter().filter(|(state, _)| {
+            stable_group_fold(*state, GOAL_REACHABILITY_CALIBRATION_FOLDS) == fold
+        }) {
             evaluate_group(
                 &model,
                 rows,
@@ -155,7 +159,7 @@ pub fn calibrate_goal_reachability(
     let ranking_win_rate_wilson_lower_bound = (comparable_state_groups != 0)
         .then_some(wilson_lower_bound(ranking_wins, comparable_state_groups));
     let mut report = GoalReachabilityCalibration {
-        schema: GOAL_REACHABILITY_CALIBRATION_SCHEMA_V1.into(),
+        schema: GOAL_REACHABILITY_CALIBRATION_SCHEMA_V2.into(),
         source_transitions: transitions.len(),
         source_state_groups: indexed_groups.len(),
         folds: GOAL_REACHABILITY_CALIBRATION_FOLDS,
@@ -316,6 +320,7 @@ mod tests {
     #[test]
     fn empty_calibration_is_valid_and_cannot_deploy() {
         let report = calibrate_goal_reachability(&[], 0).unwrap();
+        assert_eq!(report.schema, GOAL_REACHABILITY_CALIBRATION_SCHEMA_V2);
         assert_eq!(report.source_transitions, 0);
         assert!(!report.deployment_ready);
         report.validate().unwrap();

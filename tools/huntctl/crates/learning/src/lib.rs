@@ -84,6 +84,7 @@ pub mod rl_readiness;
 pub mod scratch_action_catalog;
 pub mod scratch_q;
 pub mod semantic_goal_input;
+mod stable_group_fold;
 #[cfg(test)]
 mod tactic_adapter_conformance;
 pub mod tactic_asset;

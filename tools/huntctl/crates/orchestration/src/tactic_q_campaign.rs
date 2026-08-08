@@ -26,7 +26,9 @@ use dusklight_learning::generalized_tactic_value::authenticated_terminal_conditi
 use dusklight_learning::generalized_tactic_value::{
     GeneralizedTacticContext, GeneralizedTacticValueError, GeneralizedTacticValueModel,
 };
-use dusklight_learning::goal_reachability_calibration::GoalReachabilityCalibration;
+use dusklight_learning::goal_reachability_calibration::{
+    GOAL_REACHABILITY_CALIBRATION_SCHEMA_V2, GoalReachabilityCalibration,
+};
 use dusklight_learning::hindsight::{
     HindsightError, HindsightOptionReplay, RelabeledHindsightOption,
 };
@@ -68,7 +70,9 @@ use dusklight_learning::tactic_macro_promotion::{
 use dusklight_learning::tactic_value_treatment::{
     ContinuousTacticDoubleQModel, ContinuousTacticValueModel, TacticValueTreatment,
 };
-use dusklight_learning::terminal_action_calibration::TerminalActionCalibration;
+use dusklight_learning::terminal_action_calibration::{
+    TERMINAL_ACTION_CALIBRATION_SCHEMA_V2, TerminalActionCalibration,
+};
 use dusklight_proposals::behavior_archive::{
     BehaviorArchive, TacticEndpointDescriptor, TacticFrontierEntry, TacticStateDescriptor,
     tactic_endpoint_descriptor_for_state, tactic_state_descriptor,
@@ -94,6 +98,7 @@ pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3: &str = "dusklight-tactic-q-learne
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4: &str = "dusklight-tactic-q-learner-snapshot/v4";
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5: &str = "dusklight-tactic-q-learner-snapshot/v5";
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6: &str = "dusklight-tactic-q-learner-snapshot/v6";
+pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7: &str = "dusklight-tactic-q-learner-snapshot/v7";
 /// Episode group reserved for critic evidence that must never become an
 /// executable frontier.
 pub const TACTIC_Q_MODEL_ONLY_EPISODE_GROUP: u64 = u64::MAX;
@@ -635,7 +640,7 @@ impl TacticQCampaign {
             })
             .transpose()?;
         let snapshot = TacticQLearnerSnapshot {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7.into(),
             kind: TacticQLearnerSnapshotKind::Learned,
             value_treatment: self.value_treatment,
             execution_authority_sha256: self.execution_authority_sha256,

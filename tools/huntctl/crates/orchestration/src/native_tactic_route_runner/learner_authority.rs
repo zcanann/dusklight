@@ -252,7 +252,7 @@ impl CampaignTacticLearnerAuthority {
                     .map_err(route_error)?;
                 let training_replay_sha256 = replay_snapshot.training_replay_sha256();
                 let started = Instant::now();
-                let migrated = manifest.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6;
+                let migrated = manifest.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7;
                 let model_revision = if migrated {
                     manifest.model_revision.checked_add(1).ok_or_else(|| {
                         route_message("migrated campaign learner model revision overflowed")
@@ -1095,7 +1095,7 @@ mod tests {
         // Simulate the historical defect: a newer fitted model retained
         // calibration from an older replay prefix. V5 accepts that state for
         // migration, but reopening the authority must replay, recalibrate, and
-        // publish a V6 head before the model can be used.
+        // publish a current head before the model can be used.
         let replay =
             TacticReplayControlPlane::open(&migration_journal, &migration_objects, &identity)
                 .unwrap();
@@ -1131,7 +1131,7 @@ mod tests {
         let migrated_snapshot = migrated_authority.snapshot();
         assert_eq!(
             migrated_snapshot.manifest.schema,
-            TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6
+            TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7
         );
         assert_ne!(migrated_snapshot.sha256, legacy_sha256);
         assert_eq!(

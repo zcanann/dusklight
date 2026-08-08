@@ -50,7 +50,7 @@ impl TacticQLearnerSnapshot {
     ) -> Result<Self, TacticQCampaignError> {
         validate_training_corpus(corpus)?;
         let snapshot = Self {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7.into(),
             kind: TacticQLearnerSnapshotKind::Demonstration,
             value_treatment,
             execution_authority_sha256: corpus.execution_authority_sha256,
@@ -86,7 +86,8 @@ impl TacticQLearnerSnapshot {
             || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3
             || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4
             || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5
-            || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6;
+            || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6
+            || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7;
         if (!legacy && !current)
             || self.execution_authority_sha256 == Digest::ZERO
             || self.feature_schema_sha256 == Digest::ZERO
@@ -103,6 +104,7 @@ impl TacticQLearnerSnapshot {
                         | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4
                         | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5
                         | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6
+                        | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7
                 ) || !self.value_treatment.uses_goal_relabeling()))
             || self
                 .goal_reachability_calibration
@@ -114,7 +116,9 @@ impl TacticQLearnerSnapshot {
             || (self.terminal_action_calibration.is_some()
                 && (!matches!(
                     self.schema.as_str(),
-                    TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5 | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6
+                    TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5
+                        | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6
+                        | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7
                 ) || !self.value_treatment.uses_goal_relabeling()))
             || self
                 .terminal_action_calibration
@@ -123,21 +127,39 @@ impl TacticQLearnerSnapshot {
                     u64::try_from(calibration.source_transitions)
                         .map_or(true, |rows| rows > self.training_replay_rows)
                 })
-            || (self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6
+            || (matches!(
+                self.schema.as_str(),
+                TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6 | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7
+            ) && self
+                .goal_reachability_calibration
+                .as_ref()
+                .is_some_and(|calibration| {
+                    u64::try_from(calibration.source_transitions)
+                        .map_or(true, |rows| rows != self.training_replay_rows)
+                }))
+            || (matches!(
+                self.schema.as_str(),
+                TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6 | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7
+            ) && self
+                .terminal_action_calibration
+                .as_ref()
+                .is_some_and(|calibration| {
+                    u64::try_from(calibration.source_transitions)
+                        .map_or(true, |rows| rows != self.training_replay_rows)
+                }))
+            || (self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7
                 && self
                     .goal_reachability_calibration
                     .as_ref()
                     .is_some_and(|calibration| {
-                        u64::try_from(calibration.source_transitions)
-                            .map_or(true, |rows| rows != self.training_replay_rows)
+                        calibration.schema != GOAL_REACHABILITY_CALIBRATION_SCHEMA_V2
                     }))
-            || (self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6
+            || (self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7
                 && self
                     .terminal_action_calibration
                     .as_ref()
                     .is_some_and(|calibration| {
-                        u64::try_from(calibration.source_transitions)
-                            .map_or(true, |rows| rows != self.training_replay_rows)
+                        calibration.schema != TERMINAL_ACTION_CALIBRATION_SCHEMA_V2
                     }))
         {
             return Err(TacticQCampaignError::InvalidState(
@@ -366,9 +388,10 @@ impl TacticQImmutableLearnerSnapshot {
         let goal_reachability_calibration =
             goal_reachability_calibration_rows(value_treatment, corpus.transitions.len())
                 .map(|calibration_rows| {
-                    if let Some(prior) = prior_goal_reachability_calibration
-                        .filter(|prior| prior.source_transitions == calibration_rows)
-                    {
+                    if let Some(prior) = prior_goal_reachability_calibration.filter(|prior| {
+                        prior.schema == GOAL_REACHABILITY_CALIBRATION_SCHEMA_V2
+                            && prior.source_transitions == calibration_rows
+                    }) {
                         Ok(prior.clone())
                     } else {
                         calibrate_goal_reachability(
@@ -386,9 +409,10 @@ impl TacticQImmutableLearnerSnapshot {
                     .ok_or(TacticQCampaignError::InvalidState(
                         "terminal action model exists without terminal calibration rows",
                     ))?;
-                if let Some(prior) = prior_terminal_action_calibration
-                    .filter(|prior| prior.source_transitions == calibration_rows)
-                {
+                if let Some(prior) = prior_terminal_action_calibration.filter(|prior| {
+                    prior.schema == TERMINAL_ACTION_CALIBRATION_SCHEMA_V2
+                        && prior.source_transitions == calibration_rows
+                }) {
                     Ok(prior.clone())
                 } else {
                     calibrate_terminal_action_ranking(
@@ -411,7 +435,7 @@ impl TacticQImmutableLearnerSnapshot {
             })
             .transpose()?;
         let manifest = TacticQLearnerSnapshot {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7.into(),
             kind: TacticQLearnerSnapshotKind::Learned,
             value_treatment,
             execution_authority_sha256: corpus.execution_authority_sha256,
@@ -517,7 +541,7 @@ mod tests {
     fn current_snapshot_rejects_calibration_from_an_older_replay_prefix() {
         let calibration = calibrate_goal_reachability(&[], 0).unwrap();
         let mut snapshot = TacticQLearnerSnapshot {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7.into(),
             kind: TacticQLearnerSnapshotKind::Learned,
             value_treatment: TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4,
             execution_authority_sha256: Digest([1; 32]),
@@ -538,6 +562,57 @@ mod tests {
         assert!(
             snapshot.validate().is_ok(),
             "legacy snapshots remain readable so the authority can replay and migrate them"
+        );
+    }
+
+    #[test]
+    fn current_snapshot_requires_stable_fold_calibrations() {
+        let goal = calibrate_goal_reachability(&[], 0).unwrap();
+        let terminal =
+            dusklight_learning::terminal_action_calibration::calibrate_terminal_action_ranking(
+                &[],
+                0,
+                1,
+                1.0,
+                true,
+            )
+            .unwrap();
+        let mut snapshot = TacticQLearnerSnapshot {
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7.into(),
+            kind: TacticQLearnerSnapshotKind::Learned,
+            value_treatment: TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4,
+            execution_authority_sha256: Digest([1; 32]),
+            feature_schema_sha256: Digest([2; 32]),
+            objective_sha256: Digest([3; 32]),
+            root_checkpoint_sha256: Digest([4; 32]),
+            training_replay_rows: 0,
+            training_replay_sha256: Digest([5; 32]),
+            model_revision: 1,
+            model_config: OptionValueConfig::default(),
+            model_sha256: None,
+            goal_reachability_calibration: Some(goal),
+            terminal_action_calibration: Some(terminal),
+        };
+        snapshot.validate().unwrap();
+
+        snapshot
+            .goal_reachability_calibration
+            .as_mut()
+            .unwrap()
+            .schema = dusklight_learning::goal_reachability_calibration::GOAL_REACHABILITY_CALIBRATION_SCHEMA_V1.into();
+        snapshot
+            .terminal_action_calibration
+            .as_mut()
+            .unwrap()
+            .schema =
+            dusklight_learning::terminal_action_calibration::TERMINAL_ACTION_CALIBRATION_SCHEMA_V1
+                .into();
+        assert!(snapshot.validate().is_err());
+
+        snapshot.schema = TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6.into();
+        assert!(
+            snapshot.validate().is_ok(),
+            "the authority must be able to read and migrate moving-fold snapshots"
         );
     }
 

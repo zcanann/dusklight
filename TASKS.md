@@ -99,7 +99,20 @@ target is 120.
   eight-row/sign-accuracy shortcut was invalid because it could grant authority
   without proving sibling ranking; estimates remain visible but cannot control
   behavior until whole-state held-out ranking is deployment-ready.
-- The full orchestration suite passes: 496 tests, including exact-return policy
+- The first matched native treatment after removing that shortcut reached the
+  real terminal in all four seeds but regressed to 256 ticks. Learned
+  reachability controlled only 13 of 128 decisions: calibration passed at replay
+  revision 128, collapsed from 38/59 to 29/63 held-out sibling wins at revision
+  138, and did not recover until revision 239. The cause was not snapshot
+  retention or throughput. Both production critics assigned sorted state groups
+  to folds by collection index, so inserting a newly observed state could move
+  most earlier states between training and test folds and rewrite the experiment.
+  Fold membership is now derived only from each authenticated state digest.
+  Calibration v2 and learner snapshot v7 prevent old moving-fold evidence from
+  silently regaining authority; durable v6 snapshots are replayed, recalibrated,
+  and republished on open.
+- The full learning and orchestration suites pass: 455 and 497 tests respectively,
+  including stable whole-state calibration, exact-return policy
   adoption, learned-option decision compression, checkpoint branching, replay
   recovery, and campaign report validation.
 
@@ -189,6 +202,17 @@ incumbent from a nonconsecutive restored checkpoint.
   learned authority when the evidence is insufficient. Do not special-case Ordon
   coordinates, action IDs, or route phases, and do not run another native campaign
   until this deterministic production-path behavior passes.
+- [x] Make growing-corpus deployment calibration a stable experiment. Adding a
+  new authenticated source state must never reassign an earlier state between
+  training and held-out folds merely because its digest sorts earlier. Apply the
+  same invariant to achieved-goal and terminal-action critics, bind the split
+  semantics into versioned calibration and learner snapshots, and migrate old
+  durable authority by replaying rather than trusting its readiness bit.
+- [ ] Re-run the exact bounded four-seed treatment once with stable folds. Report
+  the complete readiness chronology, learned-control decisions, ranking changes,
+  terminal rate, and authenticated best route. If the stable held-out evidence
+  still revokes authority, extract the first genuine ranking error and fix that
+  learning problem; do not retain a disproven older model or add search volume.
 - [ ] Discover and cold-replay a zero-shot route of 124 ticks or less twice with
   identical terminal identity and first-hit tick.
 - [ ] Reach 123 ticks or less and then 120 ticks or less with unchanged generic
