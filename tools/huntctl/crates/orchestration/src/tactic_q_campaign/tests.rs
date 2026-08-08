@@ -84,6 +84,7 @@ fn uncalibrated_terminal_probe_cannot_replace_reachability_primary() {
 
     ensure_goal_reachability_acquisition(&descriptors[1..2], 0, 2, &mut proposals).unwrap();
     retain_goal_reachability_acquisition(&mut proposals).unwrap();
+    ensure_terminal_support_factor_acquisitions(&descriptors[2..3], 2, &mut proposals).unwrap();
     ensure_generalized_value_acquisition(&descriptors[2..3], 0, 2, &mut proposals).unwrap();
 
     assert_eq!(proposals.len(), 2);

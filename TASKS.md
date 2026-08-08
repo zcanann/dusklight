@@ -128,11 +128,21 @@ incumbent from a nonconsecutive restored checkpoint.
   An uncalibrated terminal critic may collect a distinct sibling probe while
   the achieved-goal critic continues learning from every completed and censored
   branch.
-- [ ] Re-run the same bounded treatment once with calibration-gated terminal
-  authority. Before deployment readiness, require zero terminal-critic primary
-  selections, achieved-goal control whenever its evidence gate passes, and
-  terminal probes only as siblings. If it does not improve 222 ticks, diagnose
-  the first wrong retained decision from this run rather than adding volume.
+- [x] Re-run the same bounded treatment once with calibration-gated terminal
+  authority. All four seeds reached terminal and the best improved from the
+  broken treatment's 278 to 260 ticks, but did not improve 222. The gate worked:
+  terminal-model candidates appeared in 105 batches and controlled zero
+  primaries. The audit then exposed the first separate failure at seed 104729
+  decision 18: reachability calibration was deployment-ready, but terminal
+  factor-diversity rebuilding discarded its candidate before retention and
+  left `unsupported_bootstrap` primary. Across the run, exact-ID bootstrap still
+  controlled 113 of 128 decisions and reachability only eight. Factor probes
+  are now allocated only after retaining the learned primary.
+- [ ] Run one bounded matched verification of corrected batch retention. Require
+  reachability to control every eligible non-epsilon, non-exact decision while
+  the terminal critic is uncalibrated, with terminal/factor probes confined to
+  siblings. If the route does not improve 222 ticks, diagnose the first wrong
+  retained decision from that run rather than adding volume.
 - [ ] Discover and cold-replay a zero-shot route of 124 ticks or less twice with
   identical terminal identity and first-hit tick.
 - [ ] Reach 123 ticks or less and then 120 ticks or less with unchanged generic

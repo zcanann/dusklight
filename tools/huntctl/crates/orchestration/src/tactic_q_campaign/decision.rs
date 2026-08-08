@@ -287,6 +287,7 @@ impl TacticQCampaign {
                 .filter(|choice| choice.applicable)
                 .map(|choice| choice.descriptor.clone())
                 .collect::<Vec<_>>();
+            let mut terminal_factor_probe_ranking = None;
             // Partition zero becomes the terminal-cost policy lane only after
             // held-out sibling comparisons authorize that critic. Until then,
             // it keeps consulting the achieved-goal critic just like the broad
@@ -407,11 +408,7 @@ impl TacticQCampaign {
                             || (self.value_treatment.uses_goal_relabeling()
                                 && native_terminal_supported))
                     {
-                        ensure_terminal_support_factor_acquisitions(
-                            &ranked_applicable,
-                            maximum_proposals,
-                            &mut proposals,
-                        )?;
+                        terminal_factor_probe_ranking = Some(ranked_applicable);
                     }
                 }
             }
@@ -427,6 +424,17 @@ impl TacticQCampaign {
                 retain_goal_reachability_acquisition(&mut proposals)?;
             } else if terminal_action_authoritative {
                 retain_generalized_value_acquisition(&mut proposals)?;
+            }
+            // Factor-diverse siblings must be allocated after retaining the
+            // learned primary. Rebuilding a width-two batch before retention
+            // used to discard the reachability candidate and leave exact-ID
+            // bootstrap in control even when its calibration was positive.
+            if let Some(ranked_applicable) = terminal_factor_probe_ranking.as_deref() {
+                ensure_terminal_support_factor_acquisitions(
+                    ranked_applicable,
+                    maximum_proposals,
+                    &mut proposals,
+                )?;
             }
             // An uncalibrated terminal critic may evaluate a distinct sibling
             // so that authenticated same-state comparisons can eventually
