@@ -1,18 +1,12 @@
 use super::*;
 
 const MINIMUM_UNCALIBRATED_MODEL_ACQUISITION_ROWS: usize = 8;
-const UNCALIBRATED_MODEL_ACQUISITION_PERIOD: u64 = 4;
-
 fn model_guided_acquisition_allowed(
     policy: TacticProposalPolicy,
     calibration_ready: bool,
     acquisition_evidence_ready: bool,
-    decision_index: u64,
 ) -> bool {
-    calibration_ready
-        || (policy.deploys_policy_updates()
-            && acquisition_evidence_ready
-            && decision_index % UNCALIBRATED_MODEL_ACQUISITION_PERIOD == 0)
+    calibration_ready || (policy.deploys_policy_updates() && acquisition_evidence_ready)
 }
 
 fn goal_reachability_acquisition_evidence_ready(
@@ -292,7 +286,6 @@ impl TacticQCampaign {
                 .as_ref()
                 .is_some_and(|calibration| calibration.deployment_ready),
             terminal_action_acquisition_evidence_ready(terminal_action_calibration.as_ref()),
-            self.decision_index,
         );
         // A frozen treatment may not deploy behavior its sealed calibration
         // did not authorize. Adaptive learning must be allowed to acquire
@@ -328,7 +321,6 @@ impl TacticQCampaign {
                     goal_reachability_acquisition_evidence_ready(
                         self.goal_reachability_calibration.as_ref(),
                     ),
-                    self.decision_index,
                 );
             if goal_reachability_acquisition {
                 goal_reachability_calibration = self.goal_reachability_calibration.clone();
@@ -1263,36 +1255,31 @@ mod proposal_exploration_tests {
     use super::*;
 
     #[test]
-    fn adaptive_model_acquisition_is_evidence_gated_and_periodic_until_calibrated() {
+    fn adaptive_model_acquisition_uses_every_decision_once_evidence_is_ready() {
         assert!(!model_guided_acquisition_allowed(
             TacticProposalPolicy::Learned,
             false,
             false,
-            16,
         ));
         assert!(model_guided_acquisition_allowed(
             TacticProposalPolicy::Learned,
             false,
             true,
-            16,
         ));
-        assert!(!model_guided_acquisition_allowed(
+        assert!(model_guided_acquisition_allowed(
             TacticProposalPolicy::Learned,
             false,
             true,
-            17,
         ));
         assert!(!model_guided_acquisition_allowed(
             TacticProposalPolicy::FrozenPolicy,
             false,
             true,
-            16,
         ));
         assert!(model_guided_acquisition_allowed(
             TacticProposalPolicy::FrozenPolicy,
             true,
             false,
-            17,
         ));
     }
 

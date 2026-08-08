@@ -16,6 +16,8 @@ pub const NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V5: &str =
     "dusklight-native-tactic-scratch-campaign-audit/v5";
 pub const NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V6: &str =
     "dusklight-native-tactic-scratch-campaign-audit/v6";
+pub const NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V7: &str =
+    "dusklight-native-tactic-scratch-campaign-audit/v7";
 
 fn is_zero_u64(value: &u64) -> bool {
     *value == 0
@@ -96,6 +98,11 @@ pub struct NativeTacticScratchDecisionAudit {
 pub struct NativeTacticScratchSeedAudit {
     pub seed: u64,
     pub stop_reasons: Vec<NativeTacticScratchStopReason>,
+    /// Campaign incumbent already present in the imported graph before this
+    /// seed made a native terminal proposal. This is a baseline, not a
+    /// discovery or improvement attributable to the seed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inherited_best_authenticated_tick: Option<u64>,
     pub terminal_discovered: bool,
     pub best_authenticated_tick: Option<u64>,
     pub first_terminal_decision_index: Option<u64>,
@@ -232,7 +239,7 @@ impl NativeTacticScratchCampaignAudit {
         }
         let resources = resource_audit(route, &plan)?;
         let mut audit = Self {
-            schema: NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V6.into(),
+            schema: NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V7.into(),
             content_sha256: Digest::ZERO,
             route_report_sha256: route_report_sha256(route)?,
             execution_plan_sha256: route.execution_plan_sha256,
@@ -286,6 +293,7 @@ impl NativeTacticScratchCampaignAudit {
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4 => seed_is_valid_v3,
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V5 => seed_is_valid_v5,
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V6 => seed_is_valid_v6,
+            NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V7 => seed_is_valid_v7,
             _ => {
                 return Err(route_message(
                     "scratch campaign audit schema is unsupported",
@@ -297,6 +305,7 @@ impl NativeTacticScratchCampaignAudit {
             NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V4
                 | NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V5
                 | NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V6
+                | NATIVE_TACTIC_SCRATCH_CAMPAIGN_AUDIT_SCHEMA_V7
         ) {
             self.useful_graph_expansion_set_sha256 != Digest::ZERO
                 && self.unique_useful_graph_expansions
@@ -510,11 +519,23 @@ fn seed_audit(
     let scheduler_timeline_complete = true;
     let mut terminal_improvements = Vec::new();
     let mut terminal_improvement_timing_complete = true;
-    let mut best_observed_terminal_tick = None;
     let source_frame = graph
         .node(graph.root())
         .map(|root| root.restoration.route.tape_frames)
         .ok_or_else(|| route_message("scratch campaign audit graph root is absent"))?;
+    // A later generation can begin with a terminal path imported through the
+    // shared campaign graph. With no terminal proposal in the first decision,
+    // a reported incumbent can only predate that decision. Preserve it as the
+    // seed baseline instead of fabricating a local discovery at decision zero.
+    let inherited_best_authenticated_tick = seed.trace.first().and_then(|trace| {
+        (!trace
+            .proposal_batch
+            .iter()
+            .any(|proposal| proposal.terminal))
+        .then_some(trace.best_authenticated_tick_after_decision)
+        .flatten()
+    });
+    let mut best_observed_terminal_tick = inherited_best_authenticated_tick;
     let mut decisions = Vec::with_capacity(seed.trace.len());
     for trace in &seed.trace {
         if trace.source_route_ticks != trace.before.tape_frame {
@@ -739,6 +760,7 @@ fn seed_audit(
     Ok(NativeTacticScratchSeedAudit {
         seed: seed.seed,
         stop_reasons: stop_reasons(route, seed),
+        inherited_best_authenticated_tick,
         terminal_discovered: seed.terminal_discovered,
         best_authenticated_tick: seed.best_authenticated_tick,
         first_terminal_decision_index: seed.first_terminal_decision_index,
@@ -808,7 +830,7 @@ fn seed_is_valid_v5(seed: &NativeTacticScratchSeedAudit) -> bool {
     if !seed_is_valid_v3(seed) || !seed.terminal_improvement_timing_complete {
         return false;
     }
-    graph_authoritative_terminal_timeline_is_valid(seed)
+    graph_authoritative_terminal_timeline_is_valid(seed, false)
 }
 
 fn seed_is_valid_v6(seed: &NativeTacticScratchSeedAudit) -> bool {
@@ -817,8 +839,21 @@ fn seed_is_valid_v6(seed: &NativeTacticScratchSeedAudit) -> bool {
         && seed_is_valid_v5(seed)
 }
 
-fn graph_authoritative_terminal_timeline_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
-    let mut prior_best = None;
+fn seed_is_valid_v7(seed: &NativeTacticScratchSeedAudit) -> bool {
+    seed.action_surface_timeline_complete
+        && seed.scheduler_timeline_complete
+        && seed.terminal_improvement_timing_complete
+        && seed_is_valid_v3_with_selected_applicability(seed, true, true)
+        && graph_authoritative_terminal_timeline_is_valid(seed, true)
+}
+
+fn graph_authoritative_terminal_timeline_is_valid(
+    seed: &NativeTacticScratchSeedAudit,
+    allow_inherited: bool,
+) -> bool {
+    let mut prior_best = allow_inherited
+        .then_some(seed.inherited_best_authenticated_tick)
+        .flatten();
     for decision in &seed.decisions {
         match decision.best_authenticated_tick_after_decision {
             None if prior_best.is_some() => return false,
@@ -833,6 +868,11 @@ fn graph_authoritative_terminal_timeline_is_valid(seed: &NativeTacticScratchSeed
                 if prior_best.is_some_and(|prior| best > prior) {
                     return false;
                 }
+                if prior_best.is_some_and(|prior| best < prior)
+                    && decision.terminal_proposal_count == 0
+                {
+                    return false;
+                }
                 prior_best = Some(best);
             }
         }
@@ -841,23 +881,24 @@ fn graph_authoritative_terminal_timeline_is_valid(seed: &NativeTacticScratchSeed
 }
 
 fn seed_is_valid_v3(seed: &NativeTacticScratchSeedAudit) -> bool {
-    seed_is_valid_v3_with_selected_applicability(seed, true)
+    seed_is_valid_v3_with_selected_applicability(seed, true, false)
 }
 
 fn seed_is_valid_v3_legacy(seed: &NativeTacticScratchSeedAudit) -> bool {
-    seed_is_valid_v3_with_selected_applicability(seed, false)
+    seed_is_valid_v3_with_selected_applicability(seed, false, false)
 }
 
 fn seed_is_valid_v3_with_selected_applicability(
     seed: &NativeTacticScratchSeedAudit,
     require_selected_applicable: bool,
+    allow_inherited: bool,
 ) -> bool {
     let Some(total_proposals) = seed.decisions.iter().try_fold(0_u64, |total, decision| {
         total.checked_add(decision.proposal_count)
     }) else {
         return false;
     };
-    let first_terminal_valid = first_terminal_evidence_is_valid(seed);
+    let first_terminal_valid = first_terminal_evidence_is_valid(seed, allow_inherited);
     seed.decisions.windows(2).all(|pair| {
         pair[0].decision_index < pair[1].decision_index
             && pair[0].cumulative_wall_micros <= pair[1].cumulative_wall_micros
@@ -912,7 +953,7 @@ fn seed_is_valid_v3_with_selected_applicability(
             .windows(2)
             .all(|pair| pair[0] <= pair[1])
         && seed.best_authenticated_tick == seed.terminal_path_ticks.first().copied()
-        && terminal_improvement_timeline_is_valid(seed)
+        && terminal_improvement_timeline_is_valid(seed, allow_inherited)
 }
 
 fn seed_is_valid_v2(seed: &NativeTacticScratchSeedAudit) -> bool {
@@ -991,7 +1032,10 @@ fn seed_is_valid_v2(seed: &NativeTacticScratchSeedAudit) -> bool {
                     == seed.best_authenticated_tick))
 }
 
-fn first_terminal_evidence_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
+fn first_terminal_evidence_is_valid(
+    seed: &NativeTacticScratchSeedAudit,
+    allow_inherited: bool,
+) -> bool {
     match (
         seed.terminal_discovered,
         seed.first_terminal_decision_index,
@@ -1027,13 +1071,22 @@ fn first_terminal_evidence_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool
                 && decision.terminal_proposal_count > 0
         }
         (false, None, None, None, None, None) => true,
+        (true, None, None, None, None, Some(best))
+            if allow_inherited && seed.inherited_best_authenticated_tick == Some(best) =>
+        {
+            true
+        }
         _ => false,
     }
 }
 
-fn terminal_improvement_timeline_is_valid(seed: &NativeTacticScratchSeedAudit) -> bool {
+fn terminal_improvement_timeline_is_valid(
+    seed: &NativeTacticScratchSeedAudit,
+    allow_inherited: bool,
+) -> bool {
     if !seed.terminal_discovered {
-        return seed.terminal_improvements.is_empty()
+        return (!allow_inherited || seed.inherited_best_authenticated_tick.is_none())
+            && seed.terminal_improvements.is_empty()
             && seed.best_terminal_decision_index.is_none()
             && seed.time_to_best_terminal_micros.is_none()
             && seed.proposal_expansions_to_best_terminal.is_none()
@@ -1042,23 +1095,39 @@ fn terminal_improvement_timeline_is_valid(seed: &NativeTacticScratchSeedAudit) -
     if !seed.terminal_improvement_timing_complete {
         return true;
     }
+    if seed.terminal_improvements.is_empty() {
+        return allow_inherited
+            && seed.inherited_best_authenticated_tick == seed.best_authenticated_tick
+            && seed.best_terminal_decision_index.is_none()
+            && seed.time_to_best_terminal_micros.is_none()
+            && seed.proposal_expansions_to_best_terminal.is_none()
+            && seed.useful_graph_expansions_to_best_terminal.is_none();
+    }
     let Some(first) = seed.terminal_improvements.first() else {
         return false;
     };
     let Some(last) = seed.terminal_improvements.last() else {
         return false;
     };
-    if Some(first.decision_index) != seed.first_terminal_decision_index
-        || Some(first.cumulative_wall_micros) != seed.time_to_first_terminal_micros
-        || Some(first.cumulative_proposal_expansions) != seed.proposal_expansions_to_first_terminal
-        || Some(first.cumulative_useful_graph_expansions)
-            != seed.useful_graph_expansions_to_first_terminal
+    let first_improvement_matches_first_discovery = allow_inherited
+        && seed.inherited_best_authenticated_tick.is_some()
+        || (Some(first.decision_index) == seed.first_terminal_decision_index
+            && Some(first.cumulative_wall_micros) == seed.time_to_first_terminal_micros
+            && Some(first.cumulative_proposal_expansions)
+                == seed.proposal_expansions_to_first_terminal
+            && Some(first.cumulative_useful_graph_expansions)
+                == seed.useful_graph_expansions_to_first_terminal);
+    if !first_improvement_matches_first_discovery
         || Some(last.decision_index) != seed.best_terminal_decision_index
         || Some(last.cumulative_wall_micros) != seed.time_to_best_terminal_micros
         || Some(last.cumulative_proposal_expansions) != seed.proposal_expansions_to_best_terminal
         || Some(last.cumulative_useful_graph_expansions)
             != seed.useful_graph_expansions_to_best_terminal
         || Some(last.authenticated_tick) != seed.best_authenticated_tick
+        || (allow_inherited
+            && seed
+                .inherited_best_authenticated_tick
+                .is_some_and(|baseline| first.authenticated_tick >= baseline))
         || seed.terminal_improvements.windows(2).any(|pair| {
             pair[0].authenticated_tick <= pair[1].authenticated_tick
                 || pair[0].decision_index > pair[1].decision_index
@@ -1088,6 +1157,7 @@ fn terminal_improvement_timeline_is_valid(seed: &NativeTacticScratchSeedAudit) -
                 == decision.completed_executable_graph_expansions
             && improvement.cumulative_proposal_expansions > 0
             && improvement.cumulative_useful_graph_expansions > 0
+            && decision.terminal_proposal_count > 0
             && (decision.best_authenticated_tick_after_decision
                 == Some(improvement.authenticated_tick)
                 || (decision.best_authenticated_tick_after_decision.is_none()
@@ -1268,6 +1338,7 @@ mod tests {
         NativeTacticScratchSeedAudit {
             seed: 7,
             stop_reasons: vec![NativeTacticScratchStopReason::DecisionBudgetExhausted],
+            inherited_best_authenticated_tick: None,
             terminal_discovered: true,
             best_authenticated_tick: Some(9),
             first_terminal_decision_index: Some(0),
@@ -1373,34 +1444,41 @@ mod tests {
     #[test]
     fn terminal_timeline_recomputes_first_and_best_evidence_from_decisions() {
         let seed = valid_terminal_seed_audit();
-        assert!(first_terminal_evidence_is_valid(&seed));
-        assert!(terminal_improvement_timeline_is_valid(&seed));
+        assert!(first_terminal_evidence_is_valid(&seed, false));
+        assert!(terminal_improvement_timeline_is_valid(&seed, false));
         assert!(seed_is_valid_v3(&seed));
 
         let mut detached_wall = seed.clone();
         detached_wall.time_to_first_terminal_micros = Some(11);
-        assert!(!first_terminal_evidence_is_valid(&detached_wall));
+        assert!(!first_terminal_evidence_is_valid(&detached_wall, false));
 
         let mut detached_work = seed.clone();
         detached_work.proposal_expansions_to_first_terminal = Some(2);
-        assert!(!first_terminal_evidence_is_valid(&detached_work));
+        assert!(!first_terminal_evidence_is_valid(&detached_work, false));
 
         let mut detached_useful_work = seed;
         detached_useful_work.useful_graph_expansions_to_first_terminal = Some(2);
-        assert!(!first_terminal_evidence_is_valid(&detached_useful_work));
+        assert!(!first_terminal_evidence_is_valid(
+            &detached_useful_work,
+            false
+        ));
     }
 
     #[test]
     fn v5_requires_graph_authoritative_best_tick_after_each_terminal_decision() {
         let mut seed = valid_terminal_seed_audit();
-        assert!(!graph_authoritative_terminal_timeline_is_valid(&seed));
+        assert!(!graph_authoritative_terminal_timeline_is_valid(
+            &seed, false
+        ));
         seed.decisions[0].best_authenticated_tick_after_decision = Some(9);
-        assert!(graph_authoritative_terminal_timeline_is_valid(&seed));
+        assert!(graph_authoritative_terminal_timeline_is_valid(&seed, false));
         assert!(seed_is_valid_v5(&seed));
         assert!(!seed_is_valid_v6(&seed));
 
         seed.decisions[0].best_authenticated_tick_after_decision = Some(10);
-        assert!(!graph_authoritative_terminal_timeline_is_valid(&seed));
+        assert!(!graph_authoritative_terminal_timeline_is_valid(
+            &seed, false
+        ));
     }
 
     #[test]
@@ -1415,6 +1493,43 @@ mod tests {
         seed.action_surface_timeline_complete = false;
         seed.scheduler_timeline_complete = true;
         assert!(!seed_is_valid_v6(&seed));
+    }
+
+    #[test]
+    fn inherited_campaign_incumbent_is_a_baseline_not_a_seed_discovery() {
+        let mut seed = valid_terminal_seed_audit();
+        seed.inherited_best_authenticated_tick = Some(9);
+        seed.first_terminal_decision_index = None;
+        seed.time_to_first_terminal_micros = None;
+        seed.proposal_expansions_to_first_terminal = None;
+        seed.useful_graph_expansions_to_first_terminal = None;
+        seed.terminal_improvements.clear();
+        seed.best_terminal_decision_index = None;
+        seed.time_to_best_terminal_micros = None;
+        seed.proposal_expansions_to_best_terminal = None;
+        seed.useful_graph_expansions_to_best_terminal = None;
+        seed.decisions[0].terminal_proposal_count = 0;
+        seed.decisions[0].terminal = false;
+        seed.decisions[0].best_authenticated_tick_after_decision = Some(9);
+
+        assert!(first_terminal_evidence_is_valid(&seed, true));
+        assert!(terminal_improvement_timeline_is_valid(&seed, true));
+        assert!(graph_authoritative_terminal_timeline_is_valid(&seed, true));
+        assert!(!first_terminal_evidence_is_valid(&seed, false));
+    }
+
+    #[test]
+    fn inherited_campaign_incumbent_allows_a_strict_local_improvement() {
+        let mut seed = valid_terminal_seed_audit();
+        seed.inherited_best_authenticated_tick = Some(10);
+        seed.decisions[0].best_authenticated_tick_after_decision = Some(9);
+
+        assert!(first_terminal_evidence_is_valid(&seed, true));
+        assert!(terminal_improvement_timeline_is_valid(&seed, true));
+        assert!(graph_authoritative_terminal_timeline_is_valid(&seed, true));
+
+        seed.decisions[0].terminal_proposal_count = 0;
+        assert!(!graph_authoritative_terminal_timeline_is_valid(&seed, true));
     }
 
     #[test]
@@ -1438,17 +1553,23 @@ mod tests {
                 cumulative_useful_graph_expansions: 2,
                 authenticated_tick: 8,
             });
-        assert!(terminal_improvement_timeline_is_valid(&seed));
+        assert!(terminal_improvement_timeline_is_valid(&seed, false));
         assert!(seed_is_valid_v3(&seed));
 
         let mut non_improving = seed.clone();
         non_improving.terminal_improvements[1].authenticated_tick = 9;
         non_improving.best_authenticated_tick = Some(9);
-        assert!(!terminal_improvement_timeline_is_valid(&non_improving));
+        assert!(!terminal_improvement_timeline_is_valid(
+            &non_improving,
+            false
+        ));
 
         let mut detached_work = seed;
         detached_work.terminal_improvements[1].cumulative_proposal_expansions = 1;
-        assert!(!terminal_improvement_timeline_is_valid(&detached_work));
+        assert!(!terminal_improvement_timeline_is_valid(
+            &detached_work,
+            false
+        ));
     }
 
     #[test]
@@ -1465,7 +1586,7 @@ mod tests {
         seed.proposal_expansions_to_best_terminal = None;
         seed.useful_graph_expansions_to_best_terminal = None;
         seed.terminal_improvement_timing_complete = false;
-        assert!(!terminal_improvement_timeline_is_valid(&seed));
+        assert!(!terminal_improvement_timeline_is_valid(&seed, false));
     }
 
     #[test]

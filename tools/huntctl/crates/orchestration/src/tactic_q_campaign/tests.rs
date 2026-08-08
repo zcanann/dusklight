@@ -1255,6 +1255,26 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         unproven_batch.proposals[0].reason,
         TacticSelectionReason::GoalReachability
     );
+    unproven_goal_consumer.decision_index = 5;
+    let consecutive_adaptive_batch = unproven_goal_consumer
+        .decide_parameterized_batch_with_policy::<&'static str, _>(
+            &catalog,
+            &[],
+            Digest([9; 32]),
+            &encode,
+            1,
+            0,
+            TacticProposalPolicy::Learned,
+            Some(0),
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        consecutive_adaptive_batch.proposals[0].reason,
+        TacticSelectionReason::GoalReachability,
+        "an evidence-backed adaptive critic must control consecutive decisions"
+    );
+    unproven_goal_consumer.decision_index = 4;
     let frozen_batch = unproven_goal_consumer
         .decide_parameterized_batch_with_policy::<&'static str, _>(
             &catalog,

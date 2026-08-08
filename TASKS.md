@@ -59,7 +59,16 @@ target is 120.
   evidence, but 222 is still nowhere near the 124-tick adequacy gate. The older
   210-tick artifact remains the best cold-replayed route and is not directly
   comparable to this treatment.
-- The full orchestration suite passes: 491 tests, including exact-return policy
+- Its repaired v7 audit distinguishes inherited campaign incumbents from local
+  discoveries. The scorecard exposed the first policy failure: 94 of 128
+  retained decisions used exact-ID `unsupported_bootstrap`, only two retained
+  actions had an exact fitted value, and just one of 26 policy-update probes
+  changed the selected action. A generalized model candidate was present in
+  105 batches but controlled only 27 decisions because uncalibrated adaptive
+  deployment was arbitrarily limited to every fourth decision. Adaptive
+  evidence-backed acquisition now controls consecutive decisions; frozen
+  evaluation remains calibration-gated.
+- The full orchestration suite passes: 493 tests, including exact-return policy
   adoption, learned-option decision compression, checkpoint branching, replay
   recovery, and campaign report validation.
 
@@ -94,12 +103,24 @@ incumbent from a nonconsecutive restored checkpoint.
 
 ## P0 — beat the Ordon route
 
-- [ ] After the coherence exit above, run one bounded seed-104729 diagnostic that
+- [x] After the coherence exit above, run one bounded seed-104729 diagnostic that
   answers multiple hypotheses in one scorecard: terminal discoveries, incumbent
   improvements, branch sources, completed and censored rollouts, restore modes,
   action/tactic coverage, learned ranking changes, useful experience per second,
-  and cold-replay result. Diagnose the first failed learning decision before
-  adding campaign volume.
+  and cold-replay result. The four-generation seed-104729 campaign produced 260
+  completed executable expansions (1.69/s), 249 native transitions of which 144
+  were censored, 130 direct restores with zero fallback replays, and local
+  incumbent discoveries of 403, 230, and 222 ticks. The 222 route cold-replayed
+  twice with identical terminal identity and first-hit tick. Its first
+  post-terminal failure was decision 17: an evidence-backed generalized
+  candidate was evaluated, but the periodic gate retained an exact-ID-unknown
+  action instead. Diagnose first, then change the policy; do not add volume.
+- [ ] Re-run that bounded treatment once with consecutive adaptive model control.
+  Require the audit to show that evidence-backed ranking, not exact-ID novelty,
+  controls most retained decisions after support exists and that policy updates
+  change action ranking more than the previous 1-of-26 baseline. If it does not
+  improve the 222-tick incumbent, diagnose the next failed decision from the
+  same run rather than increasing campaign volume.
 - [ ] Discover and cold-replay a zero-shot route of 124 ticks or less twice with
   identical terminal identity and first-hit tick.
 - [ ] Reach 123 ticks or less and then 120 ticks or less with unchanged generic
