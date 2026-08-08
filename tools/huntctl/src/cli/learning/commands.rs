@@ -99,8 +99,9 @@ use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticCampaignSummary, NativeTacticColdReplayConfig,
     NativeTacticColdReplayEvidenceBundle, NativeTacticDemonstrationReport,
     NativeTacticExecutionPlan, NativeTacticExecutionPlanRequest, NativeTacticFaultInjector,
-    NativeTacticFaultRecoveryEvidenceBundle, NativeTacticLaunchSmokeBundle,
-    NativeTacticObservationAudit, NativeTacticOptimizationHandoffConfig, NativeTacticPlanBudgets,
+    NativeTacticFaultRecoveryEvidenceBundle, NativeTacticGoalReachabilityDiagnosis,
+    NativeTacticLaunchSmokeBundle, NativeTacticObservationAudit,
+    NativeTacticOptimizationHandoffConfig, NativeTacticPlanBudgets,
     NativeTacticPostTerminalControlReport, NativeTacticResourceLimit,
     NativeTacticRestoreLocalityConfig, NativeTacticRestoreLocalityReport,
     NativeTacticRouteDiagnosisReport, NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
@@ -460,6 +461,7 @@ fn is_frozen_and_tactic_command(name: &str) -> bool {
             | "validate-tactic-fault-recovery-bundle"
             | "audit-post-terminal-tactic-controls"
             | "audit-tactic-scratch-campaign"
+            | "diagnose-tactic-goal-reachability"
             | "audit-tactic-observations"
             | "compare-tactic-scratch-campaigns"
             | "validate-tactic-scratch-comparison"
@@ -540,6 +542,7 @@ mod tests {
             "inspect-tactic-decision-journal",
             "audit-post-terminal-tactic-controls",
             "audit-tactic-scratch-campaign",
+            "diagnose-tactic-goal-reachability",
             "audit-tactic-observations",
             "compare-tactic-scratch-campaigns",
             "validate-tactic-scratch-comparison",

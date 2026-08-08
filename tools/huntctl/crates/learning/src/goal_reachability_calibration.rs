@@ -43,6 +43,44 @@ pub struct GoalReachabilityCalibration {
     pub deployment_ready: bool,
 }
 
+/// One held-out action prediction and its authentic realized outcome.
+///
+/// This is diagnostic evidence, not model authority. It deliberately retains
+/// the typed action descriptor so a ranking failure can be reproduced without
+/// reverse-engineering an option ID.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoalReachabilityActionDiagnosis {
+    pub descriptor: crate::option_values::OptionActionDescriptor,
+    pub predicted_goal_progress_per_tick: f32,
+    pub observed_goal_progress_per_tick: f32,
+    pub nearest_distance: f32,
+    pub neighbors: usize,
+    pub selected: bool,
+    pub observed_best: bool,
+}
+
+/// Exact same-state sibling ranking used by the deployment calibration.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoalReachabilityGroupDiagnosis {
+    pub source_state_sha256: dusklight_automation_contracts::artifact::Digest,
+    pub fold: usize,
+    pub ranking_win: bool,
+    pub observed_regret: f32,
+    pub actions: Vec<GoalReachabilityActionDiagnosis>,
+}
+
+/// Aggregate authority decision plus every comparable held-out ranking behind
+/// it. Production snapshots retain only `GoalReachabilityCalibration`; this
+/// larger form is materialized solely by explicit diagnostics.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoalReachabilityCalibrationDiagnosis {
+    pub calibration: GoalReachabilityCalibration,
+    pub groups: Vec<GoalReachabilityGroupDiagnosis>,
+}
+
 impl GoalReachabilityCalibration {
     pub fn validate(&self) -> Result<(), GeneralizedTacticValueError> {
         let rates = [
@@ -93,6 +131,14 @@ pub fn calibrate_goal_reachability(
     transitions: &[OptionTransitionSample],
     goal_distance_feature: usize,
 ) -> Result<GoalReachabilityCalibration, GeneralizedTacticValueError> {
+    calibrate_goal_reachability_with_diagnosis(transitions, goal_distance_feature)
+        .map(|diagnosis| diagnosis.calibration)
+}
+
+pub fn calibrate_goal_reachability_with_diagnosis(
+    transitions: &[OptionTransitionSample],
+    goal_distance_feature: usize,
+) -> Result<GoalReachabilityCalibrationDiagnosis, GeneralizedTacticValueError> {
     for transition in transitions {
         transition
             .validate()
@@ -119,6 +165,7 @@ pub fn calibrate_goal_reachability(
     let mut regret_sum = 0.0_f64;
     let mut absolute_error_sum = 0.0_f64;
     let mut sign_correct = 0_usize;
+    let mut group_diagnoses = Vec::new();
 
     for fold in 0..GOAL_REACHABILITY_CALIBRATION_FOLDS {
         let training = indexed_groups
@@ -138,9 +185,10 @@ pub fn calibrate_goal_reachability(
         for (_, rows) in indexed_groups.iter().filter(|(state, _)| {
             stable_group_fold(*state, GOAL_REACHABILITY_CALIBRATION_FOLDS) == fold
         }) {
-            evaluate_group(
+            if let Some(diagnosis) = evaluate_group(
                 &model,
                 rows,
+                fold,
                 goal_distance_feature,
                 &mut evaluated_action_predictions,
                 &mut comparable_state_groups,
@@ -149,7 +197,9 @@ pub fn calibrate_goal_reachability(
                 &mut regret_sum,
                 &mut absolute_error_sum,
                 &mut sign_correct,
-            )?;
+            )? {
+                group_diagnoses.push(diagnosis);
+            }
         }
     }
 
@@ -182,13 +232,17 @@ pub fn calibrate_goal_reachability(
         report.chance_win_rate,
     );
     report.validate()?;
-    Ok(report)
+    Ok(GoalReachabilityCalibrationDiagnosis {
+        calibration: report,
+        groups: group_diagnoses,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
 fn evaluate_group(
     model: &GeneralizedTacticValueModel,
     rows: &[&OptionTransitionSample],
+    fold: usize,
     goal_distance_feature: usize,
     evaluated_action_predictions: &mut usize,
     comparable_state_groups: &mut usize,
@@ -197,9 +251,9 @@ fn evaluate_group(
     regret_sum: &mut f64,
     absolute_error_sum: &mut f64,
     sign_correct: &mut usize,
-) -> Result<(), GeneralizedTacticValueError> {
+) -> Result<Option<GoalReachabilityGroupDiagnosis>, GeneralizedTacticValueError> {
     let Some(first) = rows.first() else {
-        return Ok(());
+        return Ok(None);
     };
     let descriptors = rows
         .iter()
@@ -250,7 +304,7 @@ fn evaluate_group(
         }
     }
     if actual.len() < 2 {
-        return Ok(());
+        return Ok(None);
     }
     let best = actual
         .iter()
@@ -272,8 +326,36 @@ fn evaluate_group(
     *comparable_state_groups = comparable_state_groups.saturating_add(1);
     *ranking_wins = ranking_wins.saturating_add(usize::from(selected >= best - COMPARISON_EPSILON));
     *chance_sum += 1.0 / actual.len() as f64;
-    *regret_sum += f64::from((best - selected).max(0.0));
-    Ok(())
+    let observed_regret = (best - selected).max(0.0);
+    *regret_sum += f64::from(observed_regret);
+    let actions = estimates
+        .iter()
+        .enumerate()
+        .map(|(index, estimate)| {
+            let observed_goal_progress_per_tick = actual
+                .iter()
+                .find_map(|(descriptor, observed)| {
+                    (descriptor == &estimate.descriptor).then_some(*observed)
+                })
+                .expect("validated prediction remains attached to held-out outcome");
+            GoalReachabilityActionDiagnosis {
+                descriptor: estimate.descriptor.clone(),
+                predicted_goal_progress_per_tick: estimate.outcome.goal_progress_per_tick,
+                observed_goal_progress_per_tick,
+                nearest_distance: estimate.nearest_distance,
+                neighbors: estimate.neighbors,
+                selected: index == 0,
+                observed_best: observed_goal_progress_per_tick >= best - COMPARISON_EPSILON,
+            }
+        })
+        .collect();
+    Ok(Some(GoalReachabilityGroupDiagnosis {
+        source_state_sha256: first.before_state_sha256,
+        fold,
+        ranking_win: selected >= best - COMPARISON_EPSILON,
+        observed_regret,
+        actions,
+    }))
 }
 
 fn ratio(numerator: usize, denominator: usize) -> Option<f64> {

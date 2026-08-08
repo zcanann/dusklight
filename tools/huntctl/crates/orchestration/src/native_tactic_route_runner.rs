@@ -54,7 +54,10 @@ use dusklight_learning::default_tactic_catalog::MAX_GOAL_SEEK_TARGETS;
 use dusklight_learning::fact_registry::FactRegistry;
 use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::fqi::FqiConfig;
-use dusklight_learning::goal_reachability_calibration::GoalReachabilityCalibration;
+use dusklight_learning::goal_reachability_calibration::{
+    GoalReachabilityCalibration, GoalReachabilityCalibrationDiagnosis,
+    calibrate_goal_reachability_with_diagnosis,
+};
 use dusklight_learning::learner_state::LearnerState;
 use dusklight_learning::option_transition::OptionTransitionSample;
 use dusklight_learning::option_values::{OptionActionDescriptor, OptionValueConfig};
@@ -323,6 +326,11 @@ pub use scratch_campaign_audit::{
     NativeTacticCampaignResourceAudit, NativeTacticScratchCampaignAudit,
     NativeTacticScratchDecisionAudit, NativeTacticScratchSeedAudit, NativeTacticScratchStopReason,
     NativeTacticScratchTerminalImprovementAudit,
+};
+mod goal_reachability_diagnosis;
+pub use goal_reachability_diagnosis::{
+    NATIVE_TACTIC_GOAL_REACHABILITY_DIAGNOSIS_SCHEMA_V1, NativeTacticGoalReachabilityDiagnosis,
+    NativeTacticGoalReachabilityRevisionDiagnosis,
 };
 mod scratch_comparison;
 pub use scratch_comparison::{

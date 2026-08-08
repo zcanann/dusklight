@@ -170,6 +170,73 @@ fn achieved_goal_relabeling_generalizes_reachability_beyond_observed_goals() {
     }));
 }
 
+#[test]
+fn reachability_diagnosis_exposes_every_held_out_sibling_ranking() {
+    let encoder = GoalConditionedTacticFeatureEncoder::new([100.0, 0.0, 0.0]).unwrap();
+    let mut transitions = Vec::new();
+    for group in 0..8_u16 {
+        let x = f32::from(group) * 3.0;
+        transitions.push(transition(
+            &format!("fast-{group}"),
+            -std::f32::consts::FRAC_PI_2,
+            [x, 0.0],
+            [x + 2.0, 0.0],
+            group + 10,
+            group + 10,
+            0.0,
+            false,
+            0,
+        ));
+        transitions.push(transition(
+            &format!("slow-{group}"),
+            -std::f32::consts::FRAC_PI_2,
+            [x, 0.0],
+            [x + 1.0, 0.0],
+            group + 10,
+            group + 10,
+            0.0,
+            false,
+            0,
+        ));
+    }
+    for transition in &mut transitions {
+        transition.feature_schema_sha256 = encoder.schema_sha256;
+        transition.value_sample.state = encoder.encode(&transition.before).unwrap();
+        transition.value_sample.next_state = encoder.encode(&transition.after).unwrap();
+    }
+
+    let diagnosis =
+        crate::goal_reachability_calibration::calibrate_goal_reachability_with_diagnosis(
+            &transitions,
+            encoder.goal_distance_feature(),
+        )
+        .unwrap();
+    let summary = crate::goal_reachability_calibration::calibrate_goal_reachability(
+        &transitions,
+        encoder.goal_distance_feature(),
+    )
+    .unwrap();
+
+    assert_eq!(diagnosis.calibration, summary);
+    assert_eq!(diagnosis.groups.len(), summary.comparable_state_groups);
+    assert_eq!(diagnosis.groups.len(), 8);
+    assert!(diagnosis.groups.iter().all(|group| {
+        group.actions.len() == 2
+            && group
+                .actions
+                .iter()
+                .filter(|action| action.selected)
+                .count()
+                == 1
+            && group
+                .actions
+                .iter()
+                .filter(|action| action.observed_best)
+                .count()
+                == 1
+    }));
+}
+
 fn set_player_state(facts: &mut FactSnapshot, x: f32, z: f32, procedure: u16) {
     facts.player.position_f32_bits[0] = x.to_bits();
     facts.player.position_f32_bits[2] = z.to_bits();

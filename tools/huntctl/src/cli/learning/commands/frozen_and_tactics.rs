@@ -9,11 +9,11 @@ use super::{
     NativeTacticCampaignSummary, NativeTacticColdReplayConfig,
     NativeTacticColdReplayEvidenceBundle, NativeTacticDemonstrationReport,
     NativeTacticExecutionPlan, NativeTacticFaultInjector, NativeTacticFaultRecoveryEvidenceBundle,
-    NativeTacticLaunchSmokeBundle, NativeTacticObservationAudit,
-    NativeTacticOptimizationHandoffConfig, NativeTacticPolicyRunConfig,
-    NativeTacticPostTerminalControlReport, NativeTacticRestoreLocalityConfig,
-    NativeTacticRestoreLocalityReport, NativeTacticRouteDiagnosisReport,
-    NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
+    NativeTacticGoalReachabilityDiagnosis, NativeTacticLaunchSmokeBundle,
+    NativeTacticObservationAudit, NativeTacticOptimizationHandoffConfig,
+    NativeTacticPolicyRunConfig, NativeTacticPostTerminalControlReport,
+    NativeTacticRestoreLocalityConfig, NativeTacticRestoreLocalityReport,
+    NativeTacticRouteDiagnosisReport, NativeTacticRouteRunConfig, NativeTacticScratchCampaignAudit,
     NativeTacticScratchComparisonReport, NativeTacticScratchDiscoveryReport,
     NativeTacticScratchEvidenceBundle, NativeTacticTerminalEvidenceBundle,
     NativeTacticThroughputCurveConfig, NativeTacticThroughputCurveRun,
@@ -1219,6 +1219,58 @@ pub(super) fn command(args: &[String]) -> Result<(), Box<dyn Error>> {
             let audit = NativeTacticScratchCampaignAudit::build(&repository_root, &route)?;
             fs::write(&output, audit.to_pretty_json()?)?;
             println!("{}", serde_json::to_string_pretty(&audit)?);
+            Ok(())
+        }
+        Some("diagnose-tactic-goal-reachability") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let route =
+                read_native_tactic_route_report(&required_path(learn_args, "--report")?)?;
+            let mut revisions = repeated_option(learn_args, "--revision")
+                .into_iter()
+                .map(|revision| revision.parse::<u64>())
+                .collect::<Result<Vec<_>, _>>()?;
+            revisions.sort_unstable();
+            revisions.dedup();
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "goal reachability diagnosis output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let diagnosis = NativeTacticGoalReachabilityDiagnosis::build(
+                &repository_root,
+                &route,
+                &revisions,
+            )?;
+            fs::write(&output, serde_json::to_vec_pretty(&diagnosis)?)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": diagnosis.schema,
+                    "output": output,
+                    "revisions": diagnosis.revisions.iter().map(|revision| json!({
+                        "replay_revision": revision.replay_revision,
+                        "deployment_ready": revision.diagnosis.calibration.deployment_ready,
+                        "comparable_state_groups": revision.diagnosis.calibration.comparable_state_groups,
+                        "ranking_wins": revision.diagnosis.calibration.ranking_wins,
+                        "ranking_losses": revision.diagnosis.calibration.comparable_state_groups
+                            .saturating_sub(revision.diagnosis.calibration.ranking_wins),
+                    })).collect::<Vec<_>>(),
+                }))?
+            );
             Ok(())
         }
         Some("audit-post-terminal-tactic-controls") => {

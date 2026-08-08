@@ -286,6 +286,9 @@ fn print_usage() {
         "  huntctl learn seal-tactic-terminal-bundle --request OPTIMIZATION.json --execution EXECUTION.json --report ROUTE.json --seed N --bundle BUNDLE-DIR [--repository-root DIR]\n  huntctl learn validate-tactic-terminal-bundle --bundle BUNDLE-DIR\n  huntctl learn seal-tactic-cold-replay-bundle --campaign-bundle TERMINAL-BUNDLE --proof-root REPLAY-EVIDENCE --bundle BUNDLE-DIR"
     );
     eprintln!(
+        "  huntctl learn diagnose-tactic-goal-reachability --report ROUTE.json --revision N [--revision N]... --output DIAGNOSIS.json [--repository-root DIR]"
+    );
+    eprintln!(
         "  huntctl learn seal-tactic-throughput-treatment --control-bundle CURVE-BUNDLE --control-sample-ordinal N --treatment-report ROUTE.json --bundle EVIDENCE-DIR [--repository-root DIR]\n  huntctl learn validate-tactic-throughput-treatment-bundle --bundle EVIDENCE-DIR"
     );
     eprintln!(
