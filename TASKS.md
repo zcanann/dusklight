@@ -73,22 +73,23 @@ target is 120.
   collapsed toward long controllers. Terminal samples no longer authorize that
   critic: the all-experience achieved-goal critic retains authority until
   terminal ranking beats chance on held-out same-state siblings.
-- The first corrected-retention verification preserved goal-reachability
-  authority for all 30 recorded decisions in its incomplete second seed and
-  found an authenticated 214-tick incumbent before failing closed. The failure
-  was a graph lifecycle bug, not a weak route: learned frontier ranking and
-  periodic root refresh could select an exact boundary whose policy-selected
-  actions were already completed. Ordinary exploration now masks completed
-  exact expansions, skips exhausted learned/root frontiers, and distinguishes
-  this from explicit policy evaluation, where repeating a completed action is
-  intentional. Failed campaigns can be inspected from their durable decision
-  journal without requiring a sealed final report. The first post-fix attempt
-  completed seed 104729 at 464 ticks and reached 220 in seed 130363 before its
-  decision-11 learner refresh rejected a policy-update probe: the pre-update
-  batch used the exploration mask while the post-update batch incorrectly used
-  repeatable policy-evaluation availability. Probe reinference now preserves
-  the original lease mode, so the learner update remains the only changed input.
-- The full orchestration suite passes: 494 tests, including exact-return policy
+- The corrected-retention verification now seals all four seeds. It reached the
+  real terminal in every seed, retained a 220-tick best route, completed 128
+  decisions and 262 unique useful graph expansions, and served all 117
+  checkpoint-owned decisions locally with zero direct-restore fallback replay.
+  Goal-reachability controlled every primary in seeds 130363, 155921, and
+  181081. The run also exposed the first concrete critic error at the same root
+  checkpoint: it selected a 24-tick short curve predicted at 13.70 progress per
+  tick but realized at 10.83, while its 40-tick seek-target sibling was predicted
+  at 2.39 and realized 18.09. This is a learning/ranking defect, not a throughput
+  problem.
+- That audit found a second validity defect: models fitted at replay revisions
+  70, 134, and 198 could inherit deployment calibration computed at older
+  power-of-two prefixes 64, 128, and 128. Learner snapshot v6 now binds every
+  present calibration to the exact replay revision that produced the model;
+  older snapshots remain readable but are replayed, recalibrated, and republished
+  before they can regain authority.
+- The full orchestration suite passes: 495 tests, including exact-return policy
   adoption, learned-option decision compression, checkpoint branching, replay
   recovery, and campaign report validation.
 
@@ -153,16 +154,20 @@ incumbent from a nonconsecutive restored checkpoint.
   left `unsupported_bootstrap` primary. Across the run, exact-ID bootstrap still
   controlled 113 of 128 decisions and reachability only eight. Factor probes
   are now allocated only after retaining the learned primary.
-- [ ] Complete one bounded matched verification of corrected batch retention.
-  The first attempt already proved reachability authority and improved the
-  authenticated incumbent from 222 to 214 ticks, but stopped at seed 1 decision
-  30 when an exhausted learned frontier reached the unique-expansion lease.
-  Resume the same bounded post-fix attempt after correcting its policy-update
-  probe mode; do not start another campaign. Require reachability to control
-  every eligible non-epsilon, non-exact decision while the terminal critic is
-  uncalibrated, with terminal/factor probes confined to siblings. If the sealed
-  run does not retain the improvement, diagnose its first wrong decision rather
-  than adding volume.
+- [x] Complete one bounded matched verification of corrected batch retention.
+  The resumed campaign sealed all four terminal seeds with learned authority on
+  every eligible primary, 117 owner-local checkpoint decisions, no fallback
+  replay, and a 220-tick retained best. It did not preserve the incomplete
+  attempt's 214-tick route, so the first wrong same-state ranking was extracted
+  above instead of adding volume.
+- [ ] Prove that authentic sibling feedback changes later rankings across
+  parameterized action instances. Reproduce the sealed root misranking offline:
+  after observing the 40-tick seek-target sibling's 18.09 realized progress per
+  tick, a later immutable learner revision must rank compatible instances from
+  that evidence or explicitly withhold authority because uncertainty remains.
+  Calibration and the fitted model must come from the same replay revision.
+  Add a deterministic production-path regression before any further native
+  campaign; do not special-case Ordon coordinates, action IDs, or route phases.
 - [ ] Discover and cold-replay a zero-shot route of 124 ticks or less twice with
   identical terminal identity and first-hit tick.
 - [ ] Reach 123 ticks or less and then 120 ticks or less with unchanged generic

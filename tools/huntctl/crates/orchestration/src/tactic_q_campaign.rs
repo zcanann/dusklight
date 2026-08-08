@@ -93,6 +93,7 @@ pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V2: &str = "dusklight-tactic-q-learne
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3: &str = "dusklight-tactic-q-learner-snapshot/v3";
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4: &str = "dusklight-tactic-q-learner-snapshot/v4";
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5: &str = "dusklight-tactic-q-learner-snapshot/v5";
+pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6: &str = "dusklight-tactic-q-learner-snapshot/v6";
 /// Episode group reserved for critic evidence that must never become an
 /// executable frontier.
 pub const TACTIC_Q_MODEL_ONLY_EPISODE_GROUP: u64 = u64::MAX;
@@ -634,7 +635,7 @@ impl TacticQCampaign {
             })
             .transpose()?;
         let snapshot = TacticQLearnerSnapshot {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6.into(),
             kind: TacticQLearnerSnapshotKind::Learned,
             value_treatment: self.value_treatment,
             execution_authority_sha256: self.execution_authority_sha256,

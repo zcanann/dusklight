@@ -252,11 +252,19 @@ impl CampaignTacticLearnerAuthority {
                     .map_err(route_error)?;
                 let training_replay_sha256 = replay_snapshot.training_replay_sha256();
                 let started = Instant::now();
+                let migrated = manifest.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6;
+                let model_revision = if migrated {
+                    manifest.model_revision.checked_add(1).ok_or_else(|| {
+                        route_message("migrated campaign learner model revision overflowed")
+                    })?
+                } else {
+                    manifest.model_revision
+                };
                 let snapshot =
                     TacticQImmutableLearnerSnapshot::fit_verified_replay_with_prior_calibrations(
                         replay_snapshot.corpus,
                         replay_snapshot.version.revision,
-                        manifest.model_revision,
+                        model_revision,
                         model_config.clone(),
                         goal_distance_feature,
                         value_treatment,
@@ -265,7 +273,6 @@ impl CampaignTacticLearnerAuthority {
                         training_replay_sha256,
                     )
                     .map_err(route_error)?;
-                let migrated = manifest.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5;
                 if migrated {
                     let stored_sha256 = replay
                         .publish_learner_snapshot(&snapshot.manifest)
@@ -679,6 +686,7 @@ pub(super) fn lock_learner_authority(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tactic_q_campaign::TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5;
     use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
     use dusklight_control::option_execution::{OptionEndReason, OptionExecution, TapeRange};
     use dusklight_evidence::native_episode_shard::NativeObservationPhase;
@@ -1038,8 +1046,107 @@ mod tests {
         assert_eq!(restarted_decision.ranking.values, learned_values);
         assert_eq!(restarted_decision.selected, learned_selected);
 
+        let migration_journal = root.join("migration-replay.dtrp");
+        let migration_objects = root.join("migration-objects");
+        let replay = TacticReplayControlPlane::create(
+            &migration_journal,
+            &migration_objects,
+            identity.clone(),
+        )
+        .unwrap();
+        let value_treatment = TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4;
+        let mut migration_authority = CampaignTacticLearnerAuthority::new(
+            replay,
+            OptionValueConfig::default(),
+            0,
+            value_treatment,
+            1,
+            Some(4),
+        )
+        .unwrap();
+        let migration_cold_snapshot = migration_authority.snapshot();
+        let empty_calibration = migration_cold_snapshot
+            .manifest
+            .goal_reachability_calibration
+            .clone()
+            .unwrap();
+        assert_eq!(empty_calibration.source_transitions, 0);
+        assert!(matches!(
+            migration_authority
+                .publish(0, 0, migration_cold_snapshot.sha256, &transition, &route, 1,)
+                .unwrap(),
+            TacticReplayAdmissionOutcome::Admitted { sequence: 0, .. }
+        ));
+        migration_authority
+            .finish_decision(0, 0, 1, 0, true, 4)
+            .unwrap();
+        let exact_snapshot = migration_authority.snapshot();
+        assert_eq!(
+            exact_snapshot
+                .manifest
+                .goal_reachability_calibration
+                .as_ref()
+                .unwrap()
+                .source_transitions,
+            1
+        );
+        drop(migration_authority);
+
+        // Simulate the historical defect: a newer fitted model retained
+        // calibration from an older replay prefix. V5 accepts that state for
+        // migration, but reopening the authority must replay, recalibrate, and
+        // publish a V6 head before the model can be used.
+        let replay =
+            TacticReplayControlPlane::open(&migration_journal, &migration_objects, &identity)
+                .unwrap();
+        let mut legacy_manifest = exact_snapshot.manifest.clone();
+        legacy_manifest.schema = TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5.into();
+        legacy_manifest.model_revision = legacy_manifest.model_revision.saturating_add(1);
+        legacy_manifest.goal_reachability_calibration = Some(empty_calibration);
+        legacy_manifest.validate().unwrap();
+        let legacy_sha256 = replay.publish_learner_snapshot(&legacy_manifest).unwrap();
+        let mut learner_heads = CampaignLearnerHeadJournal::open_existing(&replay).unwrap();
+        learner_heads
+            .publish(CampaignLearnerHead {
+                learner_snapshot_sha256: legacy_sha256,
+                replay_revision: legacy_manifest.training_replay_rows,
+                model_revision: legacy_manifest.model_revision,
+            })
+            .unwrap();
+        drop(learner_heads);
+        drop(replay);
+
+        let replay =
+            TacticReplayControlPlane::open(&migration_journal, &migration_objects, &identity)
+                .unwrap();
+        let migrated_authority = CampaignTacticLearnerAuthority::new(
+            replay,
+            OptionValueConfig::default(),
+            0,
+            value_treatment,
+            1,
+            Some(4),
+        )
+        .unwrap();
+        let migrated_snapshot = migrated_authority.snapshot();
+        assert_eq!(
+            migrated_snapshot.manifest.schema,
+            TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6
+        );
+        assert_ne!(migrated_snapshot.sha256, legacy_sha256);
+        assert_eq!(
+            migrated_snapshot
+                .manifest
+                .goal_reachability_calibration
+                .as_ref()
+                .unwrap()
+                .source_transitions as u64,
+            migrated_snapshot.replay_revision
+        );
+
         drop(restarted_campaign);
         drop(reopened_authority);
+        drop(migrated_authority);
         fs::remove_dir_all(root).unwrap();
     }
 }

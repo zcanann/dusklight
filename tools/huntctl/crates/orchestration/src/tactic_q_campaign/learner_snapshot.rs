@@ -50,7 +50,7 @@ impl TacticQLearnerSnapshot {
     ) -> Result<Self, TacticQCampaignError> {
         validate_training_corpus(corpus)?;
         let snapshot = Self {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6.into(),
             kind: TacticQLearnerSnapshotKind::Demonstration,
             value_treatment,
             execution_authority_sha256: corpus.execution_authority_sha256,
@@ -85,7 +85,8 @@ impl TacticQLearnerSnapshot {
         let current = self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V2
             || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3
             || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4
-            || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5;
+            || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5
+            || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6;
         if (!legacy && !current)
             || self.execution_authority_sha256 == Digest::ZERO
             || self.feature_schema_sha256 == Digest::ZERO
@@ -101,6 +102,7 @@ impl TacticQLearnerSnapshot {
                     TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V3
                         | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4
                         | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5
+                        | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6
                 ) || !self.value_treatment.uses_goal_relabeling()))
             || self
                 .goal_reachability_calibration
@@ -110,8 +112,10 @@ impl TacticQLearnerSnapshot {
                         .map_or(true, |rows| rows > self.training_replay_rows)
                 })
             || (self.terminal_action_calibration.is_some()
-                && (self.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5
-                    || !self.value_treatment.uses_goal_relabeling()))
+                && (!matches!(
+                    self.schema.as_str(),
+                    TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5 | TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6
+                ) || !self.value_treatment.uses_goal_relabeling()))
             || self
                 .terminal_action_calibration
                 .as_ref()
@@ -119,6 +123,22 @@ impl TacticQLearnerSnapshot {
                     u64::try_from(calibration.source_transitions)
                         .map_or(true, |rows| rows > self.training_replay_rows)
                 })
+            || (self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6
+                && self
+                    .goal_reachability_calibration
+                    .as_ref()
+                    .is_some_and(|calibration| {
+                        u64::try_from(calibration.source_transitions)
+                            .map_or(true, |rows| rows != self.training_replay_rows)
+                    }))
+            || (self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6
+                && self
+                    .terminal_action_calibration
+                    .as_ref()
+                    .is_some_and(|calibration| {
+                        u64::try_from(calibration.source_transitions)
+                            .map_or(true, |rows| rows != self.training_replay_rows)
+                    }))
         {
             return Err(TacticQCampaignError::InvalidState(
                 "tactic learner snapshot is invalid",
@@ -344,7 +364,7 @@ impl TacticQImmutableLearnerSnapshot {
             None
         };
         let goal_reachability_calibration =
-            goal_reachability_calibration_prefix_rows(value_treatment, corpus.transitions.len())
+            goal_reachability_calibration_rows(value_treatment, corpus.transitions.len())
                 .map(|calibration_rows| {
                     if let Some(prior) = prior_goal_reachability_calibration
                         .filter(|prior| prior.source_transitions == calibration_rows)
@@ -362,7 +382,7 @@ impl TacticQImmutableLearnerSnapshot {
         let terminal_action_calibration = native_terminal_action_model
             .as_ref()
             .map(|_| {
-                let calibration_rows = terminal_action_calibration_prefix_rows(&corpus.transitions)
+                let calibration_rows = terminal_action_calibration_rows(&corpus.transitions)
                     .ok_or(TacticQCampaignError::InvalidState(
                         "terminal action model exists without terminal calibration rows",
                     ))?;
@@ -391,7 +411,7 @@ impl TacticQImmutableLearnerSnapshot {
             })
             .transpose()?;
         let manifest = TacticQLearnerSnapshot {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5.into(),
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6.into(),
             kind: TacticQLearnerSnapshotKind::Learned,
             value_treatment,
             execution_authority_sha256: corpus.execution_authority_sha256,
@@ -426,31 +446,20 @@ impl TacticQImmutableLearnerSnapshot {
     }
 }
 
-fn calibration_prefix_rows(available_rows: usize) -> usize {
-    if available_rows == 0 {
-        0
-    } else {
-        1_usize << available_rows.ilog2()
-    }
-}
-
-fn goal_reachability_calibration_prefix_rows(
+fn goal_reachability_calibration_rows(
     value_treatment: TacticValueTreatment,
     available_rows: usize,
 ) -> Option<usize> {
     value_treatment
         .uses_goal_relabeling()
-        .then(|| calibration_prefix_rows(available_rows))
+        .then_some(available_rows)
 }
 
-fn terminal_action_calibration_prefix_rows(
-    transitions: &[OptionTransitionSample],
-) -> Option<usize> {
-    let first_terminal_rows = transitions
+fn terminal_action_calibration_rows(transitions: &[OptionTransitionSample]) -> Option<usize> {
+    transitions
         .iter()
-        .position(|transition| transition.value_sample.terminal)?
-        .saturating_add(1);
-    Some(calibration_prefix_rows(transitions.len()).max(first_terminal_rows))
+        .any(|transition| transition.value_sample.terminal)
+        .then_some(transitions.len())
 }
 
 #[cfg(test)]
@@ -458,46 +467,77 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reachability_calibration_refreshes_only_at_doubling_prefixes() {
-        assert_eq!(calibration_prefix_rows(0), 0);
-        assert_eq!(calibration_prefix_rows(1), 1);
-        assert_eq!(calibration_prefix_rows(2), 2);
-        assert_eq!(calibration_prefix_rows(3), 2);
-        assert_eq!(calibration_prefix_rows(15), 8);
-        assert_eq!(calibration_prefix_rows(16), 16);
-        assert_eq!(calibration_prefix_rows(31), 16);
-        assert_eq!(calibration_prefix_rows(32), 32);
+    fn calibration_covers_the_exact_deployed_replay_revision() {
+        assert_eq!(
+            goal_reachability_calibration_rows(
+                TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4,
+                0,
+            ),
+            Some(0),
+        );
+        assert_eq!(
+            goal_reachability_calibration_rows(
+                TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4,
+                31,
+            ),
+            Some(31),
+        );
     }
 
     #[test]
     fn reachability_calibration_applies_to_all_goal_relabel_treatments() {
         assert_eq!(
-            goal_reachability_calibration_prefix_rows(
+            goal_reachability_calibration_rows(
                 TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4,
                 65,
             ),
-            Some(64),
+            Some(65),
         );
         assert_eq!(
-            goal_reachability_calibration_prefix_rows(
+            goal_reachability_calibration_rows(
                 TacticValueTreatment::GoalRelabeledFrontierDoubleQV3,
                 65,
             ),
-            Some(64),
+            Some(65),
         );
         assert_eq!(
-            goal_reachability_calibration_prefix_rows(
-                TacticValueTreatment::GoalRelabeledFittedQKnnV2,
-                65,
-            ),
-            Some(64),
+            goal_reachability_calibration_rows(TacticValueTreatment::GoalRelabeledFittedQKnnV2, 65,),
+            Some(65),
         );
         assert_eq!(
-            goal_reachability_calibration_prefix_rows(
+            goal_reachability_calibration_rows(
                 TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
                 65,
             ),
             None,
+        );
+    }
+
+    #[test]
+    fn current_snapshot_rejects_calibration_from_an_older_replay_prefix() {
+        let calibration = calibrate_goal_reachability(&[], 0).unwrap();
+        let mut snapshot = TacticQLearnerSnapshot {
+            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6.into(),
+            kind: TacticQLearnerSnapshotKind::Learned,
+            value_treatment: TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4,
+            execution_authority_sha256: Digest([1; 32]),
+            feature_schema_sha256: Digest([2; 32]),
+            objective_sha256: Digest([3; 32]),
+            root_checkpoint_sha256: Digest([4; 32]),
+            training_replay_rows: 1,
+            training_replay_sha256: Digest([5; 32]),
+            model_revision: 1,
+            model_config: OptionValueConfig::default(),
+            model_sha256: None,
+            goal_reachability_calibration: Some(calibration),
+            terminal_action_calibration: None,
+        };
+        assert!(snapshot.validate().is_err());
+
+        snapshot.schema = TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5.into();
+        assert!(
+            snapshot.validate().is_ok(),
+            "legacy snapshots remain readable so the authority can replay and migrate them"
         );
     }
 
