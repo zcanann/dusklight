@@ -1395,12 +1395,12 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         unproven_batch.goal_reachability_calibration,
         Some(acquisition_calibration)
     );
-    assert_ne!(
+    assert_eq!(
         unproven_batch.proposals, blocked_control_batch.proposals,
-        "adaptive learning must act on its current estimate even with one proposal slot"
+        "an uncalibrated estimate must remain visible evidence without controlling behavior"
     );
     assert_eq!(unproven_batch.proposals.len(), 1);
-    assert_eq!(
+    assert_ne!(
         unproven_batch.proposals[0].reason,
         TacticSelectionReason::GoalReachability
     );
@@ -1418,10 +1418,10 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
             false,
         )
         .unwrap();
-    assert_eq!(
+    assert_ne!(
         consecutive_adaptive_batch.proposals[0].reason,
         TacticSelectionReason::GoalReachability,
-        "an evidence-backed adaptive critic must control consecutive decisions"
+        "additional decision indices cannot bypass held-out ranking calibration"
     );
     unproven_goal_consumer.decision_index = 4;
     let frozen_batch = unproven_goal_consumer

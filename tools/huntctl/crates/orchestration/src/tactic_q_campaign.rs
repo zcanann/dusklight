@@ -1001,6 +1001,9 @@ mod tests;
 #[path = "tactic_q_campaign/online_adequacy_tests.rs"]
 mod online_adequacy_tests;
 mod online_learning;
+#[cfg(test)]
+#[path = "tactic_q_campaign/parameterized_learning_tests.rs"]
+mod parameterized_learning_tests;
 pub use online_learning::{
     TacticQOnlineActionSelectionRequest, TacticQOnlineActionSurface, TacticQOnlineAdmission,
     TacticQOnlineAdmissionTiming, TacticQOnlineBranchRequest, TacticQOnlineBranchSelection,

@@ -90,7 +90,16 @@ target is 120.
   present calibration to the exact replay revision that produced the model;
   older snapshots remain readable but are replayed, recalibrated, and republished
   before they can regain authority.
-- The full orchestration suite passes: 495 tests, including exact-return policy
+- Retained-state sibling feedback now changes an ordinary production-controller
+  decision across action instances. One connected zero-terminal campaign restores
+  16 intermediate checkpoints and admits a toward/away comparison at each. The
+  exact-revision held-out calibration then changes a cold inferior choice into an
+  unseen compatible lower-magnitude toward action; the controller leases and
+  admits that action and subsequently follows its retained graph edge. The prior
+  eight-row/sign-accuracy shortcut was invalid because it could grant authority
+  without proving sibling ranking; estimates remain visible but cannot control
+  behavior until whole-state held-out ranking is deployment-ready.
+- The full orchestration suite passes: 496 tests, including exact-return policy
   adoption, learned-option decision compression, checkpoint branching, replay
   recovery, and campaign report validation.
 
@@ -169,14 +178,17 @@ incumbent from a nonconsecutive restored checkpoint.
   backtracks and exposes the next learned-ranked sibling. Deterministic
   production regressions prove restoration, composition, backtracking, and the
   unchanged unique-expansion lease invariant.
-- [ ] Prove that authentic sibling feedback changes later generalized rankings
-  across parameterized action instances. From one immutable replay prefix,
-  identify the causal before/after rows that promote a compatible action family
-  member at a held-out exact state, or explicitly withhold authority because
-  uncertainty remains. Calibration and the fitted model must come from the same
-  replay revision. Do not special-case Ordon coordinates, action IDs, or route
-  phases, and do not run another native campaign until this production-path
-  regression passes.
+- [x] Make retained-state exploration teach the production policy across
+  parameterized action instances. Through the ordinary online controller: restore
+  one intermediate state, execute at least two distinct sibling continuations,
+  admit their authentic outcomes, and show that the resulting immutable learner
+  changes a later ordinary decision in favor of an unseen compatible instance at
+  the same or a held-out nearby state. The winning action must then be executable
+  through the graph rather than merely score well in an isolated model query.
+  Calibration and the fitted model come from the same replay revision; withhold
+  learned authority when the evidence is insufficient. Do not special-case Ordon
+  coordinates, action IDs, or route phases, and do not run another native campaign
+  until this deterministic production-path behavior passes.
 - [ ] Discover and cold-replay a zero-shot route of 124 ticks or less twice with
   identical terminal identity and first-hit tick.
 - [ ] Reach 123 ticks or less and then 120 ticks or less with unchanged generic

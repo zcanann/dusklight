@@ -1,24 +1,8 @@
 use super::value_treatment::{GoalRelabeledCriticAuthority, goal_relabel_critic_authority};
 use super::*;
 
-const MINIMUM_UNCALIBRATED_MODEL_ACQUISITION_ROWS: usize = 8;
-fn model_guided_acquisition_allowed(
-    policy: TacticProposalPolicy,
-    calibration_ready: bool,
-    acquisition_evidence_ready: bool,
-) -> bool {
-    calibration_ready || (policy.deploys_policy_updates() && acquisition_evidence_ready)
-}
-
-fn goal_reachability_acquisition_evidence_ready(
-    calibration: Option<&GoalReachabilityCalibration>,
-) -> bool {
-    calibration.is_some_and(|calibration| {
-        calibration.source_transitions >= MINIMUM_UNCALIBRATED_MODEL_ACQUISITION_ROWS
-            && calibration
-                .progress_sign_accuracy
-                .is_some_and(|accuracy| accuracy > 0.5)
-    })
+fn model_guided_acquisition_allowed(calibration_ready: bool) -> bool {
+    calibration_ready
 }
 
 impl TacticQCampaign {
@@ -341,13 +325,9 @@ impl TacticQCampaign {
                 self.value_treatment.uses_goal_relabeling() && !terminal_action_authoritative;
             let goal_reachability_acquisition_allowed = goal_reachability_acquisition
                 && model_guided_acquisition_allowed(
-                    policy,
                     self.goal_reachability_calibration
                         .as_ref()
                         .is_some_and(|calibration| calibration.deployment_ready),
-                    goal_reachability_acquisition_evidence_ready(
-                        self.goal_reachability_calibration.as_ref(),
-                    ),
                 );
             if goal_reachability_acquisition {
                 goal_reachability_calibration = self.goal_reachability_calibration.clone();
@@ -1318,56 +1298,9 @@ mod proposal_exploration_tests {
     use super::*;
 
     #[test]
-    fn adaptive_model_acquisition_uses_every_decision_once_evidence_is_ready() {
-        assert!(!model_guided_acquisition_allowed(
-            TacticProposalPolicy::Learned,
-            false,
-            false,
-        ));
-        assert!(model_guided_acquisition_allowed(
-            TacticProposalPolicy::Learned,
-            false,
-            true,
-        ));
-        assert!(model_guided_acquisition_allowed(
-            TacticProposalPolicy::Learned,
-            false,
-            true,
-        ));
-        assert!(!model_guided_acquisition_allowed(
-            TacticProposalPolicy::FrozenPolicy,
-            false,
-            true,
-        ));
-        assert!(model_guided_acquisition_allowed(
-            TacticProposalPolicy::FrozenPolicy,
-            true,
-            false,
-        ));
-    }
-
-    #[test]
-    fn adaptive_goal_guidance_requires_more_than_chance_sign_accuracy() {
-        let mut calibration =
-            dusklight_learning::goal_reachability_calibration::calibrate_goal_reachability(&[], 0)
-                .unwrap();
-        assert!(!goal_reachability_acquisition_evidence_ready(Some(
-            &calibration
-        )));
-        calibration.source_transitions = MINIMUM_UNCALIBRATED_MODEL_ACQUISITION_ROWS;
-        calibration.source_state_groups = MINIMUM_UNCALIBRATED_MODEL_ACQUISITION_ROWS;
-        calibration.evaluated_action_predictions = MINIMUM_UNCALIBRATED_MODEL_ACQUISITION_ROWS;
-        calibration.mean_absolute_progress_error = Some(1.0);
-        calibration.progress_sign_accuracy = Some(0.5);
-        calibration.validate().unwrap();
-        assert!(!goal_reachability_acquisition_evidence_ready(Some(
-            &calibration
-        )));
-        calibration.progress_sign_accuracy = Some(0.625);
-        calibration.validate().unwrap();
-        assert!(goal_reachability_acquisition_evidence_ready(Some(
-            &calibration
-        )));
+    fn model_acquisition_requires_held_out_ranking_calibration() {
+        assert!(!model_guided_acquisition_allowed(false));
+        assert!(model_guided_acquisition_allowed(true));
     }
 
     #[test]
