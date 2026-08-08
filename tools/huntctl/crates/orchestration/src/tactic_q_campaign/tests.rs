@@ -52,6 +52,48 @@ fn restoring_a_frozen_policy_primary_keeps_the_model_candidate_as_a_sibling() {
 }
 
 #[test]
+fn uncalibrated_terminal_probe_cannot_replace_reachability_primary() {
+    let catalog = TacticAssetCatalog::new(vec![
+        TacticCatalogEntry::new(
+            "baseline",
+            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 1 })),
+        )
+        .unwrap(),
+        TacticCatalogEntry::new(
+            "reachability",
+            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 2 })),
+        )
+        .unwrap(),
+        TacticCatalogEntry::new(
+            "terminal-probe",
+            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 3 })),
+        )
+        .unwrap(),
+    ])
+    .unwrap();
+    let descriptors = catalog.option_descriptors().cloned().collect::<Vec<_>>();
+    let baseline = SelectedTactic {
+        schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+        learner_snapshot_sha256: Digest([1; 32]),
+        decision_index: 7,
+        descriptor: descriptors[0].clone(),
+        reason: TacticSelectionReason::UnsupportedBootstrap,
+        exploration_draw: 1,
+    };
+    let mut proposals = vec![baseline];
+
+    ensure_goal_reachability_acquisition(&descriptors[1..2], 0, 2, &mut proposals).unwrap();
+    retain_goal_reachability_acquisition(&mut proposals).unwrap();
+    ensure_generalized_value_acquisition(&descriptors[2..3], 0, 2, &mut proposals).unwrap();
+
+    assert_eq!(proposals.len(), 2);
+    assert_eq!(proposals[0].descriptor, descriptors[1]);
+    assert_eq!(proposals[0].reason, TacticSelectionReason::GoalReachability);
+    assert_eq!(proposals[1].descriptor, descriptors[2]);
+    assert_eq!(proposals[1].reason, TacticSelectionReason::GeneralizedValue);
+}
+
+#[test]
 fn seeded_frontier_rotation_visits_every_eligible_cell_before_repeating() {
     let choice_count = 35;
     let visited = (0..choice_count as u64)
@@ -1983,9 +2025,42 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         .unwrap();
     assert!(uninterrupted.native_terminal_supported());
     assert!(resumed.native_terminal_supported());
+    let frontier_context =
+        GeneralizedTacticContext::from_facts(&uninterrupted.current.snapshot).unwrap();
+    let frontier_descriptor = catalog.option_descriptors().next().unwrap().clone();
+    let mut frontier_alternate = frontier_descriptor.clone();
+    frontier_alternate.option_id = "frontier-alternate".into();
+    let uncalibrated_goal_model = Arc::new(
+        GeneralizedTacticValueModel::fit(&[
+            dusklight_learning::generalized_tactic_value::GeneralizedTacticTrainingSample {
+                state_features: vec![uninterrupted.current.snapshot.tape_frame as f32],
+                context: frontier_context.clone(),
+                action: frontier_descriptor,
+                outcome: dusklight_learning::generalized_tactic_value::GeneralizedTacticOutcome {
+                    goal_progress_per_tick: 1.0,
+                    ..Default::default()
+                },
+            },
+            dusklight_learning::generalized_tactic_value::GeneralizedTacticTrainingSample {
+                state_features: vec![uninterrupted.current.snapshot.tape_frame as f32],
+                context: frontier_context,
+                action: frontier_alternate,
+                outcome: dusklight_learning::generalized_tactic_value::GeneralizedTacticOutcome {
+                    goal_progress_per_tick: -1.0,
+                    ..Default::default()
+                },
+            },
+        ])
+        .unwrap(),
+    );
     let mut frontier_v3 = TacticQCampaign::resume(uninterrupted.checkpoint().unwrap()).unwrap();
     frontier_v3.value_treatment = TacticValueTreatment::GoalRelabeledFrontierDoubleQV3;
-    frontier_v3.campaign_learner_authority_managed = false;
+    frontier_v3.campaign_learner_authority_managed = true;
+    *frontier_v3.generalized_model.borrow_mut() = Some(CachedGeneralizedTacticValueModel {
+        goal_distance_feature: 0,
+        model_revision: frontier_v3.model_revision,
+        model: Arc::clone(&uncalibrated_goal_model),
+    });
     let [_, v3_frontier] = frontier_v3
         .sample_root_and_ranked_frontier(
             5,
@@ -2002,8 +2077,11 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         .unwrap();
     let v3_acquisition = v3_frontier.acquisition.unwrap();
     assert!(v3_acquisition.terminal_value_supported);
-    assert!(v3_acquisition.best_mean_q.is_some());
-    assert!(v3_acquisition.maximum_ensemble_variance.is_some());
+    assert!(v3_acquisition.best_mean_q.is_none());
+    assert!(v3_acquisition.best_goal_progress_per_tick.is_some());
+    assert!(v3_acquisition.maximum_ensemble_variance.is_none());
+    assert!(v3_acquisition.goal_reachability_evidence_available);
+    assert!(!v3_acquisition.goal_reachability_supported);
 
     let relabeled_actions = |_: &FactSnapshot| {
         Ok::<_, &'static str>(
@@ -2037,7 +2115,12 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
 
     let mut frontier_v4 = TacticQCampaign::resume(uninterrupted.checkpoint().unwrap()).unwrap();
     frontier_v4.value_treatment = TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4;
-    frontier_v4.campaign_learner_authority_managed = false;
+    frontier_v4.campaign_learner_authority_managed = true;
+    *frontier_v4.generalized_model.borrow_mut() = Some(CachedGeneralizedTacticValueModel {
+        goal_distance_feature: 0,
+        model_revision: frontier_v4.model_revision,
+        model: Arc::clone(&uncalibrated_goal_model),
+    });
     let [_, v4_relabeled_frontier] = frontier_v4
         .sample_root_and_ranked_frontier(
             5,
@@ -2052,12 +2135,24 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         .unwrap();
     let v4_relabeled_acquisition = v4_relabeled_frontier.acquisition.unwrap();
     assert!(v4_relabeled_acquisition.terminal_value_supported);
-    assert!(v4_relabeled_acquisition.best_mean_q.is_some());
-    assert!(v4_relabeled_acquisition.maximum_ensemble_variance.is_some());
+    assert!(v4_relabeled_acquisition.best_mean_q.is_none());
+    assert!(
+        v4_relabeled_acquisition
+            .best_goal_progress_per_tick
+            .is_some()
+    );
+    assert!(v4_relabeled_acquisition.maximum_ensemble_variance.is_none());
+    assert!(v4_relabeled_acquisition.goal_reachability_evidence_available);
+    assert!(!v4_relabeled_acquisition.goal_reachability_supported);
 
     let mut frontier_v2 = TacticQCampaign::resume(uninterrupted.checkpoint().unwrap()).unwrap();
     frontier_v2.value_treatment = TacticValueTreatment::GoalRelabeledFittedQKnnV2;
-    frontier_v2.campaign_learner_authority_managed = false;
+    frontier_v2.campaign_learner_authority_managed = true;
+    *frontier_v2.generalized_model.borrow_mut() = Some(CachedGeneralizedTacticValueModel {
+        goal_distance_feature: 0,
+        model_revision: frontier_v2.model_revision,
+        model: uncalibrated_goal_model,
+    });
     let [_, v2_frontier] = frontier_v2
         .sample_root_and_ranked_frontier(
             5,
@@ -2074,8 +2169,11 @@ fn cold_start_retains_refits_and_ranks_the_next_boundary() {
         .unwrap();
     let v2_acquisition = v2_frontier.acquisition.unwrap();
     assert!(v2_acquisition.terminal_value_supported);
-    assert!(v2_acquisition.best_mean_q.is_some());
+    assert!(v2_acquisition.best_mean_q.is_none());
+    assert!(v2_acquisition.best_goal_progress_per_tick.is_some());
     assert!(v2_acquisition.maximum_ensemble_variance.is_none());
+    assert!(v2_acquisition.goal_reachability_evidence_available);
+    assert!(!v2_acquisition.goal_reachability_supported);
     let second_incremental = uninterrupted
         .write_checkpoint_with_content_store(
             &incremental_directory.join("decision-2"),

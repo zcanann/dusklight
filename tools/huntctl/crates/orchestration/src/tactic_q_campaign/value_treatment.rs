@@ -1,16 +1,16 @@
 use super::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum GoalRelabeledCriticAuthority {
+pub(super) enum GoalRelabeledCriticAuthority {
     AchievedGoal,
     NativeTerminal,
 }
 
-fn goal_relabel_critic_authority(
+pub(super) fn goal_relabel_critic_authority(
     has_native_terminal_support: bool,
-    terminal_support_acquisition: bool,
+    terminal_action_deployment_ready: bool,
 ) -> GoalRelabeledCriticAuthority {
-    if has_native_terminal_support && terminal_support_acquisition {
+    if has_native_terminal_support && terminal_action_deployment_ready {
         GoalRelabeledCriticAuthority::NativeTerminal
     } else {
         GoalRelabeledCriticAuthority::AchievedGoal
@@ -165,13 +165,13 @@ impl TacticQCampaign {
     pub(super) fn active_goal_relabel_model(
         &self,
         goal_distance_feature: usize,
-        terminal_support_acquisition: bool,
+        terminal_action_deployment_ready: bool,
     ) -> Result<Option<Arc<GeneralizedTacticValueModel>>, TacticQCampaignError> {
         match goal_relabel_critic_authority(
             self.training_replay
                 .iter()
                 .any(|transition| transition.value_sample.terminal),
-            terminal_support_acquisition,
+            terminal_action_deployment_ready,
         ) {
             GoalRelabeledCriticAuthority::AchievedGoal => {
                 self.generalized_model(goal_distance_feature)
@@ -303,7 +303,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn native_terminal_support_hands_off_from_achieved_goal_authority() {
+    fn native_terminal_support_requires_calibrated_ranking_before_handoff() {
         assert_eq!(
             goal_relabel_critic_authority(false, false),
             GoalRelabeledCriticAuthority::AchievedGoal
@@ -315,7 +315,7 @@ mod tests {
         assert_eq!(
             goal_relabel_critic_authority(true, false),
             GoalRelabeledCriticAuthority::AchievedGoal,
-            "terminal support must not disable the all-experience exploration critic",
+            "terminal samples alone must not disable the all-experience critic",
         );
     }
 }

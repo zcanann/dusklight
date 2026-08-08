@@ -450,6 +450,10 @@ impl TacticQCampaign {
             .goal_reachability_calibration
             .as_ref()
             .is_some_and(|calibration| calibration.deployment_ready);
+        let terminal_action_deployment_ready = self
+            .terminal_action_calibration
+            .as_ref()
+            .is_some_and(|calibration| calibration.deployment_ready);
         let generalized_model = if demonstration_curriculum {
             None
         } else {
@@ -459,9 +463,11 @@ impl TacticQCampaign {
                 }
                 TacticValueTreatment::GoalRelabeledFittedQKnnV2
                 | TacticValueTreatment::GoalRelabeledFrontierDoubleQV3
-                | TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4 => {
-                    self.active_goal_relabel_model(goal_distance_feature, terminal_value_supported)?
-                }
+                | TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4 => self
+                    .active_goal_relabel_model(
+                        goal_distance_feature,
+                        terminal_value_supported && terminal_action_deployment_ready,
+                    )?,
                 TacticValueTreatment::ContinuousFittedQForestV1 => None,
             }
         };
@@ -474,6 +480,7 @@ impl TacticQCampaign {
         };
         let terminal_action_model = if !demonstration_curriculum
             && terminal_value_supported
+            && terminal_action_deployment_ready
             && self.value_treatment.uses_terminal_frontier_action_value()
         {
             self.native_terminal_action_model(goal_distance_feature)?
@@ -518,7 +525,7 @@ impl TacticQCampaign {
                         let context = GeneralizedTacticContext::from_facts(&entry.frontier_state)?;
                         let goal_reachability_supported =
                             self.value_treatment.uses_goal_relabeling()
-                                && !terminal_value_supported;
+                                && !terminal_action_deployment_ready;
                         let estimates = if goal_reachability_supported {
                             model.rank_goal_reachability(&features, &context, &applicable)?
                         } else {
@@ -626,11 +633,11 @@ impl TacticQCampaign {
                     terminal: entry.transition.value_sample.terminal,
                     terminal_value_supported,
                     achieved_goal_value_supported: false,
-                    goal_reachability_supported: !terminal_value_supported
+                    goal_reachability_supported: !terminal_action_deployment_ready
                         && self.value_treatment.uses_goal_relabeling()
                         && generalized_model.is_some()
                         && goal_reachability_deployment_ready,
-                    goal_reachability_evidence_available: !terminal_value_supported
+                    goal_reachability_evidence_available: !terminal_action_deployment_ready
                         && self.value_treatment.uses_goal_relabeling()
                         && generalized_model.is_some(),
                     reward: entry.transition.value_sample.reward,

@@ -65,10 +65,15 @@ target is 120.
   actions had an exact fitted value, and just one of 26 policy-update probes
   changed the selected action. A generalized model candidate was present in
   105 batches but controlled only 27 decisions because uncalibrated adaptive
-  deployment was arbitrarily limited to every fourth decision. Adaptive
-  evidence-backed acquisition now controls consecutive decisions; frozen
-  evaluation remains calibration-gated.
-- The full orchestration suite passes: 493 tests, including exact-return policy
+  deployment was arbitrarily limited to every fourth decision. The matched
+  consecutive-control run moved generalized-value control to 108 of 128
+  decisions and changed three of 25 policy-update probes, but regressed from
+  222 to 278 ticks. Its terminal critic had zero held-out predictions or
+  comparable state groups, learned only from 16 terminal-connected rows, and
+  collapsed toward long controllers. Terminal samples no longer authorize that
+  critic: the all-experience achieved-goal critic retains authority until
+  terminal ranking beats chance on held-out same-state siblings.
+- The full orchestration suite passes: 494 tests, including exact-return policy
   adoption, learned-option decision compression, checkpoint branching, replay
   recovery, and campaign report validation.
 
@@ -115,12 +120,19 @@ incumbent from a nonconsecutive restored checkpoint.
   post-terminal failure was decision 17: an evidence-backed generalized
   candidate was evaluated, but the periodic gate retained an exact-ID-unknown
   action instead. Diagnose first, then change the policy; do not add volume.
-- [ ] Re-run that bounded treatment once with consecutive adaptive model control.
-  Require the audit to show that evidence-backed ranking, not exact-ID novelty,
-  controls most retained decisions after support exists and that policy updates
-  change action ranking more than the previous 1-of-26 baseline. If it does not
-  improve the 222-tick incumbent, diagnose the next failed decision from the
-  same run rather than increasing campaign volume.
+- [x] Re-run that bounded treatment once with consecutive adaptive model control.
+  The audit proved that the learned selector controlled most decisions and that
+  updates changed ranking more often, but the 278-tick regression exposed an
+  uncalibrated terminal-only critic rather than a volume problem. Terminal
+  samples alone can no longer hand off action or checkpoint-frontier authority.
+  An uncalibrated terminal critic may collect a distinct sibling probe while
+  the achieved-goal critic continues learning from every completed and censored
+  branch.
+- [ ] Re-run the same bounded treatment once with calibration-gated terminal
+  authority. Before deployment readiness, require zero terminal-critic primary
+  selections, achieved-goal control whenever its evidence gate passes, and
+  terminal probes only as siblings. If it does not improve 222 ticks, diagnose
+  the first wrong retained decision from this run rather than adding volume.
 - [ ] Discover and cold-replay a zero-shot route of 124 ticks or less twice with
   identical terminal identity and first-hit tick.
 - [ ] Reach 123 ticks or less and then 120 ticks or less with unchanged generic

@@ -1,3 +1,4 @@
+use super::value_treatment::{GoalRelabeledCriticAuthority, goal_relabel_critic_authority};
 use super::*;
 
 const MINIMUM_UNCALIBRATED_MODEL_ACQUISITION_ROWS: usize = 8;
@@ -17,16 +18,6 @@ fn goal_reachability_acquisition_evidence_ready(
             && calibration
                 .progress_sign_accuracy
                 .is_some_and(|accuracy| accuracy > 0.5)
-    })
-}
-
-fn terminal_action_acquisition_evidence_ready(
-    calibration: Option<&TerminalActionCalibration>,
-) -> bool {
-    calibration.is_some_and(|calibration| {
-        calibration.source_transitions >= MINIMUM_UNCALIBRATED_MODEL_ACQUISITION_ROWS
-            && calibration.fitted_folds > 0
-            && calibration.terminal_supported_transitions > 0
     })
 }
 
@@ -280,23 +271,14 @@ impl TacticQCampaign {
             && terminal_support_acquisition)
             .then(|| self.terminal_action_calibration.clone())
             .flatten();
-        let terminal_action_acquisition_allowed = model_guided_acquisition_allowed(
-            policy,
-            terminal_action_calibration
-                .as_ref()
-                .is_some_and(|calibration| calibration.deployment_ready),
-            terminal_action_acquisition_evidence_ready(terminal_action_calibration.as_ref()),
-        );
-        // A frozen treatment may not deploy behavior its sealed calibration
-        // did not authorize. Adaptive learning must be allowed to acquire
-        // evidence using its current estimate; otherwise a width-one policy
-        // can never generate the comparisons required to improve that model.
-        let unproven_terminal_primary = (policy.uses_learned_selector()
-            && self.value_treatment.uses_goal_relabeling()
-            && native_terminal_supported
-            && terminal_support_acquisition
-            && !terminal_action_acquisition_allowed)
-            .then(|| proposals[0].clone());
+        let terminal_action_deployment_ready = terminal_action_calibration
+            .as_ref()
+            .is_some_and(|calibration| calibration.deployment_ready);
+        let terminal_action_authoritative = terminal_support_acquisition
+            && goal_relabel_critic_authority(
+                native_terminal_supported,
+                terminal_action_deployment_ready,
+            ) == GoalRelabeledCriticAuthority::NativeTerminal;
         if policy.uses_learned_selector() {
             let context = GeneralizedTacticContext::from_facts(&self.current.snapshot)?;
             let applicable_descriptors = ranking
@@ -305,13 +287,13 @@ impl TacticQCampaign {
                 .filter(|choice| choice.applicable)
                 .map(|choice| choice.descriptor.clone())
                 .collect::<Vec<_>>();
-            // Partition zero is the dedicated terminal-support policy lane
-            // once a native terminal exists. Other partitions must continue
-            // consulting the achieved-goal critic: open exploratory branches
-            // are otherwise fitted and immediately ignored merely because a
-            // demonstration or earlier route supplied terminal evidence.
-            let goal_reachability_acquisition = self.value_treatment.uses_goal_relabeling()
-                && (!native_terminal_supported || !terminal_support_acquisition);
+            // Partition zero becomes the terminal-cost policy lane only after
+            // held-out sibling comparisons authorize that critic. Until then,
+            // it keeps consulting the achieved-goal critic just like the broad
+            // partitions: open exploratory branches must not be fitted and
+            // immediately ignored merely because one lineage reached terminal.
+            let goal_reachability_acquisition =
+                self.value_treatment.uses_goal_relabeling() && !terminal_action_authoritative;
             let goal_reachability_acquisition_allowed = goal_reachability_acquisition
                 && model_guided_acquisition_allowed(
                     policy,
@@ -350,7 +332,7 @@ impl TacticQCampaign {
                     TacticValueTreatment::GoalRelabeledFittedQKnnV2
                     | TacticValueTreatment::GoalRelabeledFrontierDoubleQV3
                     | TacticValueTreatment::GoalRelabeledUniversalFrontierDoubleQV4 => {
-                        if native_terminal_supported && terminal_support_acquisition {
+                        if terminal_action_authoritative {
                             self.native_terminal_action_model(goal_distance_feature)?
                                 .map(|model| {
                                     model.rank(&features, &context, &applicable_descriptors)
@@ -363,34 +345,31 @@ impl TacticQCampaign {
                                         .collect::<Vec<_>>()
                                 })
                         } else {
-                            self.active_goal_relabel_model(
-                                goal_distance_feature,
-                                terminal_support_acquisition,
-                            )?
-                            .map(|model| {
-                                model.rank_goal_reachability(
-                                    &features,
-                                    &context,
-                                    &applicable_descriptors,
-                                )
-                            })
-                            .transpose()?
-                            .map(|estimates| {
-                                goal_reachability_estimates = estimates
-                                    .iter()
-                                    .map(|estimate| TacticQGoalReachabilityEstimate {
-                                        descriptor: estimate.descriptor.clone(),
-                                        predicted_goal_progress_per_tick: estimate
-                                            .outcome
-                                            .goal_progress_per_tick,
-                                        nearest_distance: estimate.nearest_distance,
-                                    })
-                                    .collect();
-                                estimates
-                                    .into_iter()
-                                    .map(|estimate| estimate.descriptor)
-                                    .collect::<Vec<_>>()
-                            })
+                            self.generalized_model(goal_distance_feature)?
+                                .map(|model| {
+                                    model.rank_goal_reachability(
+                                        &features,
+                                        &context,
+                                        &applicable_descriptors,
+                                    )
+                                })
+                                .transpose()?
+                                .map(|estimates| {
+                                    goal_reachability_estimates = estimates
+                                        .iter()
+                                        .map(|estimate| TacticQGoalReachabilityEstimate {
+                                            descriptor: estimate.descriptor.clone(),
+                                            predicted_goal_progress_per_tick: estimate
+                                                .outcome
+                                                .goal_progress_per_tick,
+                                            nearest_distance: estimate.nearest_distance,
+                                        })
+                                        .collect();
+                                    estimates
+                                        .into_iter()
+                                        .map(|estimate| estimate.descriptor)
+                                        .collect::<Vec<_>>()
+                                })
                         }
                     }
                     TacticValueTreatment::ContinuousFittedQForestV1 => self
@@ -446,12 +425,44 @@ impl TacticQCampaign {
             )?;
             if goal_reachability_acquisition_allowed {
                 retain_goal_reachability_acquisition(&mut proposals)?;
-            } else if unproven_terminal_primary.is_none() {
+            } else if terminal_action_authoritative {
                 retain_generalized_value_acquisition(&mut proposals)?;
             }
-        }
-        if let Some(primary) = unproven_terminal_primary {
-            restore_primary_proposal(&mut proposals, primary, maximum_proposals);
+            // An uncalibrated terminal critic may evaluate a distinct sibling
+            // so that authenticated same-state comparisons can eventually
+            // prove it. It may not replace the all-experience reachability
+            // critic (or an exact/exploratory primary) merely because one
+            // terminal lineage exists.
+            if self.value_treatment.uses_goal_relabeling()
+                && native_terminal_supported
+                && terminal_support_acquisition
+                && !terminal_action_authoritative
+                && maximum_proposals > 1
+            {
+                if let Some(goal_distance_feature) = goal_distance_feature {
+                    if let Some(model) = self.native_terminal_action_model(goal_distance_feature)? {
+                        let context = GeneralizedTacticContext::from_facts(&self.current.snapshot)?;
+                        let applicable_descriptors = ranking
+                            .choices
+                            .iter()
+                            .filter(|choice| choice.applicable)
+                            .map(|choice| choice.descriptor.clone())
+                            .collect::<Vec<_>>();
+                        let terminal_probe_ranking = model
+                            .rank(&features, &context, &applicable_descriptors)?
+                            .into_iter()
+                            .map(|estimate| estimate.descriptor)
+                            .filter(|descriptor| descriptor != &proposals[0].descriptor)
+                            .collect::<Vec<_>>();
+                        ensure_generalized_value_acquisition(
+                            &terminal_probe_ranking,
+                            0,
+                            maximum_proposals,
+                            &mut proposals,
+                        )?;
+                    }
+                }
+            }
         }
         if let Some(primary) = forced_primary {
             restore_primary_proposal(&mut proposals, primary, maximum_proposals);
