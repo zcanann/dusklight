@@ -1,5 +1,6 @@
 use super::*;
 use dusklight_automation_contracts::tape::{InputFrame, RawPadState};
+use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
 use dusklight_control::option_execution::{OptionCondition, OptionEndReason, TapeRange};
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
 use dusklight_learning::fact_snapshot::{FactPhase, FactTerminalReason};
@@ -973,6 +974,59 @@ fn production_campaign_learns_the_shorter_around_corner_route_online() {
         dusklight_learning::tactic_exploration::TacticSelectionReason::ExactTerminalReturn
     );
     assert!(campaign.model_revision() > 0);
+
+    // Test the learned critic independently of the exact-graph incumbent above.
+    // A newly available action must not suppress its negative time-to-go values
+    // on a non-exploratory decision.
+    let mut extended_entries = catalog.entries().to_vec();
+    extended_entries.push(
+        TacticCatalogEntry::new(
+            "unseen-shield",
+            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 1 })),
+        )
+        .unwrap(),
+    );
+    let extended_catalog = TacticAssetCatalog::new(extended_entries).unwrap();
+    let extended_state = LearnerState::build(
+        campaign.current.snapshot.clone(),
+        &FactRegistry::canonical(),
+        &extended_catalog,
+        &[],
+        |_| true,
+    )
+    .unwrap();
+    let live = LiveTacticCatalog::build(&extended_state, &extended_catalog, &[]).unwrap();
+    let ranking = live
+        .rank(
+            campaign
+                .model
+                .as_ref()
+                .expect("terminal experience fits a critic"),
+            &encode(&extended_state.snapshot).unwrap(),
+        )
+        .unwrap();
+    assert!(ranking.values.ranked[0].mean_q < 0.0);
+    assert!(
+        ranking
+            .values
+            .unsupported
+            .iter()
+            .any(|action| action.option_id == "unseen-shield")
+    );
+    let selected = dusklight_learning::tactic_exploration::choose_tactic(
+        &ranking,
+        0,
+        TacticExplorationConfig {
+            seed: 0,
+            epsilon_per_million: 0,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        selected.reason,
+        dusklight_learning::tactic_exploration::TacticSelectionReason::Greedy
+    );
+    assert_eq!(selected.descriptor, ranking.values.ranked[0].descriptor);
 
     let mut variant_campaign =
         campaign_with_cold_primary(&base, &catalog, AdequacyState::VariantStart, "east");

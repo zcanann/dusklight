@@ -171,10 +171,10 @@ pub fn choose_tactic_with_state_untried(
 
     let exploration_draw =
         stratified_exploration_draw(config.seed, decision_index, config.epsilon_per_million);
-    let bootstrap_unsupported = ranked.is_empty()
-        || (ranked[0].mean_q <= 0.0
-            && !unsupported.is_empty()
-            && exploration_draw >= config.epsilon_per_million);
+    // Value sign is not uncertainty: authenticated time-to-go returns are
+    // negative. Once values exist, epsilon controls exploration regardless of
+    // their origin; bootstrap only when no applicable action has a value.
+    let bootstrap_unsupported = ranked.is_empty();
     let (descriptor, reason) = if exploration_draw < config.epsilon_per_million {
         // Finite tactic catalogs should spend exploratory decisions on choices
         // not yet tried in the current coarse state cell before resampling a

@@ -170,34 +170,77 @@ fn epsilon_remains_behaviorally_authoritative_without_exact_q_support() {
 }
 
 #[test]
-fn nonpositive_known_values_bootstrap_an_unsupported_tactic() {
-    let wait = descriptor("wait", OptionType::Neutral);
-    let move_forward = descriptor("move", OptionType::Move);
-    let ranking = LiveTacticRanking {
-        learner_snapshot_sha256: Digest([1; 32]),
-        action_universe_sha256: Digest([2; 32]),
-        choices: vec![choice(move_forward.clone()), choice(wait.clone())],
-        values: AvailableOptionRanking {
-            ranked: vec![RankedOption {
-                action_id: 0,
-                descriptor: wait,
-                mean_q: -0.01,
-                ensemble_variance: 0.0,
-            }],
-            unsupported: vec![move_forward.clone()],
-        },
-    };
-    let selected = choose_tactic(
-        &ranking,
-        0,
-        TacticExplorationConfig {
-            seed: 7,
-            epsilon_per_million: 0,
-        },
-    )
-    .unwrap();
-    assert_eq!(selected.descriptor, move_forward);
-    assert_eq!(selected.reason, TacticSelectionReason::UnsupportedBootstrap);
+fn learned_costs_preserve_exploitation_and_the_configured_exploration_rate() {
+    let faster = descriptor("faster", OptionType::Move);
+    let slower = descriptor("slower", OptionType::Move);
+    let unseen = descriptor("unseen", OptionType::Turn);
+    // Cost-to-go uses negative values. Zero and positive scores with the same
+    // ordering must produce the same behavior, not a different exploration rate.
+    for best_value in [-100.0, 0.0, 100.0] {
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([1; 32]),
+            action_universe_sha256: Digest([2; 32]),
+            choices: vec![
+                choice(faster.clone()),
+                choice(slower.clone()),
+                choice(unseen.clone()),
+            ],
+            values: AvailableOptionRanking {
+                ranked: vec![
+                    RankedOption {
+                        action_id: 0,
+                        descriptor: faster.clone(),
+                        mean_q: best_value,
+                        ensemble_variance: 0.0,
+                    },
+                    RankedOption {
+                        action_id: 1,
+                        descriptor: slower.clone(),
+                        mean_q: best_value - 20.0,
+                        ensemble_variance: 0.0,
+                    },
+                ],
+                unsupported: vec![unseen.clone()],
+            },
+        };
+        for policy in [
+            TacticProposalPolicy::Learned,
+            TacticProposalPolicy::FrozenPolicy,
+        ] {
+            for width in [1, 2] {
+                for epsilon in [0, 250_000, EPSILON_SCALE] {
+                    let mut explorations = 0;
+                    for decision in 0..40 {
+                        let batch = choose_tactic_batch_for_policy(
+                            &ranking,
+                            decision,
+                            TacticExplorationConfig {
+                                seed: 7,
+                                epsilon_per_million: epsilon,
+                            },
+                            std::slice::from_ref(&unseen),
+                            width,
+                            policy,
+                        )
+                        .unwrap();
+                        let selected = &batch[0];
+                        if selected.exploration_draw < epsilon {
+                            assert_eq!(selected.reason, TacticSelectionReason::Epsilon);
+                            assert_eq!(selected.descriptor, unseen);
+                            explorations += 1;
+                        } else {
+                            assert_eq!(selected.reason, TacticSelectionReason::Greedy);
+                            assert_eq!(selected.descriptor, faster);
+                        }
+                        if width == 2 {
+                            assert!(batch.iter().any(|proposal| proposal.descriptor == faster));
+                        }
+                    }
+                    assert_eq!(explorations, 40 * epsilon / EPSILON_SCALE);
+                }
+            }
+        }
+    }
 }
 
 #[test]
