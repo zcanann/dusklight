@@ -374,6 +374,81 @@ fn learned_batch(
 }
 
 #[test]
+fn hindsight_snapshot_drives_executable_choices_without_a_motion_gate() {
+    let base = base_facts();
+    let encoder = GoalConditionedTacticFeatureEncoder::new([1.0, 0.0, 0.0]).unwrap();
+    let training = collect_sibling_feedback(&base, &encoder);
+    assert!(
+        training
+            .transitions
+            .iter()
+            .all(|row| !row.value_sample.terminal)
+    );
+    let replay_revision = training.transitions.len() as u64;
+    let snapshot = TacticQImmutableLearnerSnapshot::fit(
+        training,
+        replay_revision,
+        1,
+        OptionValueConfig::default(),
+        encoder.goal_distance_feature(),
+        TacticValueTreatment::HindsightReturnKnnV1,
+    )
+    .unwrap();
+    assert!(snapshot.manifest.goal_reachability_calibration.is_none());
+    assert!(snapshot.manifest.terminal_action_calibration.is_none());
+    let query_catalog = action_catalog("held-out", 120);
+    let mut campaign = campaign(&base, 0, 0.0, &query_catalog, &encoder);
+    campaign
+        .consume_learner_snapshot_with_exploration_filter(&snapshot, |_| false)
+        .unwrap();
+    let mut online = TacticQOnlineLearningController::default();
+    let batch = learned_batch(&mut online, &campaign, &query_catalog, &encoder);
+    assert_eq!(batch.proposals[0].descriptor.option_id, "held-out/toward");
+    assert_eq!(
+        batch.proposals[0].reason,
+        TacticSelectionReason::GeneralizedValue
+    );
+    assert!(batch.goal_reachability_calibration.is_none());
+    assert!(!campaign.native_terminal_supported());
+    let leased = match online
+        .prepare_decision(
+            &mut campaign,
+            batch,
+            TacticQOnlineDecisionRequest {
+                suffix_ticks: 0,
+                horizon: 32,
+                maximum_proposals: 1,
+                learner_model_sha256: snapshot.sha256,
+                lease_mode: TacticQOnlineLeaseMode::Exploration,
+            },
+        )
+        .unwrap()
+    {
+        TacticQOnlineDecisionPlan::Execute(leased) => leased,
+        other => panic!("hindsight-selected action was not executable: {other:?}"),
+    };
+    let outcome = rewarded_outcome(&campaign, &leased.batch.proposals[0], &query_catalog, 0, 1);
+    assert!(outcome.route_tape.frames.last().unwrap().pads[0].stick_x > 0);
+    assert!(!outcome.terminal);
+    // Exploration still belongs to epsilon, including after publishing a model.
+    campaign.exploration.epsilon_per_million = 1_000_000;
+    let explored = campaign
+        .decide_parameterized_batch_with_policy(
+            &query_catalog,
+            &[],
+            ACTION_SCHEMA,
+            &|facts| encoder.encode(facts),
+            1,
+            0,
+            TacticProposalPolicy::Learned,
+            Some(encoder.goal_distance_feature()),
+            false,
+        )
+        .unwrap();
+    assert_eq!(explored.proposals[0].reason, TacticSelectionReason::Epsilon);
+}
+
+#[test]
 fn retained_sibling_feedback_controls_and_executes_an_unseen_compatible_action() {
     let base = base_facts();
     let encoder = GoalConditionedTacticFeatureEncoder::new([100.0, 0.0, 0.0]).unwrap();

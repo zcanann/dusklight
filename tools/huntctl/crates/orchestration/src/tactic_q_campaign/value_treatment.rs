@@ -64,6 +64,12 @@ impl TacticQCampaign {
             });
         if stale {
             let model = Arc::new(match self.value_treatment {
+                TacticValueTreatment::HindsightReturnKnnV1 => {
+                    GeneralizedTacticValueModel::fit_delayed_achieved_goal_returns(
+                        &self.training_replay,
+                        goal_distance_feature,
+                    )?
+                }
                 TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => {
                     match GeneralizedTacticValueModel::fit_fitted_q_transitions(
                         &self.training_replay,

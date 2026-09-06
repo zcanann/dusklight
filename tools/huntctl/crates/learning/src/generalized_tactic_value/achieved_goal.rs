@@ -26,6 +26,21 @@ pub(super) fn fit(
     transitions: &[OptionTransitionSample],
     goal_distance_feature: usize,
 ) -> Result<GeneralizedTacticValueModel, GeneralizedTacticValueError> {
+    fit_inner(transitions, goal_distance_feature, false)
+}
+
+pub(super) fn fit_delayed(
+    transitions: &[OptionTransitionSample],
+    goal_distance_feature: usize,
+) -> Result<GeneralizedTacticValueModel, GeneralizedTacticValueError> {
+    fit_inner(transitions, goal_distance_feature, true)
+}
+
+fn fit_inner(
+    transitions: &[OptionTransitionSample],
+    goal_distance_feature: usize,
+    delayed_returns: bool,
+) -> Result<GeneralizedTacticValueModel, GeneralizedTacticValueError> {
     if transitions.len() < 2 || transitions.len() > MAX_GENERALIZED_TACTIC_SAMPLES {
         return Err(GeneralizedTacticValueError::SampleCount);
     }
@@ -75,20 +90,63 @@ pub(super) fn fit(
         })
         .collect::<Vec<_>>();
     let graph = reverse_graph(&edges);
-    // Preserve every directly observed outcome relative to the authored
-    // target encoded in the replay row. These are the highest-locality
-    // reachability labels at obstacle contacts and repeated exact states. They
-    // remain exploration-only: sparse reward and terminal authority are
-    // explicitly removed.
+    let native_returns = if delayed_returns {
+        authenticated_terminal_conditional_returns(transitions)?
+    } else {
+        vec![None; transitions.len()]
+    };
+    // The motion control retains direct outcomes with no return authority.
+    // The delayed treatment supplies a closed native return where available,
+    // and otherwise learns from the action's own achieved endpoint.
     let mut samples = transitions
         .iter()
-        .map(|transition| {
+        .enumerate()
+        .map(|(index, transition)| {
             let mut outcome =
                 GeneralizedTacticOutcome::from_transition(transition, goal_distance_feature)?;
             outcome.reward = 0.0;
             outcome.terminal = 0.0;
+            let mut state_features = if let Some(value) = native_returns[index] {
+                // Native goal returns take precedence for the authored query.
+                // Other, unfinished paths still contribute hindsight tasks.
+                outcome.reward = value;
+                outcome.terminal = 1.0;
+                outcome.duration_ticks = -value;
+                transition.value_sample.state.clone()
+            } else if delayed_returns {
+                // Every observed action reached its own endpoint, including
+                // actions from otherwise unfinished episodes. This is a real
+                // short-horizon hindsight label, not a failure or zero return
+                // for some other goal.
+                let encoder = GoalConditionedTacticFeatureEncoder::new(
+                    transition
+                        .after
+                        .player
+                        .position_f32_bits
+                        .map(f32::from_bits),
+                )
+                .map_err(|error| GeneralizedTacticValueError::InvalidFacts(error.to_string()))?;
+                let features = encoder
+                    .encode_from_base(&transition.before, &base_features[index].0)
+                    .map_err(|error| {
+                        GeneralizedTacticValueError::InvalidFacts(error.to_string())
+                    })?;
+                outcome.reward = -(transition.value_sample.duration_ticks as f32);
+                outcome.goal_progress_per_tick =
+                    features[goal_distance_feature] / transition.value_sample.duration_ticks as f32;
+                features
+            } else {
+                transition.value_sample.state.clone()
+            };
+            if delayed_returns {
+                state_features.push(if native_returns[index].is_some() {
+                    GoalQueryKind::Authored.feature()
+                } else {
+                    GoalQueryKind::Achieved.feature()
+                });
+            }
             Ok(GeneralizedTacticTrainingSample {
-                state_features: transition.value_sample.state.clone(),
+                state_features,
                 context: GeneralizedTacticContext::from_facts(&transition.before)?,
                 action: transition.value_sample.action.clone(),
                 outcome,
@@ -106,7 +164,7 @@ pub(super) fn fit(
     let targets = if maximum_targets == 0 {
         Vec::new()
     } else {
-        sampled_targets(transitions, maximum_targets)
+        sampled_targets(transitions, maximum_targets, delayed_returns)
     };
     'targets: for target_index in targets {
         let target_transition = &transitions[target_index];
@@ -125,8 +183,16 @@ pub(super) fn fit(
             if samples.len() == MAX_GENERALIZED_TACTIC_SAMPLES {
                 break 'targets;
             }
+            if delayed_returns
+                && (transition.after_state_sha256 == target_transition.after_state_sha256
+                    || !costs.contains_key(&transition_index))
+            {
+                // Own endpoints were inserted above. Unconnected rows do not
+                // acquire a fabricated zero-cost continuation to this goal.
+                continue;
+            }
             let (before_base, after_base) = &base_features[transition_index];
-            let state_features = encoder
+            let mut state_features = encoder
                 .encode_from_base(&transition.before, before_base)
                 .map_err(|error| GeneralizedTacticValueError::InvalidFacts(error.to_string()))?;
             let next_features = encoder
@@ -147,6 +213,9 @@ pub(super) fn fit(
             outcome.goal_progress_per_tick = (state_features[goal_distance_feature]
                 - next_features[goal_distance_feature])
                 / duration;
+            if delayed_returns {
+                state_features.push(GoalQueryKind::Achieved.feature());
+            }
             samples.push(GeneralizedTacticTrainingSample {
                 state_features,
                 context: GeneralizedTacticContext::from_facts(&transition.before)?,
@@ -158,10 +227,19 @@ pub(super) fn fit(
     if samples.len() < 2 {
         return Err(GeneralizedTacticValueError::SampleCount);
     }
-    let mut model = GeneralizedTacticValueModel::fit_with_state_distance_weights(
-        &samples,
-        &reference.distance_weights(),
-    )?;
+    let mut weights = reference.distance_weights();
+    if delayed_returns {
+        weights.push(1.0);
+    }
+    let mut model =
+        GeneralizedTacticValueModel::fit_with_state_distance_weights(&samples, &weights)?;
+    if delayed_returns {
+        model.goal_query_kind = Some(if native_returns.iter().any(Option::is_some) {
+            GoalQueryKind::Authored
+        } else {
+            GoalQueryKind::Achieved
+        });
+    }
     // Achieved-goal labels are integral native ticks. Differences below half
     // a tick are interpolation noise, not evidence of a faster action.
     model.return_comparison_resolution = 0.5;
@@ -176,11 +254,44 @@ fn reverse_graph(edges: &[ReverseEdge]) -> ReverseCostGraph {
     )
 }
 
-fn sampled_targets(transitions: &[OptionTransitionSample], maximum_targets: usize) -> Vec<usize> {
+fn sampled_targets(
+    transitions: &[OptionTransitionSample],
+    maximum_targets: usize,
+    prefer_endpoints: bool,
+) -> Vec<usize> {
     debug_assert!(maximum_targets > 0);
     let mut unique = BTreeMap::<Digest, usize>::new();
     for (index, transition) in transitions.iter().enumerate() {
         unique.entry(transition.after_state_sha256).or_insert(index);
+    }
+    if prefer_endpoints {
+        // Retain complete recorded continuations as hindsight tasks before
+        // filling the remaining budget with interior goals. No authored goal
+        // or route identifier participates in this sampling policy.
+        let sources = transitions
+            .iter()
+            .map(|row| row.before_state_sha256)
+            .collect::<BTreeSet<_>>();
+        let endpoints = unique
+            .iter()
+            .filter(|(state, _)| !sources.contains(state))
+            .map(|(_, index)| *index)
+            .collect::<Vec<_>>();
+        let stride = endpoints.len().div_ceil(maximum_targets).max(1);
+        let mut selected = endpoints
+            .into_iter()
+            .step_by(stride)
+            .take(maximum_targets)
+            .collect::<Vec<_>>();
+        for index in unique.values().copied() {
+            if selected.len() == maximum_targets {
+                break;
+            }
+            if !selected.contains(&index) {
+                selected.push(index);
+            }
+        }
+        return selected;
     }
     let stride = unique.len().div_ceil(maximum_targets).max(1);
     unique

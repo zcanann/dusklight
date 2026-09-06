@@ -35,9 +35,16 @@ pub enum TacticValueTreatment {
     /// descriptors remain regression features, allowing terminal evidence to
     /// transfer across broad option-type labels.
     GoalRelabeledUniversalFrontierDoubleQV4,
+    /// One conditional return regressor over native and achieved-goal paths.
+    /// Immediate motion remains an observation, not action utility.
+    HindsightReturnKnnV1,
 }
 
 impl TacticValueTreatment {
+    pub const fn uses_hindsight_returns(self) -> bool {
+        matches!(self, Self::HindsightReturnKnnV1)
+    }
+
     pub const fn uses_goal_relabeling(self) -> bool {
         matches!(
             self,

@@ -510,7 +510,8 @@ impl TacticQCampaign {
             None
         } else {
             match self.value_treatment {
-                TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => {
+                TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+                | TacticValueTreatment::HindsightReturnKnnV1 => {
                     self.generalized_model(goal_distance_feature)?
                 }
                 TacticValueTreatment::GoalRelabeledFittedQKnnV2
@@ -677,7 +678,8 @@ impl TacticQCampaign {
                     expansion_count,
                     terminal: entry.transition.value_sample.terminal,
                     terminal_value_supported,
-                    achieved_goal_value_supported: false,
+                    achieved_goal_value_supported: self.value_treatment.uses_hindsight_returns()
+                        && generalized_model.is_some(),
                     goal_reachability_supported: !terminal_action_deployment_ready
                         && self.value_treatment.uses_goal_relabeling()
                         && generalized_model.is_some()

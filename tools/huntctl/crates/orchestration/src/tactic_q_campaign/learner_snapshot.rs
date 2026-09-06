@@ -306,6 +306,12 @@ impl TacticQImmutableLearnerSnapshot {
             None
         } else {
             match value_treatment {
+                TacticValueTreatment::HindsightReturnKnnV1 => Some(Arc::new(
+                    GeneralizedTacticValueModel::fit_delayed_achieved_goal_returns(
+                        &corpus.transitions,
+                        goal_distance_feature,
+                    )?,
+                )),
                 TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => {
                     match GeneralizedTacticValueModel::fit_fitted_q_transitions(
                         &corpus.transitions,

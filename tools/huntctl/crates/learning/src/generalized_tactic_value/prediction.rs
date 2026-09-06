@@ -30,6 +30,19 @@ pub(super) fn estimate_actions(
     context: &GeneralizedTacticContext,
     descriptors: &[OptionActionDescriptor],
 ) -> Result<Vec<GeneralizedTacticEstimate>, GeneralizedTacticValueError> {
+    // Reaching a hindsight coordinate and satisfying the authored game
+    // predicate are different tasks, even at the same position.
+    let query;
+    let state_features = if let Some(kind) = &model.goal_query_kind {
+        query = state_features
+            .iter()
+            .copied()
+            .chain(std::iter::once(kind.feature()))
+            .collect::<Vec<_>>();
+        query.as_slice()
+    } else {
+        state_features
+    };
     if state_features.len() != model.state_min.len()
         || state_features.iter().any(|value| !value.is_finite())
     {

@@ -18,6 +18,8 @@ use std::error::Error;
 use std::fmt;
 
 mod achieved_goal;
+#[cfg(test)]
+mod delayed_goal_tests;
 pub(crate) mod fitted_q;
 pub(crate) mod prediction;
 mod reverse_costs;
@@ -278,7 +280,23 @@ struct EncodedSample {
 }
 
 #[derive(Clone, Debug)]
+enum GoalQueryKind {
+    Authored,
+    Achieved,
+}
+
+impl GoalQueryKind {
+    fn feature(&self) -> f32 {
+        match self {
+            Self::Authored => 0.0,
+            Self::Achieved => 1.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct GeneralizedTacticValueModel {
+    goal_query_kind: Option<GoalQueryKind>,
     state_min: Vec<f32>,
     state_range: Vec<f32>,
     state_distance_weights: Vec<f32>,
@@ -307,6 +325,19 @@ impl GeneralizedTacticValueModel {
         goal_distance_feature: usize,
     ) -> Result<Self, GeneralizedTacticValueError> {
         achieved_goal::fit(transitions, goal_distance_feature)
+    }
+
+    /// Fit conditional time-to-go from recorded hindsight tasks. Every native
+    /// action contributes its own achieved endpoint, and connected earlier
+    /// actions receive full delayed returns. Unknown continuations are omitted,
+    /// not labeled as failures. Use `rank` for value-based action ordering;
+    /// `rank_goal_reachability` remains the immediate-motion comparison control.
+    /// These coordinate tasks never authenticate the authored terminal goal.
+    pub fn fit_delayed_achieved_goal_returns(
+        transitions: &[OptionTransitionSample],
+        goal_distance_feature: usize,
+    ) -> Result<Self, GeneralizedTacticValueError> {
+        achieved_goal::fit_delayed(transitions, goal_distance_feature)
     }
 
     pub fn fit_transitions(
@@ -444,6 +475,7 @@ impl GeneralizedTacticValueModel {
             fixed_feature_ranges(encoded.iter().map(|sample| &sample.behavior_context));
         let (action_min, action_range) = action_feature_ranges(&encoded);
         Ok(Self {
+            goal_query_kind: None,
             state_min,
             state_range,
             state_distance_weights: state_distance_weights.to_vec(),

@@ -334,6 +334,16 @@ impl TacticQCampaign {
             }
             if let Some(goal_distance_feature) = goal_distance_feature {
                 let ranked_applicable = match self.value_treatment {
+                    TacticValueTreatment::HindsightReturnKnnV1 => self
+                        .generalized_model(goal_distance_feature)?
+                        .map(|model| model.rank(&features, &context, &applicable_descriptors))
+                        .transpose()?
+                        .map(|estimates| {
+                            estimates
+                                .into_iter()
+                                .map(|estimate| estimate.descriptor)
+                                .collect::<Vec<_>>()
+                        }),
                     TacticValueTreatment::LocalGeneralizedFittedQKnnV1 => self
                         .generalized_model(goal_distance_feature)?
                         .map(|model| {
@@ -446,7 +456,8 @@ impl TacticQCampaign {
             )?;
             if goal_reachability_acquisition_allowed {
                 retain_goal_reachability_acquisition(&mut proposals)?;
-            } else if terminal_action_authoritative {
+            } else if terminal_action_authoritative || self.value_treatment.uses_hindsight_returns()
+            {
                 retain_generalized_value_acquisition(&mut proposals)?;
             }
             // Factor-diverse siblings must be allocated after retaining the
