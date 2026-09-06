@@ -1,10 +1,9 @@
+use super::reverse_costs::ReverseCostGraph;
 use super::*;
 use crate::tactic_features::TacticFeatureEncoder;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 
 const MAX_ACHIEVED_GOAL_TARGETS: usize = 32;
-const MAX_ACHIEVED_GOAL_HOPS: u32 = 16;
-const MAX_REVERSE_STATES_PER_TARGET: usize = 4_096;
 
 fn achieved_goal_target_budget(transition_count: usize, remaining_samples: usize) -> usize {
     if transition_count == 0 {
@@ -13,12 +12,6 @@ fn achieved_goal_target_budget(transition_count: usize, remaining_samples: usize
     (remaining_samples / transition_count)
         .min(MAX_ACHIEVED_GOAL_TARGETS)
         .min(transition_count.isqrt().max(1))
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ReverseReach {
-    ticks: u64,
-    hops: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -81,7 +74,7 @@ pub(super) fn fit(
             ticks: transition.value_sample.duration_ticks,
         })
         .collect::<Vec<_>>();
-    let incoming = incoming_edges(&edges);
+    let graph = reverse_graph(&edges);
     // Preserve every directly observed outcome relative to the authored
     // target encoded in the replay row. These are the highest-locality
     // reachability labels at obstacle contacts and repeated exact states. They
@@ -127,7 +120,7 @@ pub(super) fn fit(
         }
         let encoder = GoalConditionedTacticFeatureEncoder::new(target)
             .map_err(|error| GeneralizedTacticValueError::InvalidFacts(error.to_string()))?;
-        let costs = reverse_path_costs(&edges, &incoming, target_transition.after_state_sha256);
+        let costs = reverse_path_costs(&edges, &graph, target_transition.after_state_sha256);
         for (transition_index, transition) in transitions.iter().enumerate() {
             if samples.len() == MAX_GENERALIZED_TACTIC_SAMPLES {
                 break 'targets;
@@ -175,12 +168,12 @@ pub(super) fn fit(
     Ok(model)
 }
 
-fn incoming_edges(edges: &[ReverseEdge]) -> BTreeMap<Digest, Vec<usize>> {
-    let mut incoming = BTreeMap::<Digest, Vec<usize>>::new();
-    for (index, edge) in edges.iter().enumerate() {
-        incoming.entry(edge.after).or_default().push(index);
-    }
-    incoming
+fn reverse_graph(edges: &[ReverseEdge]) -> ReverseCostGraph {
+    ReverseCostGraph::new(
+        edges
+            .iter()
+            .map(|edge| (edge.before, edge.after, edge.ticks)),
+    )
 }
 
 fn sampled_targets(transitions: &[OptionTransitionSample], maximum_targets: usize) -> Vec<usize> {
@@ -199,39 +192,21 @@ fn sampled_targets(transitions: &[OptionTransitionSample], maximum_targets: usiz
 
 fn reverse_path_costs(
     edges: &[ReverseEdge],
-    incoming: &BTreeMap<Digest, Vec<usize>>,
+    graph: &ReverseCostGraph,
     target: Digest,
 ) -> BTreeMap<usize, u64> {
-    let mut states = BTreeMap::from([(target, ReverseReach { ticks: 0, hops: 0 })]);
-    let mut queue = VecDeque::from([target]);
-    let mut edge_costs = BTreeMap::<usize, u64>::new();
-    while let Some(state) = queue.pop_front() {
-        let reach = states[&state];
-        if reach.hops == MAX_ACHIEVED_GOAL_HOPS {
-            continue;
-        }
-        for edge_index in incoming.get(&state).into_iter().flatten().copied() {
-            let edge = edges[edge_index];
-            let ticks = reach.ticks.saturating_add(u64::from(edge.ticks));
-            edge_costs
-                .entry(edge.transition_index)
-                .and_modify(|best| *best = (*best).min(ticks))
-                .or_insert(ticks);
-            let before = edge.before;
-            let next = ReverseReach {
-                ticks,
-                hops: reach.hops + 1,
-            };
-            let improves = states
-                .get(&before)
-                .is_none_or(|prior| (next.ticks, next.hops) < (prior.ticks, prior.hops));
-            if improves && states.len() < MAX_REVERSE_STATES_PER_TARGET {
-                states.insert(before, next);
-                queue.push_back(before);
-            }
-        }
-    }
-    edge_costs
+    let states = graph.costs([(target, 0)]);
+    edges
+        .iter()
+        .filter_map(|edge| {
+            states.get(&edge.after).map(|ticks| {
+                (
+                    edge.transition_index,
+                    ticks.saturating_add(u64::from(edge.ticks)),
+                )
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -266,7 +241,7 @@ mod tests {
             edge(2, 1, 4, 40),
             edge(3, 4, 3, 40),
         ];
-        let costs = reverse_path_costs(&edges, &incoming_edges(&edges), Digest([3; 32]));
+        let costs = reverse_path_costs(&edges, &reverse_graph(&edges), Digest([3; 32]));
 
         assert_eq!(costs[&0], 12);
         assert_eq!(costs[&1], 8);

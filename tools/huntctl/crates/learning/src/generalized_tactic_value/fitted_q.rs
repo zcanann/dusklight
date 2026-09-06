@@ -27,10 +27,26 @@ pub(crate) fn fit_transition_returns(
             .validate()
             .map_err(|error| GeneralizedTacticValueError::InvalidTransition(error.to_string()))?;
     }
-    let backup_limit = fitted_q_backup_limit(minimum_iterations, transitions.len());
-    let exact_terminal_supported = terminal_supported_transition_indices(transitions);
-    let exact_first_hit_ticks =
-        terminal_supported_first_hit_ticks(transitions, &exact_terminal_supported, backup_limit)?;
+    // These targets are exact recorded path costs, not iterative function
+    // approximation. Training settings remain validated above for existing
+    // callers, but may not truncate an authenticated continuation.
+    let edges = transitions
+        .iter()
+        .map(|transition| {
+            (
+                transition.before_state_sha256,
+                transition.after_state_sha256,
+                transition.value_sample.duration_ticks,
+                transition.value_sample.terminal,
+            )
+        })
+        .collect::<Vec<_>>();
+    let exact_first_hit_ticks = reverse_costs::terminal_edge_costs(&edges);
+    let exact_terminal_supported = exact_first_hit_ticks
+        .iter()
+        .enumerate()
+        .filter_map(|(index, ticks)| ticks.is_some().then_some(index))
+        .collect();
     let values = exact_first_hit_ticks
         .iter()
         .map(|ticks| ticks.map(|ticks| -(ticks as f32)))

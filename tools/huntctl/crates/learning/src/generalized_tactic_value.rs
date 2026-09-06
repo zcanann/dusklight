@@ -13,13 +13,14 @@ use crate::option_values::OptionActionDescriptor;
 use crate::tactic_features::GoalConditionedTacticFeatureEncoder;
 use dusklight_control::option_execution::{OptionParameter, OptionType};
 use serde::Serialize;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
 mod achieved_goal;
 pub(crate) mod fitted_q;
 pub(crate) mod prediction;
+mod reverse_costs;
 
 pub const GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH: usize = 71;
 const GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH: usize = 11;
@@ -553,100 +554,6 @@ fn observed_return_resolution(transitions: &[OptionTransitionSample]) -> f64 {
         .min_by(f64::total_cmp)
         .unwrap_or(MINIMUM_RETURN_COMPARISON_RESOLUTION)
         .max(MINIMUM_RETURN_COMPARISON_RESOLUTION)
-}
-
-fn fitted_q_backup_limit(minimum_iterations: usize, transition_count: usize) -> usize {
-    transition_count
-        .max(minimum_iterations)
-        .min(MAX_FITTED_Q_BACKUP_ITERATIONS)
-}
-
-fn terminal_supported_transition_indices(
-    transitions: &[OptionTransitionSample],
-) -> BTreeSet<usize> {
-    let edges = transitions
-        .iter()
-        .map(|transition| {
-            (
-                transition.before_state_sha256,
-                transition.after_state_sha256,
-                transition.value_sample.terminal,
-            )
-        })
-        .collect::<Vec<_>>();
-    terminal_supported_edge_indices(&edges)
-}
-
-fn terminal_supported_edge_indices(edges: &[(Digest, Digest, bool)]) -> BTreeSet<usize> {
-    let mut supported_states = BTreeSet::new();
-    let mut supported_edges = BTreeSet::new();
-    loop {
-        let mut changed = false;
-        for (index, (before, after, terminal)) in edges.iter().copied().enumerate() {
-            if terminal || supported_states.contains(&after) {
-                changed |= supported_edges.insert(index);
-                changed |= supported_states.insert(before);
-            }
-        }
-        if !changed {
-            return supported_edges;
-        }
-    }
-}
-
-fn terminal_supported_first_hit_ticks(
-    transitions: &[OptionTransitionSample],
-    terminal_supported: &BTreeSet<usize>,
-    iteration_limit: usize,
-) -> Result<Vec<Option<u64>>, GeneralizedTacticValueError> {
-    let mut outgoing = BTreeMap::<_, Vec<usize>>::new();
-    for (index, transition) in transitions.iter().enumerate() {
-        outgoing
-            .entry(transition.before_state_sha256)
-            .or_default()
-            .push(index);
-    }
-    let mut ticks = transitions
-        .iter()
-        .map(|transition| {
-            transition
-                .value_sample
-                .terminal
-                .then_some(u64::from(transition.value_sample.duration_ticks))
-        })
-        .collect::<Vec<_>>();
-    for _ in 0..iteration_limit.max(1) {
-        let prior = ticks.clone();
-        let mut changed = false;
-        for (index, transition) in transitions.iter().enumerate() {
-            if transition.value_sample.terminal || !terminal_supported.contains(&index) {
-                continue;
-            }
-            let next_ticks = outgoing
-                .get(&transition.after_state_sha256)
-                .into_iter()
-                .flatten()
-                .filter(|next| terminal_supported.contains(next))
-                .filter_map(|next| prior[*next])
-                .min();
-            let value = next_ticks
-                .map(|next| next.saturating_add(u64::from(transition.value_sample.duration_ticks)));
-            changed |= ticks[index] != value;
-            ticks[index] = value;
-        }
-        if !changed {
-            break;
-        }
-    }
-    if terminal_supported
-        .iter()
-        .any(|index| ticks.get(*index).is_none_or(Option::is_none))
-    {
-        return Err(GeneralizedTacticValueError::InvalidTransition(
-            "terminal-supported transition has no finite first-hit path".into(),
-        ));
-    }
-    Ok(ticks)
 }
 
 pub fn compare_generalized_tactic_outcomes(

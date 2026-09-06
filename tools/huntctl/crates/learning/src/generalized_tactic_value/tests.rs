@@ -167,32 +167,6 @@ fn state_range_calibration_resists_single_extreme_outlier() {
 }
 
 #[test]
-fn terminal_support_excludes_censored_and_cyclic_components() {
-    let digest = |byte| Digest([byte; 32]);
-    let edges = [
-        (digest(1), digest(2), false),
-        (digest(2), digest(3), true),
-        (digest(1), digest(4), false),
-        (digest(4), digest(5), false),
-        (digest(6), digest(2), false),
-        (digest(7), digest(8), false),
-        (digest(8), digest(7), false),
-    ];
-
-    assert_eq!(
-        terminal_supported_edge_indices(&edges),
-        BTreeSet::from([0, 1, 4])
-    );
-}
-
-#[test]
-fn fitted_q_can_propagate_beyond_the_configured_minimum() {
-    assert_eq!(fitted_q_backup_limit(12, 32), 32);
-    assert_eq!(fitted_q_backup_limit(32, 4), 32);
-    assert_eq!(fitted_q_backup_limit(12, 1_000), 512);
-}
-
-#[test]
 fn action_similarity_cannot_pull_value_from_a_remote_state_region() {
     let mut samples = Vec::new();
     for index in 0..STATE_NEIGHBORS {
