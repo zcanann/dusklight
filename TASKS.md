@@ -19,12 +19,10 @@ mechanisms, loses some meaningful state distinctions, and exposes a narrower
 action space than the surrounding interfaces suggest. Useful general learning
 has not yet been demonstrated.
 
-The latest bounded Ordon check after correcting heading execution found a
-468-tick route; two seeds produced terminal outcomes. It did not establish
-improved learning. The human example takes 125 active ticks to
-`ordon_spring_load_committed`. Beating it is an initial capability check, not
-the framework's specification or performance ceiling. Experiment details live
-in [the native evaluation notes](docs/glitch-hunting/learning-evaluations/2026-09-06-heading.md).
+Beating a short human route is an initial capability check, not the framework's
+specification or performance ceiling. Current results and experiment details
+belong in [the evaluation notes](docs/glitch-hunting/learning-evaluations/),
+not in an expanding set of benchmark-specific tasks.
 
 ## Learning and exploration
 
@@ -38,25 +36,24 @@ in [the native evaluation notes](docs/glitch-hunting/learning-evaluations/2026-0
 - [ ] Provide an expressive, composable action space with usable control over
   direction, timing, duration, and contextual actions. Supplied tactics should
   accelerate discovery without becoming the boundary of possible solutions.
-- [ ] Make checkpoint branching and reuse of experience effective parts of
-  exploration. Compare alternatives, revisit useful states, learn from every
-  valid outcome, and allow enough exploration to escape local optima.
+- [ ] Use save-state branching and accumulated experience throughout exploration.
+  Try alternatives from useful states without repeatedly paying for their
+  prefixes, retain what those attempts teach, and allow enough exploration to
+  discover longer solutions before optimizing them.
 - [ ] Discover, evaluate, and reuse tactics that improve subsequent searches.
   Develop transfer beyond replaying exact recordings, and let learned tactics
   compete with supplied tactics and simpler actions.
-- [ ] Use ordinary suboptimal human examples as optional learning experience.
-  Demonstrate their contribution without requiring imitation or imposing a
-  ceiling on the learned solution.
+- [ ] Learn from optional human examples without requiring imitation or imposing
+  a ceiling on the solution. Keep discovery without a baseline a first-class path.
 
 ## Demonstrate usefulness
 
-- [ ] Show repeatable improvement in complete native routes over simple search
-  and frozen-learning controls under comparable budgets. Measure success rate,
-  route quality, and time to useful results; distinguish independent discovery
-  from shared or inherited experience. Verify claimed routes by cold replay.
-- [ ] Find substantially better-than-human routes and apply the framework to
-  additional goals. Use these results to expose limitations in the learner,
-  representation, or actions, without baking benchmark solutions into them.
+- [ ] Demonstrate useful learning in the real game: repeatable discovery,
+  substantially better-than-human routes, and creative solutions across goals.
+  Compare against simple alternatives under comparable budgets to establish
+  whether learning helps. Verify claimed routes from the original starting
+  state; distinguish independent discovery from reused experience. Do not bake
+  benchmark solutions into the learner or its success criteria.
 - [ ] Make iteration fast enough to be useful. Track where execution, restore,
   fitting, scheduling, persistence, and communication consume the budget; fix
   measured bottlenecks and evaluate parallelism by useful learning per wall time.
@@ -65,12 +62,12 @@ in [the native evaluation notes](docs/glitch-hunting/learning-evaluations/2026-0
 
 - [ ] Make the active execution and learning path easy to follow and test.
   Separate responsibilities, organize related behavior into folders, and remove
-  redundant paths. Production files over roughly 1,000 lines need decomposition
-  or a concrete single-responsibility justification.
+  redundant paths. Break up oversized modules around clear responsibilities
+  rather than letting campaign-specific logic accumulate in central files.
 - [ ] Harden checkpoint ownership, recovery, experience admission, and worker
   orchestration so failures cannot silently corrupt experiments. Keep durable
-  learning data bounded, binary, checksummed, and atomically written; reserve
-  JSON for small human-facing summaries, manifests, and explicit diagnostics.
+  learning data efficient, bounded, and recoverable, with binary serialization
+  for bulk data. Surface failures instead of silently degrading the experiment.
 - [ ] Provide concise introspection that explains what was tried, what was
   learned, what drove choices, and where time went. Make failure causes visible
   without requiring a forensic reading of implementation details.
@@ -80,12 +77,20 @@ in [the native evaluation notes](docs/glitch-hunting/learning-evaluations/2026-0
 - These are capability outcomes, not a fixed algorithm or mandatory sequence.
   Pick the next bounded milestone by its expected contribution to useful
   learning; address engineering foundations alongside the behavior they support.
+- Start with the simplest coherent learner, informative observations, and useful
+  actions. Add complexity only to address an observed limitation; removing a
+  mechanism is a valid improvement. Neither a particular algorithm nor a growing
+  collection of heuristics is the deliverable.
 - Keep experiment details and historical results outside this list. Each
   experiment needs a question, a cost limit, and a decision its result informs.
   Prefer checks that answer several related questions when practical.
 - When work stops improving understanding or capability, reassess the approach.
   Replace or retire unhelpful subtasks instead of adding increasingly narrow
   acceptance gates. Remove completed work; tests alone do not prove usefulness.
+- Finish milestones with a concrete capability change or a decision about what
+  to change next. Do not turn one unresolved benchmark into an indefinite run
+  of tuning and tests. If a task needs a design decision, state it and move to
+  independent work; implementation difficulty alone is not a blocker.
 - Use at most two owned build/native workers. Manage only child processes
   started by this session; never stop unrelated processes.
 - Commit and push every natural milestone; keep the workspace clean.
