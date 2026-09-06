@@ -1031,15 +1031,13 @@ fn pad_for(
             heading_radians_f32_bits,
             magnitude,
         } => {
-            query
-                .queried_fields
-                .extend(["player_yaw".into(), "camera_yaw".into()]);
-            query.player_yaw = Some(observation.player_yaw);
+            query.queried_fields.push("camera_yaw".into());
             query.camera_yaw_radians_f32_bits = observation.camera_yaw_radians_f32_bits;
-            let camera = required_camera(observation)?;
-            let desired = camera + f32::from_bits(*heading_radians_f32_bits);
+            required_camera(observation)?;
+            // PAD direction is already camera-relative. Subtracting Link's
+            // facing turns a fixed input command into unintended feedback.
             Ok((
-                main_heading(desired - yaw_radians(observation.player_yaw), *magnitude),
+                main_heading(f32::from_bits(*heading_radians_f32_bits), *magnitude),
                 false,
             ))
         }
@@ -1377,9 +1375,6 @@ fn main_heading(relative_error: f32, magnitude: u8) -> RawPadState {
     }
 }
 
-fn yaw_radians(yaw: i16) -> f32 {
-    f32::from(yaw) * PI / 32768.0
-}
 fn wrap_angle(value: f32) -> f32 {
     (value + PI).rem_euclid(TAU) - PI
 }

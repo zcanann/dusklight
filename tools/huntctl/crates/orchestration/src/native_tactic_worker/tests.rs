@@ -399,8 +399,8 @@ fn relative_heading_becomes_one_linear_native_controller_candidate() {
     else {
         panic!("relative heading must compile to maintain-heading");
     };
-    assert_eq!(frame, CoordinateFrame::Player);
-    assert_eq!(heading_radians.to_bits(), (-authored_heading).to_bits());
+    assert_eq!(frame, CoordinateFrame::Camera);
+    assert_eq!(heading_radians.to_bits(), authored_heading.to_bits());
     assert_eq!(magnitude, 96);
 
     let endpoint_plan = NativeGenericTacticPlan {

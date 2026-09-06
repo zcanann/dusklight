@@ -852,17 +852,11 @@ pub(crate) fn encode_action(
     // Compare what the controller actually emits, rather than comparing
     // similarly named parameters with different coordinate-frame semantics.
     // Recorded chunks expose their raw PAD heading directly. Roll headings use
-    // the opposite X convention. Native maintained-heading plans compile a
-    // camera-relative authored offset into a player-frame controller, whose
-    // first emitted PAD heading is player - authored - camera.
-    let current_yaw = context.yaw_sin.atan2(context.yaw_cos);
-    let camera_yaw = context.camera_yaw_sin.atan2(context.camera_yaw_cos);
+    // the opposite X convention. Maintained-heading plans directly express
+    // the camera-relative PAD heading, independent of player facing.
     let emitted_heading = float(descriptor, "command_initial_heading")
         .or_else(|| float(descriptor, "movement_heading"))
-        .or_else(|| {
-            float(descriptor, "heading_radians")
-                .map(|authored| angle_delta(current_yaw - authored, camera_yaw))
-        })
+        .or_else(|| float(descriptor, "heading_radians"))
         .or_else(|| {
             float(descriptor, "direction_degrees")
                 .map(|degrees| -degrees * std::f32::consts::PI / 180.0)
@@ -1035,10 +1029,6 @@ fn plan_turn_radians(coordinates: &[[f32; 2]]) -> f32 {
             cross.atan2(dot).abs()
         })
         .sum()
-}
-
-fn angle_delta(left: f32, right: f32) -> f32 {
-    (left - right + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
 fn transition_state_distance_weights(

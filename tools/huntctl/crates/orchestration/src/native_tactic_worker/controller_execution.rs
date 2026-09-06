@@ -186,14 +186,10 @@ pub(super) fn native_generic_controller_program(
             magnitude,
         } => Operation::MaintainHeading {
             blend: StickBlend::Replace,
-            // NativeGenericTactic treats the authored heading as camera-relative
-            // and emits the player-relative steering error. The controller's
-            // player-frame heading resolves to the same PAD vector when the
-            // authored offset is negated:
-            //
-            // -sin(player - offset - camera) == sin(camera + offset - player)
-            frame: CoordinateFrame::Player,
-            heading_radians: canonical_controller_heading(-f32::from_bits(
+            // The descriptor is a camera-relative input direction, independent
+            // of Link's current facing, just like the observation-driven path.
+            frame: CoordinateFrame::Camera,
+            heading_radians: canonical_controller_heading(f32::from_bits(
                 *heading_radians_f32_bits,
             )),
             magnitude: *magnitude,

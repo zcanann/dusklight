@@ -423,9 +423,22 @@ fn typed_native_targets_magnitude_and_heading_are_state_relative() {
     assert_eq!(encoded_heading[0], 1.0);
     assert_eq!(encoded_heading[5], 0.0);
     assert_eq!(encoded_heading[47], 1.0);
-    assert!((encoded_heading[48] + 1.0).abs() < 1.0e-6);
+    assert!((encoded_heading[48] - 1.0).abs() < 1.0e-6);
     assert!(encoded_heading[49].abs() < 1.0e-6);
     assert!((encoded_heading[50] - std::f32::consts::FRAC_PI_2).abs() < 1.0e-6);
+
+    // Heading factors describe the emitted input, not player/camera error.
+    let rotated_context = GeneralizedTacticContext {
+        yaw_sin: 0.75_f32.sin(),
+        yaw_cos: 0.75_f32.cos(),
+        camera_yaw_sin: (-1.25_f32).sin(),
+        camera_yaw_cos: (-1.25_f32).cos(),
+        ..context
+    };
+    assert_eq!(
+        encoded_heading,
+        encode_action(&rotated_context, &heading).unwrap()
+    );
 
     let roll = OptionActionDescriptor {
         option_id: "native-roll".into(),

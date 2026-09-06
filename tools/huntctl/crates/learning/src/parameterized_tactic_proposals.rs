@@ -18,8 +18,10 @@ use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::f32::consts::{PI, TAU};
 
-pub const PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V6: &str =
-    "dusklight-parameterized-tactic-families/v6";
+// V7 corrects maintained-heading execution and its learned action factors.
+// Previous family experience must not silently mix with the corrected actions.
+pub const PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V7: &str =
+    "dusklight-parameterized-tactic-families/v7";
 pub const MAX_PARAMETERIZED_PROPOSALS: usize = 192;
 const MAX_PARAMETERIZED_TACTIC_TICKS: u32 = 4_096;
 
@@ -113,7 +115,7 @@ pub struct ParameterizedTacticProposalCatalog {
 
 pub fn parameterized_tactic_family_schema_sha256() -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V6.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V7.as_bytes());
     hasher.update((MAX_PARAMETERIZED_PROPOSALS as u64).to_le_bytes());
     hasher.update(MAX_PARAMETERIZED_TACTIC_TICKS.to_le_bytes());
     for family in [
@@ -374,7 +376,7 @@ fn insert(
 ) -> Result<(), TacticAssetError> {
     let canonical = source.canonical_bytes()?;
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V6.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V7.as_bytes());
     hasher.update(family.slug().as_bytes());
     hasher.update((canonical.len() as u64).to_le_bytes());
     hasher.update(canonical);
@@ -393,7 +395,7 @@ fn insert(
 
 fn proposal_draw(context: ParameterizedTacticProposalContext) -> u64 {
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V6.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V7.as_bytes());
     hasher.update(context.seed.to_le_bytes());
     hasher.update(context.decision_index.to_le_bytes());
     hasher.update(context.state_sha256.0);

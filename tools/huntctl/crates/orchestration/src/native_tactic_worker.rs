@@ -55,6 +55,8 @@ use std::time::Instant;
 
 mod batched_execution;
 mod controller_execution;
+#[cfg(test)]
+mod heading_conformance_tests;
 
 pub(crate) use batched_execution::{
     execute_selected_tactic_batch_if_compatible, selected_tactic_batch_is_compatible,
