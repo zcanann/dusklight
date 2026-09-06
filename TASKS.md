@@ -2,108 +2,88 @@
 
 ## Goal
 
-Build a generic learner that uses native observations, actions, terminal
-predicates, native tick cost, and its own restorable states to discover complete
-solutions that are substantially better than human routes. Human replays are
-optional experience, never a required route script or performance ceiling.
+Build a learning framework that discovers substantially better-than-human
+routes and creative solutions in useful wall time. It should use supplied
+tactics, discover and promote its own, and work with or without human examples.
+Choose algorithms for the available experience and execution budget; Q-learning
+is an option, not a requirement.
 
-Ordon Springs is the first adequacy test. The real terminal is
-`ordon_spring_load_committed`; the human replay reaches it in 125 active ticks.
-The first pass gate is 124, convincing evidence is 123, and the current target
-is 120.
+Success means reaching real game goals efficiently. Intermediate signals help
+learning, but improvements to a proxy metric do not establish better routes.
 
-## What is actually true
+## Starting point
 
-- Exact process-local checkpoints, graph edges, replay recovery, and terminal
-  predicates work. Deterministic tests prove branching and multi-step return
-  propagation, but native route quality does not yet prove useful learning.
-- The latest matched zero-demonstration run reached the terminal in all four
-  seeds but produced only a 257-tick best route. Goal-reachability controlled
-  22 of 128 decisions; 106 decisions remained bootstrap exploration.
-- Stable held-out folds fixed one invalid experiment, but authority still
-  oscillates. Exact revision diagnostics show why: from replay revision 166 to
-  176, 11 previously correct same-state rankings became wrong while seven
-  recovered. A representative failure trusted a distant extrapolation over an
-  action with ten-times-closer evidence; the extrapolated action achieved 1.2
-  versus 16.1 progress per tick.
-- Therefore the current blocker is policy quality and confidence, not attempt
-  volume. No task is blocked on missing design.
+Checkpoint restoration, transition graphs, replay, and terminal verification
+provide useful foundations. The active learner still mixes several decision
+mechanisms, loses some meaningful state distinctions, and exposes a narrower
+action space than the surrounding interfaces suggest. Useful general learning
+has not yet been demonstrated.
 
-## P0 - make retained-state learning improve decisions
+The last reviewed Ordon campaign found a 257-tick route: two seeds produced
+terminal outcomes and two only inherited terminal support. The human example
+takes 125 active ticks to `ordon_spring_load_committed`. Beating it is an initial
+capability check, not the framework's specification or performance ceiling.
 
-- [ ] Make goal-reachability authority confidence-aware without suppressing
-  uncertainty-driven exploration. Select any distance/uncertainty treatment
-  using nested or otherwise leakage-free held-out evidence, not an Ordon-tuned
-  constant. On exact replay revisions 166, 176, and 248, require better aggregate
-  same-state ranking and regret without degrading the mature 72/113 baseline.
-- [ ] Use retained checkpoints as the ordinary native search tree: choose a
-  promising state, restore it directly, compare multiple legal sibling actions,
-  admit every authentic outcome, and show that the next policy snapshot changes
-  the action or checkpoint ranking for evidence-backed reasons. Do not replay
-  every candidate from the cold root.
-- [ ] Demonstrate native multi-step credit around the local optimum. A policy
-  must prefer a temporarily worse first move when its retained continuation has
-  lower authenticated ticks-to-terminal; immediate coordinate progress alone
-  cannot solve this gate.
-- [ ] Keep action discovery generic and state-aware. Movement, camera lock,
-  rolling, simultaneous inputs, variable durations, and prompted actions must
-  remain legal candidates; learned options must compete with their primitive
-  components and be promoted only by held-out native improvement.
+## Learning and exploration
 
-Exit: in a bounded zero-demonstration native run, learned ranking controls most
-eligible decisions, checkpoint branching changes later choices, every seed
-reaches the real terminal, and the best authenticated route materially improves
-the current 257-tick result. One lucky seed or more blind attempts does not pass.
+- [ ] Establish a simple, coherent learning loop whose decisions improve from
+  experience. Make delayed outcomes influence earlier choices, including moves
+  that look locally unhelpful. Consolidate competing models, gates, and fallback
+  rules where they obscure or impede this behavior.
+- [ ] Give the active learner observations that preserve meaningful differences
+  between states, goals, and available actions. Check what actually reaches the
+  model; retained raw data and broad schemas alone are insufficient.
+- [ ] Provide an expressive, composable action space with usable control over
+  direction, timing, duration, and contextual actions. Supplied tactics should
+  accelerate discovery without becoming the boundary of possible solutions.
+- [ ] Make checkpoint branching and reuse of experience effective parts of
+  exploration. Compare alternatives, revisit useful states, learn from every
+  valid outcome, and allow enough exploration to escape local optima.
+- [ ] Discover, evaluate, and reuse tactics that improve subsequent searches.
+  Develop transfer beyond replaying exact recordings, and let learned tactics
+  compete with supplied tactics and simpler actions.
+- [ ] Use ordinary suboptimal human examples as optional learning experience.
+  Demonstrate their contribution without requiring imitation or imposing a
+  ceiling on the learned solution.
 
-## P0 - beat and explain the Ordon route
+## Demonstrate usefulness
 
-- [ ] Discover a route of 124 ticks or less and cold-replay it twice with the
-  same terminal identity and first-hit tick.
-- [ ] Reach 123 ticks or less, then 120 ticks or less, without changing the
-  generic objective, observations, action interface, or learning rules.
-- [ ] Under one bounded envelope, run five fixed zero-shot seeds plus a permuted
-  seed order. All must reach terminal; quality and discovery time must not rely
-  on scheduler ordering, cross-run leakage, or one seed.
-- [ ] Compare the improving learner with frozen-policy and random-valid controls
-  on matched checkpoints and native-tick budgets. Attribute decisive ranking
-  changes to specific experience and generic observations.
-- [ ] Show one learner-discovered multi-action option improving held-out native
-  ticks over its primitive components. Ablate an ordinary suboptimal human replay:
-  it may accelerate learning but cannot be required or cap the final policy.
+- [ ] Show repeatable improvement in complete native routes over simple search
+  and frozen-learning controls under comparable budgets. Measure success rate,
+  route quality, and time to useful results; distinguish independent discovery
+  from shared or inherited experience. Verify claimed routes by cold replay.
+- [ ] Find substantially better-than-human routes and apply the framework to
+  additional goals. Use these results to expose limitations in the learner,
+  representation, or actions, without baking benchmark solutions into them.
+- [ ] Make iteration fast enough to be useful. Track where execution, restore,
+  fitting, scheduling, persistence, and communication consume the budget; fix
+  measured bottlenecks and evaluate parallelism by useful learning per wall time.
 
-Exit: adaptive learning and reusable learned tactics causally produce
-substantially better-than-human routes.
+## Engineering foundations
 
-## P0 - make successful learning fast enough
+- [ ] Make the active execution and learning path easy to follow and test.
+  Separate responsibilities, organize related behavior into folders, and remove
+  redundant paths. Production files over roughly 1,000 lines need decomposition
+  or a concrete single-responsibility justification.
+- [ ] Harden checkpoint ownership, recovery, experience admission, and worker
+  orchestration so failures cannot silently corrupt experiments. Keep durable
+  learning data bounded, binary, checksummed, and atomically written; reserve
+  JSON for small human-facing summaries, manifests, and explicit diagnostics.
+- [ ] Provide concise introspection that explains what was tried, what was
+  learned, what drove choices, and where time went. Make failure causes visible
+  without requiring a forensic reading of implementation details.
 
-- [ ] Only after the policy gates above pass, profile native execution, restore,
-  fitting, graph scheduling, admission, persistence, and IPC on one fixed run.
-- [ ] Optimize measured dominant costs and require less wall time to the same
-  learned result. Compare one and two checkpoint-owning lanes; retain
-  parallelism only when it increases unique useful experience without host
-  interference or evidence contamination.
+## How to use this list
 
-## P1 - generality and engineering quality
-
-- [ ] Apply the unchanged interfaces and learning rules to a second native goal
-  without route-specific shaping or authored tactics.
-- [ ] Split mixed-responsibility production files into independently testable
-  execution, checkpoint, branching, learning, proposal, tactic, persistence,
-  replay-proof, and reporting modules. Files over roughly 1,000 lines require a
-  concrete single-responsibility justification or decomposition.
-- [ ] Keep persistent corpora, checkpoints, journals, and models bounded,
-  checksummed, atomic, and binary. JSON is limited to small human-facing
-  manifests, summaries, and explicit diagnostics.
-
-## Operating rules
-
-- Work capability-first. Do not optimize throughput while learning or execution
-  semantics are invalid.
-- Do not launch another native campaign until a deterministic or replay-only
-  diagnosis identifies a concrete defect and its fix passes.
-- Every native campaign is bounded and answers multiple hypotheses. Every branch
-  contributes authentic evidence; every promoted route is cold-replayed twice.
-- Use at most two owned build/native workers. Manage only exact child processes
-  started by this session; never stop unrelated Codex, Cargo, emulator, or worker
-  processes.
-- Commit and push every natural milestone; do not leave a long-lived dirty tree.
+- These are capability outcomes, not a fixed algorithm or mandatory sequence.
+  Pick the next bounded milestone by its expected contribution to useful
+  learning; address engineering foundations alongside the behavior they support.
+- Keep experiment details and historical results outside this list. Each
+  experiment needs a question, a cost limit, and a decision its result informs.
+  Prefer checks that answer several related questions when practical.
+- When work stops improving understanding or capability, reassess the approach.
+  Replace or retire unhelpful subtasks instead of adding increasingly narrow
+  acceptance gates. Remove completed work; tests alone do not prove usefulness.
+- Use at most two owned build/native workers. Manage only child processes
+  started by this session; never stop unrelated processes.
+- Commit and push every natural milestone; keep the workspace clean.
