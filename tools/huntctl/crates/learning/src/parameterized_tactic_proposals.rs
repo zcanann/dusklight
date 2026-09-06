@@ -18,12 +18,12 @@ use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::f32::consts::{PI, TAU};
 
-// V7 corrects maintained-heading execution and its learned action factors.
-// Previous family experience must not silently mix with the corrected actions.
-pub const PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V7: &str =
-    "dusklight-parameterized-tactic-families/v7";
+// V8 adds single-tick movement and neutral inputs to the corrected V7 headings.
+pub const PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V8: &str =
+    "dusklight-parameterized-tactic-families/v8";
 pub const MAX_PARAMETERIZED_PROPOSALS: usize = 192;
 const MAX_PARAMETERIZED_TACTIC_TICKS: u32 = 4_096;
+const MOVEMENT_DURATIONS: [u32; 5] = [1, 4, 8, 16, 40];
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ParameterizedTacticFamily {
@@ -115,7 +115,7 @@ pub struct ParameterizedTacticProposalCatalog {
 
 pub fn parameterized_tactic_family_schema_sha256() -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V7.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V8.as_bytes());
     hasher.update((MAX_PARAMETERIZED_PROPOSALS as u64).to_le_bytes());
     hasher.update(MAX_PARAMETERIZED_TACTIC_TICKS.to_le_bytes());
     for family in [
@@ -150,7 +150,7 @@ pub fn propose_parameterized_tactics(
     let central_heading = normalize_angle(goal_heading + angular_jitter);
     let mut entries = BTreeMap::<String, TacticCatalogEntry>::new();
 
-    let seek_durations = [4_u32, 8, 16, 40].map(|ticks| ticks.min(context.maximum_ticks));
+    let seek_durations = MOVEMENT_DURATIONS.map(|ticks| ticks.min(context.maximum_ticks));
     for (index, duration) in seek_durations.into_iter().enumerate() {
         let magnitude = if (draw.rotate_left(index as u32) & 1) == 0 {
             96
@@ -192,13 +192,10 @@ pub fn propose_parameterized_tactics(
         7.0 * PI / 8.0,
         PI,
     ];
-    // Heading and duration are independent primitive factors. Keeping every
-    // alternative heading at four ticks forces the policy to rediscover and
-    // reselect the same turn repeatedly, while long actions are available
-    // only through goal-seek or camera-lock composites. Expose the same
-    // bounded temporal lattice as seek so ordinary analog movement can sustain
-    // a turn without embedding a route or assigning that turn utility.
-    let durations = [4_u32, 8, 16, 40].map(|ticks| ticks.min(context.maximum_ticks));
+    // Single-tick actions permit precise turns and arbitrary timing through
+    // composition. Longer options remain available to cover distance without
+    // spending a policy decision on every frame. Neither has preferred value.
+    let durations = MOVEMENT_DURATIONS.map(|ticks| ticks.min(context.maximum_ticks));
     for (index, offset) in heading_offsets.iter().copied().enumerate() {
         let magnitude = 127;
         let heading = if index == 0 {
@@ -342,15 +339,20 @@ pub fn propose_parameterized_tactics(
         )?;
     }
 
-    insert(
-        &mut entries,
-        ParameterizedTacticFamily::Neutral,
-        TacticAssetSource::ReactiveController(
-            ControllerProgram::parse("duskcontrol 1\nframes 4\nneutral replace from 0 for 4\n")
+    // A one-frame release/wait must remain possible even at a short horizon.
+    for duration in [1_u32, 4].map(|ticks| ticks.min(context.maximum_ticks)) {
+        insert(
+            &mut entries,
+            ParameterizedTacticFamily::Neutral,
+            TacticAssetSource::ReactiveController(
+                ControllerProgram::parse(&format!(
+                    "duskcontrol 1\nframes {duration}\nneutral replace from 0 for {duration}\n"
+                ))
                 .map_err(|error| TacticAssetError::InvalidAsset(error.to_string()))?,
-        ),
-        context.maximum_ticks,
-    )?;
+            ),
+            context.maximum_ticks,
+        )?;
+    }
 
     if entries.is_empty() || entries.len() > MAX_PARAMETERIZED_PROPOSALS {
         return Err(TacticAssetError::InvalidAsset(
@@ -376,7 +378,7 @@ fn insert(
 ) -> Result<(), TacticAssetError> {
     let canonical = source.canonical_bytes()?;
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V7.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V8.as_bytes());
     hasher.update(family.slug().as_bytes());
     hasher.update((canonical.len() as u64).to_le_bytes());
     hasher.update(canonical);
@@ -395,7 +397,7 @@ fn insert(
 
 fn proposal_draw(context: ParameterizedTacticProposalContext) -> u64 {
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V7.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V8.as_bytes());
     hasher.update(context.seed.to_le_bytes());
     hasher.update(context.decision_index.to_le_bytes());
     hasher.update(context.state_sha256.0);
@@ -611,9 +613,54 @@ mod tests {
         assert!(
             heading_durations
                 .values()
-                .all(|durations| durations == &BTreeSet::from([4, 8, 16, 40]))
+                .all(|durations| durations == &BTreeSet::from([1, 4, 8, 16, 40]))
         );
         assert!(proposals.blueprints.is_empty());
+    }
+
+    #[test]
+    fn single_tick_movement_and_release_remain_executable_at_every_horizon() {
+        for maximum_ticks in [1, 2, 3, 4, 16, 40, MAX_PARAMETERIZED_TACTIC_TICKS] {
+            for (prompted, roll) in [(false, false), (true, false), (false, true), (true, true)] {
+                let proposals = propose_parameterized_tactics(ParameterizedTacticProposalContext {
+                    maximum_ticks,
+                    prompted_action_available: prompted,
+                    front_roll_prompt_available: roll,
+                    ..context(43, 7)
+                })
+                .unwrap();
+                assert!(proposals.catalog.entries().len() <= MAX_PARAMETERIZED_PROPOSALS);
+                let mut one_tick_headings = BTreeSet::new();
+                let mut one_tick_release = false;
+                for entry in proposals.catalog.entries() {
+                    proposals
+                        .catalog
+                        .prepare_execution(entry.option_id())
+                        .unwrap();
+                    assert!(entry.description().duration.maximum_ticks <= maximum_ticks);
+                    if entry.description().duration.maximum_ticks != 1 {
+                        continue;
+                    }
+                    if entry.description().option.option_type == OptionType::MaintainHeading {
+                        let Some(OptionParameter::F32Bits(heading)) =
+                            entry.description().option.parameters.get("heading_radians")
+                        else {
+                            panic!("heading action must expose its direction");
+                        };
+                        one_tick_headings.insert(*heading);
+                    }
+                    if entry.option_id().starts_with("family/neutral/") {
+                        let realized = entry.exact_static_realization().unwrap().unwrap();
+                        assert_eq!(realized.tape.frames.len(), 1);
+                        let pad = realized.tape.frames[0].pads[0];
+                        assert_eq!((pad.buttons, pad.stick_x, pad.stick_y), (0, 0, 0));
+                        one_tick_release = true;
+                    }
+                }
+                assert_eq!(one_tick_headings.len(), 16, "horizon {maximum_ticks}");
+                assert!(one_tick_release, "horizon {maximum_ticks}");
+            }
+        }
     }
 
     #[test]

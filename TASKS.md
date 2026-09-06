@@ -19,10 +19,12 @@ mechanisms, loses some meaningful state distinctions, and exposes a narrower
 action space than the surrounding interfaces suggest. Useful general learning
 has not yet been demonstrated.
 
-The last reviewed Ordon campaign found a 257-tick route: two seeds produced
-terminal outcomes and two only inherited terminal support. The human example
-takes 125 active ticks to `ordon_spring_load_committed`. Beating it is an initial
-capability check, not the framework's specification or performance ceiling.
+The latest bounded Ordon check after correcting heading execution found a
+468-tick route; two seeds produced terminal outcomes. It did not establish
+improved learning. The human example takes 125 active ticks to
+`ordon_spring_load_committed`. Beating it is an initial capability check, not
+the framework's specification or performance ceiling. Experiment details live
+in [the native evaluation notes](docs/glitch-hunting/learning-evaluations/2026-09-06-heading.md).
 
 ## Learning and exploration
 
