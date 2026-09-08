@@ -1,4 +1,8 @@
 use super::*;
+use crate::tactic_q_campaign::TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V8;
+
+#[cfg(test)]
+mod bellman_tests;
 
 use super::macro_policy_evidence::TACTIC_MACRO_POLICY_EVIDENCE_PUBLISHER_LANE;
 
@@ -252,7 +256,8 @@ impl CampaignTacticLearnerAuthority {
                     .map_err(route_error)?;
                 let training_replay_sha256 = replay_snapshot.training_replay_sha256();
                 let started = Instant::now();
-                let migrated = manifest.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7;
+                let migrated = manifest.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7
+                    && manifest.schema != TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V8;
                 let model_revision = if migrated {
                     manifest.model_revision.checked_add(1).ok_or_else(|| {
                         route_message("migrated campaign learner model revision overflowed")
@@ -260,7 +265,20 @@ impl CampaignTacticLearnerAuthority {
                 } else {
                     manifest.model_revision
                 };
-                let snapshot =
+                let snapshot = if let Some(reference) = &manifest.bellman_state {
+                    let model = replay
+                        .bellman_state(reference.state_sha256)
+                        .map_err(route_error)?;
+                    TacticQImmutableLearnerSnapshot::restore_verified_bellman(
+                        replay_snapshot.corpus,
+                        replay_snapshot.version.revision,
+                        training_replay_sha256,
+                        &manifest,
+                        goal_distance_feature,
+                        &model,
+                    )
+                    .map_err(route_error)?
+                } else {
                     TacticQImmutableLearnerSnapshot::fit_verified_replay_with_prior_calibrations(
                         replay_snapshot.corpus,
                         replay_snapshot.version.revision,
@@ -272,7 +290,8 @@ impl CampaignTacticLearnerAuthority {
                         manifest.terminal_action_calibration.as_ref(),
                         training_replay_sha256,
                     )
-                    .map_err(route_error)?;
+                    .map_err(route_error)?
+                };
                 if migrated {
                     let stored_sha256 = replay
                         .publish_learner_snapshot(&snapshot.manifest)
@@ -403,7 +422,21 @@ impl CampaignTacticLearnerAuthority {
             .snapshot_through(replay_revision)
             .map_err(route_error)?;
         let training_replay_sha256 = replay.training_replay_sha256();
-        let snapshot =
+        let snapshot = if let Some(reference) = &manifest.bellman_state {
+            let model = self
+                .replay
+                .bellman_state(reference.state_sha256)
+                .map_err(route_error)?;
+            TacticQImmutableLearnerSnapshot::restore_verified_bellman(
+                replay.corpus,
+                replay.version.revision,
+                training_replay_sha256,
+                &manifest,
+                self.goal_distance_feature,
+                &model,
+            )
+            .map_err(route_error)?
+        } else {
             TacticQImmutableLearnerSnapshot::fit_verified_replay_with_prior_calibrations(
                 replay.corpus,
                 replay.version.revision,
@@ -415,7 +448,8 @@ impl CampaignTacticLearnerAuthority {
                 manifest.terminal_action_calibration.as_ref(),
                 training_replay_sha256,
             )
-            .map_err(route_error)?;
+            .map_err(route_error)?
+        };
         if snapshot.sha256 != expected_sha256 || snapshot.manifest != manifest {
             return Err(route_message(
                 "frozen learner snapshot cannot be reconstructed exactly",
@@ -609,18 +643,43 @@ impl CampaignTacticLearnerAuthority {
         let model_revision = self.latest.manifest.model_revision.saturating_add(1);
         let training_replay_sha256 = replay.training_replay_sha256();
         let snapshot =
-            TacticQImmutableLearnerSnapshot::fit_verified_replay_with_prior_calibrations(
-                replay.corpus,
-                replay.version.revision,
-                model_revision,
-                self.model_config.clone(),
-                self.goal_distance_feature,
-                self.value_treatment,
-                self.latest.manifest.goal_reachability_calibration.as_ref(),
-                self.latest.manifest.terminal_action_calibration.as_ref(),
-                training_replay_sha256,
-            )
-            .map_err(route_error)?;
+            if self.value_treatment.uses_bellman_forest() && replay.corpus.transitions.len() >= 2 {
+                TacticQImmutableLearnerSnapshot::update_verified_bellman(
+                    replay.corpus,
+                    replay.version.revision,
+                    training_replay_sha256,
+                    &self.latest,
+                )
+                .map_err(route_error)?
+            } else {
+                TacticQImmutableLearnerSnapshot::fit_verified_replay_with_prior_calibrations(
+                    replay.corpus,
+                    replay.version.revision,
+                    model_revision,
+                    self.model_config.clone(),
+                    self.goal_distance_feature,
+                    self.value_treatment,
+                    self.latest.manifest.goal_reachability_calibration.as_ref(),
+                    self.latest.manifest.terminal_action_calibration.as_ref(),
+                    training_replay_sha256,
+                )
+                .map_err(route_error)?
+            };
+        if let Some(bytes) = snapshot.bellman_state_bytes().map_err(route_error)? {
+            let stored = self
+                .replay
+                .publish_bellman_state(&bytes)
+                .map_err(route_error)?;
+            if snapshot
+                .manifest
+                .bellman_state
+                .as_ref()
+                .map(|state| state.state_sha256)
+                != Some(stored)
+            {
+                return Err(route_message("stored Bellman state changed identity"));
+            }
+        }
         let stored_sha256 = self
             .replay
             .publish_learner_snapshot(&snapshot.manifest)

@@ -263,6 +263,7 @@ mod tests {
             model_revision: 2,
             model_config: route_option_value_config(Digest([1; 32])),
             model_sha256: Some(Digest([6; 32])),
+            bellman_state: None,
             goal_reachability_calibration: None,
             terminal_action_calibration: None,
         };

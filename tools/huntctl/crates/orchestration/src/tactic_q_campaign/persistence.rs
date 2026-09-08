@@ -254,6 +254,7 @@ impl TacticQCampaign {
             model,
             model_revision: checkpoint.model_revision,
             campaign_learner_authority_managed: false,
+            managed_learner_snapshot: None,
             value_treatment: TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
             generalized_model: RefCell::new(None),
             native_terminal_model: RefCell::new(None),

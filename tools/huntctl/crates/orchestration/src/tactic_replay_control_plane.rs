@@ -654,6 +654,27 @@ impl TacticReplayControlPlane {
         Ok(reference.sha256)
     }
 
+    pub(crate) fn publish_bellman_state(
+        &self,
+        bytes: &[u8],
+    ) -> Result<Digest, TacticReplayControlPlaneError> {
+        self.content_store
+            .store_bellman_state(bytes)
+            .map_err(store_error)
+    }
+
+    pub(crate) fn bellman_state(
+        &self,
+        digest: Digest,
+    ) -> Result<
+        dusklight_learning::tactic_value_treatment::ContinuousTacticValueModel,
+        TacticReplayControlPlaneError,
+    > {
+        self.content_store
+            .load_bellman_state(digest)
+            .map_err(store_error)
+    }
+
     pub fn identity(&self) -> &TacticReplayControlPlaneIdentity {
         &self.identity
     }
@@ -1051,6 +1072,7 @@ mod tests {
             model_revision: 0,
             model_config: OptionValueConfig::default(),
             model_sha256: None,
+            bellman_state: None,
             goal_reachability_calibration: None,
             terminal_action_calibration: None,
         };

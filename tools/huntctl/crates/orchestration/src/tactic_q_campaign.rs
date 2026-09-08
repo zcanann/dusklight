@@ -99,6 +99,7 @@ pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4: &str = "dusklight-tactic-q-learne
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5: &str = "dusklight-tactic-q-learner-snapshot/v5";
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6: &str = "dusklight-tactic-q-learner-snapshot/v6";
 pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7: &str = "dusklight-tactic-q-learner-snapshot/v7";
+pub const TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V8: &str = "dusklight-tactic-q-learner-snapshot/v8";
 /// Episode group reserved for critic evidence that must never become an
 /// executable frontier.
 pub const TACTIC_Q_MODEL_ONLY_EPISODE_GROUP: u64 = u64::MAX;
@@ -448,6 +449,7 @@ pub struct TacticQCampaign {
     model: Option<Arc<OptionValueModel>>,
     model_revision: u64,
     campaign_learner_authority_managed: bool,
+    managed_learner_snapshot: Option<TacticQLearnerSnapshot>,
     value_treatment: TacticValueTreatment,
     generalized_model: RefCell<Option<CachedGeneralizedTacticValueModel>>,
     native_terminal_model: RefCell<Option<CachedGeneralizedTacticValueModel>>,
@@ -608,6 +610,7 @@ impl TacticQCampaign {
             model: None,
             model_revision: 0,
             campaign_learner_authority_managed: false,
+            managed_learner_snapshot: None,
             value_treatment: TacticValueTreatment::LocalGeneralizedFittedQKnnV1,
             generalized_model: RefCell::new(None),
             native_terminal_model: RefCell::new(None),
@@ -630,6 +633,11 @@ impl TacticQCampaign {
     }
 
     pub fn learner_snapshot(&self) -> Result<TacticQLearnerSnapshot, TacticQCampaignError> {
+        if self.campaign_learner_authority_managed
+            && let Some(snapshot) = &self.managed_learner_snapshot
+        {
+            return Ok(snapshot.clone());
+        }
         let model_sha256 = self
             .model
             .as_ref()
@@ -655,6 +663,7 @@ impl TacticQCampaign {
             model_revision: self.model_revision,
             model_config: self.model_config.clone(),
             model_sha256,
+            bellman_state: None,
             goal_reachability_calibration: self.goal_reachability_calibration.clone(),
             terminal_action_calibration: self.terminal_action_calibration.clone(),
         };
@@ -713,6 +722,7 @@ impl TacticQCampaign {
         self.model = snapshot.model.clone();
         self.model_revision = snapshot.manifest.model_revision;
         self.campaign_learner_authority_managed = true;
+        self.managed_learner_snapshot = Some(snapshot.manifest.clone());
         self.value_treatment = snapshot.manifest.value_treatment;
         *self.generalized_model.borrow_mut() =
             snapshot
@@ -953,6 +963,7 @@ impl TacticQCampaign {
             self.model = model.map(Arc::new);
             self.model_revision = self.model_revision.saturating_add(1);
             self.campaign_learner_authority_managed = false;
+            self.managed_learner_snapshot = None;
         }
         Ok(admitted)
     }
@@ -960,7 +971,8 @@ impl TacticQCampaign {
 
 mod learner_snapshot;
 pub use learner_snapshot::{
-    TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot, TacticQLearnerSnapshotKind,
+    BellmanStateReference, TacticQImmutableLearnerSnapshot, TacticQLearnerSnapshot,
+    TacticQLearnerSnapshotKind,
 };
 mod decision;
 mod final_result;
@@ -1008,7 +1020,7 @@ mod online_adequacy_tests;
 mod online_learning;
 #[cfg(test)]
 #[path = "tactic_q_campaign/parameterized_learning_tests.rs"]
-mod parameterized_learning_tests;
+pub(crate) mod parameterized_learning_tests;
 pub use online_learning::{
     TacticQOnlineActionSelectionRequest, TacticQOnlineActionSurface, TacticQOnlineAdmission,
     TacticQOnlineAdmissionTiming, TacticQOnlineBranchRequest, TacticQOnlineBranchSelection,

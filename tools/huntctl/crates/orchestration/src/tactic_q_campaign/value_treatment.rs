@@ -268,6 +268,11 @@ impl TacticQCampaign {
                 .filter(|cached| cached.goal_distance_feature == goal_distance_feature)
                 .map(|cached| Arc::clone(&cached.model)));
         }
+        if self.value_treatment.uses_bellman_forest() {
+            return Err(TacticQCampaignError::InvalidState(
+                "Bellman action selection requires a managed learner snapshot; implicit cold refits are disabled",
+            ));
+        }
         if !self.value_treatment.uses_continuous_forest() || self.training_replay.len() < 2 {
             return Ok(None);
         }

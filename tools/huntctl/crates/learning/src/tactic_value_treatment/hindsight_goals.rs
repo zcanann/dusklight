@@ -27,14 +27,14 @@ static TERMINAL_COLUMNS: LazyLock<[usize; 4]> = LazyLock::new(|| {
     })
 });
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BellmanGoalKind {
     Authored,
     Coordinate,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct BellmanReplayStats {
     pub native_rows: usize,
     pub native_terminals: usize,

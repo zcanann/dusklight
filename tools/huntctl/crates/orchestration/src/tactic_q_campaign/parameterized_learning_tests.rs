@@ -13,7 +13,7 @@ const OBJECTIVE: Digest = Digest([0x93; 32]);
 const ACTION_SCHEMA: Digest = Digest([0x94; 32]);
 const LEARNER_MODEL: Digest = Digest([0x95; 32]);
 
-fn base_facts() -> FactSnapshot {
+pub(crate) fn base_facts() -> FactSnapshot {
     let shard = NativeEpisodeShard::decode(include_bytes!(
         "../../../../../../tests/fixtures/automation/native_episode_v28.dseps"
     ))
@@ -288,7 +288,7 @@ fn current_branch(campaign: &TacticQCampaign) -> TacticCampaignBranch {
     }
 }
 
-fn collect_sibling_feedback(
+pub(crate) fn collect_sibling_feedback(
     base: &FactSnapshot,
     encoder: &GoalConditionedTacticFeatureEncoder,
 ) -> TacticQTrainingCorpus {
@@ -404,12 +404,35 @@ fn check_bellman_snapshot(treatment: TacticValueTreatment) {
         treatment,
     )
     .unwrap();
+    let snapshot = TacticQImmutableLearnerSnapshot::update_verified_bellman(
+        training.clone(),
+        training.transitions.len() as u64,
+        training_replay_sha256(&training.transitions, &training.episode_groups).unwrap(),
+        &snapshot,
+    )
+    .unwrap();
+    assert_eq!(
+        snapshot
+            .manifest
+            .bellman_state
+            .as_ref()
+            .unwrap()
+            .completed_backups,
+        4
+    );
     let query_catalog = action_catalog("held-out", 120);
     let mut campaign = campaign(&base, 0, 0.0, &query_catalog, &encoder);
     campaign.model_config = config;
+    campaign.value_treatment = treatment;
+    assert!(
+        campaign
+            .continuous_model(encoder.goal_distance_feature())
+            .is_err()
+    );
     campaign
         .consume_learner_snapshot_with_exploration_filter(&snapshot, |_| false)
         .unwrap();
+    assert_eq!(campaign.learner_snapshot().unwrap(), snapshot.manifest);
     let batch = learned_batch(
         &mut TacticQOnlineLearningController::default(),
         &campaign,

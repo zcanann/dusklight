@@ -20,7 +20,7 @@ impl ContinuousTacticValueModel {
         iterations: usize,
         discount: f32,
     ) -> Result<Self, GeneralizedTacticValueError> {
-        fit(rows, goal_distance, iterations, discount, false)
+        fit(rows, goal_distance, iterations, discount, false, None)
     }
 
     /// One time-cost Bellman learner over native and auxiliary goal tasks.
@@ -32,7 +32,25 @@ impl ContinuousTacticValueModel {
         iterations: usize,
         discount: f32,
     ) -> Result<Self, GeneralizedTacticValueError> {
-        fit(rows, goal_distance, iterations, discount, true)
+        fit(rows, goal_distance, iterations, discount, true, None)
+    }
+
+    pub fn update_bellman(
+        rows: &[OptionTransitionSample],
+        goal_distance: usize,
+        iterations: usize,
+        discount: f32,
+        treatment: TacticValueTreatment,
+        prior: Option<&Self>,
+    ) -> Result<Self, GeneralizedTacticValueError> {
+        if !treatment.uses_bellman_forest() {
+            return Err(GeneralizedTacticValueError::InvalidConfig);
+        }
+        let hindsight = treatment == TacticValueTreatment::HindsightBellmanForestV3;
+        if prior.is_some_and(|model| model.hindsight_query.is_some() != hindsight) {
+            return Err(GeneralizedTacticValueError::InvalidConfig);
+        }
+        fit(rows, goal_distance, iterations, discount, hindsight, prior)
     }
 }
 
@@ -42,6 +60,7 @@ fn fit(
     iterations: usize,
     discount: f32,
     hindsight: bool,
+    prior: Option<&ContinuousTacticValueModel>,
 ) -> Result<ContinuousTacticValueModel, GeneralizedTacticValueError> {
     let encoder = GoalConditionedTacticFeatureEncoder::new([0.0; 3]).map_err(invalid)?;
     if rows.len() < 2 || rows.len() > crate::fqi::MAX_FQI_TRANSITIONS {
@@ -125,8 +144,13 @@ fn fit(
             .categorical_features
             .extend(encoder.feature_width()..encoder.feature_width() + 5);
     }
-    let forest = FittedQ::fit_parameterized(samples[0].state_action.len(), &samples, &config)
-        .map_err(invalid)?;
+    let forest = FittedQ::fit_parameterized_from_prior(
+        samples[0].state_action.len(),
+        &samples,
+        &config,
+        prior.map(|model| &model.forest),
+    )
+    .map_err(invalid)?;
     let hindsight_query = hindsight.then_some(
         if stats.native_terminals == 0 && stats.auxiliary_terminals > 0 {
             BellmanGoalKind::Coordinate

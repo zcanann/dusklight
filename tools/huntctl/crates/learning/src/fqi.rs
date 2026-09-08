@@ -11,7 +11,8 @@ use std::error::Error;
 use std::fmt;
 
 mod parameterized;
-pub use parameterized::ParameterizedTransition;
+mod persistence;
+pub use parameterized::{ParameterizedTraining, ParameterizedTransition};
 
 pub const MAX_FQI_TRANSITIONS: usize = 250_000;
 pub const MAX_FQI_ACTIONS: usize = 256;
@@ -89,7 +90,7 @@ pub struct QEstimate {
     pub variance: f64,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FqiBootstrapUnit {
     TransitionRow,
@@ -97,12 +98,15 @@ pub enum FqiBootstrapUnit {
 }
 
 /// A fitted, immutable Q function.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(try_from = "persistence::StoredFittedQ")]
 pub struct FittedQ {
     feature_width: usize,
     actions: Vec<u32>,
     forests: Vec<RegressionForest>,
     bootstrap_unit: FqiBootstrapUnit,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parameterized_training: Option<ParameterizedTraining>,
 }
 
 impl FittedQ {
@@ -226,6 +230,7 @@ impl FittedQ {
                 actions: action_set.clone(),
                 forests,
                 bootstrap_unit,
+                parameterized_training: None,
             });
         }
 
@@ -548,7 +553,7 @@ fn validate_inputs(
     Ok(())
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct RegressionForest {
     trees: Vec<RegressionTree>,
 }
@@ -631,7 +636,7 @@ fn bootstrap_rows(
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct RegressionTree {
     root: TreeNode,
 }
@@ -654,7 +659,7 @@ impl RegressionTree {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 enum TreeNode {
     Leaf(f64),
     Split {
@@ -807,7 +812,7 @@ struct SplitCandidate {
     right: Vec<usize>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 enum SplitRule {
     NumericLessOrEqual(f32),
     CategoricalEqual(f32),

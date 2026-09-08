@@ -2,6 +2,10 @@ use super::*;
 use dusklight_learning::goal_reachability_calibration::calibrate_goal_reachability;
 use dusklight_learning::terminal_action_calibration::calibrate_terminal_action_ranking;
 
+mod bellman;
+use bellman::BellmanSnapshotInput;
+pub use bellman::BellmanStateReference;
+
 fn is_default_value_treatment(value: &TacticValueTreatment) -> bool {
     *value == TacticValueTreatment::LocalGeneralizedFittedQKnnV1
 }
@@ -37,6 +41,8 @@ pub struct TacticQLearnerSnapshot {
     pub model_config: OptionValueConfig,
     pub model_sha256: Option<Digest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bellman_state: Option<BellmanStateReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal_reachability_calibration: Option<GoalReachabilityCalibration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_action_calibration: Option<TerminalActionCalibration>,
@@ -65,6 +71,7 @@ impl TacticQLearnerSnapshot {
             model_revision: 0,
             model_config,
             model_sha256: None,
+            bellman_state: None,
             goal_reachability_calibration: None,
             terminal_action_calibration: None,
         };
@@ -87,7 +94,9 @@ impl TacticQLearnerSnapshot {
             || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V4
             || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V5
             || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V6
-            || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7;
+            || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7
+            || self.schema == TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V8;
+        bellman::validate_reference(self)?;
         if (!legacy && !current)
             || self.execution_authority_sha256 == Digest::ZERO
             || self.feature_schema_sha256 == Digest::ZERO
@@ -242,6 +251,7 @@ impl TacticQImmutableLearnerSnapshot {
             prior_goal_reachability_calibration,
             prior_terminal_action_calibration,
             training_replay_sha256,
+            None,
         )
     }
 
@@ -269,6 +279,7 @@ impl TacticQImmutableLearnerSnapshot {
             prior_goal_reachability_calibration,
             prior_terminal_action_calibration,
             training_replay_sha256,
+            None,
         )
     }
 
@@ -283,6 +294,7 @@ impl TacticQImmutableLearnerSnapshot {
         prior_goal_reachability_calibration: Option<&GoalReachabilityCalibration>,
         prior_terminal_action_calibration: Option<&TerminalActionCalibration>,
         training_replay_sha256: Digest,
+        bellman: Option<BellmanSnapshotInput<'_>>,
     ) -> Result<Self, TacticQCampaignError> {
         if replay_revision != corpus.transitions.len() as u64 {
             return Err(TacticQCampaignError::InvalidState(
@@ -379,13 +391,27 @@ impl TacticQImmutableLearnerSnapshot {
         };
         let continuous_model =
             if corpus.transitions.len() >= 2 && value_treatment.uses_continuous_forest() {
-                match ContinuousTacticValueModel::fit_treatment(
-                    value_treatment,
-                    &corpus.transitions,
-                    goal_distance_feature,
-                    model_config.fitted_q.iterations,
-                    model_config.fitted_q.discount,
-                ) {
+                let fitted = match bellman {
+                    Some(BellmanSnapshotInput::Update(prior)) => {
+                        ContinuousTacticValueModel::update_bellman(
+                            &corpus.transitions,
+                            goal_distance_feature,
+                            model_config.fitted_q.iterations,
+                            model_config.fitted_q.discount,
+                            value_treatment,
+                            prior.continuous_model.as_deref(),
+                        )
+                    }
+                    Some(BellmanSnapshotInput::Restore { model, .. }) => Ok(model.clone()),
+                    None => ContinuousTacticValueModel::fit_treatment(
+                        value_treatment,
+                        &corpus.transitions,
+                        goal_distance_feature,
+                        model_config.fitted_q.iterations,
+                        model_config.fitted_q.discount,
+                    ),
+                };
+                match fitted {
                     Ok(model) => Some(Arc::new(model)),
                     Err(GeneralizedTacticValueError::SampleCount) => None,
                     Err(error) => return Err(error.into()),
@@ -442,8 +468,16 @@ impl TacticQImmutableLearnerSnapshot {
                     .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))
             })
             .transpose()?;
+        let bellman_state = bellman
+            .map(|input| input.reference(continuous_model.as_deref()))
+            .transpose()?;
         let manifest = TacticQLearnerSnapshot {
-            schema: TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7.into(),
+            schema: if bellman_state.is_some() {
+                TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V8
+            } else {
+                TACTIC_Q_LEARNER_SNAPSHOT_SCHEMA_V7
+            }
+            .into(),
             kind: TacticQLearnerSnapshotKind::Learned,
             value_treatment,
             execution_authority_sha256: corpus.execution_authority_sha256,
@@ -455,6 +489,7 @@ impl TacticQImmutableLearnerSnapshot {
             model_revision,
             model_config,
             model_sha256,
+            bellman_state,
             goal_reachability_calibration: goal_reachability_calibration.clone(),
             terminal_action_calibration: terminal_action_calibration.clone(),
         };
@@ -562,6 +597,7 @@ mod tests {
             model_config: OptionValueConfig::default(),
             model_sha256: None,
             goal_reachability_calibration: Some(calibration),
+            bellman_state: None,
             terminal_action_calibration: None,
         };
         assert!(snapshot.validate().is_err());
@@ -599,6 +635,7 @@ mod tests {
             model_config: OptionValueConfig::default(),
             model_sha256: None,
             goal_reachability_calibration: Some(goal),
+            bellman_state: None,
             terminal_action_calibration: Some(terminal),
         };
         snapshot.validate().unwrap();
@@ -640,6 +677,7 @@ mod tests {
             model_config: OptionValueConfig::default(),
             model_sha256: None,
             goal_reachability_calibration: None,
+            bellman_state: None,
             terminal_action_calibration: None,
         };
         let raw = serde_cbor::to_vec(&legacy).unwrap();

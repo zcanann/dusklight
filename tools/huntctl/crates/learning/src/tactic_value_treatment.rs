@@ -23,7 +23,9 @@ const CONTINUOUS_DOUBLE_Q_SEED: u64 = 0x4754_4344_5141_0001;
 
 mod hindsight_goals;
 mod parameterized_bellman;
+mod training_state;
 pub use hindsight_goals::{BellmanGoalKind, BellmanReplayStats};
+pub use training_state::MAX_BELLMAN_STATE_BYTES;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -98,7 +100,7 @@ pub struct ContinuousTacticValueEstimate {
 
 /// Immutable randomized regression forest over continuous state-action
 /// features and delayed fitted-Q targets.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ContinuousTacticValueModel {
     forest: FittedQ,
     #[serde(skip_serializing_if = "Option::is_none")]

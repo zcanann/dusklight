@@ -3,6 +3,15 @@
 //! never maximized over merely because it appeared elsewhere in replay.
 use super::*;
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ParameterizedTraining {
+    pub discount: f32,
+    pub completed_backups: u64,
+    /// Maximum absolute Bellman target minus prior prediction in the last
+    /// backup, over this fit's rows. Not a held-out error or convergence proof.
+    pub last_max_target_residual: f64,
+}
+
 #[derive(Clone, Debug)]
 pub struct ParameterizedTransition {
     pub state_action: Vec<f32>,
@@ -21,6 +30,38 @@ impl FittedQ {
         samples: &[ParameterizedTransition],
         config: &FqiConfig,
     ) -> Result<Self, FqiError> {
+        Self::fit_parameterized_from_prior(feature_width, samples, config, None)
+    }
+
+    pub fn parameterized_training(&self) -> Option<&ParameterizedTraining> {
+        self.parameterized_training.as_ref()
+    }
+
+    /// Continue Bellman updates from the previous fitted values. The caller
+    /// must preserve feature/task semantics when experience changes.
+    pub fn fit_parameterized_from_prior(
+        feature_width: usize,
+        samples: &[ParameterizedTransition],
+        config: &FqiConfig,
+        prior: Option<&Self>,
+    ) -> Result<Self, FqiError> {
+        let previous_backups = if let Some(prior) = prior {
+            let training = prior
+                .parameterized_training
+                .as_ref()
+                .ok_or(FqiError::InvalidConfig(
+                    "prior is not a parameterized Bellman model",
+                ))?;
+            if prior.feature_width != feature_width
+                || prior.actions != [0]
+                || training.discount != config.discount
+            {
+                return Err(FqiError::InvalidConfig("incompatible Bellman prior"));
+            }
+            training.completed_backups
+        } else {
+            0
+        };
         if config.backup_steps != 1 {
             return Err(FqiError::InvalidConfig(
                 "parameterized fitting uses one-step backups",
@@ -64,12 +105,13 @@ impl FittedQ {
                 }
             }
         }
-        let mut current: Option<Self> = None;
+        let mut current = prior.cloned();
         let regression_config = FqiConfig {
             iterations: 1,
             ..config.clone()
         };
         for iteration in 0..config.iterations {
+            let mut max_target_residual = 0.0_f64;
             for (index, (sample, row)) in samples.iter().zip(&mut rows).enumerate() {
                 let continuation = if sample.terminal || current.is_none() {
                     0.0
@@ -93,12 +135,30 @@ impl FittedQ {
                         transition: index,
                     });
                 }
+                let previous = current
+                    .as_ref()
+                    .map(|model| {
+                        model
+                            .estimate(&sample.state_action, 0)
+                            .map(|estimate| estimate.mean)
+                    })
+                    .transpose()?
+                    .unwrap_or(0.0);
+                max_target_residual = max_target_residual.max((target - previous).abs());
                 row.reward = target as f32;
                 // The outer loop owns the Bellman backup. This row is a
                 // supervised regression target, not a relabeled game terminal.
                 row.terminal = true;
             }
-            current = Some(Self::fit(feature_width, &[0], &rows, &regression_config)?);
+            let mut fitted = Self::fit(feature_width, &[0], &rows, &regression_config)?;
+            fitted.parameterized_training = Some(ParameterizedTraining {
+                discount: config.discount,
+                completed_backups: previous_backups
+                    .checked_add(iteration as u64 + 1)
+                    .ok_or(FqiError::InvalidConfig("Bellman backup count overflow"))?,
+                last_max_target_residual: max_target_residual,
+            });
+            current = Some(fitted);
         }
         Ok(current.expect("iterations validated"))
     }
@@ -133,6 +193,56 @@ mod tests {
             discount: 0.9,
             ..FqiConfig::default()
         }
+    }
+
+    #[test]
+    fn resumed_backups_match_uninterrupted_learning_and_escape_short_horizon() {
+        let samples = [
+            row(0.0, -1.0, 1, false, &[0.0, 1.0]),
+            row(1.0, -20.0, 20, true, &[]),
+        ];
+        let config = FqiConfig {
+            iterations: 12,
+            discount: 0.999,
+            ..config()
+        };
+        let first = FittedQ::fit_parameterized(1, &samples, &config).unwrap();
+        let bytes = serde_cbor::to_vec(&first).unwrap();
+        let restored: FittedQ = serde_cbor::from_slice(&bytes).unwrap();
+        let resumed =
+            FittedQ::fit_parameterized_from_prior(1, &samples, &config, Some(&restored)).unwrap();
+        let continuous = FittedQ::fit_parameterized(
+            1,
+            &samples,
+            &FqiConfig {
+                iterations: 24,
+                ..config.clone()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            serde_cbor::to_vec(&resumed).unwrap(),
+            serde_cbor::to_vec(&continuous).unwrap()
+        );
+        assert_eq!(
+            resumed.parameterized_training().unwrap().completed_backups,
+            24
+        );
+        assert!(
+            resumed.estimate(&[0.0], 0).unwrap().mean < resumed.estimate(&[1.0], 0).unwrap().mean
+        );
+        assert!(
+            FittedQ::fit_parameterized_from_prior(
+                1,
+                &samples,
+                &FqiConfig {
+                    discount: 0.9,
+                    ..config
+                },
+                Some(&restored)
+            )
+            .is_err()
+        );
     }
 
     #[test]

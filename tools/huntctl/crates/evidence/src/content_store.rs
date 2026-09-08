@@ -51,6 +51,7 @@ pub enum ContentKind {
     TacticCheckpointIndex,
     DatasetManifest,
     CrashArtifact,
+    BellmanTrainingState,
 }
 
 impl ContentKind {
@@ -99,6 +100,7 @@ impl ContentKind {
             Self::TacticCheckpointIndex => "application/vnd.dusklight.tactic-checkpoint-index+cbor",
             Self::DatasetManifest => "application/vnd.dusklight.dataset-manifest+json",
             Self::CrashArtifact => "application/octet-stream",
+            Self::BellmanTrainingState => "application/vnd.dusklight.bellman-training-state+cbor",
         }
     }
 }

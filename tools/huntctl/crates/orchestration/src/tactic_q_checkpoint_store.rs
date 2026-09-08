@@ -416,6 +416,41 @@ impl TacticQContentStore {
         Ok(reference)
     }
 
+    pub(crate) fn store_bellman_state(
+        &self,
+        bytes: &[u8],
+    ) -> Result<Digest, TacticQContentStoreError> {
+        dusklight_learning::tactic_value_treatment::ContinuousTacticValueModel::from_training_state_bytes(bytes)
+            .map_err(TacticQContentStoreError::domain)?;
+        self.store
+            .put_bytes(bytes, ContentKind::BellmanTrainingState)
+            .map(|blob| blob.sha256)
+            .map_err(TacticQContentStoreError::Store)
+    }
+
+    pub(crate) fn load_bellman_state(
+        &self,
+        digest: Digest,
+    ) -> Result<
+        dusklight_learning::tactic_value_treatment::ContinuousTacticValueModel,
+        TacticQContentStoreError,
+    > {
+        let size = fs::metadata(self.store.blob_path(digest))
+            .map_err(TacticQContentStoreError::domain)?
+            .len();
+        if size > dusklight_learning::tactic_value_treatment::MAX_BELLMAN_STATE_BYTES as u64 {
+            return Err(TacticQContentStoreError::Invalid(
+                "Bellman state exceeds size bound",
+            ));
+        }
+        let bytes = self.read_bytes(StoredContentRef {
+            kind: ContentKind::BellmanTrainingState,
+            sha256: digest,
+        })?;
+        dusklight_learning::tactic_value_treatment::ContinuousTacticValueModel::from_training_state_bytes(&bytes)
+            .map_err(TacticQContentStoreError::domain)
+    }
+
     pub fn load_learner_snapshot(
         &self,
         reference: StoredContentRef,

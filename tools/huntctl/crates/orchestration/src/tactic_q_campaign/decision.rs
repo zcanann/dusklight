@@ -1263,6 +1263,7 @@ impl TacticQCampaign {
             self.model = model.map(Arc::new);
             self.model_revision = self.model_revision.saturating_add(1);
             self.campaign_learner_authority_managed = false;
+            self.managed_learner_snapshot = None;
         }
         self.decision_index =
             self.decision_index
