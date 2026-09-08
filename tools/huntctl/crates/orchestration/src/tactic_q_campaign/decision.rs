@@ -407,7 +407,8 @@ impl TacticQCampaign {
                                 })
                         }
                     }
-                    TacticValueTreatment::ContinuousFittedQForestV1 => self
+                    TacticValueTreatment::ContinuousFittedQForestV1
+                    | TacticValueTreatment::ContinuousBellmanForestV2 => self
                         .continuous_model(goal_distance_feature)?
                         .map(|model| model.rank(&features, &context, &applicable_descriptors))
                         .transpose()?
@@ -456,7 +457,9 @@ impl TacticQCampaign {
             )?;
             if goal_reachability_acquisition_allowed {
                 retain_goal_reachability_acquisition(&mut proposals)?;
-            } else if terminal_action_authoritative || self.value_treatment.uses_hindsight_returns()
+            } else if terminal_action_authoritative
+                || self.value_treatment.uses_hindsight_returns()
+                || self.value_treatment == TacticValueTreatment::ContinuousBellmanForestV2
             {
                 retain_generalized_value_acquisition(&mut proposals)?;
             }

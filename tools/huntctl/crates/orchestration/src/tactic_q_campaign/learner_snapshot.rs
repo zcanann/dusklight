@@ -332,7 +332,8 @@ impl TacticQImmutableLearnerSnapshot {
                         goal_distance_feature,
                     )?,
                 )),
-                TacticValueTreatment::ContinuousFittedQForestV1 => None,
+                TacticValueTreatment::ContinuousFittedQForestV1
+                | TacticValueTreatment::ContinuousBellmanForestV2 => None,
             }
         };
         let native_terminal_model = if corpus.transitions.len() >= 2
@@ -375,22 +376,22 @@ impl TacticQImmutableLearnerSnapshot {
         } else {
             None
         };
-        let continuous_model = if corpus.transitions.len() >= 2
-            && value_treatment == TacticValueTreatment::ContinuousFittedQForestV1
-        {
-            match ContinuousTacticValueModel::fit(
-                &corpus.transitions,
-                goal_distance_feature,
-                model_config.fitted_q.iterations,
-                model_config.fitted_q.discount,
-            ) {
-                Ok(model) => Some(Arc::new(model)),
-                Err(GeneralizedTacticValueError::SampleCount) => None,
-                Err(error) => return Err(error.into()),
-            }
-        } else {
-            None
-        };
+        let continuous_model =
+            if corpus.transitions.len() >= 2 && value_treatment.uses_continuous_forest() {
+                match ContinuousTacticValueModel::fit_treatment(
+                    value_treatment,
+                    &corpus.transitions,
+                    goal_distance_feature,
+                    model_config.fitted_q.iterations,
+                    model_config.fitted_q.discount,
+                ) {
+                    Ok(model) => Some(Arc::new(model)),
+                    Err(GeneralizedTacticValueError::SampleCount) => None,
+                    Err(error) => return Err(error.into()),
+                }
+            } else {
+                None
+            };
         let goal_reachability_calibration =
             goal_reachability_calibration_rows(value_treatment, corpus.transitions.len())
                 .map(|calibration_rows| {

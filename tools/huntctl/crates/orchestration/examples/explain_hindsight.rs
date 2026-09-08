@@ -1,19 +1,27 @@
 //! Read-only, offline inspection of the hindsight critic on recorded experience.
-//! Usage: explain_hindsight CHECKPOINT.dtqz GOAL_X GOAL_Y GOAL_Z [ROW_INDEX]
+//! Usage: explain_hindsight CHECKPOINT.dtqz GOAL_X GOAL_Y GOAL_Z [ROW_INDEX] [--bellman]
 //! Fits the complete checkpoint corpus, not the historical online snapshot.
 use dusklight_learning::generalized_tactic_value::{
     GeneralizedTacticContext, GeneralizedTacticValueModel,
 };
 use dusklight_learning::tactic_features::GoalConditionedTacticFeatureEncoder;
+use dusklight_learning::tactic_value_treatment::ContinuousTacticValueModel;
 use dusklight_orchestration::tactic_q_campaign::TacticQCampaign;
 use serde_json::json;
 use std::error::Error;
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let mut args = std::env::args().skip(1).collect::<Vec<_>>();
+    let bellman = args.last().is_some_and(|arg| arg == "--bellman");
+    if bellman {
+        args.pop();
+    }
     if !(4..=5).contains(&args.len()) {
-        return Err("usage: explain_hindsight CHECKPOINT GOAL_X GOAL_Y GOAL_Z [ROW_INDEX]".into());
+        return Err(
+            "usage: explain_hindsight CHECKPOINT GOAL_X GOAL_Y GOAL_Z [ROW_INDEX] [--bellman]"
+                .into(),
+        );
     }
     let checkpoint = TacticQCampaign::read_checkpoint_payload(Path::new(&args[0]))?;
     let rows = &checkpoint.training_replay;
@@ -32,10 +40,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     ])?;
     let features = encoder.encode(&query.before)?;
     let context = GeneralizedTacticContext::from_facts(&query.before)?;
-    let model = GeneralizedTacticValueModel::fit_delayed_achieved_goal_returns(
-        rows,
-        encoder.goal_distance_feature(),
-    )?;
     // Recorded descriptors are diagnostic candidates, not an assertion that
     // every action is currently applicable. No controller is executed here.
     let mut actions = rows
@@ -44,6 +48,42 @@ fn main() -> Result<(), Box<dyn Error>> {
         .collect::<Vec<_>>();
     actions.sort_by(|a, b| a.option_id.cmp(&b.option_id));
     actions.dedup();
+    if bellman {
+        let started = std::time::Instant::now();
+        // A bounded offline diagnostic, not a historical snapshot replay or
+        // a campaign configuration. Four actual Bellman updates on all rows.
+        let model = ContinuousTacticValueModel::fit_bellman(
+            rows,
+            encoder.goal_distance_feature(),
+            4,
+            checkpoint.model_config.fitted_q.discount,
+        )?;
+        let fit_millis = started.elapsed().as_millis();
+        let ranked = model.rank(&features, &context, &actions)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "checkpoint": checkpoint.content_sha256,
+                "treatment": "continuous_bellman_forest_v2",
+                "training_rows": rows.len(),
+                "terminal_rows": rows.iter().filter(|row| row.value_sample.terminal).count(),
+                "bellman_iterations": 4,
+                "fit_millis": fit_millis,
+                "query_row": index,
+                "recorded_action_candidates": actions.len(),
+                "top_predictions": ranked.iter().take(5).map(|estimate| json!({
+                    "action": estimate.descriptor.option_id,
+                    "mean_q": estimate.mean_q,
+                    "variance": estimate.ensemble_variance,
+                })).collect::<Vec<_>>(),
+            }))?
+        );
+        return Ok(());
+    }
+    let model = GeneralizedTacticValueModel::fit_delayed_achieved_goal_returns(
+        rows,
+        encoder.goal_distance_feature(),
+    )?;
     let ranked = model.rank(&features, &context, &actions)?;
     let predictions = ranked
         .iter()

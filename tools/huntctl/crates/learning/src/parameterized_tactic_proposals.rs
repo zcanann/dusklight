@@ -22,7 +22,7 @@ use std::f32::consts::{PI, TAU};
 pub const PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V8: &str =
     "dusklight-parameterized-tactic-families/v8";
 pub const MAX_PARAMETERIZED_PROPOSALS: usize = 192;
-const MAX_PARAMETERIZED_TACTIC_TICKS: u32 = 4_096;
+pub const MAX_PARAMETERIZED_TACTIC_TICKS: u32 = 4_096;
 const MOVEMENT_DURATIONS: [u32; 5] = [1, 4, 8, 16, 40];
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

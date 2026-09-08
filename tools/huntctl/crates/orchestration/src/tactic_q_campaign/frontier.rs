@@ -521,16 +521,16 @@ impl TacticQCampaign {
                         goal_distance_feature,
                         terminal_value_supported && terminal_action_deployment_ready,
                     )?,
-                TacticValueTreatment::ContinuousFittedQForestV1 => None,
+                TacticValueTreatment::ContinuousFittedQForestV1
+                | TacticValueTreatment::ContinuousBellmanForestV2 => None,
             }
         };
-        let continuous_model = if !demonstration_curriculum
-            && self.value_treatment == TacticValueTreatment::ContinuousFittedQForestV1
-        {
-            self.continuous_model(goal_distance_feature)?
-        } else {
-            None
-        };
+        let continuous_model =
+            if !demonstration_curriculum && self.value_treatment.uses_continuous_forest() {
+                self.continuous_model(goal_distance_feature)?
+            } else {
+                None
+            };
         let terminal_action_model = if !demonstration_curriculum
             && terminal_value_supported
             && terminal_action_deployment_ready
@@ -678,8 +678,11 @@ impl TacticQCampaign {
                     expansion_count,
                     terminal: entry.transition.value_sample.terminal,
                     terminal_value_supported,
-                    achieved_goal_value_supported: self.value_treatment.uses_hindsight_returns()
-                        && generalized_model.is_some(),
+                    preterminal_value_supported: (self.value_treatment.uses_hindsight_returns()
+                        && generalized_model.is_some())
+                        || (self.value_treatment
+                            == TacticValueTreatment::ContinuousBellmanForestV2
+                            && continuous_model.is_some()),
                     goal_reachability_supported: !terminal_action_deployment_ready
                         && self.value_treatment.uses_goal_relabeling()
                         && generalized_model.is_some()

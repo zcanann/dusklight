@@ -374,6 +374,51 @@ fn learned_batch(
 }
 
 #[test]
+fn bellman_snapshot_controls_unseen_executable_actions_before_any_success() {
+    let base = base_facts();
+    let encoder = GoalConditionedTacticFeatureEncoder::new([1.0, 0.0, 0.0]).unwrap();
+    let training = collect_sibling_feedback(&base, &encoder);
+    assert!(
+        training
+            .transitions
+            .iter()
+            .all(|row| !row.value_sample.terminal)
+    );
+    let mut config = OptionValueConfig::default();
+    config.fitted_q.iterations = 2;
+    let snapshot = TacticQImmutableLearnerSnapshot::fit(
+        training.clone(),
+        training.transitions.len() as u64,
+        1,
+        config.clone(),
+        encoder.goal_distance_feature(),
+        TacticValueTreatment::ContinuousBellmanForestV2,
+    )
+    .unwrap();
+    let query_catalog = action_catalog("held-out", 120);
+    let mut campaign = campaign(&base, 0, 0.0, &query_catalog, &encoder);
+    campaign.model_config = config;
+    campaign
+        .consume_learner_snapshot_with_exploration_filter(&snapshot, |_| false)
+        .unwrap();
+    let batch = learned_batch(
+        &mut TacticQOnlineLearningController::default(),
+        &campaign,
+        &query_catalog,
+        &encoder,
+    );
+    assert_eq!(
+        batch.proposals[0].reason,
+        TacticSelectionReason::GeneralizedValue
+    );
+    assert!(batch.goal_reachability_calibration.is_none());
+    assert!(!campaign.native_terminal_supported());
+    let outcome = rewarded_outcome(&campaign, &batch.proposals[0], &query_catalog, 0, 1);
+    assert_ne!(outcome.route_tape.frames.last().unwrap().pads[0].stick_x, 0);
+    assert!(!outcome.terminal);
+}
+
+#[test]
 fn hindsight_snapshot_drives_executable_choices_without_a_motion_gate() {
     let base = base_facts();
     let encoder = GoalConditionedTacticFeatureEncoder::new([1.0, 0.0, 0.0]).unwrap();

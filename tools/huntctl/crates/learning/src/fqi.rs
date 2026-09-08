@@ -10,6 +10,9 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
+mod parameterized;
+pub use parameterized::ParameterizedTransition;
+
 pub const MAX_FQI_TRANSITIONS: usize = 250_000;
 pub const MAX_FQI_ACTIONS: usize = 256;
 pub const MAX_FQI_ITERATIONS: usize = 128;

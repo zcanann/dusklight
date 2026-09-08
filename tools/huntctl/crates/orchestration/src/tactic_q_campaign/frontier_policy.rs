@@ -63,12 +63,12 @@ pub(super) fn compare_frontier_acquisition(
                     )
                 });
         }
-        if left.achieved_goal_value_supported != right.achieved_goal_value_supported {
+        if left.preterminal_value_supported != right.preterminal_value_supported {
             return right
-                .achieved_goal_value_supported
-                .cmp(&left.achieved_goal_value_supported);
+                .preterminal_value_supported
+                .cmp(&left.preterminal_value_supported);
         }
-        if left.achieved_goal_value_supported && right.achieved_goal_value_supported {
+        if left.preterminal_value_supported && right.preterminal_value_supported {
             // Preserve one expansion of every fresh state cell, then let the
             // learned achieved-goal return decide which equally fresh
             // continuation is most promising. This is learned first-hit cost,

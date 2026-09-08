@@ -271,11 +271,11 @@ pub struct TacticFrontierAcquisition {
     /// as evidence that a frontier leads to the objective.
     #[serde(default)]
     pub terminal_value_supported: bool,
-    /// Legacy checkpoint field for the former achieved-goal return ordering.
-    /// New campaigns keep this false because arbitrary replay endpoints do not
-    /// confer objective-value authority.
-    #[serde(default)]
-    pub achieved_goal_value_supported: bool,
+    /// A fitted critic can prioritize exploration before terminal supervision.
+    /// This does not confer terminal or promotion authority. Preserve the old
+    /// wire key so existing evidence can still be authenticated on read.
+    #[serde(default, rename = "achieved_goal_value_supported")]
+    pub preterminal_value_supported: bool,
     /// True when learned target-relative physical progress can prioritize
     /// exploration. This is not authored-objective value support.
     #[serde(default)]

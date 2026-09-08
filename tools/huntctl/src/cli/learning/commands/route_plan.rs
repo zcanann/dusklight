@@ -125,8 +125,11 @@ fn value_treatment(
         Some("continuous_fitted_q_forest") => {
             Ok(TacticValueTreatment::ContinuousFittedQForestV1)
         }
+        Some("continuous_bellman_forest") => {
+            Ok(TacticValueTreatment::ContinuousBellmanForestV2)
+        }
         Some(value) => Err(format!(
-            "unsupported --value-treatment {value:?}; expected hindsight_return_knn, continuous_fitted_q_forest, goal_relabeled_fitted_q_knn, goal_relabeled_frontier_double_q, goal_relabeled_universal_frontier_double_q, or local_generalized_fitted_q_knn"
+            "unsupported --value-treatment {value:?}; expected hindsight_return_knn, continuous_bellman_forest, continuous_fitted_q_forest, goal_relabeled_fitted_q_knn, goal_relabeled_frontier_double_q, goal_relabeled_universal_frontier_double_q, or local_generalized_fitted_q_knn"
         )
         .into()),
     }
@@ -260,6 +263,17 @@ mod tests {
             )
             .unwrap(),
             TacticValueTreatment::ContinuousFittedQForestV1
+        );
+        assert_eq!(
+            value_treatment(
+                &[
+                    "--value-treatment".into(),
+                    "continuous_bellman_forest".into()
+                ],
+                TacticValueTreatment::LocalGeneralizedFittedQKnnV1
+            )
+            .unwrap(),
+            TacticValueTreatment::ContinuousBellmanForestV2
         );
         assert!(
             value_treatment(

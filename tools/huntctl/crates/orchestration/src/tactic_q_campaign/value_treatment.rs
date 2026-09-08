@@ -90,7 +90,8 @@ impl TacticQCampaign {
                         goal_distance_feature,
                     )?
                 }
-                TacticValueTreatment::ContinuousFittedQForestV1 => {
+                TacticValueTreatment::ContinuousFittedQForestV1
+                | TacticValueTreatment::ContinuousBellmanForestV2 => {
                     return Ok(None);
                 }
             });
@@ -266,9 +267,7 @@ impl TacticQCampaign {
                 .filter(|cached| cached.goal_distance_feature == goal_distance_feature)
                 .map(|cached| Arc::clone(&cached.model)));
         }
-        if self.value_treatment != TacticValueTreatment::ContinuousFittedQForestV1
-            || self.training_replay.len() < 2
-        {
+        if !self.value_treatment.uses_continuous_forest() || self.training_replay.len() < 2 {
             return Ok(None);
         }
         let stale = self
@@ -280,7 +279,8 @@ impl TacticQCampaign {
                     || cached.model_revision != self.model_revision
             });
         if stale {
-            let model = match ContinuousTacticValueModel::fit(
+            let model = match ContinuousTacticValueModel::fit_treatment(
+                self.value_treatment,
                 &self.training_replay,
                 goal_distance_feature,
                 self.model_config.fitted_q.iterations,

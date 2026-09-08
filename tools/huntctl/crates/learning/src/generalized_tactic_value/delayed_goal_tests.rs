@@ -7,6 +7,29 @@ use dusklight_control::option_execution::{
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
 use std::collections::BTreeMap;
 
+#[test]
+fn parameterized_bellman_fits_and_bootstraps_without_a_completed_route() {
+    use crate::tactic_value_treatment::ContinuousTacticValueModel;
+    let (mut replay, encoder) = detour_replay(false);
+    for row in &mut replay {
+        row.value_sample.reward = -(row.value_sample.duration_ticks as f32);
+    }
+    let before = &replay[0].before;
+    let features = encoder.encode(before).unwrap();
+    let context = GeneralizedTacticContext::from_facts(before).unwrap();
+    let action = &replay[0].value_sample.action;
+    let one =
+        ContinuousTacticValueModel::fit_bellman(&replay, encoder.goal_distance_feature(), 1, 0.9)
+            .unwrap();
+    let three =
+        ContinuousTacticValueModel::fit_bellman(&replay, encoder.goal_distance_feature(), 3, 0.9)
+            .unwrap();
+    let initial = one.predict(&features, &context, action).unwrap().mean_q;
+    let updated = three.predict(&features, &context, action).unwrap().mean_q;
+    assert!(initial < 0.0 && updated < initial, "{initial} -> {updated}");
+    assert!(replay.iter().all(|row| !row.value_sample.terminal));
+}
+
 fn boundary(base: &FactSnapshot, x: f32, elapsed: u64) -> FactSnapshot {
     let mut facts = base.clone();
     facts.phase = FactPhase::PreInput;

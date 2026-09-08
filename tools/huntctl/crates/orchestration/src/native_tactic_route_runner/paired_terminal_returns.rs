@@ -401,7 +401,7 @@ mod tests {
                 expansion_count: 1,
                 terminal: false,
                 terminal_value_supported: true,
-                achieved_goal_value_supported: false,
+                preterminal_value_supported: false,
                 goal_reachability_supported: false,
                 goal_reachability_evidence_available: false,
                 reward: 0.0,

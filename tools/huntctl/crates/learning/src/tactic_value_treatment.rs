@@ -1,9 +1,9 @@
 //! Explicit state-action value treatments for live tactic acquisition.
 //!
-//! A treatment is part of execution identity. The continuous forest embeds an
-//! executable action descriptor beside the typed state, then regresses the
-//! same delayed fitted-Q return used by the local generalized control. It does
-//! not consume trajectory outcomes as utility.
+//! A treatment is part of execution identity. The V1 continuous forest is a
+//! conditional completed-path cost regressor. V2 instead performs Bellman
+//! fitting on all observed transitions and state-conditioned successor actions.
+//! Neither consumes auxiliary trajectory outcomes as utility.
 
 use crate::double_q::{DoubleQ, DoubleQConfig};
 use crate::fqi::{FittedQ, FqiConfig, Transition as FqiTransition};
@@ -21,6 +21,8 @@ const CONTINUOUS_FOREST_ACTION: u32 = 0;
 const CONTINUOUS_FOREST_SEED: u64 = 0x4754_4351_4649_0001;
 const CONTINUOUS_DOUBLE_Q_SEED: u64 = 0x4754_4344_5141_0001;
 
+mod parameterized_bellman;
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TacticValueTreatment {
@@ -28,6 +30,9 @@ pub enum TacticValueTreatment {
     LocalGeneralizedFittedQKnnV1,
     GoalRelabeledFittedQKnnV2,
     ContinuousFittedQForestV1,
+    /// All observed transitions, with duration-aware Bellman backups over
+    /// state-conditioned executable successor controls.
+    ContinuousBellmanForestV2,
     /// Goal-relabeled V2 models plus action-conditioned Double-Q frontier
     /// opportunity ranking after native terminal support exists.
     GoalRelabeledFrontierDoubleQV3,
@@ -41,6 +46,12 @@ pub enum TacticValueTreatment {
 }
 
 impl TacticValueTreatment {
+    pub const fn uses_continuous_forest(self) -> bool {
+        matches!(
+            self,
+            Self::ContinuousFittedQForestV1 | Self::ContinuousBellmanForestV2
+        )
+    }
     pub const fn uses_hindsight_returns(self) -> bool {
         matches!(self, Self::HindsightReturnKnnV1)
     }
@@ -256,6 +267,24 @@ impl ContinuousTacticDoubleQModel {
 }
 
 impl ContinuousTacticValueModel {
+    pub fn fit_treatment(
+        treatment: TacticValueTreatment,
+        transitions: &[OptionTransitionSample],
+        goal_distance_feature: usize,
+        iterations: usize,
+        discount: f32,
+    ) -> Result<Self, GeneralizedTacticValueError> {
+        match treatment {
+            TacticValueTreatment::ContinuousFittedQForestV1 => {
+                Self::fit(transitions, goal_distance_feature, iterations, discount)
+            }
+            TacticValueTreatment::ContinuousBellmanForestV2 => {
+                Self::fit_bellman(transitions, goal_distance_feature, iterations, discount)
+            }
+            _ => Err(GeneralizedTacticValueError::InvalidConfig),
+        }
+    }
+
     pub fn fit(
         transitions: &[OptionTransitionSample],
         goal_distance_feature: usize,
