@@ -136,6 +136,44 @@ mod tests {
     }
 
     #[test]
+    fn bounded_backups_do_not_establish_cost_to_goal_convergence() {
+        // A fully observed self-loop costs one tick; a known terminal action
+        // costs twenty. A cold, short fit still optimistically prefers waiting.
+        // This is a planning-depth limitation, not missing terminal evidence
+        // or an unavailable successor contaminating the target.
+        let samples = [
+            row(0.0, -1.0, 1, false, &[0.0, 1.0]),
+            row(1.0, -20.0, 20, true, &[]),
+        ];
+        let short = FittedQ::fit_parameterized(
+            1,
+            &samples,
+            &FqiConfig {
+                iterations: 12,
+                discount: 0.999,
+                ..config()
+            },
+        )
+        .unwrap();
+        let deeper = FittedQ::fit_parameterized(
+            1,
+            &samples,
+            &FqiConfig {
+                iterations: 24,
+                discount: 0.999,
+                ..config()
+            },
+        )
+        .unwrap();
+        let waiting = short.estimate(&[0.0], 0).unwrap().mean;
+        let finishing = short.estimate(&[1.0], 0).unwrap().mean;
+        assert!(waiting > finishing, "{waiting} vs {finishing}");
+        assert!(
+            deeper.estimate(&[0.0], 0).unwrap().mean < deeper.estimate(&[1.0], 0).unwrap().mean
+        );
+    }
+
+    #[test]
     fn factored_successor_queries_match_full_vectors() {
         let rows = vec![
             ParameterizedTransition {
