@@ -85,6 +85,38 @@ fn sample(
 }
 
 #[test]
+fn state_only_density_cannot_hide_nearest_action_evidence() {
+    let bad = action("crowded", 100.0, 100.0, 0.0, None, 100.0);
+    let good = action("alternative", 200.0, -100.0, 2.0, Some(8), -100.0);
+    let mut samples = (0..32)
+        .map(|_| {
+            let mut row = sample(bad.clone(), -100.0, GeneralizedTacticOutcome::default());
+            row.state_features = vec![0.0];
+            row
+        })
+        .collect::<Vec<_>>();
+    for state in [0.01, 0.02] {
+        let mut row = sample(good.clone(), -1.0, GeneralizedTacticOutcome::default());
+        row.state_features = vec![state];
+        samples.push(row);
+    }
+    let model = GeneralizedTacticValueModel::fit(&samples).unwrap();
+    let query = [0.005];
+    let context = GeneralizedTacticContext::default();
+    let neighbors = model.explain_action(&query, &context, &good).unwrap();
+    assert!(
+        neighbors.iter().any(|row| row.training_sample_index >= 32),
+        "{neighbors:#?}"
+    );
+    assert_eq!(
+        model.rank(&query, &context, &[bad, good]).unwrap()[0]
+            .descriptor
+            .option_id,
+        "alternative"
+    );
+}
+
+#[test]
 fn shared_multi_action_neighborhood_matches_independent_predictions() {
     let descriptors = [
         action("straight", 100.0, 100.0, 0.0, None, 100.0),
@@ -124,6 +156,24 @@ fn shared_multi_action_neighborhood_matches_independent_predictions() {
                 .predict(&state, &context, &estimate.descriptor)
                 .unwrap()
         );
+        let neighbors = model
+            .explain_action(&state, &context, &estimate.descriptor)
+            .unwrap();
+        assert_eq!(neighbors.len(), estimate.neighbors);
+        let total_weight: f32 = neighbors.iter().map(|row| row.normalized_weight).sum();
+        let explained_return: f32 = neighbors
+            .iter()
+            .map(|row| row.normalized_weight * row.outcome.reward)
+            .sum();
+        assert!((total_weight - 1.0).abs() < 1.0e-6);
+        assert!((explained_return - estimate.outcome.reward).abs() < 1.0e-5);
+        for neighbor in &neighbors {
+            assert_eq!(
+                neighbor.outcome,
+                model.samples[neighbor.training_sample_index].outcome
+            );
+            assert!(neighbor.state_distance >= 0.0 && neighbor.action_distance >= 0.0);
+        }
     }
     for estimate in model
         .rank_terminal_support(&state, &context, &descriptors)
@@ -169,7 +219,7 @@ fn state_range_calibration_resists_single_extreme_outlier() {
 #[test]
 fn action_similarity_cannot_pull_value_from_a_remote_state_region() {
     let mut samples = Vec::new();
-    for index in 0..STATE_NEIGHBORS {
+    for index in 0..16 {
         samples.push(GeneralizedTacticTrainingSample {
             state_features: vec![0.0, 0.0],
             context: GeneralizedTacticContext::default(),
@@ -181,7 +231,7 @@ fn action_similarity_cannot_pull_value_from_a_remote_state_region() {
         });
     }
     let target = action("target", 100.0, 100.0, 0.0, None, 100.0);
-    for index in 0..STATE_NEIGHBORS {
+    for index in 0..16 {
         let mut remote = target.clone();
         remote.option_id = format!("remote-{index}");
         samples.push(GeneralizedTacticTrainingSample {
@@ -206,7 +256,7 @@ fn action_similarity_cannot_pull_value_from_a_remote_state_region() {
 fn later_action_similarity_cannot_override_exact_local_state_evidence() {
     let target = action("target", 100.0, 100.0, 0.0, None, 100.0);
     let mut samples = Vec::new();
-    for index in 0..STATE_NEIGHBORS {
+    for index in 0..16 {
         samples.push(GeneralizedTacticTrainingSample {
             state_features: vec![0.0],
             context: GeneralizedTacticContext::default(),
@@ -217,7 +267,7 @@ fn later_action_similarity_cannot_override_exact_local_state_evidence() {
             },
         });
     }
-    for index in 0..STATE_NEIGHBORS {
+    for index in 0..16 {
         let mut later = target.clone();
         later.option_id = format!("later-{index}");
         samples.push(GeneralizedTacticTrainingSample {

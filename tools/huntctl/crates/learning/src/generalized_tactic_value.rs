@@ -29,7 +29,6 @@ const GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH: usize = 11;
 const MAX_GENERALIZED_TACTIC_SAMPLES: usize = 100_000;
 pub(crate) const MAX_FITTED_Q_BACKUP_ITERATIONS: usize = 512;
 const NEIGHBORS: usize = 8;
-const STATE_NEIGHBORS: usize = 16;
 const MAX_RANGE_CALIBRATION_SAMPLES: usize = 2_048;
 const EXACT_STATE_DISTANCE_EPSILON: f32 = 1.0e-8;
 const MINIMUM_RETURN_COMPARISON_RESOLUTION: f64 = 1.0e-4;
@@ -271,6 +270,18 @@ pub struct GeneralizedTacticEstimate {
     pub neighbors: usize,
 }
 
+/// An on-demand explanation of the exact neighbors used for a prediction.
+/// This is diagnostic output, not additional policy input or durable replay.
+#[derive(Clone, Debug, Serialize)]
+pub struct GeneralizedTacticNeighbor {
+    pub training_sample_index: usize,
+    pub state_distance: f32,
+    pub action_distance: f32,
+    pub normalized_weight: f32,
+    pub state_features: Vec<f32>,
+    pub outcome: GeneralizedTacticOutcome,
+}
+
 #[derive(Clone, Debug)]
 struct EncodedSample {
     state: Vec<f32>,
@@ -309,6 +320,15 @@ pub struct GeneralizedTacticValueModel {
 }
 
 impl GeneralizedTacticValueModel {
+    pub fn explain_action(
+        &self,
+        state_features: &[f32],
+        context: &GeneralizedTacticContext,
+        descriptor: &OptionActionDescriptor,
+    ) -> Result<Vec<GeneralizedTacticNeighbor>, GeneralizedTacticValueError> {
+        prediction::explain_action(self, state_features, context, descriptor)
+    }
+
     /// Fits a universal goal-conditioned acquisition model from goals that
     /// native exploration actually reached.
     ///

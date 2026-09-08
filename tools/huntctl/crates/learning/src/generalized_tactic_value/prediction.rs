@@ -24,12 +24,10 @@ pub(crate) fn action_class(option_type: &OptionType) -> u32 {
     option_type_index(option_type) as u32
 }
 
-pub(super) fn estimate_actions(
-    model: &GeneralizedTacticValueModel,
+fn state_neighbors<'a>(
+    model: &'a GeneralizedTacticValueModel,
     state_features: &[f32],
-    context: &GeneralizedTacticContext,
-    descriptors: &[OptionActionDescriptor],
-) -> Result<Vec<GeneralizedTacticEstimate>, GeneralizedTacticValueError> {
+) -> Result<Vec<(f32, &'a EncodedSample)>, GeneralizedTacticValueError> {
     // Reaching a hindsight coordinate and satisfying the authored game
     // predicate are different tasks, even at the same position.
     let query;
@@ -74,9 +72,17 @@ pub(super) fn estimate_actions(
         .is_some_and(|(distance, _)| *distance <= EXACT_STATE_DISTANCE_EPSILON)
     {
         state_neighbors.retain(|(distance, _)| *distance <= EXACT_STATE_DISTANCE_EPSILON);
-    } else {
-        state_neighbors.truncate(STATE_NEIGHBORS.min(state_neighbors.len()));
     }
+    Ok(state_neighbors)
+}
+
+pub(super) fn estimate_actions(
+    model: &GeneralizedTacticValueModel,
+    state_features: &[f32],
+    context: &GeneralizedTacticContext,
+    descriptors: &[OptionActionDescriptor],
+) -> Result<Vec<GeneralizedTacticEstimate>, GeneralizedTacticValueError> {
+    let state_neighbors = state_neighbors(model, state_features)?;
 
     // The nearest terminal state cohort is likewise independent of the action.
     // Absolute simulation/tape position is deliberately absent: successful
@@ -126,6 +132,72 @@ pub(super) fn estimate_actions(
         .collect()
 }
 
+fn action_neighbors<'a>(
+    model: &GeneralizedTacticValueModel,
+    action: &[f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
+    state_neighbors: &[(f32, &'a EncodedSample)],
+) -> Vec<(f32, &'a EncodedSample)> {
+    // State-only truncation can discard the nearest state-action examples:
+    // many relabeled goals for one action crowd out a different action before
+    // its distance is even evaluated. Keep the exact nearest joint neighbors.
+    // Sorted state distance is a lower bound because action distance >= 0;
+    // stop only when no remaining row can enter the bounded best-neighbor set.
+    let mut neighbors: Vec<(f32, &'a EncodedSample)> = Vec::with_capacity(NEIGHBORS + 1);
+    for (state_distance, sample) in state_neighbors {
+        if neighbors.len() == NEIGHBORS && *state_distance > neighbors[NEIGHBORS - 1].0 {
+            break;
+        }
+        let distance = *state_distance
+            + normalized_distance(
+                action,
+                &sample.action,
+                &model.action_min,
+                &model.action_range,
+            ) * 2.0;
+        // Insert after equal distances to preserve stable state-cohort order.
+        let position = neighbors.partition_point(|(existing, _)| *existing <= distance);
+        if position < NEIGHBORS {
+            neighbors.insert(position, (distance, *sample));
+            neighbors.truncate(NEIGHBORS);
+        }
+    }
+    neighbors
+}
+
+pub(super) fn explain_action(
+    model: &GeneralizedTacticValueModel,
+    state_features: &[f32],
+    context: &GeneralizedTacticContext,
+    descriptor: &OptionActionDescriptor,
+) -> Result<Vec<GeneralizedTacticNeighbor>, GeneralizedTacticValueError> {
+    let states = state_neighbors(model, state_features)?;
+    let action = encode_action(context, descriptor)?;
+    let neighbors = action_neighbors(model, &action, &states);
+    let total_weight: f32 = neighbors.iter().map(|(d, _)| 1.0 / (0.01 + d)).sum();
+    Ok(neighbors
+        .iter()
+        .map(|(distance, sample)| {
+            let state_distance = states
+                .iter()
+                .find(|(_, state)| std::ptr::eq(*state, *sample))
+                .expect("action neighbor belongs to state cohort")
+                .0;
+            GeneralizedTacticNeighbor {
+                training_sample_index: model
+                    .samples
+                    .iter()
+                    .position(|candidate| std::ptr::eq(candidate, *sample))
+                    .expect("neighbor belongs to model"),
+                state_distance,
+                action_distance: (distance - state_distance) / 2.0,
+                normalized_weight: (1.0 / (0.01 + distance)) / total_weight,
+                state_features: sample.state.clone(),
+                outcome: sample.outcome,
+            }
+        })
+        .collect())
+}
+
 fn estimate_action(
     model: &GeneralizedTacticValueModel,
     context: &GeneralizedTacticContext,
@@ -134,23 +206,7 @@ fn estimate_action(
     terminal_cohort: &[&EncodedSample],
 ) -> Result<GeneralizedTacticEstimate, GeneralizedTacticValueError> {
     let action = encode_action(context, descriptor)?;
-    let mut neighbors = state_neighbors
-        .iter()
-        .map(|(state_distance, sample)| {
-            (
-                *state_distance
-                    + normalized_distance(
-                        &action,
-                        &sample.action,
-                        &model.action_min,
-                        &model.action_range,
-                    ) * 2.0,
-                *sample,
-            )
-        })
-        .collect::<Vec<_>>();
-    neighbors.sort_by(|left, right| left.0.total_cmp(&right.0));
-    neighbors.truncate(NEIGHBORS.min(neighbors.len()));
+    let neighbors = action_neighbors(model, &action, state_neighbors);
     let nearest_distance = neighbors[0].0;
     let terminal_support_distance = (!terminal_cohort.is_empty()).then(|| {
         terminal_cohort
@@ -191,4 +247,74 @@ fn estimate_action(
         terminal_support_distance,
         neighbors: neighbors.len(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn bounded_joint_neighbors_match_exhaustive_search() {
+        let actions = (0..5)
+            .map(|index| OptionActionDescriptor {
+                option_id: format!("action-{index}"),
+                option_type: OptionType::Move,
+                parameters: BTreeMap::from([
+                    (
+                        "duration_ticks".into(),
+                        OptionParameter::Unsigned(index + 1),
+                    ),
+                    (
+                        "command_initial_heading".into(),
+                        OptionParameter::F32Bits((index as f32).to_bits()),
+                    ),
+                ]),
+            })
+            .collect::<Vec<_>>();
+        let samples = (0..80)
+            .flat_map(|index| {
+                actions
+                    .iter()
+                    .map(move |action| GeneralizedTacticTrainingSample {
+                        state_features: vec![(index % 20) as f32, (index % 3) as f32],
+                        context: GeneralizedTacticContext::default(),
+                        action: action.clone(),
+                        outcome: GeneralizedTacticOutcome::default(),
+                    })
+            })
+            .collect::<Vec<_>>();
+        let model = GeneralizedTacticValueModel::fit(&samples).unwrap();
+        for query in [[0.0, 0.0], [0.01, 0.01], [12.5, 1.5], [1000.0, -20.0]] {
+            let states = state_neighbors(&model, &query).unwrap();
+            for descriptor in &actions {
+                let action =
+                    encode_action(&GeneralizedTacticContext::default(), descriptor).unwrap();
+                let actual = action_neighbors(&model, &action, &states);
+                let mut expected = states
+                    .iter()
+                    .map(|(distance, row)| {
+                        (
+                            distance
+                                + 2.0
+                                    * normalized_distance(
+                                        &action,
+                                        &row.action,
+                                        &model.action_min,
+                                        &model.action_range,
+                                    ),
+                            *row,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                expected.sort_by(|left, right| left.0.total_cmp(&right.0));
+                expected.truncate(NEIGHBORS);
+                assert_eq!(actual.len(), expected.len());
+                for (actual, expected) in actual.iter().zip(&expected) {
+                    assert_eq!(actual.0, expected.0);
+                    assert!(std::ptr::eq(actual.1, expected.1));
+                }
+            }
+        }
+    }
 }
