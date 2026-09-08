@@ -30,6 +30,93 @@ fn parameterized_bellman_fits_and_bootstraps_without_a_completed_route() {
     assert!(replay.iter().all(|row| !row.value_sample.terminal));
 }
 
+#[test]
+fn hindsight_bellman_preserves_native_evidence_and_trains_unconnected_attempts() {
+    use crate::tactic_value_treatment::{BellmanGoalKind, ContinuousTacticValueModel};
+    for native_terminal in [false, true] {
+        let (replay, encoder) = detour_replay(native_terminal);
+        let original = replay.clone();
+        let model = ContinuousTacticValueModel::fit_hindsight_bellman(
+            &replay,
+            encoder.goal_distance_feature(),
+            2,
+            0.9,
+        )
+        .unwrap();
+        let stats = model.bellman_replay_stats().unwrap();
+        assert_eq!(stats.native_rows, replay.len());
+        assert_eq!(stats.native_terminals, usize::from(native_terminal));
+        assert_eq!(stats.auxiliary_goals, 3); // -1, +1, and the shared endpoint.
+        assert_eq!(
+            stats.auxiliary_rows + stats.already_satisfied_omissions,
+            replay.len() * stats.auxiliary_goals
+        );
+        assert!(stats.auxiliary_terminals > 0);
+        assert!(stats.auxiliary_rows > stats.auxiliary_terminals);
+        assert_eq!(replay, original);
+        assert_eq!(
+            model.goal_query_kind(),
+            Some(if native_terminal {
+                BellmanGoalKind::Authored
+            } else {
+                BellmanGoalKind::Coordinate
+            })
+        );
+        let prediction = model
+            .predict(
+                &encoder.encode(&replay[0].before).unwrap(),
+                &GeneralizedTacticContext::from_facts(&replay[0].before).unwrap(),
+                &replay[0].value_sample.action,
+            )
+            .unwrap();
+        assert!(prediction.mean_q.is_finite());
+        assert!(
+            model
+                .predict(
+                    &[],
+                    &GeneralizedTacticContext::default(),
+                    &replay[0].value_sample.action
+                )
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn stationary_hindsight_goals_do_not_teach_that_waiting_reaches_a_new_goal() {
+    use crate::tactic_value_treatment::{BellmanGoalKind, ContinuousTacticValueModel};
+    let (source, encoder) = detour_replay(false);
+    let root = source[0].before.clone();
+    let replay = vec![
+        row(
+            root.clone(),
+            boundary(&root, 0.0, 1),
+            "wait-one",
+            0.0,
+            &encoder,
+        ),
+        row(
+            root.clone(),
+            boundary(&root, 0.0, 2),
+            "wait-two",
+            0.0,
+            &encoder,
+        ),
+    ];
+    let model = ContinuousTacticValueModel::fit_hindsight_bellman(
+        &replay,
+        encoder.goal_distance_feature(),
+        1,
+        0.9,
+    )
+    .unwrap();
+    let stats = model.bellman_replay_stats().unwrap();
+    assert_eq!(stats.auxiliary_goals, 1);
+    assert_eq!(stats.already_satisfied_omissions, 2);
+    assert_eq!(stats.auxiliary_rows, 0);
+    assert_eq!(model.goal_query_kind(), Some(BellmanGoalKind::Authored));
+}
+
 fn boundary(base: &FactSnapshot, x: f32, elapsed: u64) -> FactSnapshot {
     let mut facts = base.clone();
     facts.phase = FactPhase::PreInput;

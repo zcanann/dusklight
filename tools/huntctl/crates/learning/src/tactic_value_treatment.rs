@@ -21,7 +21,9 @@ const CONTINUOUS_FOREST_ACTION: u32 = 0;
 const CONTINUOUS_FOREST_SEED: u64 = 0x4754_4351_4649_0001;
 const CONTINUOUS_DOUBLE_Q_SEED: u64 = 0x4754_4344_5141_0001;
 
+mod hindsight_goals;
 mod parameterized_bellman;
+pub use hindsight_goals::{BellmanGoalKind, BellmanReplayStats};
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -43,13 +45,23 @@ pub enum TacticValueTreatment {
     /// One conditional return regressor over native and achieved-goal paths.
     /// Immediate motion remains an observation, not action utility.
     HindsightReturnKnnV1,
+    /// The same Bellman learner augmented with explicit auxiliary goal tasks.
+    HindsightBellmanForestV3,
 }
 
 impl TacticValueTreatment {
     pub const fn uses_continuous_forest(self) -> bool {
         matches!(
             self,
-            Self::ContinuousFittedQForestV1 | Self::ContinuousBellmanForestV2
+            Self::ContinuousFittedQForestV1
+                | Self::ContinuousBellmanForestV2
+                | Self::HindsightBellmanForestV3
+        )
+    }
+    pub const fn uses_bellman_forest(self) -> bool {
+        matches!(
+            self,
+            Self::ContinuousBellmanForestV2 | Self::HindsightBellmanForestV3
         )
     }
     pub const fn uses_hindsight_returns(self) -> bool {
@@ -89,6 +101,10 @@ pub struct ContinuousTacticValueEstimate {
 #[derive(Clone, Debug, Serialize)]
 pub struct ContinuousTacticValueModel {
     forest: FittedQ,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hindsight_query: Option<BellmanGoalKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bellman_stats: Option<BellmanReplayStats>,
 }
 
 /// Continuous state/action regressor used after authenticated terminal support
@@ -267,6 +283,12 @@ impl ContinuousTacticDoubleQModel {
 }
 
 impl ContinuousTacticValueModel {
+    pub fn bellman_replay_stats(&self) -> Option<&BellmanReplayStats> {
+        self.bellman_stats.as_ref()
+    }
+    pub fn goal_query_kind(&self) -> Option<BellmanGoalKind> {
+        self.hindsight_query
+    }
     pub fn fit_treatment(
         treatment: TacticValueTreatment,
         transitions: &[OptionTransitionSample],
@@ -281,6 +303,12 @@ impl ContinuousTacticValueModel {
             TacticValueTreatment::ContinuousBellmanForestV2 => {
                 Self::fit_bellman(transitions, goal_distance_feature, iterations, discount)
             }
+            TacticValueTreatment::HindsightBellmanForestV3 => Self::fit_hindsight_bellman(
+                transitions,
+                goal_distance_feature,
+                iterations,
+                discount,
+            ),
             _ => Err(GeneralizedTacticValueError::InvalidConfig),
         }
     }
@@ -346,7 +374,11 @@ impl ContinuousTacticValueModel {
             &continuous_forest_config(),
         )
         .map_err(|error| GeneralizedTacticValueError::InvalidTransition(error.to_string()))?;
-        Ok(Self { forest })
+        Ok(Self {
+            forest,
+            hindsight_query: None,
+            bellman_stats: None,
+        })
     }
 
     pub fn predict(
@@ -355,6 +387,16 @@ impl ContinuousTacticValueModel {
         context: &GeneralizedTacticContext,
         descriptor: &OptionActionDescriptor,
     ) -> Result<ContinuousTacticValueEstimate, GeneralizedTacticValueError> {
+        let query;
+        let state_features = if let Some(kind) = self.hindsight_query {
+            if state_features.len() < 4 {
+                return Err(GeneralizedTacticValueError::FeatureWidth);
+            }
+            query = hindsight_goals::query_features(state_features, kind)?;
+            query.as_slice()
+        } else {
+            state_features
+        };
         let features = regression_features(state_features, context, descriptor)?;
         let estimate = self
             .forest

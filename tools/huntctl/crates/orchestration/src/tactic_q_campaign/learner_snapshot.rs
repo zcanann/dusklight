@@ -333,7 +333,8 @@ impl TacticQImmutableLearnerSnapshot {
                     )?,
                 )),
                 TacticValueTreatment::ContinuousFittedQForestV1
-                | TacticValueTreatment::ContinuousBellmanForestV2 => None,
+                | TacticValueTreatment::ContinuousBellmanForestV2
+                | TacticValueTreatment::HindsightBellmanForestV3 => None,
             }
         };
         let native_terminal_model = if corpus.transitions.len() >= 2

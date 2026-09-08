@@ -375,6 +375,15 @@ fn learned_batch(
 
 #[test]
 fn bellman_snapshot_controls_unseen_executable_actions_before_any_success() {
+    check_bellman_snapshot(TacticValueTreatment::ContinuousBellmanForestV2);
+}
+
+#[test]
+fn hindsight_bellman_snapshot_controls_executable_actions_without_native_success() {
+    check_bellman_snapshot(TacticValueTreatment::HindsightBellmanForestV3);
+}
+
+fn check_bellman_snapshot(treatment: TacticValueTreatment) {
     let base = base_facts();
     let encoder = GoalConditionedTacticFeatureEncoder::new([1.0, 0.0, 0.0]).unwrap();
     let training = collect_sibling_feedback(&base, &encoder);
@@ -392,7 +401,7 @@ fn bellman_snapshot_controls_unseen_executable_actions_before_any_success() {
         1,
         config.clone(),
         encoder.goal_distance_feature(),
-        TacticValueTreatment::ContinuousBellmanForestV2,
+        treatment,
     )
     .unwrap();
     let query_catalog = action_catalog("held-out", 120);

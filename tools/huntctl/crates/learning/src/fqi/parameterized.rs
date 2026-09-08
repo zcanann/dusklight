@@ -10,7 +10,9 @@ pub struct ParameterizedTransition {
     pub duration: u32,
     pub terminal: bool,
     /// An empty set on a nonterminal row is missing support, not a terminal.
-    pub successor_state_actions: Vec<Vec<f32>>,
+    pub successor_actions: Vec<Vec<f32>>,
+    /// Shared prefix of each successor query; candidates supply only suffixes.
+    pub successor_state: Vec<f32>,
 }
 
 impl FittedQ {
@@ -37,16 +39,24 @@ impl FittedQ {
             .collect::<Vec<_>>();
         validate_inputs(feature_width, &[0], &rows, config)?;
         for sample in samples {
-            if !sample.terminal && sample.successor_state_actions.is_empty() {
+            if !sample.terminal && sample.successor_actions.is_empty() {
                 return Err(FqiError::InvalidConfig(
                     "nonterminal parameterized row lacks successor actions",
                 ));
             }
-            for successor in &sample.successor_state_actions {
-                if successor.len() != feature_width {
+            if sample
+                .successor_state
+                .iter()
+                .any(|value| !value.is_finite())
+            {
+                return Err(FqiError::NonFiniteFeature);
+            }
+            for successor in &sample.successor_actions {
+                let width = sample.successor_state.len() + successor.len();
+                if width != feature_width {
                     return Err(FqiError::FeatureWidth {
                         expected: feature_width,
-                        actual: successor.len(),
+                        actual: width,
                     });
                 }
                 if successor.iter().any(|value| !value.is_finite()) {
@@ -65,14 +75,15 @@ impl FittedQ {
                     0.0
                 } else {
                     let model = current.as_ref().unwrap();
-                    sample
-                        .successor_state_actions
-                        .iter()
-                        .map(|features| model.estimate(features, 0).map(|value| value.mean))
-                        .collect::<Result<Vec<_>, _>>()?
-                        .into_iter()
-                        .max_by(f64::total_cmp)
-                        .unwrap()
+                    let mut features = sample.successor_state.clone();
+                    let prefix = features.len();
+                    features.resize(feature_width, 0.0);
+                    let mut best = f64::NEG_INFINITY;
+                    for action in &sample.successor_actions {
+                        features[prefix..].copy_from_slice(action);
+                        best = best.max(model.estimate(&features, 0)?.mean);
+                    }
+                    best
                 };
                 let target = f64::from(sample.reward)
                     + f64::from(config.discount).powf(f64::from(sample.duration)) * continuation;
@@ -109,7 +120,8 @@ mod tests {
             reward,
             duration,
             terminal,
-            successor_state_actions: next.iter().map(|x| vec![*x]).collect(),
+            successor_actions: next.iter().map(|x| vec![*x]).collect(),
+            successor_state: Vec::new(),
         }
     }
 
@@ -121,6 +133,45 @@ mod tests {
             discount: 0.9,
             ..FqiConfig::default()
         }
+    }
+
+    #[test]
+    fn factored_successor_queries_match_full_vectors() {
+        let rows = vec![
+            ParameterizedTransition {
+                state_action: vec![0.0, 0.0],
+                reward: -1.0,
+                duration: 1,
+                terminal: false,
+                successor_state: vec![1.0],
+                successor_actions: vec![vec![0.0], vec![1.0]],
+            },
+            ParameterizedTransition {
+                state_action: vec![1.0, 0.0],
+                reward: 2.0,
+                duration: 1,
+                terminal: true,
+                successor_state: vec![],
+                successor_actions: vec![],
+            },
+            ParameterizedTransition {
+                state_action: vec![1.0, 1.0],
+                reward: 5.0,
+                duration: 1,
+                terminal: true,
+                successor_state: vec![],
+                successor_actions: vec![],
+            },
+        ];
+        let mut expanded = rows.clone();
+        expanded[0].successor_state.clear();
+        expanded[0].successor_actions = vec![vec![1.0, 0.0], vec![1.0, 1.0]];
+        let compact = FittedQ::fit_parameterized(2, &rows, &config()).unwrap();
+        let full = FittedQ::fit_parameterized(2, &expanded, &config()).unwrap();
+        assert_eq!(
+            compact.estimate(&[0.0, 0.0], 0).unwrap(),
+            full.estimate(&[0.0, 0.0], 0).unwrap()
+        );
     }
 
     #[test]

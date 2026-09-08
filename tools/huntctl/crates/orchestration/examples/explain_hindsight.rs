@@ -1,5 +1,6 @@
 //! Read-only, offline inspection of the hindsight critic on recorded experience.
-//! Usage: explain_hindsight CHECKPOINT.dtqz GOAL_X GOAL_Y GOAL_Z [ROW_INDEX] [--bellman]
+//! Usage: explain_hindsight CHECKPOINT.dtqz GOAL_X GOAL_Y GOAL_Z [ROW_INDEX]
+//!        [--bellman | --hindsight-bellman]
 //! Fits the complete checkpoint corpus, not the historical online snapshot.
 use dusklight_learning::generalized_tactic_value::{
     GeneralizedTacticContext, GeneralizedTacticValueModel,
@@ -13,13 +14,14 @@ use std::path::Path;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1).collect::<Vec<_>>();
-    let bellman = args.last().is_some_and(|arg| arg == "--bellman");
+    let hindsight_bellman = args.last().is_some_and(|arg| arg == "--hindsight-bellman");
+    let bellman = hindsight_bellman || args.last().is_some_and(|arg| arg == "--bellman");
     if bellman {
         args.pop();
     }
     if !(4..=5).contains(&args.len()) {
         return Err(
-            "usage: explain_hindsight CHECKPOINT GOAL_X GOAL_Y GOAL_Z [ROW_INDEX] [--bellman]"
+            "usage: explain_hindsight CHECKPOINT GOAL_X GOAL_Y GOAL_Z [ROW_INDEX] [--bellman | --hindsight-bellman]"
                 .into(),
         );
     }
@@ -52,7 +54,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         let started = std::time::Instant::now();
         // A bounded offline diagnostic, not a historical snapshot replay or
         // a campaign configuration. Four actual Bellman updates on all rows.
-        let model = ContinuousTacticValueModel::fit_bellman(
+        let fit = if hindsight_bellman {
+            ContinuousTacticValueModel::fit_hindsight_bellman
+        } else {
+            ContinuousTacticValueModel::fit_bellman
+        };
+        let model = fit(
             rows,
             encoder.goal_distance_feature(),
             4,
@@ -64,7 +71,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             "{}",
             serde_json::to_string_pretty(&json!({
                 "checkpoint": checkpoint.content_sha256,
-                "treatment": "continuous_bellman_forest_v2",
+                "treatment": if hindsight_bellman { "hindsight_bellman_forest_v3" } else { "continuous_bellman_forest_v2" },
+                "goal_query_kind": model.goal_query_kind(),
+                "replay_stats": model.bellman_replay_stats(),
                 "training_rows": rows.len(),
                 "terminal_rows": rows.iter().filter(|row| row.value_sample.terminal).count(),
                 "bellman_iterations": 4,

@@ -5,19 +5,29 @@ pub(crate) fn regression_features(
     context: &GeneralizedTacticContext,
     descriptor: &OptionActionDescriptor,
 ) -> Result<Vec<f32>, GeneralizedTacticValueError> {
+    let action = encode_action(context, descriptor)?;
+    let mut features = regression_state_features(state_features, context)?;
+    features.extend_from_slice(&action);
+    Ok(features)
+}
+
+pub(crate) fn regression_state_features(
+    state_features: &[f32],
+    context: &GeneralizedTacticContext,
+) -> Result<Vec<f32>, GeneralizedTacticValueError> {
     if state_features.is_empty() || state_features.iter().any(|value| !value.is_finite()) {
         return Err(GeneralizedTacticValueError::FeatureWidth);
     }
-    let action = encode_action(context, descriptor)?;
-    let mut features = Vec::with_capacity(
-        state_features.len()
-            + GENERALIZED_TACTIC_BEHAVIOR_CONTEXT_WIDTH
-            + GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH,
-    );
-    features.extend_from_slice(state_features);
+    let mut features = state_features.to_vec();
     features.extend_from_slice(&context.values());
-    features.extend_from_slice(&action);
     Ok(features)
+}
+
+pub(crate) fn regression_action_features(
+    context: &GeneralizedTacticContext,
+    descriptor: &OptionActionDescriptor,
+) -> Result<Vec<f32>, GeneralizedTacticValueError> {
+    encode_action(context, descriptor).map(|values| values.to_vec())
 }
 
 pub(crate) fn action_class(option_type: &OptionType) -> u32 {

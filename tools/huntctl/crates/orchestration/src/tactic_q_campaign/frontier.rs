@@ -522,7 +522,8 @@ impl TacticQCampaign {
                         terminal_value_supported && terminal_action_deployment_ready,
                     )?,
                 TacticValueTreatment::ContinuousFittedQForestV1
-                | TacticValueTreatment::ContinuousBellmanForestV2 => None,
+                | TacticValueTreatment::ContinuousBellmanForestV2
+                | TacticValueTreatment::HindsightBellmanForestV3 => None,
             }
         };
         let continuous_model =
@@ -680,8 +681,7 @@ impl TacticQCampaign {
                     terminal_value_supported,
                     preterminal_value_supported: (self.value_treatment.uses_hindsight_returns()
                         && generalized_model.is_some())
-                        || (self.value_treatment
-                            == TacticValueTreatment::ContinuousBellmanForestV2
+                        || (self.value_treatment.uses_bellman_forest()
                             && continuous_model.is_some()),
                     goal_reachability_supported: !terminal_action_deployment_ready
                         && self.value_treatment.uses_goal_relabeling()

@@ -91,7 +91,8 @@ impl TacticQCampaign {
                     )?
                 }
                 TacticValueTreatment::ContinuousFittedQForestV1
-                | TacticValueTreatment::ContinuousBellmanForestV2 => {
+                | TacticValueTreatment::ContinuousBellmanForestV2
+                | TacticValueTreatment::HindsightBellmanForestV3 => {
                     return Ok(None);
                 }
             });
